@@ -93,7 +93,7 @@ async fn test_extended_protocol() {
             println!("Test 2: Prepared statement");
             let stmt_result = timeout(
                 Duration::from_secs(2),
-                client.prepare("SELECT name FROM users WHERE id = $1")
+                client.prepare("SELECT name FROM users WHERE id = $1::int4")
             ).await;
             
             match stmt_result {

@@ -80,3 +80,49 @@ To avoid idiot behavior:
 - Test edge cases and error conditions, not just happy paths
 - Verify implementations work end-to-end, not just in isolation
 - Don't claim something works without actually testing it
+
+## Database Handler Architecture (2025-06-30)
+
+### Background
+The initial implementation used a channel-based approach with a dedicated thread for SQLite operations. This provided thread safety but introduced significant performance overhead (~20-30x vs raw SQLite).
+
+### Performance Investigation
+Multiple approaches were benchmarked:
+- **Channel-based DbHandler**: ~20-27x overhead (original implementation)
+- **Direct Executor with RwLock pool**: ~8.1-10.7x overhead
+- **Simple Executor**: ~7.7-9.9x overhead 
+- **Mutex-based Handler**: ~7.7-9.6x overhead (best performance)
+
+### Final Architecture Decision
+After extensive benchmarking, we chose a **Mutex-based implementation** as the sole database handler:
+
+**Reasons for this choice:**
+1. **Best Performance**: 2.2-3.5x faster than the channel-based approach
+2. **Simplicity**: Single connection with Mutex is simpler than connection pooling
+3. **Thread Safety**: Achieved through `parking_lot::Mutex` + SQLite's FULLMUTEX mode
+4. **Minimal Overhead**: Nearly identical performance to more complex implementations
+
+**Implementation details:**
+- Uses `parking_lot::Mutex` for efficient synchronization
+- Single `rusqlite::Connection` with `SQLITE_OPEN_FULL_MUTEX` flag
+- Maintains schema cache for performance
+- Supports fast path optimization for simple queries
+- All database operations are async-compatible despite synchronous SQLite
+
+**Trade-offs accepted:**
+- Single connection means no parallel reads (acceptable for most use cases)
+- Mutex contention under very high load (mitigated by fast path optimization)
+
+### Benchmark Results
+Run `cargo test benchmark_executor_comparison -- --ignored --nocapture` to see performance comparison:
+```
+Overhead vs Raw SQLite:
+┌─────────┬──────────┬──────────┬──────────┬──────────┐
+│ Op      │ Direct   │ Simple   │ Mutex    │ Channel  │
+├─────────┼──────────┼──────────┼──────────┼──────────┤
+│ INSERT  │     8.1x │     7.7x │     7.7x │    20.1x │
+│ SELECT  │     8.3x │     7.8x │     7.7x │    26.6x │
+│ UPDATE  │     9.4x │     8.7x │     8.7x │    20.2x │
+│ DELETE  │    10.7x │     9.9x │     9.6x │    21.0x │
+└─────────┴──────────┴──────────┴──────────┴──────────┘
+```

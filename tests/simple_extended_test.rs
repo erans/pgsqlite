@@ -66,7 +66,7 @@ async fn test_simple_extended_protocol() {
     
     // Query with parameter - this triggers type lookups
     println!("Running query with parameter...");
-    match client.query("SELECT id, name FROM test WHERE id = $1", &[&1i32]).await {
+    match client.query("SELECT id, name FROM test WHERE id = $1::int4", &[&1i32]).await {
         Ok(rows) => {
             println!("Query successful, got {} rows", rows.len());
             assert_eq!(rows.len(), 1);

@@ -1,5 +1,48 @@
 # pgsqlite TODO List
 
+## ✅ Performance Optimization - COMPLETED (2025-06-30)
+
+### Background
+Investigated replacing the channel-based DbHandler with a direct multi-threaded implementation using SQLite's FULLMUTEX mode.
+
+### Performance Findings
+Benchmark results comparing implementations (1000 operations each):
+
+| Implementation | INSERT | SELECT | UPDATE | DELETE | Notes |
+|----------------|--------|--------|--------|--------|-------|
+| Raw SQLite | 0.005ms | 0.006ms | 0.005ms | 0.004ms | Baseline |
+| Mutex Handler | 0.036ms | 0.046ms | 0.040ms | 0.038ms | 7.7-9.6x overhead (CHOSEN) |
+| Direct Executor | 0.038ms | 0.050ms | 0.043ms | 0.042ms | 8.1-10.7x overhead |
+| Simple Executor | 0.036ms | 0.047ms | 0.040ms | 0.039ms | 7.7-9.9x overhead |
+| Channel-based | 0.094ms | 0.159ms | 0.092ms | 0.083ms | 20-27x overhead |
+
+**Key Achievement**: Mutex-based implementation provides 2.2-3.5x performance improvement over channels.
+
+### Final Implementation
+[x] Implemented and deployed **Mutex-based DbHandler** as the sole database handler:
+- Uses `parking_lot::Mutex` for efficient synchronization
+- Single SQLite connection with `SQLITE_OPEN_FULL_MUTEX` flag
+- Thread-safe and Send+Sync compatible
+- Maintains all features: schema cache, fast path optimization, transaction support
+
+### Work Completed
+- [x] Benchmarked multiple implementations (channel, direct, simple, mutex)
+- [x] Created mutex-based implementation with best performance characteristics
+- [x] Removed all experimental implementations (direct_handler, simple_executor, etc.)
+- [x] Updated session module to use single DbHandler implementation
+- [x] Documented architectural decision in CLAUDE.md
+- [x] Cleaned up codebase to remove unused modules
+
+### Architectural Decision Rationale
+Chose mutex-based approach because:
+1. Best performance (7.7-9.6x overhead vs 20-27x for channels)
+2. Simplest implementation (single connection, no pool complexity)
+3. Thread-safe through parking_lot::Mutex + SQLite FULLMUTEX
+4. Minimal code changes required
+5. Trade-offs acceptable (no parallel reads, potential mutex contention under extreme load)
+
+# pgsqlite TODO List
+
 ## How to Use This TODO List
 
 This file tracks all future development tasks for the pgsqlite project. It serves as a comprehensive roadmap for features, improvements, and fixes that need to be implemented.
@@ -153,10 +196,17 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 ### Caching and Optimization
 - [x] Schema metadata caching to avoid repeated PRAGMA table_info queries
 - [x] Query plan caching for parsed INSERT statements
+- [x] SQLite WAL mode + multi-threaded support with connection pooling
+  - [x] Separate read/write connection pools
+  - [x] Connection affinity for transactions
+  - [x] Shared cache for in-memory databases
+  - [x] Fix concurrent access test failures (implemented RAII connection return)
+  - [x] Optimize connection pool management
 - [ ] Batch INSERT support for multi-row inserts
 - [ ] Fast path for simple INSERTs that don't need decimal rewriting
 - [ ] Cache SQLite prepared statements for reuse
 - [ ] Remove debug logging from hot paths
+- [ ] Direct read-only access optimization (bypass channels for SELECT)
 
 ### Indexing
 - [ ] Support for expression indexes
