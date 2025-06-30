@@ -1,6 +1,14 @@
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use crate::protocol::TransactionStatus;
+use crate::cache::QueryCache;
+use std::sync::Arc;
+use once_cell::sync::Lazy;
+
+// Global query cache shared across all sessions
+pub static GLOBAL_QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| {
+    Arc::new(QueryCache::new(1000, 600)) // 1000 queries, 10 minute TTL
+});
 
 pub struct SessionState {
     pub id: uuid::Uuid,

@@ -129,7 +129,45 @@ cargo test
 
 # Run the project
 cargo run
+
+# Run with in-memory database (for testing/benchmarking)
+cargo run -- --in-memory
+
+# Run with Unix socket support (creates socket in /tmp)
+cargo run -- --socket-dir /tmp
+
+# Run with Unix socket only (no TCP listener)
+cargo run -- --socket-dir /tmp --no-tcp
 ```
+
+### In-Memory Mode
+
+pgsqlite supports an in-memory SQLite database mode for testing and benchmarking purposes. This mode eliminates disk I/O overhead, making it ideal for measuring the pure protocol translation overhead.
+
+```bash
+# Start pgsqlite with in-memory database
+cargo run -- --in-memory
+
+# Or in release mode for benchmarking
+cargo build --release
+./target/release/pgsqlite --in-memory
+```
+
+**Note**: In-memory databases are ephemeral - all data is lost when the server stops. This mode is intended for testing and benchmarking only, not for production use.
+
+### Unix Socket Support
+
+pgsqlite supports Unix domain sockets for local connections, providing lower latency than TCP/IP:
+
+```bash
+# Connect via Unix socket with psql
+psql -h /tmp -p 5432 -d your_database
+
+# Connect with psycopg2
+conn = psycopg2.connect(host='/tmp', port=5432, dbname='your_database')
+```
+
+The socket file is created as `.s.PGSQL.{port}` in the specified directory. Both TCP and Unix socket listeners run simultaneously by default, or you can use `--no-tcp` to disable TCP.
 
 ## Reporting Issues
 

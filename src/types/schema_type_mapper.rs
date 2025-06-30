@@ -132,6 +132,40 @@ impl SchemaTypeMapper {
         }
     }
     
+    /// Convert PostgreSQL OID to type name
+    pub fn pg_oid_to_type_name(oid: i32) -> &'static str {
+        match oid {
+            16 => "bool",
+            17 => "bytea",
+            20 => "int8",
+            21 => "int2",
+            23 => "int4",
+            25 => "text",
+            700 => "float4",
+            701 => "float8",
+            790 => "money",
+            829 => "macaddr",
+            869 => "inet",
+            774 => "macaddr8",
+            650 => "cidr",
+            1043 => "varchar",
+            1082 => "date",
+            1083 => "time",
+            1114 => "timestamp",
+            1184 => "timestamptz",
+            1266 => "timetz",
+            1560 => "bit",
+            1562 => "varbit",
+            1700 => "numeric",
+            2950 => "uuid",
+            3802 => "jsonb",
+            3904 => "int4range",
+            3906 => "numrange",
+            3926 => "int8range",
+            _ => "text",
+        }
+    }
+    
     /// Infer type from value when no schema is available
     pub fn infer_type_from_value(value: Option<&[u8]>) -> i32 {
         match value {

@@ -1,0 +1,72 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
+
+pub mod schema;
+pub mod query;
+
+pub use schema::SchemaCache;
+pub use query::{QueryCache, CachedQuery};
+
+/// Simple LRU cache with TTL support
+pub struct LruCache<K, V> {
+    cache: Arc<RwLock<HashMap<K, CacheEntry<V>>>>,
+    capacity: usize,
+    ttl: Duration,
+}
+
+struct CacheEntry<V> {
+    value: V,
+    last_accessed: Instant,
+}
+
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> LruCache<K, V> {
+    pub fn new(capacity: usize, ttl: Duration) -> Self {
+        Self {
+            cache: Arc::new(RwLock::new(HashMap::with_capacity(capacity))),
+            capacity,
+            ttl,
+        }
+    }
+
+    pub fn get(&self, key: &K) -> Option<V> {
+        let mut cache = self.cache.write().unwrap();
+        
+        if let Some(entry) = cache.get_mut(key) {
+            if entry.last_accessed.elapsed() < self.ttl {
+                entry.last_accessed = Instant::now();
+                return Some(entry.value.clone());
+            } else {
+                cache.remove(key);
+            }
+        }
+        
+        None
+    }
+
+    pub fn insert(&self, key: K, value: V) {
+        let mut cache = self.cache.write().unwrap();
+        
+        // Simple eviction: remove oldest entry if at capacity
+        if cache.len() >= self.capacity && !cache.contains_key(&key) {
+            if let Some((oldest_key, _)) = cache.iter()
+                .min_by_key(|(_, entry)| entry.last_accessed) {
+                let oldest_key = oldest_key.clone();
+                cache.remove(&oldest_key);
+            }
+        }
+        
+        cache.insert(key, CacheEntry {
+            value,
+            last_accessed: Instant::now(),
+        });
+    }
+
+    pub fn invalidate(&self, key: &K) {
+        self.cache.write().unwrap().remove(key);
+    }
+
+    pub fn clear(&self) {
+        self.cache.write().unwrap().clear();
+    }
+}

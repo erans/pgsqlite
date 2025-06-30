@@ -103,6 +103,14 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## Protocol Features
 
+### Connection Methods
+- [x] Unix domain socket support
+  - [x] Add --socket-dir command line option
+  - [x] Create socket file as .s.PGSQL.{port} in specified directory
+  - [x] Handle socket file cleanup on shutdown
+  - [x] Support both TCP and Unix socket listeners simultaneously
+  - [x] Implement proper socket permissions
+
 ### Prepared Statements
 - [ ] Full support for prepared statement lifecycle
 - [ ] Parameter type inference improvements
@@ -141,6 +149,14 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Implement ts_rank and ts_headline
 
 ## Performance and Storage
+
+### Caching and Optimization
+- [x] Schema metadata caching to avoid repeated PRAGMA table_info queries
+- [x] Query plan caching for parsed INSERT statements
+- [ ] Batch INSERT support for multi-row inserts
+- [ ] Fast path for simple INSERTs that don't need decimal rewriting
+- [ ] Cache SQLite prepared statements for reuse
+- [ ] Remove debug logging from hot paths
 
 ### Indexing
 - [ ] Support for expression indexes
@@ -186,6 +202,11 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Row-level security policies
 - [ ] Column-level permissions
 - [ ] SSL/TLS connection support
+  - [ ] Implement SSL negotiation in protocol handler
+  - [ ] Support sslmode options (disable, allow, prefer, require, verify-ca, verify-full)
+  - [ ] Certificate-based authentication
+  - [ ] Configure SSL cert/key paths via command line or config
+  - [ ] Support PostgreSQL SSL protocol flow
 - [ ] Authentication methods (md5, scram-sha-256)
 
 ### Monitoring

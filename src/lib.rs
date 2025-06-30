@@ -7,6 +7,7 @@ pub mod functions;
 pub mod query;
 pub mod metadata;
 pub mod rewriter;
+pub mod cache;
 
 use thiserror::Error;
 

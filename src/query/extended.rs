@@ -1,5 +1,5 @@
 use crate::protocol::{BackendMessage, FieldDescription};
-use crate::session::{DbHandler, SessionState, PreparedStatement, Portal};
+use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_QUERY_CACHE};
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::DecimalHandler;
@@ -31,20 +31,42 @@ impl ExtendedQueryHandler {
         // For INSERT and SELECT queries, we need to determine parameter types from the target table schema
         let mut actual_param_types = param_types.clone();
         if param_types.is_empty() && query.contains('$') {
-            if query.trim().to_uppercase().starts_with("INSERT") {
-                actual_param_types = Self::analyze_insert_params(&query, db).await.unwrap_or_else(|_| {
-                    // If we can't determine types, default to text
-                    let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                    vec![25; param_count]
-                });
-                info!("Analyzed INSERT parameter types: {:?}", actual_param_types);
-            } else if query.trim().to_uppercase().starts_with("SELECT") {
-                actual_param_types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
-                    // If we can't determine types, default to text
-                    let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                    vec![25; param_count]
-                });
-                info!("Analyzed SELECT parameter types: {:?}", actual_param_types);
+            // Check if we have this query cached
+            if let Some(cached) = GLOBAL_QUERY_CACHE.get(&query) {
+                actual_param_types = cached.param_types.clone();
+                info!("Using cached parameter types for query: {:?}", actual_param_types);
+            } else {
+                if query.trim().to_uppercase().starts_with("INSERT") {
+                    actual_param_types = Self::analyze_insert_params(&query, db).await.unwrap_or_else(|_| {
+                        // If we can't determine types, default to text
+                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                        vec![25; param_count]
+                    });
+                    info!("Analyzed INSERT parameter types: {:?}", actual_param_types);
+                    
+                    // Cache the parsed query with its parameter types
+                    if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
+                        &sqlparser::dialect::PostgreSqlDialect {},
+                        &query
+                    ) {
+                        if let Some(statement) = parsed.first() {
+                            let table_names = Self::extract_table_names_from_statement(statement);
+                            GLOBAL_QUERY_CACHE.insert(query.clone(), crate::cache::CachedQuery {
+                                statement: statement.clone(),
+                                param_types: actual_param_types.clone(),
+                                is_decimal_query: false, // Will be determined later
+                                table_names,
+                            });
+                        }
+                    }
+                } else if query.trim().to_uppercase().starts_with("SELECT") {
+                    actual_param_types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
+                        // If we can't determine types, default to text
+                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                        vec![25; param_count]
+                    });
+                    info!("Analyzed SELECT parameter types: {:?}", actual_param_types);
+                }
             }
         }
         
@@ -1713,36 +1735,26 @@ impl ExtendedQueryHandler {
         
         info!("Analyzing INSERT for table '{}' with columns: {:?}", table_name, columns);
         
-        // If no explicit columns, we need to get all columns from the table
+        // Get cached table schema
+        let table_schema = db.get_table_schema(&table_name).await
+            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get table schema: {}", e)))?;
+        
+        // If no explicit columns, use all columns from the table
         let columns = if columns.is_empty() {
-            // Get all columns from the table schema
-            let schema_query = format!("PRAGMA table_info({})", table_name);
-            match db.query(&schema_query).await {
-                Ok(response) => {
-                    response.rows.iter()
-                        .filter_map(|row| {
-                            row.get(1)?.as_ref().and_then(|name_bytes| {
-                                String::from_utf8(name_bytes.clone()).ok()
-                            })
-                        })
-                        .collect()
-                }
-                Err(_) => return Err(PgSqliteError::Protocol("Failed to get table schema".to_string())),
-            }
+            table_schema.columns.iter()
+                .map(|col| col.name.clone())
+                .collect()
         } else {
             columns
         };
         
-        // Look up types for each column
+        // Look up types for each column using cached schema
         let mut param_types = Vec::new();
         for column in &columns {
-            // First check metadata table for stored PostgreSQL types
-            if let Ok(Some(pg_type)) = db.get_schema_type(&table_name, column).await {
-                let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type);
-                
+            if let Some(col_info) = table_schema.column_map.get(&column.to_lowercase()) {
                 // For certain PostgreSQL types that tokio-postgres doesn't support in binary format,
                 // use TEXT as the parameter type to allow string representation
-                let param_oid = match oid {
+                let param_oid = match col_info.pg_oid {
                     774 => 25, // MACADDR8 -> TEXT
                     829 => 25, // MACADDR -> TEXT  
                     869 => 25, // INET -> TEXT
@@ -1753,46 +1765,21 @@ impl ExtendedQueryHandler {
                     3906 => 25, // NUMRANGE -> TEXT
                     1560 => 25, // BIT -> TEXT
                     1562 => 25, // VARBIT -> TEXT
-                    _ => oid, // Use original OID for supported types
+                    _ => col_info.pg_oid, // Use original OID for supported types
                 };
                 
                 param_types.push(param_oid);
-                if param_oid != oid {
-                    info!("Mapped parameter type for {}.{}: {} (OID {}) -> TEXT (OID 25) for binary protocol compatibility", table_name, column, pg_type, oid);
+                if param_oid != col_info.pg_oid {
+                    info!("Mapped parameter type for {}.{}: {} (OID {}) -> TEXT (OID 25) for binary protocol compatibility", 
+                          table_name, column, col_info.pg_type, col_info.pg_oid);
                 } else {
-                    info!("Found stored type for {}.{}: {} (OID {})", table_name, column, pg_type, oid);
+                    info!("Found cached type for {}.{}: {} (OID {})", 
+                          table_name, column, col_info.pg_type, col_info.pg_oid);
                 }
             } else {
-                // Fall back to SQLite schema
-                let schema_query = format!("PRAGMA table_info({})", table_name);
-                if let Ok(response) = db.query(&schema_query).await {
-                    let mut found = false;
-                    for row in &response.rows {
-                        if let (Some(Some(name_bytes)), Some(Some(type_bytes))) = (row.get(1), row.get(2)) {
-                            if let (Ok(col_name), Ok(sqlite_type)) = (
-                                String::from_utf8(name_bytes.clone()),
-                                String::from_utf8(type_bytes.clone())
-                            ) {
-                                if col_name.to_lowercase() == column.to_lowercase() {
-                                    let pg_type = crate::types::SchemaTypeMapper::sqlite_type_to_pg_oid(&sqlite_type);
-                                    param_types.push(pg_type);
-                                    info!("Mapped SQLite type for {}.{}: {} -> PG OID {}", 
-                                          table_name, column, sqlite_type, pg_type);
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !found {
-                        // Default to text if column not found
-                        param_types.push(25);
-                        info!("Column {}.{} not found, defaulting to text", table_name, column);
-                    }
-                } else {
-                    // Default to text if we can't query schema
-                    param_types.push(25);
-                }
+                // Default to text if column not found
+                param_types.push(25);
+                info!("Column {}.{} not found in schema, defaulting to text", table_name, column);
             }
         }
         
@@ -2064,6 +2051,47 @@ impl ExtendedQueryHandler {
             "varbit" | "bit varying" => 1562,
             _ => 25, // Default to text for unknown types
         }
+    }
+    
+    /// Extract table names from a parsed SQL statement
+    fn extract_table_names_from_statement(statement: &sqlparser::ast::Statement) -> Vec<String> {
+        use sqlparser::ast::TableFactor;
+        
+        let mut tables = Vec::new();
+        
+        match statement {
+            sqlparser::ast::Statement::Insert(insert) => {
+                tables.push(insert.table.to_string());
+            }
+            sqlparser::ast::Statement::Query(query) => {
+                super::extended_helpers::extract_tables_from_query(query, &mut tables);
+            }
+            sqlparser::ast::Statement::Update { table, .. } => {
+                if let TableFactor::Table { name, .. } = &table.relation {
+                    tables.push(name.to_string());
+                }
+            }
+            sqlparser::ast::Statement::Delete(delete) => {
+                // For DELETE, just get the main table from the FROM clause
+                match &delete.from {
+                    sqlparser::ast::FromTable::WithFromKeyword(table_list) => {
+                        for table in table_list {
+                            if let TableFactor::Table { name, .. } = &table.relation {
+                                tables.push(name.to_string());
+                            }
+                        }
+                    }
+                    sqlparser::ast::FromTable::WithoutKeyword(names) => {
+                        for name in names {
+                            tables.push(name.to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        
+        tables
     }
 }
 
