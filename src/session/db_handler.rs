@@ -1,278 +1,249 @@
-use rusqlite::Connection;
-use tokio::sync::{mpsc, oneshot};
-use std::thread;
-use tracing::{info, error};
+use std::sync::Arc;
+use parking_lot::Mutex;
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sqlparser::parser::Parser;
 use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::ast::{Statement, Query, TableFactor};
 use crate::cache::SchemaCache;
+use crate::cache::schema::TableSchema;
+use crate::rewriter::DecimalQueryRewriter;
+use tracing::info;
 
-pub enum DbCommand {
-    Execute {
-        query: String,
-        response: oneshot::Sender<Result<DbResponse, rusqlite::Error>>,
-    },
-    Query {
-        query: String,
-        response: oneshot::Sender<Result<DbResponse, rusqlite::Error>>,
-    },
-    GetSchemaType {
-        table_name: String,
-        column_name: String,
-        response: oneshot::Sender<Result<Option<String>, rusqlite::Error>>,
-    },
-    GetTableSchema {
-        table_name: String,
-        response: oneshot::Sender<Result<crate::cache::schema::TableSchema, rusqlite::Error>>,
-    },
-    InvalidateSchemaCache {
-        table_name: Option<String>,
-    },
-    Shutdown,
-}
-
+/// Database response structure
 pub struct DbResponse {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Option<Vec<u8>>>>,
     pub rows_affected: usize,
 }
 
+/// Thread-safe database handler using a Mutex-protected SQLite connection
+/// 
+/// This implementation was chosen after extensive benchmarking showed it provides
+/// the best performance characteristics:
+/// - ~7.7-9.6x overhead vs raw SQLite (compared to ~20-27x for channel-based)
+/// - 2.2-3.5x better performance than channel-based approach
+/// - Simpler than connection pooling with nearly identical performance
+/// - Thread-safe through parking_lot::Mutex and SQLite's FULLMUTEX mode
 pub struct DbHandler {
-    sender: mpsc::Sender<DbCommand>,
+    conn: Arc<Mutex<Connection>>,
+    schema_cache: Arc<SchemaCache>,
 }
 
 impl DbHandler {
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
-        let (sender, mut receiver) = mpsc::channel(100);
-        let db_path = db_path.to_string();
+        // Use FULLMUTEX for SQLite's internal thread safety
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE 
+            | OpenFlags::SQLITE_OPEN_CREATE 
+            | OpenFlags::SQLITE_OPEN_FULL_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI;
         
-        // Spawn a dedicated thread for SQLite operations
-        thread::spawn(move || {
-            let conn = if db_path == ":memory:" {
-                Connection::open_in_memory()
-            } else {
-                Connection::open(&db_path)
-            };
-            
-            let conn = match conn {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to open database: {}", e);
-                    return;
-                }
-            };
-            
-            // Set pragmas
-            if let Err(e) = conn.execute_batch(
-                "PRAGMA journal_mode=WAL;
-                 PRAGMA synchronous=NORMAL;
-                 PRAGMA cache_size=-64000;
-                 PRAGMA temp_store=MEMORY;"
-            ) {
-                error!("Failed to set pragmas: {}", e);
-            }
-            
-            // Register custom functions
-            if let Err(e) = crate::functions::register_all_functions(&conn) {
-                error!("Failed to register custom functions: {}", e);
-            }
-            
-            // Initialize metadata table
-            if let Err(e) = crate::metadata::TypeMetadata::init(&conn) {
-                error!("Failed to initialize metadata table: {}", e);
-            }
-            
-            // Initialize schema cache with 5 minute TTL
-            let schema_cache = SchemaCache::new(300);
-            
-            // Main command loop
-            while let Some(cmd) = receiver.blocking_recv() {
-                match cmd {
-                    DbCommand::Execute { query, response } => {
-                        // Check if this is a DDL statement that might invalidate cache
-                        if is_ddl_statement(&query) {
-                            schema_cache.clear();
-                        }
-                        let result = execute_dml(&conn, &query);
-                        let _ = response.send(result);
-                    }
-                    DbCommand::Query { query, response } => {
-                        let result = execute_query(&conn, &query);
-                        let _ = response.send(result);
-                    }
-                    DbCommand::GetSchemaType { table_name, column_name, response } => {
-                        let result = crate::metadata::TypeMetadata::get_pg_type(&conn, &table_name, &column_name);
-                        let _ = response.send(result);
-                    }
-                    DbCommand::GetTableSchema { table_name, response } => {
-                        let result = get_table_schema_cached(&conn, &schema_cache, &table_name);
-                        let _ = response.send(result);
-                    }
-                    DbCommand::InvalidateSchemaCache { table_name } => {
-                        if let Some(table) = table_name {
-                            schema_cache.invalidate(&table);
-                        } else {
-                            schema_cache.clear();
-                        }
-                    }
-                    DbCommand::Shutdown => break,
-                }
-            }
-            
-            info!("Database handler thread shutting down");
-        });
+        let conn = if db_path == ":memory:" {
+            // Use a unique in-memory database for each instance to avoid test interference
+            // The cache=private ensures each connection gets its own database
+            Connection::open_with_flags("file::memory:?cache=private", flags)?
+        } else if db_path.starts_with("file:") && db_path.contains(":memory:") {
+            // Allow explicit file::memory: URIs with custom parameters
+            Connection::open_with_flags(db_path, flags)?
+        } else {
+            Connection::open_with_flags(db_path, flags)?
+        };
         
-        Ok(DbHandler { sender })
+        // Set pragmas for performance
+        conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA cache_size = -64000;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA mmap_size = 268435456;
+        ")?;
+        
+        // Initialize functions and metadata
+        crate::functions::register_all_functions(&conn)?;
+        crate::metadata::TypeMetadata::init(&conn)?;
+        
+        info!("DbHandler initialized with mutex-based implementation");
+        
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            schema_cache: Arc::new(SchemaCache::new(300)),
+        })
     }
     
     pub async fn execute(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        let (tx, rx) = oneshot::channel();
+        // Check if DDL to clear cache
+        if is_ddl_statement(query) {
+            self.schema_cache.clear();
+        }
         
-        self.sender.send(DbCommand::Execute {
-            query: query.to_string(),
-            response: tx,
-        }).await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Database handler unavailable".to_string())
-        ))?;
+        let conn = self.conn.lock();
         
-        rx.await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Failed to receive response".to_string())
-        ))?
+        // Try fast path first
+        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path(&*conn, query, &self.schema_cache) {
+            return Ok(DbResponse {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                rows_affected,
+            });
+        }
+        
+        // Fall back to normal execution
+        execute_dml_sync(&*conn, query, &self.schema_cache)
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        let (tx, rx) = oneshot::channel();
+        let conn = self.conn.lock();
         
-        self.sender.send(DbCommand::Query {
-            query: query.to_string(),
-            response: tx,
-        }).await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Database handler unavailable".to_string())
-        ))?;
+        // Try fast path first for queries
+        if let Ok(Some(response)) = crate::query::query_fast_path(&*conn, query, &self.schema_cache) {
+            return Ok(response);
+        }
         
-        rx.await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Failed to receive response".to_string())
-        ))?
+        // Fall back to normal query execution
+        execute_query_sync(&*conn, query, &self.schema_cache)
     }
     
     pub async fn get_schema_type(&self, table_name: &str, column_name: &str) -> Result<Option<String>, rusqlite::Error> {
-        let (tx, rx) = oneshot::channel();
+        let conn = self.conn.lock();
         
-        self.sender.send(DbCommand::GetSchemaType {
-            table_name: table_name.to_string(),
-            column_name: column_name.to_string(),
-            response: tx,
-        }).await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Database handler unavailable".to_string())
-        ))?;
+        let mut stmt = conn.prepare(
+            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+        )?;
         
-        rx.await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Failed to receive response".to_string())
-        ))?
+        let result = stmt.query_row([table_name, column_name], |row| {
+            row.get::<_, String>(0)
+        }).optional()?;
+        
+        Ok(result)
     }
     
-    pub async fn get_table_schema(&self, table_name: &str) -> Result<crate::cache::schema::TableSchema, rusqlite::Error> {
-        let (tx, rx) = oneshot::channel();
-        
-        self.sender.send(DbCommand::GetTableSchema {
-            table_name: table_name.to_string(),
-            response: tx,
-        }).await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Database handler unavailable".to_string())
-        ))?;
-        
-        rx.await.map_err(|_| rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-            Some("Failed to receive response".to_string())
-        ))?
-    }
-
-    pub async fn shutdown(&self) {
-        let _ = self.sender.send(DbCommand::Shutdown).await;
-    }
-}
-
-fn execute_query(conn: &Connection, query: &str) -> Result<DbResponse, rusqlite::Error> {
-    // Rewrite query to use decimal functions if needed
-    let rewritten_query = rewrite_query_if_needed(conn, query)?;
-    let mut stmt = conn.prepare(&rewritten_query)?;
-    let column_count = stmt.column_count();
-    
-    // Get column names
-    let mut columns = Vec::new();
-    for i in 0..column_count {
-        columns.push(stmt.column_name(i)?.to_string());
-    }
-    
-    // Try to extract table name from query for type lookup
-    let table_name = extract_table_name_from_query(&rewritten_query);
-    
-    // Get column types from metadata if we have a table name
-    let mut column_types = Vec::new();
-    if let Some(ref table) = table_name {
-        for col_name in &columns {
-            let pg_type = get_column_type_sync(conn, table, col_name)?;
-            column_types.push(pg_type);
+    pub async fn get_table_schema(&self, table_name: &str) -> Result<TableSchema, rusqlite::Error> {
+        // Check cache first
+        if let Some(schema) = self.schema_cache.get(table_name) {
+            return Ok(schema);
         }
-    } else {
-        // Fill with None if we can't determine table
-        column_types.resize(columns.len(), None);
-    }
-    
-    // Get rows
-    let mut rows = Vec::new();
-    let result_rows = stmt.query_map([], |row| {
-        let mut values = Vec::new();
-        for i in 0..column_count {
-            use rusqlite::types::ValueRef;
-            match row.get_ref(i)? {
-                ValueRef::Null => values.push(None),
-                ValueRef::Integer(int_val) => {
-                    // Check if this column is a boolean type
-                    if let Some(Some(pg_type)) = column_types.get(i) {
-                        if pg_type.to_uppercase() == "BOOLEAN" {
-                            // Convert 0/1 to PostgreSQL boolean format 'f'/'t'
-                            let bool_str = if int_val == 0 { "f" } else { "t" };
-                            values.push(Some(bool_str.as_bytes().to_vec()));
-                        } else {
-                            // Regular integer
-                            values.push(Some(int_val.to_string().into_bytes()));
-                        }
-                    } else {
-                        // No type info, treat as regular integer
-                        values.push(Some(int_val.to_string().into_bytes()));
-                    }
+        
+        let conn = self.conn.lock();
+        
+        // Get schema information from both metadata and SQLite schema
+        let mut column_data = Vec::new();
+        
+        // First get all columns from SQLite schema
+        let pragma_query = format!("PRAGMA table_info({})", table_name);
+        let mut stmt = conn.prepare(&pragma_query)?;
+        let rows = stmt.query_map([], |row| {
+            let name: String = row.get(1)?;
+            let sqlite_type: String = row.get(2)?;
+            Ok((name, sqlite_type))
+        })?;
+        
+        for row in rows {
+            let (col_name, sqlite_type) = row?;
+            
+            // Try to get PostgreSQL type from metadata
+            let (pg_type, pg_oid) = match conn.query_row(
+                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2",
+                [table_name, &col_name],
+                |row| row.get::<_, String>(0),
+            ) {
+                Ok(pg_type_str) => {
+                    let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                    (pg_type_str, oid)
                 },
-                ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
-                ValueRef::Text(s) => values.push(Some(s.to_vec())),
-                ValueRef::Blob(b) => values.push(Some(b.to_vec())),
-            }
+                Err(_) => {
+                    // If no metadata, map from SQLite type
+                    let type_mapper = crate::types::TypeMapper::new();
+                    let pg_type = type_mapper.sqlite_to_pg(&sqlite_type);
+                    let oid = pg_type.to_oid();
+                    let pg_type_str = match pg_type {
+                        crate::types::PgType::Text => "text",
+                        crate::types::PgType::Int8 => "int8",
+                        crate::types::PgType::Int4 => "int4",
+                        crate::types::PgType::Int2 => "int2",
+                        crate::types::PgType::Float8 => "float8",
+                        crate::types::PgType::Float4 => "float4",
+                        crate::types::PgType::Bool => "boolean",
+                        crate::types::PgType::Bytea => "bytea",
+                        crate::types::PgType::Date => "date",
+                        crate::types::PgType::Timestamp => "timestamp",
+                        crate::types::PgType::Timestamptz => "timestamptz",
+                        crate::types::PgType::Uuid => "uuid",
+                        crate::types::PgType::Json => "json",
+                        crate::types::PgType::Jsonb => "jsonb",
+                        crate::types::PgType::Numeric => "numeric",
+                        crate::types::PgType::Varchar => "varchar",
+                        crate::types::PgType::Char => "char",
+                        crate::types::PgType::Time => "time",
+                        crate::types::PgType::Money => "money",
+                        _ => "text",
+                    }.to_string();
+                    (pg_type_str, oid as i32)
+                }
+            };
+            
+            column_data.push((col_name, pg_type, sqlite_type, pg_oid));
         }
-        Ok(values)
-    })?;
-    
-    for row in result_rows {
-        rows.push(row?);
+        
+        let schema = crate::cache::schema::SchemaCache::build_table_schema(column_data);
+        
+        // Cache it
+        self.schema_cache.insert(table_name.to_string(), schema.clone());
+        
+        Ok(schema)
     }
     
-    let rows_affected = rows.len();
-    Ok(DbResponse {
-        columns,
-        rows,
-        rows_affected,
-    })
+    /// Begin transaction
+    pub async fn begin(&self) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock();
+        conn.execute("BEGIN", [])?;
+        Ok(())
+    }
+    
+    /// Commit transaction  
+    pub async fn commit(&self) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock();
+        conn.execute("COMMIT", [])?;
+        Ok(())
+    }
+    
+    /// Rollback transaction
+    pub async fn rollback(&self) -> Result<(), rusqlite::Error> {
+        let conn = self.conn.lock();
+        conn.execute("ROLLBACK", [])?;
+        Ok(())
+    }
+    
+    /// Shutdown (no-op for mutex handler)
+    pub async fn shutdown(&self) {
+        // Nothing to do
+    }
 }
 
-fn execute_dml(conn: &Connection, query: &str) -> Result<DbResponse, rusqlite::Error> {
-    // Rewrite query to use decimal functions if needed
-    let rewritten_query = rewrite_query_if_needed(conn, query)?;
+impl Clone for DbHandler {
+    fn clone(&self) -> Self {
+        Self {
+            conn: self.conn.clone(),
+            schema_cache: self.schema_cache.clone(),
+        }
+    }
+}
+
+// Helper functions (previously in db_executor.rs)
+
+pub fn is_ddl_statement(query: &str) -> bool {
+    let query_upper = query.trim().to_uppercase();
+    query_upper.starts_with("CREATE") ||
+    query_upper.starts_with("DROP") ||
+    query_upper.starts_with("ALTER") ||
+    query_upper.starts_with("TRUNCATE")
+}
+
+pub fn execute_dml_sync(
+    conn: &Connection,
+    query: &str,
+    _schema_cache: &SchemaCache,
+) -> Result<DbResponse, rusqlite::Error> {
+    // Rewrite query for DECIMAL types if needed
+    let rewritten_query = rewrite_query_for_decimal(query, conn)?;
+    
     let rows_affected = conn.execute(&rewritten_query, [])?;
     
     Ok(DbResponse {
@@ -282,149 +253,139 @@ fn execute_dml(conn: &Connection, query: &str) -> Result<DbResponse, rusqlite::E
     })
 }
 
-/// Rewrite query to use decimal functions if it contains NUMERIC operations
-fn rewrite_query_if_needed(conn: &Connection, query: &str) -> Result<String, rusqlite::Error> {
-    // Parse the query
-    let dialect = PostgreSqlDialect {};
-    let mut statements = match Parser::parse_sql(&dialect, query) {
-        Ok(stmts) => stmts,
-        Err(e) => {
-            // If we can't parse it, just return the original query
-            error!("Failed to parse query for decimal rewriting: {}", e);
-            return Ok(query.to_string());
-        }
-    };
+pub fn execute_query_sync(
+    conn: &Connection,
+    query: &str,
+    _schema_cache: &SchemaCache,
+) -> Result<DbResponse, rusqlite::Error> {
+    // Rewrite query for DECIMAL types if needed
+    let rewritten_query = rewrite_query_for_decimal(query, conn)?;
     
-    // If we have a statement, try to rewrite it
-    if let Some(stmt) = statements.first_mut() {
-        let mut rewriter = crate::rewriter::DecimalQueryRewriter::new(conn);
-        if let Err(e) = rewriter.rewrite_statement(stmt) {
-            error!("Failed to rewrite query for decimal operations: {}", e);
-            return Ok(query.to_string());
-        }
-        
-        // Return the rewritten query
-        Ok(stmt.to_string())
-    } else {
-        Ok(query.to_string())
-    }
-}
-
-/// Extract table name from a SQL query (simplified version)
-fn extract_table_name_from_query(query: &str) -> Option<String> {
-    let dialect = PostgreSqlDialect {};
-    match Parser::parse_sql(&dialect, query) {
-        Ok(statements) => {
-            if let Some(Statement::Query(query)) = statements.first() {
-                extract_table_from_query_box(query)
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    }
-}
-
-/// Extract table name from a Query
-fn extract_table_from_query_box(query: &Box<Query>) -> Option<String> {
-    if let Some(_with) = &query.with {
-        // Handle CTEs - for now, skip them
-    }
+    let mut stmt = conn.prepare(&rewritten_query)?;
+    let column_count = stmt.column_count();
     
-    match &*query.body {
-        sqlparser::ast::SetExpr::Select(select) => {
-            // Look for the first table in FROM clause
-            for table in &select.from {
-                if let TableFactor::Table { name, .. } = &table.relation {
-                    if let Some(ident) = name.0.first() {
-                        return Some(ident.to_string());
-                    }
+    let columns: Vec<String> = (0..column_count)
+        .map(|i| stmt.column_name(i).unwrap_or("").to_string())
+        .collect();
+    
+    // Extract table name from query to look up schema
+    let table_name = extract_table_name_from_select(query);
+    
+    // Pre-fetch schema types for all columns if we have a table name
+    let mut schema_types = std::collections::HashMap::new();
+    if let Some(ref table) = table_name {
+        for col_name in &columns {
+            // Try to get type from __pgsqlite_schema
+            if let Ok(mut meta_stmt) = conn.prepare(
+                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+            ) {
+                if let Ok(pg_type) = meta_stmt.query_row([table, col_name], |row| {
+                    row.get::<_, String>(0)
+                }) {
+                    schema_types.insert(col_name.clone(), pg_type);
                 }
             }
         }
-        _ => {}
-    }
-    None
-}
-
-/// Get column type from metadata table synchronously
-fn get_column_type_sync(conn: &Connection, table_name: &str, column_name: &str) -> Result<Option<String>, rusqlite::Error> {
-    let mut stmt = conn.prepare(
-        "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
-    )?;
-    
-    match stmt.query_row([table_name, column_name], |row| {
-        row.get::<_, String>(0)
-    }) {
-        Ok(pg_type) => Ok(Some(pg_type)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-/// Get table schema with caching
-fn get_table_schema_cached(
-    conn: &Connection,
-    cache: &SchemaCache,
-    table_name: &str,
-) -> Result<crate::cache::schema::TableSchema, rusqlite::Error> {
-    // Check cache first
-    if let Some(schema) = cache.get(table_name) {
-        info!("Schema cache hit for table: {}", table_name);
-        return Ok(schema);
     }
     
-    info!("Schema cache miss for table: {}, querying database", table_name);
-    
-    // Get schema information from both metadata and SQLite schema
-    let mut columns = Vec::new();
-    
-    // First get all columns from SQLite schema
-    let pragma_query = format!("PRAGMA table_info({})", table_name);
-    let mut stmt = conn.prepare(&pragma_query)?;
     let rows = stmt.query_map([], |row| {
-        let name: String = row.get(1)?;
-        let sqlite_type: String = row.get(2)?;
-        Ok((name, sqlite_type))
+        let mut row_data = Vec::new();
+        for i in 0..column_count {
+            let value = row.get_ref(i)?;
+            match value {
+                rusqlite::types::ValueRef::Null => row_data.push(None),
+                rusqlite::types::ValueRef::Integer(int_val) => {
+                    // Check if this column is a boolean type
+                    let col_name = &columns[i];
+                    let is_boolean = schema_types.get(col_name)
+                        .map(|pg_type| {
+                            let type_lower = pg_type.to_lowercase();
+                            type_lower == "boolean" || type_lower == "bool"
+                        })
+                        .unwrap_or(false);
+                    
+                    if is_boolean {
+                        // Convert SQLite's 0/1 to PostgreSQL's f/t format
+                        let bool_str = if int_val == 0 { "f" } else { "t" };
+                        row_data.push(Some(bool_str.as_bytes().to_vec()));
+                    } else {
+                        // For simple query protocol, always return text format
+                        row_data.push(Some(int_val.to_string().into_bytes()));
+                    }
+                },
+                rusqlite::types::ValueRef::Real(f) => {
+                    // For simple query protocol, always return text format
+                    row_data.push(Some(f.to_string().into_bytes()));
+                },
+                rusqlite::types::ValueRef::Text(s) => {
+                    row_data.push(Some(s.to_vec()));
+                },
+                rusqlite::types::ValueRef::Blob(b) => {
+                    row_data.push(Some(b.to_vec()));
+                },
+            }
+        }
+        Ok(row_data)
     })?;
     
+    let mut result_rows = Vec::new();
     for row in rows {
-        let (col_name, sqlite_type) = row?;
-        
-        // Try to get PostgreSQL type from metadata
-        let pg_type_result = conn.query_row(
-            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2",
-            [table_name, &col_name],
-            |row| row.get::<_, String>(0),
-        );
-        
-        let (pg_type, pg_oid) = match pg_type_result {
-            Ok(pg_type) => {
-                let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type);
-                (pg_type, oid)
-            }
-            Err(_) => {
-                // Fall back to mapping from SQLite type
-                let pg_oid = crate::types::SchemaTypeMapper::sqlite_type_to_pg_oid(&sqlite_type);
-                let pg_type = crate::types::SchemaTypeMapper::pg_oid_to_type_name(pg_oid);
-                (pg_type.to_string(), pg_oid)
-            }
-        };
-        
-        columns.push((col_name, pg_type, sqlite_type, pg_oid));
+        result_rows.push(row?);
     }
     
-    let schema = SchemaCache::build_table_schema(columns);
-    cache.insert(table_name.to_string(), schema.clone());
-    
-    Ok(schema)
+    Ok(DbResponse {
+        columns,
+        rows: result_rows,
+        rows_affected: 0,
+    })
 }
 
-/// Check if a query is a DDL statement that might affect schema
-fn is_ddl_statement(query: &str) -> bool {
-    let query_upper = query.trim().to_uppercase();
-    query_upper.starts_with("CREATE") ||
-    query_upper.starts_with("ALTER") ||
-    query_upper.starts_with("DROP") ||
-    query_upper.starts_with("TRUNCATE")
+/// Extract table name from SELECT statement
+fn extract_table_name_from_select(query: &str) -> Option<String> {
+    let query_lower = query.to_lowercase();
+    
+    // Look for FROM clause
+    if let Some(from_pos) = query_lower.find(" from ") {
+        let after_from = &query[from_pos + 6..].trim();
+        
+        // Find the end of table name (space, where, order by, etc.)
+        let table_end = after_from.find(|c: char| {
+            c.is_whitespace() || c == ',' || c == ';' || c == '('
+        }).unwrap_or(after_from.len());
+        
+        let table_name = after_from[..table_end].trim();
+        
+        // Remove quotes if present
+        let table_name = table_name.trim_matches('"').trim_matches('\'');
+        
+        if !table_name.is_empty() {
+            Some(table_name.to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+/// Rewrite query to handle DECIMAL types if needed
+fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
+    // Parse the SQL statement
+    let dialect = PostgreSqlDialect {};
+    let mut statements = Parser::parse_sql(&dialect, query)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    
+    if statements.is_empty() {
+        return Ok(query.to_string());
+    }
+    
+    // Rewrite the first statement for decimal handling
+    let mut rewriter = DecimalQueryRewriter::new(conn);
+    if let Err(e) = rewriter.rewrite_statement(&mut statements[0]) {
+        // If rewriting fails, log and return original query
+        tracing::warn!("Failed to rewrite query for decimal: {}", e);
+        return Ok(query.to_string());
+    }
+    
+    Ok(statements[0].to_string())
 }

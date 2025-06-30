@@ -377,7 +377,7 @@ async fn test_special_characters_in_strings() {
         
         // Verify retrieval
         let row = client.query_one(
-            "SELECT content FROM special_chars WHERE id = $1", 
+            "SELECT content FROM special_chars WHERE id = $1::int4", 
             &[&(i as i32)]
         ).await.unwrap();
         let retrieved: String = row.get(0);

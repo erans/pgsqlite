@@ -1198,8 +1198,28 @@ impl ExtendedQueryHandler {
                             }
                         }
                     } else {
-                        // Text format - keep as-is
-                        Some(bytes.clone())
+                        // Text format
+                        match type_oid {
+                            16 => {
+                                // bool - convert SQLite's 0/1 to PostgreSQL's f/t format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    let pg_bool_str = match s.trim() {
+                                        "0" => "f",
+                                        "1" => "t",
+                                        // Already in PostgreSQL format or other values
+                                        "f" | "t" | "false" | "true" => &s,
+                                        _ => &s, // Keep unknown values as-is
+                                    };
+                                    Some(pg_bool_str.as_bytes().to_vec())
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            _ => {
+                                // For other types, keep as-is
+                                Some(bytes.clone())
+                            }
+                        }
                     }
                 }
             };

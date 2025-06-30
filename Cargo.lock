@@ -1162,6 +1162,7 @@ dependencies = [
  "futures",
  "hex",
  "once_cell",
+ "parking_lot",
  "postgres-protocol",
  "pretty_assertions",
  "prometheus",

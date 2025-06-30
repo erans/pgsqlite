@@ -3,6 +3,10 @@ name = "pgsqlite"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+use_db_executor = []
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.45", features = ["full"] }
@@ -41,6 +45,7 @@ futures = "0.3"
 hex = "0.4"
 regex = "1.11"
 byteorder = "1.5"
+parking_lot = "0.12"
 
 # Configuration
 config = "0.15"

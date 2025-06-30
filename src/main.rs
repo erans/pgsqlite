@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
         config.database.clone()
     };
 
-    // Initialize database handler with crossbeam optimizations
+    // Initialize database handler with direct executor
     let db_handler = Arc::new(
         DbHandler::new(&db_path)
             .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
@@ -201,6 +201,7 @@ where
     }
 
     let session = Arc::new(SessionState::new(database, user));
+    let _session_id = uuid::Uuid::new_v4();
 
     // Send authentication OK
     framed
