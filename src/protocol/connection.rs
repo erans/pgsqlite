@@ -38,8 +38,9 @@ impl Connection {
                 Connection::Framed(Framed::new(stream, codec))
             }
             WriterType::Direct => {
-                // For now, we'll use FramedWriter with DirectWriter later
-                // TODO: Implement proper stream splitting for DirectWriter
+                // TODO: Properly integrate DirectConnection into Connection enum
+                // For now, still use Framed mode
+                // This requires refactoring the Connection enum to support DirectConnection
                 let codec = PostgresCodec::new();
                 Connection::Framed(Framed::new(stream, codec))
             }

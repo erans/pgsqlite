@@ -1,5 +1,5 @@
 use bytes::{BytesMut, BufMut};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
@@ -190,7 +190,7 @@ impl ProtocolWriter for FramedWriter {
 
 /// Direct socket writer for zero-copy operation
 pub struct DirectWriter {
-    socket: TcpStream,
+    socket: Box<dyn AsyncWrite + Unpin + Send>,
     write_buffer: BytesMut,
     /// Pre-allocated buffer for building messages
     message_buffer: crate::protocol::zero_copy::ZeroCopyMessageBuilder,
@@ -199,7 +199,16 @@ pub struct DirectWriter {
 impl DirectWriter {
     pub fn new(socket: TcpStream) -> Self {
         Self {
-            socket,
+            socket: Box::new(socket),
+            write_buffer: BytesMut::with_capacity(8192),
+            message_buffer: crate::protocol::zero_copy::ZeroCopyMessageBuilder::with_capacity(4096),
+        }
+    }
+    
+    /// Create a DirectWriter from any AsyncWrite
+    pub fn new_from_writer<W: AsyncWrite + Unpin + Send + 'static>(writer: W) -> Self {
+        Self {
+            socket: Box::new(writer),
             write_buffer: BytesMut::with_capacity(8192),
             message_buffer: crate::protocol::zero_copy::ZeroCopyMessageBuilder::with_capacity(4096),
         }
