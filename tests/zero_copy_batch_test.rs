@@ -81,8 +81,8 @@ mod tests {
         assert!(default_config.enabled);
         
         // Test environment variable configuration
-        std::env::set_var("PGSQLITE_BATCH_SIZE", "500");
-        std::env::set_var("PGSQLITE_BATCH_ENABLED", "1");
+        unsafe { std::env::set_var("PGSQLITE_BATCH_SIZE", "500"); }
+        unsafe { std::env::set_var("PGSQLITE_BATCH_ENABLED", "1"); }
         
         let env_config = BatchConfig::from_env();
         println!("Environment config: {:?}", env_config);
@@ -90,7 +90,7 @@ mod tests {
         assert!(env_config.enabled);
         
         // Test disabling batching
-        std::env::set_var("PGSQLITE_BATCH_ENABLED", "0");
+        unsafe { std::env::set_var("PGSQLITE_BATCH_ENABLED", "0"); }
         let disabled_config = BatchConfig::from_env();
         println!("Disabled config: {:?}", disabled_config);
         assert!(!disabled_config.enabled);

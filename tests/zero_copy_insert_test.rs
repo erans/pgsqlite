@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use pgsqlite::protocol::QueryExecutor;
+    use pgsqlite::query::QueryExecutor;
     use pgsqlite::session::DbHandler;
     use pgsqlite::protocol::PostgresCodec;
     use tokio_util::codec::Framed;
@@ -36,7 +36,7 @@ mod tests {
         let mut framed = Framed::new(server, codec);
         
         // Test with zero-copy disabled
-        std::env::set_var("PGSQLITE_ZERO_COPY", "0");
+        unsafe { std::env::set_var("PGSQLITE_ZERO_COPY", "0"); }
         
         println!("Testing INSERT performance WITHOUT zero-copy optimization:");
         let start = Instant::now();
@@ -51,7 +51,7 @@ mod tests {
         println!("  Per INSERT: {:?}", elapsed_without / 1000);
         
         // Test with zero-copy enabled
-        std::env::set_var("PGSQLITE_ZERO_COPY", "1");
+        unsafe { std::env::set_var("PGSQLITE_ZERO_COPY", "1"); }
         
         println!("\nTesting INSERT performance WITH zero-copy optimization:");
         let start = Instant::now();
@@ -89,7 +89,7 @@ mod tests {
         println!("\n=== Testing Zero-Copy DML Operations ===\n");
         
         // Enable zero-copy
-        std::env::set_var("PGSQLITE_ZERO_COPY", "1");
+        unsafe { std::env::set_var("PGSQLITE_ZERO_COPY", "1"); }
         assert!(should_use_zero_copy());
         
         // Create test database
