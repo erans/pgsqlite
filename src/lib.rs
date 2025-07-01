@@ -9,6 +9,9 @@ pub mod metadata;
 pub mod rewriter;
 pub mod cache;
 
+#[cfg(test)]
+pub mod alloc_tracker;
+
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -39,6 +42,22 @@ pub enum PgSqliteError {
 }
 
 pub type Result<T> = std::result::Result<T, PgSqliteError>;
+
+impl PgSqliteError {
+    /// Get the PostgreSQL error code for this error
+    pub fn pg_error_code(&self) -> &str {
+        match self {
+            PgSqliteError::Protocol(_) => "08P01", // protocol_violation
+            PgSqliteError::SqlParse(_) => "42601", // syntax_error
+            PgSqliteError::Sqlite(_) => "58000", // system_error
+            PgSqliteError::TypeConversion(_) => "22P02", // invalid_text_representation
+            PgSqliteError::NotSupported(_) => "0A000", // feature_not_supported
+            PgSqliteError::AuthenticationFailed => "28000", // invalid_authorization_specification
+            PgSqliteError::InvalidParameter(_) => "22023", // invalid_parameter_value
+            PgSqliteError::Io(_) => "58030", // io_error
+        }
+    }
+}
 
 // Test helper to expose connection handler
 #[doc(hidden)]
