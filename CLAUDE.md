@@ -42,12 +42,20 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 ## Recent Work (Condensed History)
 - Implemented comprehensive PostgreSQL type support (40+ types including ranges, network types, binary types)
 - Built custom DECIMAL type system with automatic query rewriting for proper numeric handling
-- Developed multi-phase SELECT query optimization reducing overhead from ~200x to ~26x for cached queries:
+- Developed multi-phase SELECT query optimization reducing overhead from ~200x to ~14x for cached queries:
   - Phase 1: Query plan cache with LRU eviction
   - Phase 2: Enhanced fast path for simple WHERE clauses and parameters
   - Phase 3: Prepared statement pooling with metadata caching
   - Phase 4: Schema cache with bulk preloading and bloom filters
   - Phase 5: Execution cache with query fingerprinting and optimized type conversion
+  - Phase 6: Binary protocol support and result caching
+- Implemented zero-copy protocol architecture:
+  - Phase 1-5: Memory-mapped values, direct socket writing, buffer pooling
+  - Achieved 67% improvement in cached SELECT queries (26x → 8.5x overhead)
+- Optimized INSERT operations:
+  - Fast path detection and execution for non-decimal tables
+  - Statement pool provides near-native performance (1.0x overhead)
+  - Protocol overhead remains significant (~168x) due to PostgreSQL wire protocol
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.

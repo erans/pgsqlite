@@ -85,15 +85,20 @@ pgsqlite achieves reasonable performance through a multi-layered optimization ap
 - **Rewrite Optimization**: Decimal arithmetic rewriting computed once per unique query structure
 - **Prepared Statement Optimization**: Statement metadata caching and parameter optimization
 
-**Performance Results with Zero-Copy Architecture (2025-07-01):**
+**Performance Results with Latest Optimizations (2025-07-01):**
 ```
-Uncached SELECT: ~91x overhead (0.100ms vs 0.001ms SQLite)
-Cached SELECT: ~8.5x overhead (0.060ms vs 0.006ms SQLite) ⭐ 67% IMPROVEMENT!
-Cache Speedup: 1.7x improvement for repeated queries
-UPDATE: ~30x overhead (excellent DML performance)
-INSERT: ~159x overhead (primary optimization target)
-DELETE: ~35x overhead (good performance)
-Overall: ~71x overhead (12% improvement from baseline)
+Protocol-Level Performance (includes full PostgreSQL wire protocol):
+- Uncached SELECT: ~140x overhead (0.152ms vs 0.001ms SQLite)
+- Cached SELECT: ~21x overhead (0.063ms vs 0.003ms SQLite) 
+- INSERT: ~168x overhead (0.288ms vs 0.002ms SQLite)
+- UPDATE: ~32x overhead (0.040ms vs 0.001ms SQLite)
+- DELETE: ~37x overhead (0.037ms vs 0.001ms SQLite)
+- Overall: ~94x overhead (full protocol)
+
+Direct DbHandler Performance (bypassing protocol):
+- INSERT fast path: 1.5x overhead (2.572µs vs 1.756µs SQLite)
+- INSERT with statement pool: 1.0x overhead (1.758µs vs 1.756µs SQLite) ⭐
+- Query execution: ~24µs average
 ```
 
 **Zero-Copy Architecture Achievements:**
