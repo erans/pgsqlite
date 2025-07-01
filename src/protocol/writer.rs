@@ -3,7 +3,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
 
-use crate::protocol::{BackendMessage, PostgresCodec, FieldDescription, TransactionStatus, AuthenticationMessage, ErrorResponse};
+use crate::protocol::{BackendMessage, PostgresCodec, FieldDescription, TransactionStatus, AuthenticationMessage, ErrorResponse, MappedValue};
 use crate::PgSqliteError;
 
 /// Trait for writing PostgreSQL protocol messages
@@ -33,6 +33,9 @@ pub trait ProtocolWriter: Send {
     
     /// Send a data row with pre-encoded values (for zero-copy)
     async fn send_data_row_raw(&mut self, values: &[Option<&[u8]>]) -> Result<(), PgSqliteError>;
+    
+    /// Send a data row with memory-mapped values (for zero-copy large data)
+    async fn send_data_row_mapped(&mut self, values: &[Option<&MappedValue>]) -> Result<(), PgSqliteError>;
     
     /// Send command complete
     async fn send_command_complete(&mut self, tag: &str) -> Result<(), PgSqliteError>;
@@ -181,6 +184,14 @@ impl ProtocolWriter for FramedWriter {
         Ok(())
     }
     
+    async fn send_data_row_mapped(&mut self, values: &[Option<&MappedValue>]) -> Result<(), PgSqliteError> {
+        // For FramedWriter, convert mapped values to regular Vec<u8> format
+        let converted_values: Vec<Option<Vec<u8>>> = values.iter()
+            .map(|opt| opt.map(|mapped| mapped.as_slice().to_vec()))
+            .collect();
+        self.send_data_row(&converted_values).await
+    }
+    
     async fn flush(&mut self) -> Result<(), PgSqliteError> {
         use futures::SinkExt;
         self.framed.flush().await?;
@@ -299,6 +310,39 @@ impl ProtocolWriter for DirectWriter {
         self.message_buffer.clear();
         self.message_buffer.build_data_row(values);
         self.socket.write_all(self.message_buffer.as_bytes()).await?;
+        Ok(())
+    }
+    
+    async fn send_data_row_mapped(&mut self, values: &[Option<&MappedValue>]) -> Result<(), PgSqliteError> {
+        // DirectWriter can optimize memory-mapped values for true zero-copy
+        self.write_buffer.clear();
+        self.write_buffer.put_u8(b'D'); // DataRow message type
+        
+        let len_pos = self.write_buffer.len();
+        self.write_buffer.put_i32(0); // Placeholder for length
+        
+        self.write_buffer.put_i16(values.len() as i16); // Number of columns
+        
+        for value in values {
+            match value {
+                Some(mapped_value) => {
+                    let data = mapped_value.as_slice();
+                    self.write_buffer.put_i32(data.len() as i32);
+                    // For now, still copy the data - true zero-copy would require vectored I/O
+                    self.write_buffer.extend_from_slice(data);
+                }
+                None => {
+                    self.write_buffer.put_i32(-1); // NULL value
+                }
+            }
+        }
+        
+        // Update length
+        let total_len = (self.write_buffer.len() - len_pos) as i32;
+        self.write_buffer[len_pos..len_pos + 4].copy_from_slice(&total_len.to_be_bytes());
+        
+        // Write the complete message
+        self.socket.write_all(&self.write_buffer).await?;
         Ok(())
     }
     

@@ -150,6 +150,14 @@ where
             .map_err(|e| PgSqliteError::Io(e))
     }
     
+    async fn send_data_row_mapped(&mut self, values: &[Option<&crate::protocol::MappedValue>]) -> Result<(), PgSqliteError> {
+        // For FramedWriterAdapter, convert mapped values to regular Vec<u8> format
+        let converted_values: Vec<Option<Vec<u8>>> = values.iter()
+            .map(|opt| opt.map(|mapped| mapped.as_slice().to_vec()))
+            .collect();
+        self.send_data_row(&converted_values).await
+    }
+    
     async fn flush(&mut self) -> Result<(), PgSqliteError> {
         use futures::SinkExt;
         self.framed.flush().await

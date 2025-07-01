@@ -48,6 +48,10 @@ regex = "1.11"
 byteorder = "1.5"
 parking_lot = "0.12"
 
+# Memory mapping for zero-copy operations
+memmap2 = "0.9"
+tempfile = "3.8"
+
 # Configuration
 config = "0.15"
 clap = { version = "4.5", features = ["derive"] }
