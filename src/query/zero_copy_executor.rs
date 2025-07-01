@@ -135,8 +135,6 @@ impl ZeroCopyExecutor {
 /// Demonstrates the performance difference
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::protocol::{DirectWriter, FramedWriter};
     
     #[test]
     fn show_allocation_difference() {

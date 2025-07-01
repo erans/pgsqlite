@@ -96,8 +96,10 @@ mod tests {
         assert!(!disabled_config.enabled);
         
         // Clean up
-        std::env::remove_var("PGSQLITE_BATCH_SIZE");
-        std::env::remove_var("PGSQLITE_BATCH_ENABLED");
+        unsafe {
+            std::env::remove_var("PGSQLITE_BATCH_SIZE");
+            std::env::remove_var("PGSQLITE_BATCH_ENABLED");
+        }
     }
     
     #[tokio::test]
