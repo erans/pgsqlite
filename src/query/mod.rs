@@ -4,6 +4,9 @@ pub mod extended;
 mod extended_helpers;
 pub mod fast_path;
 
+pub mod executor_v2;
+pub mod executor_compat;
+
 #[cfg(feature = "zero-copy-protocol")]
 pub mod zero_copy_executor;
 
@@ -14,6 +17,8 @@ pub mod executor_zero_copy;
 pub mod executor_batch;
 
 pub use executor::QueryExecutor;
+pub use executor_v2::QueryExecutorV2;
+pub use executor_compat::{QueryExecutorCompat, execute_query_with_writer};
 pub use extended::ExtendedQueryHandler;
 pub use fast_path::{
     can_use_fast_path, execute_fast_path, query_fast_path,
