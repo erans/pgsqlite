@@ -362,7 +362,7 @@ impl ExtendedQueryHandler {
         } else if query_upper.starts_with("INSERT") 
             || query_upper.starts_with("UPDATE") 
             || query_upper.starts_with("DELETE") {
-            Self::execute_dml(framed, db, &final_query).await?;
+            Self::execute_dml(framed, db, &final_query, &portal, session).await?;
         } else if query_upper.starts_with("CREATE") 
             || query_upper.starts_with("DROP") 
             || query_upper.starts_with("ALTER") {
@@ -460,8 +460,8 @@ impl ExtendedQueryHandler {
     async fn try_execute_fast_path_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
-        _session: &Arc<SessionState>,
-        _portal: &str,
+        session: &Arc<SessionState>,
+        portal: &str,
         query: &str,
         bound_values: &[Option<Vec<u8>>],
         param_formats: &[i16],
@@ -489,6 +489,13 @@ impl ExtendedQueryHandler {
             }
         }
         
+        // Get result formats from portal
+        let result_formats = {
+            let portals = session.portals.read().await;
+            let portal_obj = portals.get(portal).unwrap();
+            portal_obj.result_formats.clone()
+        };
+        
         // Try fast path execution first
         if let Ok(Some(response)) = db.try_execute_fast_path_with_params(query, &rusqlite_params).await {
             if response.columns.is_empty() {
@@ -502,7 +509,7 @@ impl ExtendedQueryHandler {
                 framed.send(BackendMessage::CommandComplete { tag }).await?;
             } else {
                 // SELECT operation - send full response
-                Self::send_select_response(framed, response, max_rows).await?;
+                Self::send_select_response(framed, response, max_rows, &result_formats).await?;
             }
             return Ok(Some(Ok(())));
         }
@@ -520,7 +527,7 @@ impl ExtendedQueryHandler {
                 framed.send(BackendMessage::CommandComplete { tag }).await?;
             } else {
                 // SELECT operation
-                Self::send_select_response(framed, response, max_rows).await?;
+                Self::send_select_response(framed, response, max_rows, &result_formats).await?;
             }
             return Ok(Some(Ok(())));
         }
@@ -580,6 +587,7 @@ impl ExtendedQueryHandler {
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         response: crate::session::db_handler::DbResponse,
         _max_rows: i32,
+        result_formats: &[i16],
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -587,6 +595,16 @@ impl ExtendedQueryHandler {
         // Send RowDescription
         let mut field_descriptions = Vec::new();
         for (i, column_name) in response.columns.iter().enumerate() {
+            let format = if result_formats.is_empty() {
+                0 // Default to text if no formats specified
+            } else if result_formats.len() == 1 {
+                result_formats[0] // Single format applies to all columns
+            } else if i < result_formats.len() {
+                result_formats[i] // Use column-specific format
+            } else {
+                0 // Default to text if not enough formats
+            };
+            
             field_descriptions.push(FieldDescription {
                 name: column_name.clone(),
                 table_oid: 0,
@@ -594,7 +612,7 @@ impl ExtendedQueryHandler {
                 type_oid: 25, // TEXT for now - could be improved with type detection
                 type_size: -1,
                 type_modifier: -1,
-                format: 0, // Text format
+                format,
             });
         }
         framed.send(BackendMessage::RowDescription(field_descriptions)).await?;
@@ -1524,18 +1542,36 @@ impl ExtendedQueryHandler {
                 })
                 .collect::<Vec<_>>();
             
-            let fields: Vec<FieldDescription> = response.columns.iter()
-                .enumerate()
-                .map(|(i, col_name)| FieldDescription {
-                    name: col_name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: *field_types.get(i).unwrap_or(&25),
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
-                .collect();
+            let fields: Vec<FieldDescription> = {
+                let portals = session.portals.read().await;
+                let portal = portals.get(portal_name).unwrap();
+                let result_formats = &portal.result_formats;
+                
+                response.columns.iter()
+                    .enumerate()
+                    .map(|(i, col_name)| {
+                        let format = if result_formats.is_empty() {
+                            0 // Default to text if no formats specified
+                        } else if result_formats.len() == 1 {
+                            result_formats[0] // Single format applies to all columns
+                        } else if i < result_formats.len() {
+                            result_formats[i] // Use column-specific format
+                        } else {
+                            0 // Default to text if not enough formats
+                        };
+                        
+                        FieldDescription {
+                            name: col_name.clone(),
+                            table_oid: 0,
+                            column_id: (i + 1) as i16,
+                            type_oid: *field_types.get(i).unwrap_or(&25),
+                            type_size: -1,
+                            type_modifier: -1,
+                            format,
+                        }
+                    })
+                    .collect()
+            };
             info!("Sending RowDescription with {} fields during Execute with inferred types", fields.len());
             framed.send(BackendMessage::RowDescription(fields)).await
                 .map_err(|e| PgSqliteError::Io(e))?;
@@ -1612,13 +1648,21 @@ impl ExtendedQueryHandler {
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
         query: &str,
+        portal_name: &str,
+        session: &Arc<SessionState>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
-            return Self::execute_dml_with_returning(framed, db, query).await;
+            // Get result formats from portal
+            let result_formats = {
+                let portals = session.portals.read().await;
+                let portal = portals.get(portal_name).unwrap();
+                portal.result_formats.clone()
+            };
+            return Self::execute_dml_with_returning(framed, db, query, &result_formats).await;
         }
         
         let response = db.execute(query).await?;
@@ -1643,6 +1687,7 @@ impl ExtendedQueryHandler {
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
         query: &str,
+        result_formats: &[i16],
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -1672,14 +1717,26 @@ impl ExtendedQueryHandler {
             // Send row description
             let fields: Vec<FieldDescription> = returning_response.columns.iter()
                 .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: 25, // Default to text
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
+                .map(|(i, name)| {
+                    let format = if result_formats.is_empty() {
+                        0 // Default to text if no formats specified
+                    } else if result_formats.len() == 1 {
+                        result_formats[0] // Single format applies to all columns
+                    } else if i < result_formats.len() {
+                        result_formats[i] // Use column-specific format
+                    } else {
+                        0 // Default to text if not enough formats
+                    };
+                    
+                    FieldDescription {
+                        name: name.clone(),
+                        table_oid: 0,
+                        column_id: (i + 1) as i16,
+                        type_oid: 25, // Default to text
+                        type_size: -1,
+                        type_modifier: -1,
+                        format,
+                    }
                 })
                 .collect();
             
@@ -1732,14 +1789,26 @@ impl ExtendedQueryHandler {
                 // Send row description
                 let fields: Vec<FieldDescription> = returning_response.columns.iter()
                     .enumerate()
-                    .map(|(i, name)| FieldDescription {
-                        name: name.clone(),
-                        table_oid: 0,
-                        column_id: (i + 1) as i16,
-                        type_oid: 25,
-                        type_size: -1,
-                        type_modifier: -1,
-                        format: 0,
+                    .map(|(i, name)| {
+                        let format = if result_formats.is_empty() {
+                            0 // Default to text if no formats specified
+                        } else if result_formats.len() == 1 {
+                            result_formats[0] // Single format applies to all columns
+                        } else if i < result_formats.len() {
+                            result_formats[i] // Use column-specific format
+                        } else {
+                            0 // Default to text if not enough formats
+                        };
+                        
+                        FieldDescription {
+                            name: name.clone(),
+                            table_oid: 0,
+                            column_id: (i + 1) as i16,
+                            type_oid: 25,
+                            type_size: -1,
+                            type_modifier: -1,
+                            format,
+                        }
                     })
                     .collect();
                 

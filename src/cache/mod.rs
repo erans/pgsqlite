@@ -6,11 +6,15 @@ pub mod schema;
 pub mod query;
 pub mod status;
 pub mod statement_pool;
+pub mod execution;
+pub mod result_cache;
 
 pub use schema::SchemaCache;
 pub use query::{QueryCache, CachedQuery, CacheMetrics};
 pub use status::{CacheStatus, get_cache_status, format_cache_status_as_table, log_cache_status};
 pub use statement_pool::{StatementPool, StatementMetadata, StatementPoolStats};
+pub use execution::{ExecutionCache, ExecutionMetadata, global_execution_cache, global_type_converter_table};
+pub use result_cache::{ResultSetCache, ResultCacheKey, CachedResultSet, global_result_cache};
 
 /// Simple LRU cache with TTL support
 pub struct LruCache<K, V> {

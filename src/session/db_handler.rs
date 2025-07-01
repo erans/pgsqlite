@@ -4,7 +4,8 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sqlparser::parser::Parser;
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::ast::Statement;
-use crate::cache::{SchemaCache, CachedQuery, StatementPool};
+use crate::cache::{SchemaCache, CachedQuery, StatementPool, global_execution_cache, global_type_converter_table, ExecutionMetadata, ExecutionCache};
+use crate::cache::{global_result_cache, ResultCacheKey, ResultSetCache};
 use crate::cache::schema::TableSchema;
 use crate::rewriter::DecimalQueryRewriter;
 use crate::types::PgType;
@@ -80,6 +81,8 @@ impl DbHandler {
             crate::query::clear_decimal_cache();
             // Clear statement pool
             StatementPool::global().clear();
+            // Clear result cache
+            global_result_cache().clear();
         }
         
         let conn = self.conn.lock();
@@ -98,15 +101,54 @@ impl DbHandler {
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Check result cache first for non-parameterized queries
+        let cache_key = ResultCacheKey::new(query, &[]);
+        if let Some(cached_result) = global_result_cache().get(&cache_key) {
+            debug!("Result cache hit for query: {}", query);
+            return Ok(DbResponse {
+                columns: cached_result.columns,
+                rows: cached_result.rows,
+                rows_affected: cached_result.rows_affected as usize,
+            });
+        }
+        
+        let start = std::time::Instant::now();
         let conn = self.conn.lock();
         
         // Try enhanced fast path first for queries
         if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query, &self.schema_cache) {
+            let execution_time_us = start.elapsed().as_micros() as u64;
+            
+            // Cache the result if appropriate
+            if ResultSetCache::should_cache(query, execution_time_us, response.rows.len()) {
+                global_result_cache().insert(
+                    cache_key,
+                    response.columns.clone(),
+                    response.rows.clone(),
+                    response.rows_affected as u64,
+                    execution_time_us,
+                );
+            }
+            
             return Ok(response);
         }
         
         // Fall back to normal query execution
-        execute_query_sync(&*conn, query, &self.schema_cache)
+        let response = execute_query_sync(&*conn, query, &self.schema_cache)?;
+        let execution_time_us = start.elapsed().as_micros() as u64;
+        
+        // Cache the result if appropriate
+        if ResultSetCache::should_cache(query, execution_time_us, response.rows.len()) {
+            global_result_cache().insert(
+                cache_key,
+                response.columns.clone(),
+                response.rows.clone(),
+                response.rows_affected as u64,
+                execution_time_us,
+            );
+        }
+        
+        Ok(response)
     }
     
     pub async fn get_schema_type(&self, table_name: &str, column_name: &str) -> Result<Option<String>, rusqlite::Error> {
@@ -124,78 +166,10 @@ impl DbHandler {
     }
     
     pub async fn get_table_schema(&self, table_name: &str) -> Result<TableSchema, rusqlite::Error> {
-        // Check cache first
-        if let Some(schema) = self.schema_cache.get(table_name) {
-            return Ok(schema);
-        }
-        
         let conn = self.conn.lock();
         
-        // Get schema information from both metadata and SQLite schema
-        let mut column_data = Vec::new();
-        
-        // First get all columns from SQLite schema
-        let pragma_query = format!("PRAGMA table_info({})", table_name);
-        let mut stmt = conn.prepare(&pragma_query)?;
-        let rows = stmt.query_map([], |row| {
-            let name: String = row.get(1)?;
-            let sqlite_type: String = row.get(2)?;
-            Ok((name, sqlite_type))
-        })?;
-        
-        for row in rows {
-            let (col_name, sqlite_type) = row?;
-            
-            // Try to get PostgreSQL type from metadata
-            let (pg_type, pg_oid) = match conn.query_row(
-                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2",
-                [table_name, &col_name],
-                |row| row.get::<_, String>(0),
-            ) {
-                Ok(pg_type_str) => {
-                    let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
-                    (pg_type_str, oid)
-                },
-                Err(_) => {
-                    // If no metadata, map from SQLite type
-                    let type_mapper = crate::types::TypeMapper::new();
-                    let pg_type = type_mapper.sqlite_to_pg(&sqlite_type);
-                    let oid = pg_type.to_oid();
-                    let pg_type_str = match pg_type {
-                        crate::types::PgType::Text => "text",
-                        crate::types::PgType::Int8 => "int8",
-                        crate::types::PgType::Int4 => "int4",
-                        crate::types::PgType::Int2 => "int2",
-                        crate::types::PgType::Float8 => "float8",
-                        crate::types::PgType::Float4 => "float4",
-                        crate::types::PgType::Bool => "boolean",
-                        crate::types::PgType::Bytea => "bytea",
-                        crate::types::PgType::Date => "date",
-                        crate::types::PgType::Timestamp => "timestamp",
-                        crate::types::PgType::Timestamptz => "timestamptz",
-                        crate::types::PgType::Uuid => "uuid",
-                        crate::types::PgType::Json => "json",
-                        crate::types::PgType::Jsonb => "jsonb",
-                        crate::types::PgType::Numeric => "numeric",
-                        crate::types::PgType::Varchar => "varchar",
-                        crate::types::PgType::Char => "char",
-                        crate::types::PgType::Time => "time",
-                        crate::types::PgType::Money => "money",
-                        _ => "text",
-                    }.to_string();
-                    (pg_type_str, oid as i32)
-                }
-            };
-            
-            column_data.push((col_name, pg_type, sqlite_type, pg_oid));
-        }
-        
-        let schema = crate::cache::schema::SchemaCache::build_table_schema(column_data);
-        
-        // Cache it
-        self.schema_cache.insert(table_name.to_string(), schema.clone());
-        
-        Ok(schema)
+        // Use enhanced schema cache with automatic preloading
+        self.schema_cache.get_or_load(&*conn, table_name)
     }
     
     /// Begin transaction
@@ -366,11 +340,291 @@ pub fn execute_dml_sync(
     })
 }
 
+/// Ultra-fast execution path using execution cache
+pub fn execute_query_optimized(
+    conn: &Connection,
+    query: &str,
+    schema_cache: &SchemaCache,
+) -> Result<DbResponse, rusqlite::Error> {
+    // Generate cache key
+    let cache_key = ExecutionCache::generate_key(query, &[]);
+    
+    // Try execution cache first
+    if let Some(metadata) = global_execution_cache().get(&cache_key) {
+        return execute_with_cached_metadata(conn, &metadata);
+    }
+    
+    // Cache miss - analyze and build metadata
+    let metadata = build_execution_metadata(conn, query, schema_cache)?;
+    
+    // Cache for future use
+    global_execution_cache().insert(cache_key, metadata.clone());
+    
+    // Execute with new metadata
+    execute_with_cached_metadata(conn, &metadata)
+}
+
+/// Execute query using pre-computed execution metadata with batch processing
+fn execute_with_cached_metadata(
+    conn: &Connection,
+    metadata: &ExecutionMetadata,
+) -> Result<DbResponse, rusqlite::Error> {
+    // Use prepared statement for execution
+    let mut stmt = conn.prepare(&metadata.prepared_sql)?;
+    
+    // Batch processing optimization: Process rows in chunks for better cache locality
+    const BATCH_SIZE: usize = 100;
+    let mut rows = Vec::new();
+    
+    // Pre-allocate conversion buffers for better performance
+    let type_converter_table = global_type_converter_table();
+    let num_columns = metadata.type_converters.len();
+    
+    let query_result = stmt.query_map([], |row| {
+        // Pre-allocate row data vector
+        let mut row_data = Vec::with_capacity(num_columns);
+        
+        // Optimized row processing with minimal allocations
+        for (col_idx, &converter_idx) in metadata.type_converters.iter().enumerate() {
+            let value = row.get_ref(col_idx)?;
+            
+            // Fast path for common value types to avoid allocation
+            // Handle NULL values explicitly
+            if matches!(value, rusqlite::types::ValueRef::Null) {
+                row_data.push(None);
+                continue;
+            }
+            
+            // Check if binary encoding is requested for this column
+            let converted = if col_idx < metadata.result_formats.len() && metadata.result_formats[col_idx] == 1 {
+                // Binary encoding requested
+                let type_oid = if col_idx < metadata.type_oids.len() {
+                    metadata.type_oids[col_idx]
+                } else {
+                    25 // Default to TEXT
+                };
+                
+                let owned_value: rusqlite::types::Value = match value {
+                    rusqlite::types::ValueRef::Integer(i) => rusqlite::types::Value::Integer(i),
+                    rusqlite::types::ValueRef::Real(r) => rusqlite::types::Value::Real(r),
+                    rusqlite::types::ValueRef::Text(t) => rusqlite::types::Value::Text(String::from_utf8_lossy(t).to_string()),
+                    rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
+                    _ => unreachable!("NULL already handled above"),
+                };
+                
+                type_converter_table.convert_binary(&owned_value, type_oid)?
+            } else {
+                // Text encoding (existing logic)
+                match (value, converter_idx) {
+                    // Fast boolean conversion (most common case)
+                    (rusqlite::types::ValueRef::Integer(i), 2) => {
+                        if i == 0 { b"f".to_vec() } else { b"t".to_vec() }
+                    },
+                    // Fast text conversion for strings
+                    (rusqlite::types::ValueRef::Text(t), 0) => t.to_vec(),
+                    // Fast integer conversion
+                    (rusqlite::types::ValueRef::Integer(i), 1) => i.to_string().into_bytes(),
+                    // Fallback to generic converter for complex cases
+                    _ => {
+                        let owned_value: rusqlite::types::Value = match value {
+                            rusqlite::types::ValueRef::Integer(i) => rusqlite::types::Value::Integer(i),
+                            rusqlite::types::ValueRef::Real(r) => rusqlite::types::Value::Real(r),
+                            rusqlite::types::ValueRef::Text(t) => rusqlite::types::Value::Text(String::from_utf8_lossy(t).to_string()),
+                            rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
+                            _ => unreachable!("NULL already handled above"),
+                        };
+                        type_converter_table.convert(converter_idx, &owned_value)?
+                    }
+                }
+            };
+            
+            // For non-NULL values, empty vectors are valid (e.g., empty strings)
+            row_data.push(Some(converted));
+        }
+        
+        Ok(row_data)
+    })?;
+
+    // Collect rows with batch processing for better memory efficiency
+    for row in query_result {
+        rows.push(row?);
+        
+        // Process in batches for better cache performance (though we collect all here)
+        if rows.len() % BATCH_SIZE == 0 && rows.len() > 0 {
+            // Reserve capacity for next batch
+            rows.reserve(BATCH_SIZE);
+        }
+    }
+
+    Ok(DbResponse {
+        columns: metadata.columns.clone(),
+        rows,
+        rows_affected: 0,
+    })
+}
+
+/// Build execution metadata for a query
+fn build_execution_metadata(
+    conn: &Connection, 
+    query: &str, 
+    schema_cache: &SchemaCache
+) -> Result<ExecutionMetadata, rusqlite::Error> {
+    // Check if query can use fast path
+    let fast_path_eligible = is_fast_path_query(query);
+    
+    // Prepare the query to get column information
+    let prepared_sql = if needs_decimal_rewriting(query, schema_cache) {
+        rewrite_query_for_decimal(query, conn)?
+    } else {
+        query.to_string()
+    };
+    
+    let stmt = conn.prepare(&prepared_sql)?;
+    let column_count = stmt.column_count();
+    
+    // Extract column information
+    let mut columns = Vec::new();
+    let mut boolean_columns = Vec::new();
+    let mut type_converters = Vec::new();
+    
+    for i in 0..column_count {
+        let col_name = stmt.column_name(i).unwrap_or("").to_string();
+        columns.push(col_name.clone());
+        
+        // Determine if this is a boolean column
+        let is_boolean = is_boolean_column(&col_name, query, schema_cache);
+        boolean_columns.push(is_boolean);
+        
+        // Select appropriate type converter based on column type
+        let converter_idx = if is_boolean {
+            2 // Boolean converter
+        } else {
+            // Try to infer type from column name and schema
+            let col_type = infer_column_type(&col_name, query, schema_cache);
+            match col_type.as_str() {
+                "integer" | "int4" | "int8" | "int2" | "bigint" | "smallint" => 1, // Integer converter
+                "real" | "float4" | "float8" | "double" | "numeric" => 3, // Float converter  
+                "bytea" | "blob" => 4, // Blob converter
+                _ => 0, // Text converter (default)
+            }
+        };
+        type_converters.push(converter_idx);
+    }
+    
+    let column_count = columns.len();
+    Ok(ExecutionMetadata {
+        columns,
+        boolean_columns,
+        type_converters,
+        type_oids: vec![25; column_count], // Default to TEXT, will be populated later
+        result_formats: vec![], // Will be populated from Portal when executing
+        fast_path_eligible,
+        prepared_sql,
+        param_count: 0, // TODO: Count parameters
+    })
+}
+
+/// Check if a query needs decimal rewriting
+fn needs_decimal_rewriting(query: &str, schema_cache: &SchemaCache) -> bool {
+    // Quick check for decimal operations
+    if !query.contains('+') && !query.contains('-') && !query.contains('*') && !query.contains('/') {
+        return false;
+    }
+    
+    // Extract table names and check if any have decimal columns
+    if let Ok(table_names) = extract_table_names_simple(query) {
+        for table_name in table_names {
+            if schema_cache.has_decimal_columns(&table_name) {
+                return true;
+            }
+        }
+    }
+    
+    false
+}
+
+/// Simple table name extraction without full parsing
+fn extract_table_names_simple(query: &str) -> Result<Vec<String>, ()> {
+    let upper_query = query.to_uppercase();
+    let mut table_names = Vec::new();
+    
+    // Look for "FROM table_name" patterns
+    if let Some(from_pos) = upper_query.find(" FROM ") {
+        let after_from = &query[from_pos + 6..];
+        if let Some(next_space) = after_from.find(' ') {
+            let table_name = after_from[..next_space].trim().to_string();
+            table_names.push(table_name);
+        } else {
+            let table_name = after_from.trim().to_string();
+            table_names.push(table_name);
+        }
+    }
+    
+    Ok(table_names)
+}
+
+/// Check if this is a fast path eligible query
+fn is_fast_path_query(query: &str) -> bool {
+    let upper = query.trim().to_uppercase();
+    
+    // Simple SELECT without complex features
+    upper.starts_with("SELECT") &&
+    !upper.contains("JOIN") &&
+    !upper.contains("UNION") &&
+    !upper.contains("SUBQUERY") &&
+    !upper.contains("GROUP BY") &&
+    !upper.contains("ORDER BY") &&
+    !upper.contains("HAVING")
+}
+
+/// Check if a column is a boolean type
+fn is_boolean_column(col_name: &str, query: &str, schema_cache: &SchemaCache) -> bool {
+    // Try to extract table name from query
+    if let Ok(table_names) = extract_table_names_simple(query) {
+        for table_name in table_names {
+            if let Some(schema) = schema_cache.get(&table_name) {
+                if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
+                    return col_info.pg_type.to_lowercase() == "boolean" || col_info.pg_oid == 16;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Infer the column type for optimized conversion
+fn infer_column_type(col_name: &str, query: &str, schema_cache: &SchemaCache) -> String {
+    // Try to extract table name from query and get column type
+    if let Ok(table_names) = extract_table_names_simple(query) {
+        for table_name in table_names {
+            if let Some(schema) = schema_cache.get(&table_name) {
+                if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
+                    return col_info.pg_type.clone();
+                }
+            }
+        }
+    }
+    
+    // Fallback to text type
+    "text".to_string()
+}
+
 pub fn execute_query_sync(
     conn: &Connection,
     query: &str,
-    _schema_cache: &SchemaCache,
+    schema_cache: &SchemaCache,
 ) -> Result<DbResponse, rusqlite::Error> {
+    // Try ultra-fast execution path first - but skip for queries with casts for now
+    if !query.contains("::") {
+        match execute_query_optimized(conn, query, schema_cache) {
+            Ok(result) => return Ok(result),
+            Err(_) => {
+                // Fall back to original path if optimized path fails
+                debug!("Optimized execution failed, falling back to original path for: {}", query);
+            }
+        }
+    }
+    
     // Check global query cache first
     if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
         // Use cached rewritten query if available
@@ -396,7 +650,7 @@ pub fn execute_query_sync(
     debug!("Query cache MISS for: {}", query);
     
     // Parse and rewrite query for DECIMAL types if needed
-    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query, conn)?;
+    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query, conn, schema_cache)?;
     
     // Cache the parsed query for future use
     let cached_query = CachedQuery {
@@ -458,7 +712,7 @@ struct ParsedQueryInfo {
 }
 
 /// Parse and rewrite query, returning rewritten query and parsed info
-fn parse_and_rewrite_query(query: &str, conn: &Connection) -> Result<(String, ParsedQueryInfo), rusqlite::Error> {
+fn parse_and_rewrite_query(query: &str, conn: &Connection, schema_cache: &SchemaCache) -> Result<(String, ParsedQueryInfo), rusqlite::Error> {
     // Parse the SQL statement
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, query)
@@ -473,28 +727,25 @@ fn parse_and_rewrite_query(query: &str, conn: &Connection) -> Result<(String, Pa
     // Extract table names
     let table_names = extract_table_names_from_statement(&statement);
     
-    // Get column types for the tables
+    // Get column types for the tables using enhanced schema cache
     let mut column_types = Vec::new();
     let mut has_decimal_columns = false;
     
     for table_name in &table_names {
-        // Query schema for column types
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1"
-        ) {
-            if let Ok(rows) = stmt.query_map([table_name], |row| {
-                let col_name: String = row.get(0)?;
-                let pg_type_str: String = row.get(1)?;
-                Ok((col_name, pg_type_str))
-            }) {
-                for row in rows.flatten() {
-                    if let Some(pg_type) = pg_type_from_string(&row.1) {
-                        if pg_type == PgType::Numeric {
-                            has_decimal_columns = true;
-                        }
-                        column_types.push((row.0, pg_type));
+        // Use the enhanced cache for fast schema lookup
+        if let Ok(table_schema) = schema_cache.get_or_load(conn, table_name) {
+            for col_info in &table_schema.columns {
+                if let Some(pg_type) = pg_type_from_string(&col_info.pg_type) {
+                    if pg_type == PgType::Numeric {
+                        has_decimal_columns = true;
                     }
+                    column_types.push((col_info.name.clone(), pg_type));
                 }
+            }
+        } else {
+            // Fast path: check decimal table bloom filter
+            if schema_cache.has_decimal_columns(table_name) {
+                has_decimal_columns = true;
             }
         }
     }
