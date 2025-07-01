@@ -27,6 +27,11 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - Update task descriptions if implementation reveals complexity
 - Check TODO.md for prioritized tasks when planning development work
 - Use TODO.md as the authoritative source for tracking all future work
+- **NEVER commit code before ensuring ALL of the following pass**:
+  - `cargo check` - No compilation errors or warnings
+  - `cargo build` - Successfully builds the project
+  - `cargo test` - All tests pass
+  - If any of these fail, fix the issues before committing
 
 ## Code Style
 - Follow Rust conventions
