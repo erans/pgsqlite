@@ -17,7 +17,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError> 
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         info!("Executing query: {}", query);
         
@@ -50,7 +50,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError> 
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Simple query routing
         let query_upper = query.trim().to_uppercase();
@@ -81,7 +81,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Check if this is a catalog query first
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query) {
@@ -169,11 +169,22 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
             return Self::execute_dml_with_returning(framed, db, query).await;
+        }
+        
+        #[cfg(feature = "zero-copy-protocol")]
+        {
+            // Use optimized path if zero-copy is enabled
+            if crate::query::should_use_zero_copy() {
+                use crate::query::QueryExecutorZeroCopy;
+                
+                // DbHandler contains Arc internally, so we can pass it directly
+                return Self::execute_dml_optimized(framed, db, query).await;
+            }
         }
         
         let response = db.execute(query).await?;
@@ -200,7 +211,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
             .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
@@ -372,7 +383,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         use crate::translator::CreateTableTranslator;
         
@@ -455,7 +466,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         let query_upper = query.trim().to_uppercase();
         
@@ -482,7 +493,7 @@ impl QueryExecutor {
         query: &str,
     ) -> Result<(), PgSqliteError>
     where
-        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Try to execute as a simple statement
         db.execute(query).await?;

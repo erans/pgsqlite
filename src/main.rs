@@ -179,7 +179,7 @@ async fn handle_connection_generic<S>(
     db_handler: Arc<DbHandler>,
 ) -> Result<()>
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
 {
     let codec = PostgresCodec::new();
     let mut framed = Framed::new(stream, codec);

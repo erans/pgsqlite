@@ -5,11 +5,12 @@ use std::collections::HashMap;
 use super::messages::*;
 use tracing::debug;
 
+#[derive(Clone)]
 pub struct PostgresCodec {
     state: CodecState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum CodecState {
     WaitingForStartup,
     Normal,
