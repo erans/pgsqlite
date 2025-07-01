@@ -96,6 +96,20 @@ impl DbHandler {
             });
         }
         
+        // Check INSERT query cache to avoid re-parsing
+        if query.trim().to_uppercase().starts_with("INSERT") {
+            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
+                // Use cached rewritten query if available
+                let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
+                let rows_affected = conn.execute(final_query, [])?;
+                return Ok(DbResponse {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected,
+                });
+            }
+        }
+        
         // Fall back to normal execution
         execute_dml_sync(&*conn, query, &self.schema_cache)
     }
@@ -326,11 +340,27 @@ pub fn is_ddl_statement(query: &str) -> bool {
 pub fn execute_dml_sync(
     conn: &Connection,
     query: &str,
-    _schema_cache: &SchemaCache,
+    schema_cache: &SchemaCache,
 ) -> Result<DbResponse, rusqlite::Error> {
-    // Rewrite query for DECIMAL types if needed
-    let rewritten_query = rewrite_query_for_decimal(query, conn)?;
+    // Fast path: For simple INSERT statements without decimals, execute directly
+    let trimmed = query.trim();
+    if trimmed.to_uppercase().starts_with("INSERT") {
+        if let Some(table_name) = extract_insert_table_name(trimmed) {
+            // Check if table has decimal columns using bloom filter
+            if !schema_cache.has_decimal_columns(&table_name) {
+                // No decimal columns, execute directly without parsing
+                let rows_affected = conn.execute(query, [])?;
+                return Ok(DbResponse {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected,
+                });
+            }
+        }
+    }
     
+    // Fall back to decimal rewriting for other cases
+    let rewritten_query = rewrite_query_for_decimal(query, conn)?;
     let rows_affected = conn.execute(&rewritten_query, [])?;
     
     Ok(DbResponse {
@@ -679,6 +709,23 @@ pub fn execute_query_sync(
     
     // Execute using cached information and statement pool
     execute_cached_query_with_statement_pool(conn, query, &cached_query, &rewritten_query)
+}
+
+
+/// Extract table name from INSERT statement
+fn extract_insert_table_name(query: &str) -> Option<String> {
+    // Simple regex-free parsing for performance
+    let upper = query.to_uppercase();
+    if let Some(into_pos) = upper.find(" INTO ") {
+        let after_into = &query[into_pos + 6..].trim();
+        // Find the table name (ends at space or opening parenthesis)
+        let end = after_into.find(' ').or_else(|| after_into.find('(')).unwrap_or(after_into.len());
+        let table_name = after_into[..end].trim();
+        if !table_name.is_empty() {
+            return Some(table_name.to_string());
+        }
+    }
+    None
 }
 
 /// Rewrite query to handle DECIMAL types if needed
