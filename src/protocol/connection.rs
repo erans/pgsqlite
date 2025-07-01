@@ -155,6 +155,7 @@ impl Connection {
 }
 
 /// Helper trait to make Connection easier to use
+#[allow(async_fn_in_trait)]
 pub trait ConnectionExt {
     async fn send_auth_ok(&mut self) -> Result<(), PgSqliteError>;
     async fn send_parameter_status(&mut self, name: &str, value: &str) -> Result<(), PgSqliteError>;
