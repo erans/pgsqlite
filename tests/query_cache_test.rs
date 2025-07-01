@@ -14,7 +14,7 @@ async fn test_query_cache_basic() {
     let port = listener.local_addr().unwrap().port();
     println!("Test server listening on port {}", port);
     
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         // Create database handler
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(":memory:").unwrap()
@@ -107,7 +107,7 @@ async fn test_query_cache_normalization() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         // Create database handler
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(":memory:").unwrap()

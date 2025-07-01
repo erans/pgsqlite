@@ -263,7 +263,7 @@ pub fn clear_decimal_cache() {
 
 /// Check if a table has any DECIMAL columns that would require query rewriting
 pub fn table_has_decimal_columns(
-    conn: &Connection,
+    _conn: &Connection,
     table_name: &str,
     schema_cache: &SchemaCache,
 ) -> Result<bool, rusqlite::Error> {
@@ -274,25 +274,8 @@ pub fn table_has_decimal_columns(
         }
     }
     
-    let has_decimal = match schema_cache.get(table_name) {
-        Some(schema) => {
-            // Use schema cache if available
-            schema.columns.iter().any(|col| {
-                let pg_type_upper = col.pg_type.to_uppercase();
-                pg_type_upper == "NUMERIC" || pg_type_upper == "DECIMAL"
-            })
-        }
-        None => {
-            // Fall back to checking metadata
-            let mut stmt = conn.prepare(
-                "SELECT COUNT(*) FROM __pgsqlite_schema 
-                 WHERE table_name = ?1 AND pg_type IN ('NUMERIC', 'DECIMAL')"
-            )?;
-            
-            let count: i32 = stmt.query_row([table_name], |row| row.get(0))?;
-            count > 0
-        }
-    };
+    // Fast decimal detection using bloom filter
+    let has_decimal = schema_cache.has_decimal_columns(table_name);
     
     // Cache the result
     if let Ok(mut cache) = DECIMAL_TABLE_CACHE.lock() {
@@ -358,23 +341,19 @@ pub fn query_fast_path(
                     columns.push(stmt.column_name(i)?.to_string());
                 }
                 
-                // Check for boolean columns in the schema
+                // Check for boolean columns in the schema using cache
                 let mut column_types = Vec::new();
-                for col_name in &columns {
-                    // Try to get type from __pgsqlite_schema
-                    if let Ok(mut meta_stmt) = conn.prepare(
-                        "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
-                    ) {
-                        if let Ok(pg_type) = meta_stmt.query_row([&table_name, col_name], |row| {
-                            row.get::<_, String>(0)
-                        }) {
-                            column_types.push(Some(pg_type));
+                if let Ok(table_schema) = schema_cache.get_or_load(conn, &table_name) {
+                    for col_name in &columns {
+                        if let Some(col_info) = table_schema.column_map.get(&col_name.to_lowercase()) {
+                            column_types.push(Some(col_info.pg_type.clone()));
                         } else {
                             column_types.push(None);
                         }
-                    } else {
-                        column_types.push(None);
                     }
+                } else {
+                    // Fallback to None for all columns
+                    column_types.resize(columns.len(), None);
                 }
                 
                 // Get rows - with boolean type conversions
@@ -557,7 +536,7 @@ fn execute_fast_select_with_params(
     query: &str,
     table_name: &str,
     params: &[rusqlite::types::Value],
-    _schema_cache: &SchemaCache,
+    schema_cache: &SchemaCache,
 ) -> Result<Option<DbResponse>, rusqlite::Error> {
     let mut stmt = conn.prepare(query)?;
     let column_count = stmt.column_count();
@@ -568,23 +547,19 @@ fn execute_fast_select_with_params(
         columns.push(stmt.column_name(i)?.to_string());
     }
     
-    // Check for boolean columns in the schema
+    // Check for boolean columns in the schema using cache
     let mut column_types = Vec::new();
-    for col_name in &columns {
-        // Try to get type from __pgsqlite_schema
-        if let Ok(mut meta_stmt) = conn.prepare(
-            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
-        ) {
-            if let Ok(pg_type) = meta_stmt.query_row([table_name, col_name], |row| {
-                row.get::<_, String>(0)
-            }) {
-                column_types.push(Some(pg_type));
+    if let Ok(table_schema) = schema_cache.get_or_load(conn, table_name) {
+        for col_name in &columns {
+            if let Some(col_info) = table_schema.column_map.get(&col_name.to_lowercase()) {
+                column_types.push(Some(col_info.pg_type.clone()));
             } else {
                 column_types.push(None);
             }
-        } else {
-            column_types.push(None);
         }
+    } else {
+        // Fallback to None for all columns
+        column_types.resize(columns.len(), None);
     }
     
     // Get rows - with boolean type conversions, using parameters
@@ -637,7 +612,7 @@ fn execute_fast_select(
     conn: &Connection,
     query: &str,
     table_name: &str,
-    _schema_cache: &SchemaCache,
+    schema_cache: &SchemaCache,
 ) -> Result<Option<DbResponse>, rusqlite::Error> {
     let mut stmt = conn.prepare(query)?;
     let column_count = stmt.column_count();
@@ -648,23 +623,19 @@ fn execute_fast_select(
         columns.push(stmt.column_name(i)?.to_string());
     }
     
-    // Check for boolean columns in the schema
+    // Check for boolean columns in the schema using cache
     let mut column_types = Vec::new();
-    for col_name in &columns {
-        // Try to get type from __pgsqlite_schema
-        if let Ok(mut meta_stmt) = conn.prepare(
-            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
-        ) {
-            if let Ok(pg_type) = meta_stmt.query_row([table_name, col_name], |row| {
-                row.get::<_, String>(0)
-            }) {
-                column_types.push(Some(pg_type));
+    if let Ok(table_schema) = schema_cache.get_or_load(conn, table_name) {
+        for col_name in &columns {
+            if let Some(col_info) = table_schema.column_map.get(&col_name.to_lowercase()) {
+                column_types.push(Some(col_info.pg_type.clone()));
             } else {
                 column_types.push(None);
             }
-        } else {
-            column_types.push(None);
         }
+    } else {
+        // Fallback to None for all columns
+        column_types.resize(columns.len(), None);
     }
     
     // Get rows - with boolean type conversions

@@ -55,7 +55,7 @@ PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
 
 pgsqlite achieves reasonable performance through a multi-layered optimization approach:
 
-#### Fast Path Execution (~7-10x overhead vs raw SQLite)
+#### Fast Path Execution (~35-40x overhead vs raw SQLite)
 **Conditions for fast path:**
 - Simple queries: `SELECT/INSERT/UPDATE/DELETE` with basic WHERE clauses
 - Simple WHERE predicates: `=`, `>`, `<`, `>=`, `<=`, `!=`, `<>`
@@ -87,13 +87,14 @@ pgsqlite achieves reasonable performance through a multi-layered optimization ap
 
 **Performance Results (2025-07-01):**
 ```
-Uncached SELECT: ~131x overhead (0.159ms vs 0.001ms SQLite)
-Cached SELECT: ~16x overhead (0.085ms vs 0.005ms SQLite) ⭐ TARGET ACHIEVED
-Cache Speedup: 1.9x improvement for repeated queries
-Overall Progress: 3-phase optimization reduced overhead from ~98x to ~16x
+Uncached SELECT: ~190x overhead (0.193ms vs 0.001ms SQLite)
+Cached SELECT: ~39x overhead (0.088ms vs 0.002ms SQLite)
+Cache Speedup: 2.2x improvement for repeated queries
+UPDATE: ~36x overhead (best DML operation)
+INSERT: ~186x overhead (worst performer due to protocol overhead)
 ```
 
-#### Full Query Pipeline (~130x overhead for uncached, ~16x for cached)
+#### Full Query Pipeline (~190x overhead for uncached, ~39x for cached)
 For complex queries that can't use fast path:
 - Complete PostgreSQL SQL parsing with query plan caching
 - Query rewriting for decimal arithmetic (cached when possible)
@@ -102,11 +103,13 @@ For complex queries that can't use fast path:
 - Cached schema metadata lookups
 
 #### Caching Strategy ✅ FULLY IMPLEMENTED
-- **Schema Cache**: In-memory table metadata to avoid repeated database queries
+- **Schema Cache**: In-memory table metadata with bulk preloading and bloom filters
 - **Decimal Table Cache**: Cached detection of tables requiring decimal rewriting  
 - **Type Information**: Cached PostgreSQL type mappings for result formatting
 - **Query Plan Cache**: LRU cache of parsed queries, metadata, and decimal rewrites (1000 entries)
 - **Statement Pool**: Cached SQLite prepared statements with metadata (100 statements, LRU eviction)
+- **Execution Cache**: Pre-computed metadata for query execution with type converters
+- **Result Set Cache**: LRU cache for complete query results (100 entries, 60s TTL)
 - **Cache Metrics**: Hit/miss tracking and periodic logging for monitoring
 
 #### Where Overhead Comes From
@@ -131,7 +134,7 @@ cargo test benchmark_cache_effectiveness -- --ignored --nocapture
 cargo test test_statement_pool_basic
 ```
 
-The architecture prioritizes correctness and compatibility while providing multiple optimization layers for different query patterns. The implemented query plan cache, enhanced fast path, and statement pool optimizations have successfully achieved the target performance goals for cached queries.
+The architecture prioritizes correctness and compatibility while providing multiple optimization layers for different query patterns. While the initial target of 10-20x overhead was not fully achieved, the current performance (35-40x for most operations) is reasonable for a protocol adapter that provides full PostgreSQL compatibility for SQLite databases.
 
 ## Project Structure
 
@@ -176,6 +179,29 @@ pgsqlite/
 ## Type Mapping
 
 pgsqlite implements a comprehensive type mapping system between PostgreSQL and SQLite. For detailed information about how types are mapped between the two systems, see our [Type Mapping PRD](docs/type-mapping-prd.md).
+
+## Advanced Features
+
+### Binary Protocol Support ✅ IMPLEMENTED
+pgsqlite now supports PostgreSQL's binary protocol for efficient data transfer:
+- Binary encoding for common types: BOOLEAN, INT2/4/8, FLOAT4/8, BYTEA
+- Automatic format detection from client preferences
+- Correct FieldDescription format codes based on Portal settings
+- Seamless fallback to text protocol when needed
+
+### Zero-Copy Message Construction ✅ IMPLEMENTED
+Optimized protocol message construction for reduced allocations:
+- `ZeroCopyMessageBuilder` for efficient DataRow construction
+- Direct buffer writing without intermediate allocations
+- Support for batch message construction
+
+### Result Set Caching ✅ IMPLEMENTED
+Intelligent caching of complete query results:
+- Automatic caching for queries taking >1ms or returning >10 rows
+- Cache key includes query text and parameter values
+- 100 entry LRU cache with 60-second TTL
+- Automatic invalidation on DDL statements
+- 2.2x speedup for cached queries
 
 ## Supported Features
 

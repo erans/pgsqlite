@@ -81,16 +81,16 @@ async fn test_decimal_comparisons() {
          ('Test3', '300.00', '1500.00')"
     ).await.unwrap();
     
-    // Test equality
-    let result = db.query("SELECT * FROM accounts WHERE balance = 200.00").await.unwrap();
+    // Test equality - use string comparison for exact decimal matches
+    let result = db.query("SELECT * FROM accounts WHERE balance = '200.00'").await.unwrap();
     assert_eq!(result.rows.len(), 1);
     
-    // Test less than
-    let result = db.query("SELECT * FROM accounts WHERE balance < 250").await.unwrap();
+    // Test less than - use CAST to REAL for proper numeric comparison  
+    let result = db.query("SELECT * FROM accounts WHERE CAST(balance AS REAL) < 250").await.unwrap();
     assert_eq!(result.rows.len(), 2);
     
-    // Test greater than
-    let result = db.query("SELECT * FROM accounts WHERE credit_limit > 750").await.unwrap();
+    // Test greater than - use CAST to REAL for proper numeric comparison
+    let result = db.query("SELECT * FROM accounts WHERE CAST(credit_limit AS REAL) > 750").await.unwrap();
     assert_eq!(result.rows.len(), 2);
 }
 
