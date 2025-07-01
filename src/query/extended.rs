@@ -56,6 +56,10 @@ impl ExtendedQueryHandler {
                                 param_types: actual_param_types.clone(),
                                 is_decimal_query: false, // Will be determined later
                                 table_names,
+                                column_types: Vec::new(), // Will be filled when query is executed
+                                has_decimal_columns: false,
+                                rewritten_query: None,
+                                normalized_query: crate::cache::QueryCache::normalize_query(&query),
                             });
                         }
                     }
@@ -317,6 +321,28 @@ impl ExtendedQueryHandler {
             stmt.param_types.clone()
         };
         
+        // Try fast path with parameters first (avoids parameter substitution overhead)
+        // Only attempt this for parameterized queries to avoid type issues in extended protocol
+        if let Some(fast_query) = crate::query::can_use_fast_path_enhanced(&query) {
+            // Only use fast path for queries that actually have parameters in the extended protocol
+            if !bound_values.is_empty() && query.contains('$') {
+                if let Ok(Some(result)) = Self::try_execute_fast_path_with_params(
+                    framed, 
+                    db, 
+                    session, 
+                    &portal, 
+                    &query, 
+                    &bound_values, 
+                    &param_formats, 
+                    &param_types,
+                    &fast_query, 
+                    max_rows
+                ).await {
+                    return result;
+                }
+            }
+        }
+
         // Convert bound values and substitute parameters
         let final_query = Self::substitute_parameters(&query, &bound_values, &param_formats, &param_types)?;
         
@@ -427,6 +453,163 @@ impl ExtendedQueryHandler {
         // Send CloseComplete
         framed.send(BackendMessage::CloseComplete).await
             .map_err(|e| PgSqliteError::Io(e))?;
+        
+        Ok(())
+    }
+    
+    async fn try_execute_fast_path_with_params<T>(
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        db: &DbHandler,
+        _session: &Arc<SessionState>,
+        _portal: &str,
+        query: &str,
+        bound_values: &[Option<Vec<u8>>],
+        param_formats: &[i16],
+        param_types: &[i32],
+        fast_query: &crate::query::FastPathQuery,
+        max_rows: i32,
+    ) -> Result<Option<Result<(), PgSqliteError>>, PgSqliteError>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        // Convert parameters to rusqlite Values
+        let mut rusqlite_params: Vec<rusqlite::types::Value> = Vec::new();
+        for (i, value) in bound_values.iter().enumerate() {
+            match value {
+                Some(bytes) => {
+                    let format = param_formats.get(i).unwrap_or(&0);
+                    let param_type = param_types.get(i).unwrap_or(&25); // Default to TEXT
+                    
+                    match Self::convert_parameter_to_value(bytes, *format, *param_type) {
+                        Ok(sql_value) => rusqlite_params.push(sql_value),
+                        Err(_) => return Ok(None), // Fall back to normal path on conversion error
+                    }
+                }
+                None => rusqlite_params.push(rusqlite::types::Value::Null),
+            }
+        }
+        
+        // Try fast path execution first
+        if let Ok(Some(response)) = db.try_execute_fast_path_with_params(query, &rusqlite_params).await {
+            if response.columns.is_empty() {
+                // DML operation - send command complete
+                let tag = match fast_query.operation {
+                    crate::query::FastPathOperation::Insert => format!("INSERT 0 {}", response.rows_affected),
+                    crate::query::FastPathOperation::Update => format!("UPDATE {}", response.rows_affected),
+                    crate::query::FastPathOperation::Delete => format!("DELETE {}", response.rows_affected),
+                    _ => unreachable!(),
+                };
+                framed.send(BackendMessage::CommandComplete { tag }).await?;
+            } else {
+                // SELECT operation - send full response
+                Self::send_select_response(framed, response, max_rows).await?;
+            }
+            return Ok(Some(Ok(())));
+        }
+        
+        // Try statement pool execution for parameterized queries
+        if let Ok(response) = Self::try_statement_pool_execution(db, query, &rusqlite_params, &fast_query).await {
+            if response.columns.is_empty() {
+                // DML operation
+                let tag = match fast_query.operation {
+                    crate::query::FastPathOperation::Insert => format!("INSERT 0 {}", response.rows_affected),
+                    crate::query::FastPathOperation::Update => format!("UPDATE {}", response.rows_affected),
+                    crate::query::FastPathOperation::Delete => format!("DELETE {}", response.rows_affected),
+                    _ => unreachable!(),
+                };
+                framed.send(BackendMessage::CommandComplete { tag }).await?;
+            } else {
+                // SELECT operation
+                Self::send_select_response(framed, response, max_rows).await?;
+            }
+            return Ok(Some(Ok(())));
+        }
+        
+        Ok(None) // Fast path didn't work, fall back to normal execution
+    }
+    
+    async fn try_statement_pool_execution(
+        db: &DbHandler,
+        query: &str,
+        params: &[rusqlite::types::Value],
+        fast_query: &crate::query::FastPathQuery,
+    ) -> Result<crate::session::db_handler::DbResponse, PgSqliteError> {
+        // Only try statement pool for queries without decimal columns
+        // (decimal queries need rewriting which complicates caching)
+        match fast_query.operation {
+            crate::query::FastPathOperation::Select => {
+                db.query_with_statement_pool_params(query, params)
+                    .await
+                    .map_err(|e| PgSqliteError::Sqlite(e))
+            }
+            _ => {
+                db.execute_with_statement_pool_params(query, params)
+                    .await
+                    .map_err(|e| PgSqliteError::Sqlite(e))
+            }
+        }
+    }
+    
+    fn convert_parameter_to_value(
+        bytes: &[u8], 
+        format: i16, 
+        param_type: i32
+    ) -> Result<rusqlite::types::Value, PgSqliteError> {
+        // Convert based on format and type
+        if format == 0 { // Text format
+            let text = std::str::from_utf8(bytes)
+                .map_err(|_| PgSqliteError::Protocol("Invalid UTF-8 in parameter".to_string()))?;
+                
+            // Convert based on PostgreSQL type OID
+            match param_type {
+                16 => Ok(rusqlite::types::Value::Integer(if text == "t" || text == "true" { 1 } else { 0 })), // BOOL
+                20 => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int8".to_string()))?)), // INT8
+                23 => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int4".to_string()))?)), // INT4
+                21 => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int2".to_string()))?)), // INT2
+                700 => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float4".to_string()))?)), // FLOAT4
+                701 => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float8".to_string()))?)), // FLOAT8
+                _ => Ok(rusqlite::types::Value::Text(text.to_string())), // Default to TEXT
+            }
+        } else {
+            // Binary format - simplified for now, fall back to normal path
+            Err(PgSqliteError::Protocol("Binary format not supported in fast path".to_string()))
+        }
+    }
+    
+    async fn send_select_response<T>(
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        response: crate::session::db_handler::DbResponse,
+        _max_rows: i32,
+    ) -> Result<(), PgSqliteError>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        // Send RowDescription
+        let mut field_descriptions = Vec::new();
+        for (i, column_name) in response.columns.iter().enumerate() {
+            field_descriptions.push(FieldDescription {
+                name: column_name.clone(),
+                table_oid: 0,
+                column_id: (i + 1) as i16,
+                type_oid: 25, // TEXT for now - could be improved with type detection
+                type_size: -1,
+                type_modifier: -1,
+                format: 0, // Text format
+            });
+        }
+        framed.send(BackendMessage::RowDescription(field_descriptions)).await?;
+        
+        // Send DataRows
+        for row in response.rows {
+            let mut values = Vec::new();
+            for cell in row {
+                values.push(cell);
+            }
+            framed.send(BackendMessage::DataRow(values)).await?;
+        }
+        
+        // Send CommandComplete
+        framed.send(BackendMessage::CommandComplete { tag: format!("SELECT {}", response.rows_affected) }).await?;
         
         Ok(())
     }

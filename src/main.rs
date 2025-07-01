@@ -106,6 +106,15 @@ async fn main() -> Result<()> {
         }
         std::process::exit(0);
     });
+    
+    // Start periodic cache metrics logging
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // Log every 5 minutes
+        loop {
+            interval.tick().await;
+            pgsqlite::cache::log_cache_status();
+        }
+    });
 
     // Accept connections from both TCP and Unix sockets
     loop {

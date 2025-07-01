@@ -4,9 +4,13 @@ use std::time::{Duration, Instant};
 
 pub mod schema;
 pub mod query;
+pub mod status;
+pub mod statement_pool;
 
 pub use schema::SchemaCache;
-pub use query::{QueryCache, CachedQuery};
+pub use query::{QueryCache, CachedQuery, CacheMetrics};
+pub use status::{CacheStatus, get_cache_status, format_cache_status_as_table, log_cache_status};
+pub use statement_pool::{StatementPool, StatementMetadata, StatementPoolStats};
 
 /// Simple LRU cache with TTL support
 pub struct LruCache<K, V> {

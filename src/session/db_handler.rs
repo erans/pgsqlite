@@ -3,10 +3,12 @@ use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use sqlparser::parser::Parser;
 use sqlparser::dialect::PostgreSqlDialect;
-use crate::cache::SchemaCache;
+use sqlparser::ast::Statement;
+use crate::cache::{SchemaCache, CachedQuery, StatementPool};
 use crate::cache::schema::TableSchema;
 use crate::rewriter::DecimalQueryRewriter;
-use tracing::info;
+use crate::types::PgType;
+use tracing::{info, debug};
 
 /// Database response structure
 pub struct DbResponse {
@@ -72,12 +74,18 @@ impl DbHandler {
         // Check if DDL to clear cache
         if is_ddl_statement(query) {
             self.schema_cache.clear();
+            // Clear global query cache
+            crate::session::GLOBAL_QUERY_CACHE.clear();
+            // Clear decimal table cache
+            crate::query::clear_decimal_cache();
+            // Clear statement pool
+            StatementPool::global().clear();
         }
         
         let conn = self.conn.lock();
         
-        // Try fast path first
-        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path(&*conn, query, &self.schema_cache) {
+        // Try enhanced fast path first
+        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query, &self.schema_cache) {
             return Ok(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -92,8 +100,8 @@ impl DbHandler {
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
         let conn = self.conn.lock();
         
-        // Try fast path first for queries
-        if let Ok(Some(response)) = crate::query::query_fast_path(&*conn, query, &self.schema_cache) {
+        // Try enhanced fast path first for queries
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query, &self.schema_cache) {
             return Ok(response);
         }
         
@@ -211,6 +219,111 @@ impl DbHandler {
         Ok(())
     }
     
+    /// Try executing a query with parameters using the fast path
+    pub async fn try_execute_fast_path_with_params(
+        &self, 
+        query: &str, 
+        params: &[rusqlite::types::Value]
+    ) -> Result<Option<DbResponse>, rusqlite::Error> {
+        let conn = self.conn.lock();
+        
+        // Try fast path for DML operations
+        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced_with_params(&*conn, query, params, &self.schema_cache) {
+            return Ok(Some(DbResponse {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                rows_affected,
+            }));
+        }
+        
+        // Try fast path for SELECT operations
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced_with_params(&*conn, query, params, &self.schema_cache) {
+            return Ok(Some(response));
+        }
+        
+        Ok(None)
+    }
+    
+    /// Execute a query using the statement pool for optimization
+    pub async fn execute_with_statement_pool(
+        &self,
+        query: &str
+    ) -> Result<DbResponse, rusqlite::Error> {
+        let conn = self.conn.lock();
+        
+        // Use statement pool for execution
+        let rows_affected = StatementPool::global().execute_cached(&*conn, query, [])?;
+        
+        Ok(DbResponse {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected,
+        })
+    }
+    
+    /// Query using the statement pool for optimization  
+    pub async fn query_with_statement_pool(
+        &self,
+        query: &str
+    ) -> Result<DbResponse, rusqlite::Error> {
+        let conn = self.conn.lock();
+        
+        // Use statement pool for querying
+        let (columns, rows) = StatementPool::global().query_cached(&*conn, query, [])?;
+        let rows_affected = rows.len();
+        
+        Ok(DbResponse {
+            columns,
+            rows,
+            rows_affected,
+        })
+    }
+    
+    /// Execute a parameterized query using the statement pool
+    pub async fn execute_with_statement_pool_params(
+        &self,
+        query: &str,
+        params: &[rusqlite::types::Value]
+    ) -> Result<DbResponse, rusqlite::Error> {
+        let conn = self.conn.lock();
+        
+        // Use statement pool for execution with parameters
+        let rows_affected = StatementPool::global().execute_cached(
+            &*conn, 
+            query, 
+            rusqlite::params_from_iter(params.iter())
+        )?;
+        
+        Ok(DbResponse {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected,
+        })
+    }
+    
+    /// Query with parameters using the statement pool
+    pub async fn query_with_statement_pool_params(
+        &self,
+        query: &str,
+        params: &[rusqlite::types::Value]
+    ) -> Result<DbResponse, rusqlite::Error> {
+        let conn = self.conn.lock();
+        
+        // Use statement pool for querying with parameters
+        let (columns, rows) = StatementPool::global().query_cached(
+            &*conn, 
+            query, 
+            rusqlite::params_from_iter(params.iter())
+        )?;
+        let rows_affected = rows.len();
+        
+        Ok(DbResponse {
+            columns,
+            rows,
+            rows_affected,
+        })
+    }
+    
     /// Shutdown (no-op for mutex handler)
     pub async fn shutdown(&self) {
         // Nothing to do
@@ -258,32 +371,205 @@ pub fn execute_query_sync(
     query: &str,
     _schema_cache: &SchemaCache,
 ) -> Result<DbResponse, rusqlite::Error> {
-    // Rewrite query for DECIMAL types if needed
-    let rewritten_query = rewrite_query_for_decimal(query, conn)?;
+    // Check global query cache first
+    if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
+        // Use cached rewritten query if available
+        let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
+        debug!("Query cache HIT for: {}", query);
+        
+        // Log metrics periodically (every 100 queries)
+        let metrics = crate::session::GLOBAL_QUERY_CACHE.get_metrics();
+        if metrics.total_queries % 100 == 0 {
+            info!(
+                "Query cache metrics - Total: {}, Hits: {}, Hit Rate: {:.1}%, Evictions: {}",
+                metrics.total_queries,
+                metrics.cache_hits,
+                (metrics.cache_hits as f64 / metrics.total_queries as f64) * 100.0,
+                metrics.evictions
+            );
+        }
+        
+        // For cached queries, try to use statement pool for better performance
+        return execute_cached_query_with_statement_pool(conn, query, &cached, final_query);
+    }
     
-    let mut stmt = conn.prepare(&rewritten_query)?;
+    debug!("Query cache MISS for: {}", query);
+    
+    // Parse and rewrite query for DECIMAL types if needed
+    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query, conn)?;
+    
+    // Cache the parsed query for future use
+    let cached_query = CachedQuery {
+        statement: parsed_info.statement,
+        param_types: Vec::new(), // Will be filled for extended protocol
+        is_decimal_query: parsed_info.is_decimal_query,
+        table_names: parsed_info.table_names,
+        column_types: parsed_info.column_types,
+        has_decimal_columns: parsed_info.has_decimal_columns,
+        rewritten_query: if parsed_info.is_decimal_query && rewritten_query != query {
+            Some(rewritten_query.clone())
+        } else {
+            None
+        },
+        normalized_query: crate::cache::QueryCache::normalize_query(query),
+    };
+    
+    // Insert into global cache
+    crate::session::GLOBAL_QUERY_CACHE.insert(query.to_string(), cached_query.clone());
+    debug!(
+        "Cached query - Tables: {:?}, Decimal: {}, Column types: {}",
+        cached_query.table_names,
+        cached_query.has_decimal_columns,
+        cached_query.column_types.len()
+    );
+    
+    // Execute using cached information and statement pool
+    execute_cached_query_with_statement_pool(conn, query, &cached_query, &rewritten_query)
+}
+
+/// Rewrite query to handle DECIMAL types if needed
+fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
+    // Parse the SQL statement
+    let dialect = PostgreSqlDialect {};
+    let mut statements = Parser::parse_sql(&dialect, query)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    
+    if statements.is_empty() {
+        return Ok(query.to_string());
+    }
+    
+    // Rewrite the first statement for decimal handling
+    let mut rewriter = DecimalQueryRewriter::new(conn);
+    if let Err(e) = rewriter.rewrite_statement(&mut statements[0]) {
+        // If rewriting fails, log and return original query
+        tracing::warn!("Failed to rewrite query for decimal: {}", e);
+        return Ok(query.to_string());
+    }
+    
+    Ok(statements[0].to_string())
+}
+
+struct ParsedQueryInfo {
+    statement: Statement,
+    table_names: Vec<String>,
+    column_types: Vec<(String, PgType)>,
+    has_decimal_columns: bool,
+    is_decimal_query: bool,
+}
+
+/// Parse and rewrite query, returning rewritten query and parsed info
+fn parse_and_rewrite_query(query: &str, conn: &Connection) -> Result<(String, ParsedQueryInfo), rusqlite::Error> {
+    // Parse the SQL statement
+    let dialect = PostgreSqlDialect {};
+    let statements = Parser::parse_sql(&dialect, query)
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    
+    if statements.is_empty() {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    
+    let statement = statements.into_iter().next().unwrap();
+    
+    // Extract table names
+    let table_names = extract_table_names_from_statement(&statement);
+    
+    // Get column types for the tables
+    let mut column_types = Vec::new();
+    let mut has_decimal_columns = false;
+    
+    for table_name in &table_names {
+        // Query schema for column types
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1"
+        ) {
+            if let Ok(rows) = stmt.query_map([table_name], |row| {
+                let col_name: String = row.get(0)?;
+                let pg_type_str: String = row.get(1)?;
+                Ok((col_name, pg_type_str))
+            }) {
+                for row in rows.flatten() {
+                    if let Some(pg_type) = pg_type_from_string(&row.1) {
+                        if pg_type == PgType::Numeric {
+                            has_decimal_columns = true;
+                        }
+                        column_types.push((row.0, pg_type));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Rewrite for decimal if needed
+    let mut statement_clone = statement.clone();
+    let mut rewriter = DecimalQueryRewriter::new(conn);
+    let is_decimal_query = has_decimal_columns;
+    
+    let rewritten_query = if is_decimal_query {
+        if let Err(e) = rewriter.rewrite_statement(&mut statement_clone) {
+            tracing::warn!("Failed to rewrite query for decimal: {}", e);
+            query.to_string()
+        } else {
+            statement_clone.to_string()
+        }
+    } else {
+        query.to_string()
+    };
+    
+    Ok((rewritten_query, ParsedQueryInfo {
+        statement,
+        table_names,
+        column_types,
+        has_decimal_columns,
+        is_decimal_query,
+    }))
+}
+
+/// Execute a query using cached information and statement pool
+fn execute_cached_query_with_statement_pool(
+    conn: &Connection,
+    _original_query: &str,
+    cached: &CachedQuery,
+    final_query: &str,
+) -> Result<DbResponse, rusqlite::Error> {
+    // For simple queries, try to use statement pool
+    if !final_query.contains('$') && final_query.trim().to_uppercase().starts_with("SELECT") {
+        if let Ok((columns, rows)) = StatementPool::global().query_cached(conn, final_query, []) {
+            // Update touch for the statement pool entry
+            StatementPool::global().touch(final_query);
+            
+            return Ok(DbResponse {
+                columns,
+                rows,
+                rows_affected: 0,
+            });
+        }
+    }
+    
+    // Fall back to original execution method
+    execute_cached_query(conn, _original_query, cached, final_query)
+}
+
+/// Execute a query using cached information
+fn execute_cached_query(
+    conn: &Connection,
+    _original_query: &str,
+    cached: &CachedQuery,
+    final_query: &str,
+) -> Result<DbResponse, rusqlite::Error> {
+    let mut stmt = conn.prepare(final_query)?;
     let column_count = stmt.column_count();
     
     let columns: Vec<String> = (0..column_count)
         .map(|i| stmt.column_name(i).unwrap_or("").to_string())
         .collect();
     
-    // Extract table name from query to look up schema
-    let table_name = extract_table_name_from_select(query);
-    
-    // Pre-fetch schema types for all columns if we have a table name
-    let mut schema_types = std::collections::HashMap::new();
-    if let Some(ref table) = table_name {
-        for col_name in &columns {
-            // Try to get type from __pgsqlite_schema
-            if let Ok(mut meta_stmt) = conn.prepare(
-                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
-            ) {
-                if let Ok(pg_type) = meta_stmt.query_row([table, col_name], |row| {
-                    row.get::<_, String>(0)
-                }) {
-                    schema_types.insert(col_name.clone(), pg_type);
-                }
+    // Use cached column types for boolean detection
+    let mut is_boolean_col = vec![false; column_count];
+    for (i, col_name) in columns.iter().enumerate() {
+        for (cached_col, pg_type) in &cached.column_types {
+            if cached_col == col_name && *pg_type == PgType::Bool {
+                is_boolean_col[i] = true;
+                break;
             }
         }
     }
@@ -295,16 +581,7 @@ pub fn execute_query_sync(
             match value {
                 rusqlite::types::ValueRef::Null => row_data.push(None),
                 rusqlite::types::ValueRef::Integer(int_val) => {
-                    // Check if this column is a boolean type
-                    let col_name = &columns[i];
-                    let is_boolean = schema_types.get(col_name)
-                        .map(|pg_type| {
-                            let type_lower = pg_type.to_lowercase();
-                            type_lower == "boolean" || type_lower == "bool"
-                        })
-                        .unwrap_or(false);
-                    
-                    if is_boolean {
+                    if is_boolean_col[i] {
                         // Convert SQLite's 0/1 to PostgreSQL's f/t format
                         let bool_str = if int_val == 0 { "f" } else { "t" };
                         row_data.push(Some(bool_str.as_bytes().to_vec()));
@@ -314,7 +591,6 @@ pub fn execute_query_sync(
                     }
                 },
                 rusqlite::types::ValueRef::Real(f) => {
-                    // For simple query protocol, always return text format
                     row_data.push(Some(f.to_string().into_bytes()));
                 },
                 rusqlite::types::ValueRef::Text(s) => {
@@ -340,52 +616,47 @@ pub fn execute_query_sync(
     })
 }
 
-/// Extract table name from SELECT statement
-fn extract_table_name_from_select(query: &str) -> Option<String> {
-    let query_lower = query.to_lowercase();
-    
-    // Look for FROM clause
-    if let Some(from_pos) = query_lower.find(" from ") {
-        let after_from = &query[from_pos + 6..].trim();
-        
-        // Find the end of table name (space, where, order by, etc.)
-        let table_end = after_from.find(|c: char| {
-            c.is_whitespace() || c == ',' || c == ';' || c == '('
-        }).unwrap_or(after_from.len());
-        
-        let table_name = after_from[..table_end].trim();
-        
-        // Remove quotes if present
-        let table_name = table_name.trim_matches('"').trim_matches('\'');
-        
-        if !table_name.is_empty() {
-            Some(table_name.to_string())
-        } else {
-            None
+/// Extract table names from a statement
+fn extract_table_names_from_statement(statement: &Statement) -> Vec<String> {
+    match statement {
+        Statement::Query(query) => {
+            let mut tables = Vec::new();
+            // This is a simplified version - in production you'd want full AST traversal
+            if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
+                for table_with_joins in &select.from {
+                    if let sqlparser::ast::TableFactor::Table { name, .. } = &table_with_joins.relation {
+                        tables.push(name.to_string());
+                    }
+                }
+            }
+            tables
         }
-    } else {
-        None
+        _ => Vec::new(),
     }
 }
 
-/// Rewrite query to handle DECIMAL types if needed
-fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
-    // Parse the SQL statement
-    let dialect = PostgreSqlDialect {};
-    let mut statements = Parser::parse_sql(&dialect, query)
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    
-    if statements.is_empty() {
-        return Ok(query.to_string());
+/// Convert PostgreSQL type string to PgType enum
+fn pg_type_from_string(type_str: &str) -> Option<PgType> {
+    match type_str.to_lowercase().as_str() {
+        "boolean" | "bool" => Some(PgType::Bool),
+        "smallint" | "int2" => Some(PgType::Int2),
+        "integer" | "int" | "int4" => Some(PgType::Int4),
+        "bigint" | "int8" => Some(PgType::Int8),
+        "real" | "float4" => Some(PgType::Float4),
+        "double precision" | "float8" => Some(PgType::Float8),
+        "text" => Some(PgType::Text),
+        "varchar" => Some(PgType::Varchar),
+        "char" => Some(PgType::Char),
+        "uuid" => Some(PgType::Uuid),
+        "json" => Some(PgType::Json),
+        "jsonb" => Some(PgType::Jsonb),
+        "date" => Some(PgType::Date),
+        "time" => Some(PgType::Time),
+        "timestamp" => Some(PgType::Timestamp),
+        "timestamptz" | "timestamp with time zone" => Some(PgType::Timestamptz),
+        "numeric" | "decimal" => Some(PgType::Numeric),
+        "bytea" => Some(PgType::Bytea),
+        "money" => Some(PgType::Money),
+        _ => None,
     }
-    
-    // Rewrite the first statement for decimal handling
-    let mut rewriter = DecimalQueryRewriter::new(conn);
-    if let Err(e) = rewriter.rewrite_statement(&mut statements[0]) {
-        // If rewriting fails, log and return original query
-        tracing::warn!("Failed to rewrite query for decimal: {}", e);
-        return Ok(query.to_string());
-    }
-    
-    Ok(statements[0].to_string())
 }
