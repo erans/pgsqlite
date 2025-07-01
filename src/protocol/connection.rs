@@ -4,7 +4,7 @@ use futures::{StreamExt, Stream, SinkExt};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::protocol::{PostgresCodec, FrontendMessage, BackendMessage, ProtocolWriter, FramedWriter, DirectWriter, WriterType, TransactionStatus};
+use crate::protocol::{PostgresCodec, FrontendMessage, BackendMessage, ProtocolWriter, FramedWriter, WriterType, TransactionStatus};
 use crate::PgSqliteError;
 
 /// A unified connection type that provides a migration path from Framed to ProtocolWriter
@@ -118,7 +118,13 @@ impl Connection {
     /// Receive the next message
     pub async fn next(&mut self) -> Option<Result<FrontendMessage, PgSqliteError>> {
         match self {
-            Connection::Framed(framed) => framed.next().await,
+            Connection::Framed(framed) => {
+                match framed.next().await {
+                    Some(Ok(msg)) => Some(Ok(msg)),
+                    Some(Err(e)) => Some(Err(PgSqliteError::Io(e))),
+                    None => None,
+                }
+            }
             Connection::Writer { .. } => {
                 // TODO: Implement proper reading for Writer mode
                 unimplemented!("Reading in Writer mode not yet implemented")

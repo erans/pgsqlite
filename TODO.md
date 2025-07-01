@@ -194,11 +194,24 @@ Following the successful SELECT optimization, began implementing the zero-copy a
 3. **Testing**: Comprehensive test coverage for both writer implementations
 4. **Benchmarking**: Infrastructure in place to measure performance improvements
 
-### Next Steps (Phase 2)
-- [ ] Replace Framed codec usage throughout the codebase with ProtocolWriter trait
-- [ ] Implement message batching for multiple DataRow messages
-- [ ] Add connection management for DirectWriter
+### Phase 2: Connection Infrastructure - IN PROGRESS
+
+#### Completed
+- [x] Identified all Framed usage points across codebase
+- [x] Created Connection adapter enum supporting both Framed and Writer modes
+- [x] Implemented ConnectionExt trait for ergonomic message sending
+- [x] Made PostgresCodec cloneable for connection management
+
+#### Current Work
+- [ ] Migrate QueryExecutor to accept ProtocolWriter trait
+- [ ] Implement proper stream splitting for DirectWriter
+- [ ] Replace INSERT command handling with DirectWriter (highest priority)
+- [ ] Implement message batching for DataRow messages
+
+#### Next Steps
+- [ ] Add connection pooling for DirectWriter instances
 - [ ] Benchmark allocation reduction and performance improvement
+- [ ] Measure INSERT operation improvement with DirectWriter
 
 # pgsqlite TODO List
 
