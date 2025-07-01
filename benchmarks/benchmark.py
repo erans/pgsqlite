@@ -46,10 +46,10 @@ class BenchmarkRunner:
         
         # Timing storage
         self.sqlite_times: Dict[str, List[float]] = {
-            "CREATE": [], "INSERT": [], "UPDATE": [], "DELETE": [], "SELECT": []
+            "CREATE": [], "INSERT": [], "UPDATE": [], "DELETE": [], "SELECT": [], "SELECT (cached)": []
         }
         self.pgsqlite_times: Dict[str, List[float]] = {
-            "CREATE": [], "INSERT": [], "UPDATE": [], "DELETE": [], "SELECT": []
+            "CREATE": [], "INSERT": [], "UPDATE": [], "DELETE": [], "SELECT": [], "SELECT (cached)": []
         }
         
     def setup(self):
@@ -152,6 +152,29 @@ class BenchmarkRunner:
                 conn.commit()
         
         conn.commit()
+        
+        # Run cached query benchmarks
+        print(f"{Fore.CYAN}Running SQLite cached query benchmarks...{Style.RESET_ALL}")
+        # Use the same connection to keep the data
+        
+        # Define a set of queries to repeat
+        cached_queries = [
+            ("SELECT * FROM benchmark_table WHERE int_col > ?", (2500,)),
+            ("SELECT text_col, real_col FROM benchmark_table WHERE bool_col = ?", (True,)),
+            ("SELECT COUNT(*) FROM benchmark_table WHERE text_col LIKE ?", ("A%",)),
+            ("SELECT AVG(real_col) FROM benchmark_table WHERE int_col BETWEEN ? AND ?", (1000, 5000)),
+            ("SELECT * FROM benchmark_table ORDER BY int_col DESC LIMIT ?", (10,))
+        ]
+        
+        # Run each query multiple times
+        iterations_per_query = max(20, self.iterations // 100)  # At least 20 iterations per query
+        
+        for query, params in cached_queries:
+            for _ in range(iterations_per_query):
+                elapsed, _ = self.measure_time(cursor.execute, query, params)
+                cursor.fetchall()  # Ensure we fetch results
+                self.sqlite_times["SELECT (cached)"].append(elapsed)
+        
         conn.close()
         print(f"{Fore.GREEN}SQLite benchmarks completed.{Style.RESET_ALL}")
     
@@ -242,6 +265,34 @@ class BenchmarkRunner:
                 conn.commit()
         
         conn.commit()
+        
+        # Run cached query benchmarks
+        print(f"{Fore.CYAN}Running pgsqlite cached query benchmarks...{Style.RESET_ALL}")
+        # Continue using the same connection
+        
+        # Define a set of queries to repeat (same as SQLite but with pgsqlite table)
+        cached_queries = [
+            ("SELECT * FROM benchmark_table_pg WHERE int_col > %s", (2500,)),
+            ("SELECT text_col, real_col FROM benchmark_table_pg WHERE bool_col = %s", (True,)),
+            ("SELECT COUNT(*) FROM benchmark_table_pg WHERE text_col LIKE %s", ("A%",)),
+            ("SELECT AVG(real_col) FROM benchmark_table_pg WHERE int_col BETWEEN %s AND %s", (1000, 5000)),
+            ("SELECT * FROM benchmark_table_pg ORDER BY int_col DESC LIMIT %s", (10,))
+        ]
+        
+        # Run each query multiple times
+        iterations_per_query = max(20, self.iterations // 100)  # At least 20 iterations per query
+        
+        for query, params in cached_queries:
+            # First run to warm up the cache
+            cursor.execute(query, params)
+            cursor.fetchall()
+            
+            # Now measure cached performance
+            for _ in range(iterations_per_query):
+                elapsed, _ = self.measure_time(cursor.execute, query, params)
+                cursor.fetchall()  # Ensure we fetch results
+                self.pgsqlite_times["SELECT (cached)"].append(elapsed)
+        
         conn.close()
         print(f"{Fore.GREEN}pgsqlite benchmarks completed.{Style.RESET_ALL}")
     
@@ -290,7 +341,7 @@ class BenchmarkRunner:
         
         if self.sqlite_only:
             # SQLite-only table
-            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT"]:
+            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT", "SELECT (cached)"]:
                 sqlite_stats = self.calculate_stats(self.sqlite_times[operation])
                 if len(self.sqlite_times[operation]) > 0:
                     summary_data.append([
@@ -306,7 +357,7 @@ class BenchmarkRunner:
         
         elif self.pgsqlite_only:
             # pgSQLite-only table
-            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT"]:
+            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT", "SELECT (cached)"]:
                 pgsqlite_stats = self.calculate_stats(self.pgsqlite_times[operation])
                 if len(self.pgsqlite_times[operation]) > 0:
                     summary_data.append([
@@ -322,7 +373,7 @@ class BenchmarkRunner:
         
         else:
             # Full comparison table
-            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT"]:
+            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT", "SELECT (cached)"]:
                 sqlite_stats = self.calculate_stats(self.sqlite_times[operation])
                 pgsqlite_stats = self.calculate_stats(self.pgsqlite_times[operation])
                 
@@ -352,7 +403,7 @@ class BenchmarkRunner:
         # Per-operation difference summary (only for full comparison)
         if not self.sqlite_only and not self.pgsqlite_only:
             print(f"\n{Fore.CYAN}Per-Operation Time Differences:{Style.RESET_ALL}")
-            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT"]:
+            for operation in ["CREATE", "INSERT", "UPDATE", "DELETE", "SELECT", "SELECT (cached)"]:
                 sqlite_stats = self.calculate_stats(self.sqlite_times[operation])
                 pgsqlite_stats = self.calculate_stats(self.pgsqlite_times[operation])
                 if len(self.sqlite_times[operation]) > 0:
@@ -384,6 +435,28 @@ class BenchmarkRunner:
             print(f"Total pgsqlite time: {total_pgsqlite:.3f}s")
             if total_sqlite > 0:
                 print(f"Overall overhead: {((total_pgsqlite - total_sqlite) / total_sqlite * 100):+.1f}%")
+            
+            # Cache effectiveness analysis
+            if len(self.sqlite_times["SELECT"]) > 0 and len(self.sqlite_times["SELECT (cached)"]) > 0:
+                print(f"\n{Fore.CYAN}Cache Effectiveness Analysis:{Style.RESET_ALL}")
+                
+                # SQLite cached performance
+                sqlite_uncached = self.calculate_stats(self.sqlite_times["SELECT"])
+                sqlite_cached = self.calculate_stats(self.sqlite_times["SELECT (cached)"])
+                sqlite_cache_speedup = sqlite_uncached['avg'] / sqlite_cached['avg'] if sqlite_cached['avg'] > 0 else 1
+                
+                # pgsqlite cached performance
+                pgsqlite_uncached = self.calculate_stats(self.pgsqlite_times["SELECT"])
+                pgsqlite_cached = self.calculate_stats(self.pgsqlite_times["SELECT (cached)"])
+                pgsqlite_cache_speedup = pgsqlite_uncached['avg'] / pgsqlite_cached['avg'] if pgsqlite_cached['avg'] > 0 else 1
+                
+                print(f"SQLite - Uncached SELECT: {sqlite_uncached['avg']*1000:.3f}ms, Cached: {sqlite_cached['avg']*1000:.3f}ms (Speedup: {sqlite_cache_speedup:.1f}x)")
+                print(f"pgsqlite - Uncached SELECT: {pgsqlite_uncached['avg']*1000:.3f}ms, Cached: {pgsqlite_cached['avg']*1000:.3f}ms (Speedup: {pgsqlite_cache_speedup:.1f}x)")
+                
+                # Cache overhead comparison
+                cached_overhead = ((pgsqlite_cached['avg'] - sqlite_cached['avg']) / sqlite_cached['avg']) * 100 if sqlite_cached['avg'] > 0 else 0
+                print(f"\nCached query overhead: {cached_overhead:+.1f}% (pgsqlite vs SQLite)")
+                print(f"Cache improvement: {pgsqlite_cache_speedup:.1f}x speedup for pgsqlite cached queries")
         
     def run(self):
         """Run the complete benchmark suite"""

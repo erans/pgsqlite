@@ -13,6 +13,18 @@ impl CatalogInterceptor {
     pub fn intercept_query(query: &str) -> Option<Result<DbResponse, PgSqliteError>> {
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
+        
+        // Check for cache status query
+        if lower_query.contains("select * from pgsqlite_cache_status") {
+            let (columns, rows) = crate::cache::format_cache_status_as_table();
+            let rows_affected = rows.len();
+            return Some(Ok(DbResponse {
+                columns,
+                rows,
+                rows_affected,
+            }));
+        }
+        
         if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") {
             return None;
         }

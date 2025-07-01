@@ -3,6 +3,8 @@ use regex::Regex;
 use once_cell::sync::Lazy;
 use crate::cache::SchemaCache;
 use crate::session::db_handler::DbResponse;
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 // Pre-compiled regexes for fast path detection
 static INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -13,15 +15,215 @@ static SELECT_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^\s*SELECT\s+.+\s+FROM\s+(\w+)").unwrap()
 });
 
+static SELECT_WHERE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*SELECT\s+.+\s+FROM\s+(\w+)\s+WHERE\s+(\w+)\s*(>=|<=|!=|<>|=|>|<)\s*(.+)$").unwrap()
+});
+
+static SELECT_WHERE_PARAM_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*SELECT\s+.+\s+FROM\s+(\w+)\s+WHERE\s+(\w+)\s*(>=|<=|!=|<>|=|>|<)\s*\$(\d+)\s*$").unwrap()
+});
+
 static UPDATE_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^\s*UPDATE\s+(\w+)\s+SET").unwrap()
+});
+
+static UPDATE_WHERE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*UPDATE\s+(\w+)\s+SET\s+.+\s+WHERE\s+(\w+)\s*(>=|<=|!=|<>|=|>|<)\s*(.+)$").unwrap()
+});
+
+static UPDATE_WHERE_PARAM_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*UPDATE\s+(\w+)\s+SET\s+.+\s+WHERE\s+(\w+)\s*(>=|<=|!=|<>|=|>|<)\s*\$(\d+)\s*$").unwrap()
 });
 
 static DELETE_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^\s*DELETE\s+FROM\s+(\w+)").unwrap()
 });
 
-/// Check if a query is simple enough for fast path execution
+static DELETE_WHERE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*DELETE\s+FROM\s+(\w+)\s+WHERE\s+(\w+)\s*(>=|<=|!=|<>|=|>|<)\s*(.+)$").unwrap()
+});
+
+static DELETE_WHERE_PARAM_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)^\s*DELETE\s+FROM\s+(\w+)\s+WHERE\s+(\w+)\s*(>=|<=|!=|<>|=|>|<)\s*\$(\d+)\s*$").unwrap()
+});
+
+// Cache for decimal table detection to avoid repeated schema lookups
+static DECIMAL_TABLE_CACHE: Lazy<Mutex<HashMap<String, bool>>> = Lazy::new(|| {
+    Mutex::new(HashMap::new())
+});
+
+/// Represents a fast path query with its components
+#[derive(Debug, Clone)]
+pub struct FastPathQuery {
+    pub table_name: String,
+    pub operation: FastPathOperation,
+    pub where_clause: Option<WhereClause>,
+}
+
+#[derive(Debug, Clone)]
+pub enum FastPathOperation {
+    Select,
+    Insert,
+    Update,
+    Delete,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhereClause {
+    pub column: String,
+    pub operator: String,
+    pub value: String,
+    pub is_parameter: bool,
+    pub parameter_index: Option<usize>,
+}
+
+/// Enhanced fast path detection that supports simple WHERE clauses
+pub fn can_use_fast_path_enhanced(query: &str) -> Option<FastPathQuery> {
+    // Remove any trailing semicolon and trim
+    let query = query.trim().trim_end_matches(';');
+    
+    // Check for complex patterns that disqualify fast path
+    if query.contains("JOIN") || 
+       query.contains("UNION") ||
+       query.contains("(SELECT") ||
+       query.contains("CASE") ||
+       query.contains("LIMIT") ||
+       query.contains("ORDER BY") ||
+       query.contains("GROUP BY") ||
+       query.contains("HAVING") {
+        return None;
+    }
+    
+    // Try SELECT with WHERE (parameter version first)
+    if let Some(caps) = SELECT_WHERE_PARAM_REGEX.captures(query) {
+        let param_index = caps.get(4).unwrap().as_str().parse::<usize>().unwrap_or(1);
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Select,
+            where_clause: Some(WhereClause {
+                column: caps.get(2).unwrap().as_str().to_string(),
+                operator: caps.get(3).unwrap().as_str().to_string(),
+                value: format!("${}", param_index),
+                is_parameter: true,
+                parameter_index: Some(param_index),
+            }),
+        });
+    }
+    
+    // Try SELECT with WHERE (literal value)
+    if let Some(caps) = SELECT_WHERE_REGEX.captures(query) {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Select,
+            where_clause: Some(WhereClause {
+                column: caps.get(2).unwrap().as_str().to_string(),
+                operator: caps.get(3).unwrap().as_str().to_string(),
+                value: caps.get(4).unwrap().as_str().trim().to_string(),
+                is_parameter: false,
+                parameter_index: None,
+            }),
+        });
+    }
+    
+    // Try UPDATE with WHERE (parameter version first)
+    if let Some(caps) = UPDATE_WHERE_PARAM_REGEX.captures(query) {
+        let param_index = caps.get(4).unwrap().as_str().parse::<usize>().unwrap_or(1);
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Update,
+            where_clause: Some(WhereClause {
+                column: caps.get(2).unwrap().as_str().to_string(),
+                operator: caps.get(3).unwrap().as_str().to_string(),
+                value: format!("${}", param_index),
+                is_parameter: true,
+                parameter_index: Some(param_index),
+            }),
+        });
+    }
+    
+    // Try UPDATE with WHERE (literal value)
+    if let Some(caps) = UPDATE_WHERE_REGEX.captures(query) {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Update,
+            where_clause: Some(WhereClause {
+                column: caps.get(2).unwrap().as_str().to_string(),
+                operator: caps.get(3).unwrap().as_str().to_string(),
+                value: caps.get(4).unwrap().as_str().trim().to_string(),
+                is_parameter: false,
+                parameter_index: None,
+            }),
+        });
+    }
+    
+    // Try DELETE with WHERE (parameter version first)
+    if let Some(caps) = DELETE_WHERE_PARAM_REGEX.captures(query) {
+        let param_index = caps.get(4).unwrap().as_str().parse::<usize>().unwrap_or(1);
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Delete,
+            where_clause: Some(WhereClause {
+                column: caps.get(2).unwrap().as_str().to_string(),
+                operator: caps.get(3).unwrap().as_str().to_string(),
+                value: format!("${}", param_index),
+                is_parameter: true,
+                parameter_index: Some(param_index),
+            }),
+        });
+    }
+    
+    // Try DELETE with WHERE (literal value)
+    if let Some(caps) = DELETE_WHERE_REGEX.captures(query) {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Delete,
+            where_clause: Some(WhereClause {
+                column: caps.get(2).unwrap().as_str().to_string(),
+                operator: caps.get(3).unwrap().as_str().to_string(),
+                value: caps.get(4).unwrap().as_str().trim().to_string(),
+                is_parameter: false,
+                parameter_index: None,
+            }),
+        });
+    }
+    
+    // Fall back to simple patterns without WHERE
+    if let Some(caps) = INSERT_REGEX.captures(query) {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Insert,
+            where_clause: None,
+        });
+    }
+    
+    if let Some(caps) = SELECT_REGEX.captures(query) {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Select,
+            where_clause: None,
+        });
+    }
+    
+    if let Some(caps) = UPDATE_REGEX.captures(query) && !query.contains("WHERE") {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Update,
+            where_clause: None,
+        });
+    }
+    
+    if let Some(caps) = DELETE_REGEX.captures(query) && !query.contains("WHERE") {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Delete,
+            where_clause: None,
+        });
+    }
+    
+    None
+}
+
+/// Check if a query is simple enough for fast path execution (legacy function)
 pub fn can_use_fast_path(query: &str) -> Option<String> {
     // Check for simple patterns and extract table name
     if let Some(caps) = INSERT_REGEX.captures(query) {
@@ -52,31 +254,52 @@ pub fn can_use_fast_path(query: &str) -> Option<String> {
     None
 }
 
+/// Clear the decimal table cache (should be called on DDL operations)
+pub fn clear_decimal_cache() {
+    if let Ok(mut cache) = DECIMAL_TABLE_CACHE.lock() {
+        cache.clear();
+    }
+}
+
 /// Check if a table has any DECIMAL columns that would require query rewriting
 pub fn table_has_decimal_columns(
     conn: &Connection,
     table_name: &str,
     schema_cache: &SchemaCache,
 ) -> Result<bool, rusqlite::Error> {
-    // Try cache first
-    if let Some(schema) = schema_cache.get(table_name) {
-        for col in &schema.columns {
-            if col.pg_type.to_uppercase() == "NUMERIC" || 
-               col.pg_type.to_uppercase() == "DECIMAL" {
-                return Ok(true);
-            }
+    // Check dedicated decimal cache first
+    if let Ok(cache) = DECIMAL_TABLE_CACHE.lock() {
+        if let Some(&has_decimal) = cache.get(table_name) {
+            return Ok(has_decimal);
         }
-        return Ok(false);
     }
     
-    // Fall back to checking metadata
-    let mut stmt = conn.prepare(
-        "SELECT COUNT(*) FROM __pgsqlite_schema 
-         WHERE table_name = ?1 AND pg_type IN ('NUMERIC', 'DECIMAL')"
-    )?;
+    let has_decimal = match schema_cache.get(table_name) {
+        Some(schema) => {
+            // Use schema cache if available
+            schema.columns.iter().any(|col| {
+                let pg_type_upper = col.pg_type.to_uppercase();
+                pg_type_upper == "NUMERIC" || pg_type_upper == "DECIMAL"
+            })
+        }
+        None => {
+            // Fall back to checking metadata
+            let mut stmt = conn.prepare(
+                "SELECT COUNT(*) FROM __pgsqlite_schema 
+                 WHERE table_name = ?1 AND pg_type IN ('NUMERIC', 'DECIMAL')"
+            )?;
+            
+            let count: i32 = stmt.query_row([table_name], |row| row.get(0))?;
+            count > 0
+        }
+    };
     
-    let count: i32 = stmt.query_row([table_name], |row| row.get(0))?;
-    Ok(count > 0)
+    // Cache the result
+    if let Ok(mut cache) = DECIMAL_TABLE_CACHE.lock() {
+        cache.insert(table_name.to_string(), has_decimal);
+    }
+    
+    Ok(has_decimal)
 }
 
 /// Fast path DML execution that bypasses parsing and rewriting
@@ -208,6 +431,287 @@ pub fn query_fast_path(
     Ok(None)
 }
 
+/// Enhanced fast path execution that supports WHERE clauses and parameters
+pub fn execute_fast_path_enhanced_with_params(
+    conn: &Connection,
+    query: &str,
+    params: &[rusqlite::types::Value],
+    schema_cache: &SchemaCache,
+) -> Result<Option<usize>, rusqlite::Error> {
+    // Try enhanced fast path detection
+    if let Some(fast_query) = can_use_fast_path_enhanced(query) {
+        // Skip SELECT queries here, they need special handling
+        if matches!(fast_query.operation, FastPathOperation::Select) {
+            return Ok(None);
+        }
+        
+        // Check if table has decimal columns
+        match table_has_decimal_columns(conn, &fast_query.table_name, schema_cache) {
+            Ok(false) => {
+                // No decimal columns, execute directly with parameters
+                let rows_affected = conn.execute(query, rusqlite::params_from_iter(params.iter()))?;
+                return Ok(Some(rows_affected));
+            }
+            _ => {
+                // Has decimal columns or error checking, fall back to normal path
+                return Ok(None);
+            }
+        }
+    }
+    
+    Ok(None)
+}
+
+/// Enhanced fast path execution that supports WHERE clauses
+pub fn execute_fast_path_enhanced(
+    conn: &Connection,
+    query: &str,
+    schema_cache: &SchemaCache,
+) -> Result<Option<usize>, rusqlite::Error> {
+    // Try enhanced fast path detection
+    if let Some(fast_query) = can_use_fast_path_enhanced(query) {
+        // Skip SELECT queries here, they need special handling
+        if matches!(fast_query.operation, FastPathOperation::Select) {
+            return Ok(None);
+        }
+        
+        // Check if table has decimal columns
+        match table_has_decimal_columns(conn, &fast_query.table_name, schema_cache) {
+            Ok(false) => {
+                // No decimal columns, execute directly
+                let rows_affected = conn.execute(query, [])?;
+                return Ok(Some(rows_affected));
+            }
+            _ => {
+                // Has decimal columns or error checking, fall back to normal path
+                return Ok(None);
+            }
+        }
+    }
+    
+    // Fall back to legacy fast path
+    execute_fast_path(conn, query, schema_cache)
+}
+
+/// Enhanced fast path SELECT execution with parameters
+pub fn query_fast_path_enhanced_with_params(
+    conn: &Connection,
+    query: &str,
+    params: &[rusqlite::types::Value],
+    schema_cache: &SchemaCache,
+) -> Result<Option<DbResponse>, rusqlite::Error> {
+    // Try enhanced fast path detection
+    if let Some(fast_query) = can_use_fast_path_enhanced(query) {
+        // Only handle SELECT queries
+        if !matches!(fast_query.operation, FastPathOperation::Select) {
+            return Ok(None);
+        }
+        
+        // Check if table has decimal columns
+        match table_has_decimal_columns(conn, &fast_query.table_name, schema_cache) {
+            Ok(false) => {
+                return execute_fast_select_with_params(conn, query, &fast_query.table_name, params, schema_cache);
+            }
+            _ => {
+                // Has decimal columns or error checking, fall back to normal path
+                return Ok(None);
+            }
+        }
+    }
+    
+    Ok(None)
+}
+
+/// Enhanced fast path SELECT execution that supports WHERE clauses
+pub fn query_fast_path_enhanced(
+    conn: &Connection,
+    query: &str,
+    schema_cache: &SchemaCache,
+) -> Result<Option<DbResponse>, rusqlite::Error> {
+    // Try enhanced fast path detection
+    if let Some(fast_query) = can_use_fast_path_enhanced(query) {
+        // Only handle SELECT queries
+        if !matches!(fast_query.operation, FastPathOperation::Select) {
+            return Ok(None);
+        }
+        
+        // Check if table has decimal columns
+        match table_has_decimal_columns(conn, &fast_query.table_name, schema_cache) {
+            Ok(false) => {
+                return execute_fast_select(conn, query, &fast_query.table_name, schema_cache);
+            }
+            _ => {
+                // Has decimal columns or error checking, fall back to normal path
+                return Ok(None);
+            }
+        }
+    }
+    
+    // Fall back to legacy fast path
+    query_fast_path(conn, query, schema_cache)
+}
+
+/// Execute a fast SELECT query with parameters
+fn execute_fast_select_with_params(
+    conn: &Connection,
+    query: &str,
+    table_name: &str,
+    params: &[rusqlite::types::Value],
+    _schema_cache: &SchemaCache,
+) -> Result<Option<DbResponse>, rusqlite::Error> {
+    let mut stmt = conn.prepare(query)?;
+    let column_count = stmt.column_count();
+    
+    // Get column names
+    let mut columns = Vec::new();
+    for i in 0..column_count {
+        columns.push(stmt.column_name(i)?.to_string());
+    }
+    
+    // Check for boolean columns in the schema
+    let mut column_types = Vec::new();
+    for col_name in &columns {
+        // Try to get type from __pgsqlite_schema
+        if let Ok(mut meta_stmt) = conn.prepare(
+            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+        ) {
+            if let Ok(pg_type) = meta_stmt.query_row([table_name, col_name], |row| {
+                row.get::<_, String>(0)
+            }) {
+                column_types.push(Some(pg_type));
+            } else {
+                column_types.push(None);
+            }
+        } else {
+            column_types.push(None);
+        }
+    }
+    
+    // Get rows - with boolean type conversions, using parameters
+    let mut rows = Vec::new();
+    let result_rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+        let mut values = Vec::new();
+        for i in 0..column_count {
+            match row.get_ref(i)? {
+                ValueRef::Null => values.push(None),
+                ValueRef::Integer(int_val) => {
+                    // Check if this column is a boolean type
+                    let is_boolean = column_types.get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|pg_type| {
+                            let type_lower = pg_type.to_lowercase();
+                            type_lower == "boolean" || type_lower == "bool"
+                        })
+                        .unwrap_or(false);
+                    
+                    if is_boolean {
+                        // Convert SQLite's 0/1 to PostgreSQL's f/t format
+                        let bool_str = if int_val == 0 { "f" } else { "t" };
+                        values.push(Some(bool_str.as_bytes().to_vec()));
+                    } else {
+                        values.push(Some(int_val.to_string().into_bytes()));
+                    }
+                },
+                ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
+                ValueRef::Text(s) => values.push(Some(s.to_vec())),
+                ValueRef::Blob(b) => values.push(Some(b.to_vec())),
+            }
+        }
+        Ok(values)
+    })?;
+    
+    for row in result_rows {
+        rows.push(row?);
+    }
+    
+    let rows_affected = rows.len();
+    Ok(Some(DbResponse {
+        columns,
+        rows,
+        rows_affected,
+    }))
+}
+
+/// Execute a fast SELECT query without decimal rewriting
+fn execute_fast_select(
+    conn: &Connection,
+    query: &str,
+    table_name: &str,
+    _schema_cache: &SchemaCache,
+) -> Result<Option<DbResponse>, rusqlite::Error> {
+    let mut stmt = conn.prepare(query)?;
+    let column_count = stmt.column_count();
+    
+    // Get column names
+    let mut columns = Vec::new();
+    for i in 0..column_count {
+        columns.push(stmt.column_name(i)?.to_string());
+    }
+    
+    // Check for boolean columns in the schema
+    let mut column_types = Vec::new();
+    for col_name in &columns {
+        // Try to get type from __pgsqlite_schema
+        if let Ok(mut meta_stmt) = conn.prepare(
+            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+        ) {
+            if let Ok(pg_type) = meta_stmt.query_row([table_name, col_name], |row| {
+                row.get::<_, String>(0)
+            }) {
+                column_types.push(Some(pg_type));
+            } else {
+                column_types.push(None);
+            }
+        } else {
+            column_types.push(None);
+        }
+    }
+    
+    // Get rows - with boolean type conversions
+    let mut rows = Vec::new();
+    let result_rows = stmt.query_map([], |row| {
+        let mut values = Vec::new();
+        for i in 0..column_count {
+            match row.get_ref(i)? {
+                ValueRef::Null => values.push(None),
+                ValueRef::Integer(int_val) => {
+                    // Check if this column is a boolean type
+                    let is_boolean = column_types.get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|pg_type| {
+                            let type_lower = pg_type.to_lowercase();
+                            type_lower == "boolean" || type_lower == "bool"
+                        })
+                        .unwrap_or(false);
+                    
+                    if is_boolean {
+                        // Convert SQLite's 0/1 to PostgreSQL's f/t format
+                        let bool_str = if int_val == 0 { "f" } else { "t" };
+                        values.push(Some(bool_str.as_bytes().to_vec()));
+                    } else {
+                        values.push(Some(int_val.to_string().into_bytes()));
+                    }
+                },
+                ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
+                ValueRef::Text(s) => values.push(Some(s.to_vec())),
+                ValueRef::Blob(b) => values.push(Some(b.to_vec())),
+            }
+        }
+        Ok(values)
+    })?;
+    
+    for row in result_rows {
+        rows.push(row?);
+    }
+    
+    let rows_affected = rows.len();
+    Ok(Some(DbResponse {
+        columns,
+        rows,
+        rows_affected,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +736,111 @@ mod tests {
         assert_eq!(can_use_fast_path("SELECT * FROM products"), Some("products".to_string()));
         assert_eq!(can_use_fast_path("UPDATE items SET price = 10"), Some("items".to_string()));
         assert_eq!(can_use_fast_path("DELETE FROM orders WHERE id = 1"), Some("orders".to_string()));
+    }
+    
+    #[test]
+    fn test_enhanced_fast_path_detection() {
+        // Simple WHERE clauses that should work
+        let query = can_use_fast_path_enhanced("SELECT * FROM users WHERE id = 42");
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert_eq!(q.table_name, "users");
+        assert!(matches!(q.operation, FastPathOperation::Select));
+        assert!(q.where_clause.is_some());
+        let where_clause = q.where_clause.unwrap();
+        assert_eq!(where_clause.column, "id");
+        assert_eq!(where_clause.operator, "=");
+        assert_eq!(where_clause.value, "42");
+        assert!(!where_clause.is_parameter);
+        assert_eq!(where_clause.parameter_index, None);
+        
+        // UPDATE with WHERE
+        let query = can_use_fast_path_enhanced("UPDATE products SET price = 100 WHERE id = 5");
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert_eq!(q.table_name, "products");
+        assert!(matches!(q.operation, FastPathOperation::Update));
+        
+        // DELETE with WHERE
+        let query = can_use_fast_path_enhanced("DELETE FROM orders WHERE user_id > 100");
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert_eq!(q.table_name, "orders");
+        assert!(matches!(q.operation, FastPathOperation::Delete));
+        
+        // Complex queries that should NOT work
+        assert!(can_use_fast_path_enhanced("SELECT * FROM users JOIN orders").is_none());
+        assert!(can_use_fast_path_enhanced("SELECT * FROM users WHERE id IN (SELECT id FROM active)").is_none());
+        assert!(can_use_fast_path_enhanced("SELECT * FROM users ORDER BY name").is_none());
+        assert!(can_use_fast_path_enhanced("SELECT * FROM users LIMIT 10").is_none());
+        assert!(can_use_fast_path_enhanced("SELECT COUNT(*) FROM users GROUP BY status").is_none());
+    }
+    
+    #[test]
+    fn test_where_clause_operators() {
+        let operators = ["=", ">", "<", ">=", "<=", "!=", "<>"];
+        
+        for op in operators {
+            let query_str = format!("SELECT * FROM test WHERE col {} 42", op);
+            let query = can_use_fast_path_enhanced(&query_str);
+            assert!(query.is_some(), "Should support operator: {}", op);
+            let q = query.unwrap();
+            assert_eq!(q.where_clause.unwrap().operator, op);
+        }
+    }
+    
+    #[test]
+    fn test_parameterized_queries() {
+        // SELECT with parameter
+        let query = can_use_fast_path_enhanced("SELECT * FROM users WHERE id = $1");
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert_eq!(q.table_name, "users");
+        assert!(matches!(q.operation, FastPathOperation::Select));
+        let where_clause = q.where_clause.unwrap();
+        assert_eq!(where_clause.column, "id");
+        assert_eq!(where_clause.operator, "=");
+        assert_eq!(where_clause.value, "$1");
+        assert!(where_clause.is_parameter);
+        assert_eq!(where_clause.parameter_index, Some(1));
+        
+        // UPDATE with parameter
+        let query = can_use_fast_path_enhanced("UPDATE products SET price = 100 WHERE id = $2");
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert_eq!(q.table_name, "products");
+        assert!(matches!(q.operation, FastPathOperation::Update));
+        let where_clause = q.where_clause.unwrap();
+        assert_eq!(where_clause.column, "id");
+        assert_eq!(where_clause.operator, "=");
+        assert_eq!(where_clause.value, "$2");
+        assert!(where_clause.is_parameter);
+        assert_eq!(where_clause.parameter_index, Some(2));
+        
+        // DELETE with parameter
+        let query = can_use_fast_path_enhanced("DELETE FROM orders WHERE user_id > $1");
+        assert!(query.is_some());
+        let q = query.unwrap();
+        assert_eq!(q.table_name, "orders");
+        assert!(matches!(q.operation, FastPathOperation::Delete));
+        let where_clause = q.where_clause.unwrap();
+        assert_eq!(where_clause.column, "user_id");
+        assert_eq!(where_clause.operator, ">");
+        assert_eq!(where_clause.value, "$1");
+        assert!(where_clause.is_parameter);
+        assert_eq!(where_clause.parameter_index, Some(1));
+        
+        // Test different parameter operators
+        let operators = ["=", ">", "<", ">=", "<=", "!=", "<>"];
+        for op in operators {
+            let query_str = format!("SELECT * FROM test WHERE col {} $1", op);
+            let query = can_use_fast_path_enhanced(&query_str);
+            assert!(query.is_some(), "Should support parameterized operator: {}", op);
+            let q = query.unwrap();
+            let where_clause = q.where_clause.unwrap();
+            assert_eq!(where_clause.operator, op);
+            assert!(where_clause.is_parameter);
+            assert_eq!(where_clause.parameter_index, Some(1));
+        }
     }
 }

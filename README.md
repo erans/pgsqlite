@@ -32,6 +32,107 @@ A PostgreSQL protocol adapter for SQLite databases. This project allows PostgreS
 
 The result is that PostgreSQL applications can operate on SQLite databases without knowing they're not connected to actual PostgreSQL.
 
+## Schema Mapping and Performance Architecture
+
+### PostgreSQL to SQLite Schema Translation
+
+pgsqlite implements a sophisticated schema mapping system that maintains PostgreSQL compatibility while leveraging SQLite's simplicity:
+
+#### Type System Bridge
+- **PostgreSQL → SQLite Mapping**: Rich PostgreSQL types (100+ types) are mapped to SQLite's 5 storage classes (NULL, INTEGER, REAL, TEXT, BLOB)
+- **Metadata Registry**: The `__pgsqlite_schema` table stores original PostgreSQL type information for each column
+- **Bidirectional Translation**: Values are converted back to PostgreSQL format during query results
+- **Custom Type Handling**: Special cases like DECIMAL use rust_decimal for precision, BOOLEAN converts 0/1 ↔ f/t
+
+#### Schema Information Flow
+```
+PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
+                                       ↓
+                  Schema Cache ← __pgsqlite_schema ← SQLite Storage
+```
+
+### Performance Optimization Strategy
+
+pgsqlite achieves reasonable performance through a multi-layered optimization approach:
+
+#### Fast Path Execution (~7-10x overhead vs raw SQLite)
+**Conditions for fast path:**
+- Simple queries: `SELECT/INSERT/UPDATE/DELETE` with basic WHERE clauses
+- Simple WHERE predicates: `=`, `>`, `<`, `>=`, `<=`, `!=`, `<>`
+- Single-table operations with column comparisons
+- Tables without DECIMAL columns (avoids query rewriting)
+- Parameterized queries ($1, $2, etc.) in extended protocol
+
+**Fast path benefits:**
+- Bypasses SQL parsing and AST manipulation
+- Skips decimal arithmetic rewriting
+- Direct SQLite execution with minimal overhead
+- Cached schema lookups for decimal detection
+- Optimized parameter binding for extended protocol
+
+#### Query Plan Caching ✅ IMPLEMENTED
+**Comprehensive query optimization with significant performance improvements:**
+
+**Query Plan Cache Architecture:**
+- **LRU Cache**: Stores parsed and analyzed query plans by normalized query text (1000 entries, 10min TTL)
+- **Cached Metadata**: Table schemas, column types, and decimal detection results stored with plans
+- **Rewrite Cache**: Pre-computed decimal query rewrites for tables with NUMERIC columns
+- **Statement Pool**: Reuses SQLite prepared statements and metadata (100 statements, LRU eviction)
+
+**Cache Benefits:**
+- **Eliminates Re-parsing**: Skip expensive SQL parsing for repeated query patterns
+- **Avoids Schema Lookups**: Table metadata cached with query plans, eliminating `__pgsqlite_schema` queries
+- **Rewrite Optimization**: Decimal arithmetic rewriting computed once per unique query structure
+- **Prepared Statement Optimization**: Statement metadata caching and parameter optimization
+
+**Performance Results (2025-07-01):**
+```
+Uncached SELECT: ~131x overhead (0.159ms vs 0.001ms SQLite)
+Cached SELECT: ~16x overhead (0.085ms vs 0.005ms SQLite) ⭐ TARGET ACHIEVED
+Cache Speedup: 1.9x improvement for repeated queries
+Overall Progress: 3-phase optimization reduced overhead from ~98x to ~16x
+```
+
+#### Full Query Pipeline (~130x overhead for uncached, ~16x for cached)
+For complex queries that can't use fast path:
+- Complete PostgreSQL SQL parsing with query plan caching
+- Query rewriting for decimal arithmetic (cached when possible)
+- Type-aware result processing with statement pool optimization
+- Boolean value conversion
+- Cached schema metadata lookups
+
+#### Caching Strategy ✅ FULLY IMPLEMENTED
+- **Schema Cache**: In-memory table metadata to avoid repeated database queries
+- **Decimal Table Cache**: Cached detection of tables requiring decimal rewriting  
+- **Type Information**: Cached PostgreSQL type mappings for result formatting
+- **Query Plan Cache**: LRU cache of parsed queries, metadata, and decimal rewrites (1000 entries)
+- **Statement Pool**: Cached SQLite prepared statements with metadata (100 statements, LRU eviction)
+- **Cache Metrics**: Hit/miss tracking and periodic logging for monitoring
+
+#### Where Overhead Comes From
+1. **Protocol Translation** (~20-30%): PostgreSQL wire protocol encoding/decoding
+2. **SQL Parsing & Rewriting** (~40-50%): Converting PostgreSQL SQL to SQLite-compatible queries
+3. **Type Conversion** (~15-20%): Converting values between PostgreSQL and SQLite formats
+4. **Schema Lookups** (~10-15%): Retrieving type metadata for proper result formatting
+
+#### Performance Monitoring
+Run benchmarks to measure overhead:
+```bash
+# Comprehensive benchmark comparing pgsqlite vs raw SQLite
+./benchmarks/benchmark.py
+
+# Fast path effectiveness test
+cargo test benchmark_fast_path -- --ignored --nocapture
+
+# Cache effectiveness benchmark  
+cargo test benchmark_cache_effectiveness -- --ignored --nocapture
+
+# Statement pool performance test
+cargo test test_statement_pool_basic
+```
+
+The architecture prioritizes correctness and compatibility while providing multiple optimization layers for different query patterns. The implemented query plan cache, enhanced fast path, and statement pool optimizations have successfully achieved the target performance goals for cached queries.
+
 ## Project Structure
 
 ```

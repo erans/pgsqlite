@@ -6,4 +6,9 @@ pub mod fast_path;
 
 pub use executor::QueryExecutor;
 pub use extended::ExtendedQueryHandler;
-pub use fast_path::{can_use_fast_path, execute_fast_path, query_fast_path};
+pub use fast_path::{
+    can_use_fast_path, execute_fast_path, query_fast_path,
+    can_use_fast_path_enhanced, execute_fast_path_enhanced, query_fast_path_enhanced,
+    execute_fast_path_enhanced_with_params, query_fast_path_enhanced_with_params,
+    clear_decimal_cache, FastPathQuery, FastPathOperation, WhereClause
+};
