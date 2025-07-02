@@ -11,6 +11,7 @@ pub struct ParameterTypeCache {
 #[derive(Clone, Debug)]
 pub struct CachedParameterInfo {
     pub param_types: Vec<i32>,
+    pub original_types: Vec<i32>, // Original PostgreSQL types before mapping to TEXT
     pub table_name: Option<String>,
     pub column_names: Vec<String>,
     pub created_at: Instant,

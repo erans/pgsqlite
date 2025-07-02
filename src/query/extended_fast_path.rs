@@ -5,7 +5,6 @@ use crate::cache::GLOBAL_PARAM_VALUE_CACHE;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
-use tracing::info;
 use std::sync::Arc;
 
 /// Optimized parameter binding that avoids string substitution
@@ -21,27 +20,50 @@ impl ExtendedFastPath {
         query: &str,
         bound_values: &[Option<Vec<u8>>],
         param_formats: &[i16],
+        result_formats: &[i16],
         param_types: &[i32],
+        original_types: &[i32],
         query_type: QueryType,
     ) -> Result<bool, PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        // Convert parameters to rusqlite values with caching
-        let rusqlite_params = match Self::convert_parameters_cached(bound_values, param_formats, param_types) {
+        // Convert parameters to rusqlite values with caching, using original types for proper conversion
+        let rusqlite_params = match Self::convert_parameters_cached(bound_values, param_formats, param_types, original_types) {
             Ok(params) => params,
-            Err(_) => return Ok(false), // Fall back to normal path
+            Err(_) => {
+                // Parameter conversion failed, fall back to normal path
+                return Ok(false); // Fall back to normal path
+            }
         };
         
         // Execute based on query type
         match query_type {
             QueryType::Select => {
-                Self::execute_select_with_params(framed, db, session, portal_name, query, rusqlite_params).await?;
-                Ok(true)
+                // Fast check for binary result formats - optimize for common case
+                // Most queries use text format (empty or [0])
+                // Check first element as most queries have uniform format
+                if !result_formats.is_empty() && result_formats[0] == 1 {
+                    // Fall back to normal path for binary results
+                    // TODO: Implement proper binary encoding for result formats
+                    return Ok(false);
+                }
+                match Self::execute_select_with_params(framed, db, session, portal_name, query, rusqlite_params, result_formats).await {
+                    Ok(()) => Ok(true),
+                    Err(_) => {
+                        // Fast path SELECT failed, fall back
+                        Ok(false) // Fall back to normal path
+                    }
+                }
             }
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                Self::execute_dml_with_params(framed, db, query, rusqlite_params, query_type).await?;
-                Ok(true)
+                match Self::execute_dml_with_params(framed, db, query, rusqlite_params, query_type).await {
+                    Ok(()) => Ok(true),
+                    Err(_) => {
+                        // Fast path DML failed, fall back
+                        Ok(false) // Fall back to normal path
+                    }
+                }
             }
             _ => Ok(false), // Fall back for other query types
         }
@@ -52,6 +74,7 @@ impl ExtendedFastPath {
         bound_values: &[Option<Vec<u8>>],
         param_formats: &[i16],
         param_types: &[i32],
+        original_types: &[i32],
     ) -> Result<Vec<rusqlite::types::Value>, PgSqliteError> {
         let mut params = Vec::with_capacity(bound_values.len());
         
@@ -61,13 +84,14 @@ impl ExtendedFastPath {
                 Some(bytes) => {
                     let format = param_formats.get(i).copied().unwrap_or(0);
                     let param_type = param_types.get(i).copied().unwrap_or(25); // Default to TEXT
+                    let original_type = original_types.get(i).copied().unwrap_or(param_type);
                     
-                    // Use cache for parameter value conversion
+                    // Use cache for parameter value conversion, using original type for conversion
                     let converted = GLOBAL_PARAM_VALUE_CACHE.get_or_convert(
                         bytes,
-                        param_type,
+                        original_type,
                         format,
-                        || Self::convert_parameter_value(bytes, format, param_type)
+                        || Self::convert_parameter_value(bytes, format, original_type)
                     )?;
                     
                     params.push(converted);
@@ -117,8 +141,10 @@ impl ExtendedFastPath {
                         Err(e) => Err(PgSqliteError::Protocol(format!("Invalid NUMERIC: {}", e))),
                     }
                 }
-                790 => {
-                    // MONEY - store as text
+                790 | 829 | 774 | 869 | 650 | 3904 | 3926 | 3906 | 1560 | 1562 => {
+                    // Special types that are mapped to TEXT:
+                    // 790: MONEY, 829: MACADDR, 774: MACADDR8, 869: INET, 650: CIDR,
+                    // 3904: INT4RANGE, 3926: INT8RANGE, 3906: NUMRANGE, 1560: BIT, 1562: VARBIT
                     Ok(rusqlite::types::Value::Text(text.to_string()))
                 }
                 _ => {
@@ -180,6 +206,29 @@ impl ExtendedFastPath {
                         Err(e) => Err(PgSqliteError::Protocol(format!("Invalid binary NUMERIC: {}", e))),
                     }
                 }
+                790 => {
+                    // MONEY - tokio-postgres sends text even when format is marked as binary
+                    // Try to parse as text first
+                    if let Ok(text) = std::str::from_utf8(bytes) {
+                        Ok(rusqlite::types::Value::Text(text.to_string()))
+                    } else if bytes.len() == 8 {
+                        // Fallback to binary format (int64 representing cents * 100)
+                        let microdollars = i64::from_be_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7]
+                        ]);
+                        // Convert microdollars to dollar string format
+                        let dollars = microdollars as f64 / 100.0;
+                        let text = format!("${:.2}", dollars);
+                        Ok(rusqlite::types::Value::Text(text))
+                    } else {
+                        Err(PgSqliteError::Protocol(format!("Invalid MONEY format, {} bytes", bytes.len())))
+                    }
+                }
+                829 | 774 | 869 | 650 | 3904 | 3926 | 3906 | 1560 | 1562 => {
+                    // Other special types - for now, error out so we can implement them properly
+                    Err(PgSqliteError::Protocol(format!("Binary format not implemented for type {}", param_type)))
+                }
                 _ => {
                     // Store as BLOB for unsupported binary types
                     Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
@@ -189,12 +238,13 @@ impl ExtendedFastPath {
     }
     
     async fn execute_select_with_params<T>(
-        _framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
         _session: &Arc<SessionState>,
         _portal_name: &str,
         query: &str,
         params: Vec<rusqlite::types::Value>,
+        result_formats: &[i16],
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -206,8 +256,20 @@ impl ExtendedFastPath {
             Err(e) => return Err(PgSqliteError::Sqlite(e)),
         };
         
-        // TODO: Implement proper response handling
-        info!("Fast path SELECT executed, {} rows returned", response.rows.len());
+        // TODO: Handle result_formats for binary encoding
+        // For now, we only support text format (handled by falling back earlier)
+        let _ = result_formats; // Suppress unused warning
+        
+        // Send data rows
+        for row in response.rows {
+            framed.send(BackendMessage::DataRow(row)).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+        }
+        
+        // Send CommandComplete
+        let tag = format!("SELECT {}", response.rows_affected);
+        framed.send(BackendMessage::CommandComplete { tag }).await
+            .map_err(|e| PgSqliteError::Io(e))?;
         
         Ok(())
     }
@@ -255,14 +317,27 @@ pub enum QueryType {
 
 impl QueryType {
     pub fn from_query(query: &str) -> Self {
-        let query_upper = query.trim().to_uppercase();
-        if query_upper.starts_with("SELECT") {
+        let query_trimmed = query.trim();
+        // Use case-insensitive comparison to avoid expensive to_uppercase()
+        let first_chars = query_trimmed.as_bytes();
+        if first_chars.len() >= 6 {
+            match &first_chars[0..6] {
+                b"SELECT" | b"select" | b"Select" => return QueryType::Select,
+                b"INSERT" | b"insert" | b"Insert" => return QueryType::Insert,
+                b"UPDATE" | b"update" | b"Update" => return QueryType::Update,
+                b"DELETE" | b"delete" | b"Delete" => return QueryType::Delete,
+                _ => {}
+            }
+        }
+        // Check mixed case or shorter queries
+        let query_start = &query_trimmed[..query_trimmed.len().min(6)];
+        if query_start.eq_ignore_ascii_case("SELECT") {
             QueryType::Select
-        } else if query_upper.starts_with("INSERT") {
+        } else if query_start.eq_ignore_ascii_case("INSERT") {
             QueryType::Insert
-        } else if query_upper.starts_with("UPDATE") {
+        } else if query_start.eq_ignore_ascii_case("UPDATE") {
             QueryType::Update
-        } else if query_upper.starts_with("DELETE") {
+        } else if query_start.eq_ignore_ascii_case("DELETE") {
             QueryType::Delete
         } else {
             QueryType::Other
