@@ -445,8 +445,12 @@ Successfully resolved cached SELECT performance regression while maintaining ful
 
 ## Type System Enhancements
 
-### Code Quality - Magic Numbers
-- [ ] Replace OID type magic numbers with PgType enum values (e.g., replace hardcoded 1700 for Numeric with proper enum references)
+### Code Quality - Magic Numbers - COMPLETED (2025-07-02)
+- [x] Replace OID type magic numbers with PgType enum values (e.g., replace hardcoded 1700 for Numeric with proper enum references)
+  - Replaced all hardcoded OIDs (16, 17, 20, 21, 23, 25, 700, 701, 1700, etc.) with PgType enum values
+  - Updated 9 core files: session handlers, query executors, type mappers, protocol handlers
+  - Changed match statements to use pattern guards with `t if t == PgType::X.to_oid()`
+  - Improved code readability and maintainability with no performance regression
 
 ### Schema Validation and Drift Detection
 - [ ] Implement schema drift detection between __pgsqlite_schema and actual SQLite tables
