@@ -587,6 +587,7 @@ For bulk INSERT operations, always use multi-row VALUES syntax. The protocol ove
 - [ ] Protocol compliance test suite
 - [ ] Performance benchmarks
 - [ ] Stress testing for concurrent connections
+- [x] Skip test_flush_performance in CI due to long execution time (marked with #[ignore])
 
 ### Documentation
 - [ ] API documentation

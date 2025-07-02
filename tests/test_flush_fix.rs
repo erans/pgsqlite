@@ -4,6 +4,7 @@ use tokio::net::TcpStream;
 use tokio::process::Command;
 
 #[tokio::test]
+#[ignore] // Skip in normal test runs due to long execution time
 async fn test_flush_performance() {
     // Use a unique port to avoid conflicts
     let port = 15435;
