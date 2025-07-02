@@ -96,8 +96,29 @@ impl DbHandler {
             });
         }
         
-        // Check INSERT query cache to avoid re-parsing
+        // For INSERT queries, try statement pool for better performance
         if query.trim().to_uppercase().starts_with("INSERT") {
+            // First check if we can use fast path with statement pool
+            if let Some(table_name) = extract_insert_table_name(query) {
+                if !self.schema_cache.has_decimal_columns(&table_name) {
+                    // No decimal columns, use statement pool for optimal performance
+                    match StatementPool::global().execute_cached(&*conn, query, []) {
+                        Ok(rows_affected) => {
+                            return Ok(DbResponse {
+                                columns: Vec::new(),
+                                rows: Vec::new(),
+                                rows_affected,
+                            });
+                        }
+                        Err(e) => {
+                            // Log error but continue to fallback
+                            debug!("Statement pool execution failed: {}", e);
+                        }
+                    }
+                }
+            }
+            
+            // Check INSERT query cache to avoid re-parsing
             if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
                 // Use cached rewritten query if available
                 let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
