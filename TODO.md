@@ -347,6 +347,13 @@ The logging reduction provided measurable performance gains, particularly for un
 
 The combination of logging reduction and RowDescription caching has cut SELECT query overhead in half!
 
+### Debug Logging Investigation (2025-07-02)
+Investigated removing debug! calls from hot paths but found:
+- Debug macros are already compiled out in release builds with log level "error"
+- No measurable performance impact from removing debug! statements
+- The tracing crate's macros are zero-cost when disabled
+- Keeping debug logs for development/troubleshooting has no production impact
+
 ## ✅ Batch INSERT Performance - DISCOVERED (2025-07-02)
 
 ### Background
