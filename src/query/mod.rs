@@ -3,6 +3,7 @@ pub mod executor;
 pub mod extended;
 mod extended_helpers;
 pub mod fast_path;
+pub mod extended_fast_path;
 
 pub mod executor_v2;
 pub mod executor_compat;

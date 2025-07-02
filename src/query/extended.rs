@@ -3,7 +3,7 @@ use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::DecimalHandler;
-use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
+use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
@@ -32,20 +32,65 @@ impl ExtendedQueryHandler {
         // For INSERT and SELECT queries, we need to determine parameter types from the target table schema
         let mut actual_param_types = param_types.clone();
         if param_types.is_empty() && query.contains('$') {
-            // Check if we have this query cached
-            if let Some(cached) = GLOBAL_QUERY_CACHE.get(&query) {
-                actual_param_types = cached.param_types.clone();
+            // First check parameter cache
+            if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
+                actual_param_types = cached_info.param_types;
                 info!("Using cached parameter types for query: {:?}", actual_param_types);
             } else {
-                if query.trim().to_uppercase().starts_with("INSERT") {
-                    actual_param_types = Self::analyze_insert_params(&query, db).await.unwrap_or_else(|_| {
-                        // If we can't determine types, default to text
-                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                        vec![25; param_count]
-                    });
-                    info!("Analyzed INSERT parameter types: {:?}", actual_param_types);
+                // Check if we have this query cached in query cache
+                if let Some(cached) = GLOBAL_QUERY_CACHE.get(&query) {
+                    actual_param_types = cached.param_types.clone();
+                    info!("Using cached parameter types from query cache: {:?}", actual_param_types);
                     
-                    // Cache the parsed query with its parameter types
+                    // Also cache in parameter cache for faster access
+                    GLOBAL_PARAMETER_CACHE.insert(query.clone(), CachedParameterInfo {
+                        param_types: actual_param_types.clone(),
+                        table_name: cached.table_names.first().cloned(),
+                        column_names: Vec::new(), // Will be populated later if needed
+                        created_at: std::time::Instant::now(),
+                    });
+                } else {
+                    // Need to analyze the query
+                    let (analyzed_types, table_name, column_names) = if query.trim().to_uppercase().starts_with("INSERT") {
+                        let types = Self::analyze_insert_params(&query, db).await.unwrap_or_else(|_| {
+                            // If we can't determine types, default to text
+                            let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                            vec![25; param_count]
+                        });
+                        info!("Analyzed INSERT parameter types: {:?}", types);
+                        
+                        // Extract table and columns for caching
+                        let (table, cols) = crate::types::QueryContextAnalyzer::get_insert_column_info(&query)
+                            .unwrap_or_else(|| (String::new(), Vec::new()));
+                        
+                        (types, Some(table), cols)
+                    } else if query.trim().to_uppercase().starts_with("SELECT") {
+                        let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
+                            // If we can't determine types, default to text
+                            let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                            vec![25; param_count]
+                        });
+                        info!("Analyzed SELECT parameter types: {:?}", types);
+                        
+                        let table = extract_table_name_from_select(&query);
+                        (types, table, Vec::new())
+                    } else {
+                        // Other query types - just count parameters
+                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                        (vec![25; param_count], None, Vec::new())
+                    };
+                    
+                    actual_param_types = analyzed_types.clone();
+                    
+                    // Cache the parameter info
+                    GLOBAL_PARAMETER_CACHE.insert(query.clone(), CachedParameterInfo {
+                        param_types: analyzed_types,
+                        table_name,
+                        column_names,
+                        created_at: std::time::Instant::now(),
+                    });
+                    
+                    // Also update query cache if it's a parseable query
                     if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
                         &sqlparser::dialect::PostgreSqlDialect {},
                         &query
@@ -64,13 +109,6 @@ impl ExtendedQueryHandler {
                             });
                         }
                     }
-                } else if query.trim().to_uppercase().starts_with("SELECT") {
-                    actual_param_types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
-                        // If we can't determine types, default to text
-                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                        vec![25; param_count]
-                    });
-                    info!("Analyzed SELECT parameter types: {:?}", actual_param_types);
                 }
             }
         }
@@ -322,8 +360,37 @@ impl ExtendedQueryHandler {
             stmt.param_types.clone()
         };
         
-        // Try fast path with parameters first (avoids parameter substitution overhead)
-        // Only attempt this for parameterized queries to avoid type issues in extended protocol
+        // Try optimized extended fast path first for parameterized queries
+        if !bound_values.is_empty() && query.contains('$') {
+            let query_type = super::extended_fast_path::QueryType::from_query(&query);
+            
+            // Use optimized path for SELECT, INSERT, UPDATE, DELETE
+            match query_type {
+                super::extended_fast_path::QueryType::Select |
+                super::extended_fast_path::QueryType::Insert |
+                super::extended_fast_path::QueryType::Update |
+                super::extended_fast_path::QueryType::Delete => {
+                    match super::extended_fast_path::ExtendedFastPath::execute_with_params(
+                        framed,
+                        db,
+                        session,
+                        &portal,
+                        &query,
+                        &bound_values,
+                        &param_formats,
+                        &param_types,
+                        query_type,
+                    ).await {
+                        Ok(true) => return Ok(()), // Successfully executed via fast path
+                        Ok(false) => {}, // Fall back to normal path
+                        Err(e) => return Err(e), // Propagate errors
+                    }
+                }
+                _ => {}, // Fall back to normal path for other query types
+            }
+        }
+        
+        // Try existing fast path as second option
         if let Some(fast_query) = crate::query::can_use_fast_path_enhanced(&query) {
             // Only use fast path for queries that actually have parameters in the extended protocol
             if !bound_values.is_empty() && query.contains('$') {
