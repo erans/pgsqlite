@@ -6,7 +6,7 @@ use crate::types::PgType;
 use crate::PgSqliteError;
 use rusqlite::types::Value as SqliteValue;
 use std::collections::HashMap;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 
 /// Memory-mapped query executor that optimizes large value transmission
 pub struct MemoryMappedQueryExecutor {
@@ -147,13 +147,12 @@ impl MemoryMappedQueryExecutor {
                         
                         if !is_system_table {
                             // For user tables, missing metadata is an error
-                            error!("MISSING METADATA: Column '{}' in table '{}' not found in __pgsqlite_schema. This indicates the table was not created through PostgreSQL protocol.", name, table);
-                            error!("Tables must be created using PostgreSQL CREATE TABLE syntax to ensure proper type metadata.");
+                            debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", name, table);
                         }
                     }
                     
                     // Default to text for simple queries without schema info
-                    warn!("Column '{}' using default text type (should have metadata)", name);
+                    debug!("Column '{}' using default text type", name);
                     PgType::Text.to_oid()
                 };
                 

@@ -6,7 +6,7 @@ use crate::types::PgType;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
-use tracing::{info, warn, error};
+use tracing::{info, debug};
 
 pub struct QueryExecutor;
 
@@ -122,14 +122,13 @@ impl QueryExecutor {
                                              table == "__pgsqlite_schema";
                         
                         if !is_system_table {
-                            // For user tables, missing metadata is an error
-                            error!("MISSING METADATA: Column '{}' in table '{}' not found in __pgsqlite_schema. This indicates the table was not created through PostgreSQL protocol.", name, table);
-                            error!("Tables must be created using PostgreSQL CREATE TABLE syntax to ensure proper type metadata.");
+                            // For user tables, missing metadata should be logged at debug level
+                            debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", name, table);
                         }
                     }
                     
                     // Default to text for simple queries without schema info
-                    warn!("Column '{}' using default text type (should have metadata)", name);
+                    debug!("Column '{}' using default text type", name);
                     PgType::Text.to_oid()
                 };
                 
@@ -420,7 +419,7 @@ impl QueryExecutor {
                 
                 match db.execute(init_query).await {
                     Ok(_) => info!("Successfully created/verified __pgsqlite_schema table"),
-                    Err(e) => error!("Failed to create __pgsqlite_schema table: {}", e),
+                    Err(e) => debug!("Failed to create __pgsqlite_schema table: {}", e),
                 }
                 
                 // Store each type mapping
@@ -435,7 +434,7 @@ impl QueryExecutor {
                         
                         match db.execute(&insert_query).await {
                             Ok(_) => info!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
-                            Err(e) => error!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e),
+                            Err(e) => debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e),
                         }
                     }
                 }

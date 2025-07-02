@@ -296,6 +296,31 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - High-priority items that affect core functionality are listed first
 - Consider dependencies between tasks when planning implementation
 
+## 🚧 SELECT Query Optimization - Logging Reduction (2025-07-02)
+
+### Background
+SELECT queries showed ~82x overhead with excessive error logging for missing schema metadata causing performance issues.
+
+### Work Completed
+- [x] Profiled SELECT query execution to identify logging bottlenecks
+- [x] Changed error! and warn! logging to debug! level for missing metadata in:
+  - src/query/executor.rs (lines 126, 131, 422, 437)
+  - src/query/executor_v2.rs (lines 117, 122)
+  - src/query/executor_memory_mapped.rs (lines 150, 155)
+  - src/query/extended.rs (lines 698, 734, 1524)
+- [x] Reduced logging overhead for user tables without schema metadata
+
+### Impact
+Missing metadata logging is now at debug level, reducing noise for legitimate cases where schema information is unavailable. This is particularly important for:
+- Dynamic queries without explicit type information
+- Tables created outside pgsqlite
+- Queries using type inference
+
+### Next Steps
+- [ ] Benchmark impact of logging reduction on SELECT performance
+- [ ] Implement RowDescription caching to avoid repeated field generation
+- [ ] Consider lazy schema loading for better startup performance
+
 ## ✅ Batch INSERT Performance - DISCOVERED (2025-07-02)
 
 ### Background

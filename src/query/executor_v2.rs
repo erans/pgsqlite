@@ -4,7 +4,7 @@ use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::PgType;
 use crate::PgSqliteError;
-use tracing::{info, warn, error};
+use tracing::{info, warn, debug};
 
 /// QueryExecutor V2 - Uses ProtocolWriter trait for zero-copy support
 pub struct QueryExecutorV2;
@@ -114,13 +114,12 @@ impl QueryExecutorV2 {
                         
                         if !is_system_table {
                             // For user tables, missing metadata is an error
-                            error!("MISSING METADATA: Column '{}' in table '{}' not found in __pgsqlite_schema. This indicates the table was not created through PostgreSQL protocol.", name, table);
-                            error!("Tables must be created using PostgreSQL CREATE TABLE syntax to ensure proper type metadata.");
+                            debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", name, table);
                         }
                     }
                     
                     // Default to text for simple queries without schema info
-                    warn!("Column '{}' using default text type (should have metadata)", name);
+                    debug!("Column '{}' using default text type", name);
                     PgType::Text.to_oid()
                 };
                 

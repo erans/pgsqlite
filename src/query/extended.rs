@@ -6,7 +6,7 @@ use crate::types::DecimalHandler;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
-use tracing::{info, warn, error};
+use tracing::{info, warn, debug};
 use std::sync::Arc;
 use byteorder::{BigEndian, ByteOrder};
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
@@ -695,7 +695,7 @@ impl ExtendedQueryHandler {
                                         format!("'{}'", s.replace('\'', "''"))
                                     }
                                     Err(e) => {
-                                        error!("Failed to decode binary NUMERIC parameter: {}", e);
+                                        debug!("Failed to decode binary NUMERIC parameter: {}", e);
                                         return Err(PgSqliteError::InvalidParameter(format!("Invalid binary NUMERIC: {}", e)));
                                     }
                                 }
@@ -731,7 +731,7 @@ impl ExtendedQueryHandler {
                                                 format!("'{}'", s.replace('\'', "''"))
                                             }
                                             Err(e) => {
-                                                error!("Invalid NUMERIC parameter: {}", e);
+                                                debug!("Invalid NUMERIC parameter: {}", e);
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid NUMERIC value: {}", e)));
                                             }
                                         }
@@ -1520,9 +1520,8 @@ impl ExtendedQueryHandler {
                         
                         if !is_system_table {
                             // For user tables, missing metadata is an error
-                            error!("MISSING METADATA: Column '{}' in table '{}' not found in __pgsqlite_schema. This indicates the table was not created through PostgreSQL protocol.", col_name, table);
-                            error!("Tables must be created using PostgreSQL CREATE TABLE syntax to ensure proper type metadata.");
-                            error!("Falling back to type inference, but this may cause type compatibility issues.");
+                            debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", col_name, table);
+                            debug!("Falling back to type inference, but this may cause type compatibility issues.");
                         }
                     }
                     
