@@ -163,7 +163,7 @@ async fn benchmark_batch_insert_performance() {
         TOTAL_ROWS as f64 / sqlite_batch_elapsed.as_secs_f64());
     
     println!("\npgsqlite via PostgreSQL protocol:");
-    for (batch_size, elapsed, per_row, rows_per_sec) in &results {
+    for (batch_size, elapsed, _per_row, rows_per_sec) in &results {
         let speedup = results[0].1.as_secs_f64() / elapsed.as_secs_f64();
         println!("  Batch size {:4}: {:?} ({:6.0} rows/sec, {:.1}x speedup vs single)",
             batch_size, elapsed, rows_per_sec, speedup);
