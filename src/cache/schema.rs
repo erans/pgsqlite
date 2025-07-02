@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use rusqlite::Connection;
+use crate::types::PgType;
 
 /// Represents column information for a table
 #[derive(Clone, Debug)]
@@ -132,7 +133,7 @@ impl SchemaCache {
             if let Ok(schema) = self.load_table_schema_direct(conn, &table_name) {
                 // Check for decimal columns
                 let has_decimal = schema.columns.iter().any(|col| {
-                    col.pg_type == "numeric" || col.pg_oid == 1700 // NUMERIC OID
+                    col.pg_type == "numeric" || col.pg_oid == PgType::Numeric.to_oid()
                 });
                 
                 if has_decimal {
@@ -264,7 +265,7 @@ impl SchemaCache {
         
         // Check for decimal columns and update bloom filter
         let has_decimal = schema.columns.iter().any(|col| {
-            col.pg_type == "numeric" || col.pg_oid == 1700
+            col.pg_type == "numeric" || col.pg_oid == PgType::Numeric.to_oid()
         });
         if has_decimal {
             self.decimal_tables.write().unwrap().insert(table_name.to_string());

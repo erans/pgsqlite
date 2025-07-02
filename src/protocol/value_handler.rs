@@ -1,6 +1,7 @@
 use std::io;
 use rusqlite::types::Value as SqliteValue;
 use crate::protocol::{MappedValue, MappedValueFactory, MemoryMappedConfig};
+use crate::types::PgType;
 // use crate::types::value_converter::ValueConverter; // Reserved for future enhanced type conversion
 use tracing::debug;
 
@@ -195,10 +196,10 @@ impl ValueHandler {
         use crate::protocol::BinaryEncoder;
         
         match pg_type_oid {
-            21 => BinaryEncoder::encode_int2(value as i16), // INT2
-            23 => BinaryEncoder::encode_int4(value as i32), // INT4
-            20 => BinaryEncoder::encode_int8(value),        // INT8
-            16 => BinaryEncoder::encode_bool(value != 0),   // BOOL
+            t if t == PgType::Int2.to_oid() => BinaryEncoder::encode_int2(value as i16), // INT2
+            t if t == PgType::Int4.to_oid() => BinaryEncoder::encode_int4(value as i32), // INT4
+            t if t == PgType::Int8.to_oid() => BinaryEncoder::encode_int8(value),        // INT8
+            t if t == PgType::Bool.to_oid() => BinaryEncoder::encode_bool(value != 0),   // BOOL
             _ => value.to_string().into_bytes(),           // Fallback to text
         }
     }
@@ -208,8 +209,8 @@ impl ValueHandler {
         use crate::protocol::BinaryEncoder;
         
         match pg_type_oid {
-            700 => BinaryEncoder::encode_float4(value as f32), // FLOAT4
-            701 => BinaryEncoder::encode_float8(value),        // FLOAT8
+            t if t == PgType::Float4.to_oid() => BinaryEncoder::encode_float4(value as f32), // FLOAT4
+            t if t == PgType::Float8.to_oid() => BinaryEncoder::encode_float8(value),        // FLOAT8
             _ => value.to_string().into_bytes(),              // Fallback to text
         }
     }

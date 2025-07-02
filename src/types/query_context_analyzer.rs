@@ -1,3 +1,5 @@
+use crate::types::PgType;
+
 /// Analyzes query context to help with type inference
 pub struct QueryContextAnalyzer;
 
@@ -45,20 +47,20 @@ impl QueryContextAnalyzer {
             let param = format!("${}", i);
             
             if query_lower.contains(&format!("{}::int4", param)) {
-                types.push(23); // Explicit cast to int4
+                types.push(PgType::Int4.to_oid()); // Explicit cast to int4
             } else if query_lower.contains(&format!("{}::int8", param)) ||
                       query_lower.contains(&format!("{}::bigint", param)) {
-                types.push(20); // Explicit cast to int8
+                types.push(PgType::Int8.to_oid()); // Explicit cast to int8
             } else if query_lower.contains(&format!("{}::text", param)) {
-                types.push(25); // Explicit cast to text
+                types.push(PgType::Text.to_oid()); // Explicit cast to text
             } else if query_lower.contains(&format!("{}::bytea", param)) {
-                types.push(17); // Explicit cast to bytea
+                types.push(PgType::Bytea.to_oid()); // Explicit cast to bytea
             } else if query_lower.contains(&format!("{}::bool", param)) ||
                       query_lower.contains(&format!("{}::boolean", param)) {
-                types.push(16); // Explicit cast to bool
+                types.push(PgType::Bool.to_oid()); // Explicit cast to bool
             } else if query_lower.contains(&format!("{}::float8", param)) ||
                       query_lower.contains(&format!("{}::double precision", param)) {
-                types.push(701); // Explicit cast to float8
+                types.push(PgType::Float8.to_oid()); // Explicit cast to float8
             } else {
                 types.push(0); // Unknown - will need to be determined from schema
             }

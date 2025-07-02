@@ -2,7 +2,7 @@ use crate::protocol::{BackendMessage, FieldDescription};
 use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_QUERY_CACHE};
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
-use crate::types::DecimalHandler;
+use crate::types::{DecimalHandler, PgType};
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
@@ -66,7 +66,7 @@ impl ExtendedQueryHandler {
                             Err(_) => {
                                 // If we can't determine types, default to text
                                 let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                                let types = vec![25; param_count];
+                                let types = vec![PgType::Text.to_oid(); param_count];
                                 (types.clone(), Some(types), None, Vec::new())
                             }
                         }
@@ -74,7 +74,7 @@ impl ExtendedQueryHandler {
                         let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
                             // If we can't determine types, default to text
                             let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                            vec![25; param_count]
+                            vec![PgType::Text.to_oid(); param_count]
                         });
                         info!("Analyzed SELECT parameter types: {:?}", types);
                         
@@ -83,7 +83,7 @@ impl ExtendedQueryHandler {
                     } else {
                         // Other query types - just count parameters
                         let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
-                        let types = vec![25; param_count];
+                        let types = vec![PgType::Text.to_oid(); param_count];
                         (types.clone(), Some(types), None, Vec::new())
                     };
                     
@@ -241,7 +241,7 @@ impl ExtendedQueryHandler {
             
             info!("Query has {} parameters, defaulting all to text", max_param);
             // Default all to text - we'll handle type conversion during execution
-            actual_param_types = vec![25; max_param];
+            actual_param_types = vec![PgType::Text.to_oid(); max_param];
         }
         
         info!("Final param_types for statement: {:?}", actual_param_types);
@@ -666,12 +666,12 @@ impl ExtendedQueryHandler {
                 
             // Convert based on PostgreSQL type OID
             match param_type {
-                16 => Ok(rusqlite::types::Value::Integer(if text == "t" || text == "true" { 1 } else { 0 })), // BOOL
-                20 => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int8".to_string()))?)), // INT8
-                23 => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int4".to_string()))?)), // INT4
-                21 => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int2".to_string()))?)), // INT2
-                700 => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float4".to_string()))?)), // FLOAT4
-                701 => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float8".to_string()))?)), // FLOAT8
+                t if t == PgType::Bool.to_oid() => Ok(rusqlite::types::Value::Integer(if text == "t" || text == "true" { 1 } else { 0 })), // BOOL
+                t if t == PgType::Int8.to_oid() => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int8".to_string()))?)), // INT8
+                t if t == PgType::Int4.to_oid() => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int4".to_string()))?)), // INT4
+                t if t == PgType::Int2.to_oid() => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int2".to_string()))?)), // INT2
+                t if t == PgType::Float4.to_oid() => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float4".to_string()))?)), // FLOAT4
+                t if t == PgType::Float8.to_oid() => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float8".to_string()))?)), // FLOAT8
                 _ => Ok(rusqlite::types::Value::Text(text.to_string())), // Default to TEXT
             }
         } else {
@@ -737,7 +737,7 @@ impl ExtendedQueryHandler {
         for (i, value) in values.iter().enumerate() {
             let param = format!("${}", i + 1);
             let format = formats.get(i).copied().unwrap_or(0); // Default to text format
-            let param_type = param_types.get(i).copied().unwrap_or(25); // Default to text
+            let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to text
             
             let replacement = match value {
                 None => "NULL".to_string(),
@@ -745,7 +745,7 @@ impl ExtendedQueryHandler {
                     if format == 1 {
                         // Binary format - decode based on expected type
                         match param_type {
-                            23 => {
+                            t if t == PgType::Int4.to_oid() => {
                                 // int4
                                 if bytes.len() == 4 {
                                     let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
@@ -755,7 +755,7 @@ impl ExtendedQueryHandler {
                                     format!("X'{}'", hex::encode(bytes))
                                 }
                             }
-                            20 => {
+                            t if t == PgType::Int8.to_oid() => {
                                 // int8
                                 if bytes.len() == 8 {
                                     let value = i64::from_be_bytes([
@@ -768,7 +768,7 @@ impl ExtendedQueryHandler {
                                     format!("X'{}'", hex::encode(bytes))
                                 }
                             }
-                            790 => {
+                            t if t == PgType::Money.to_oid() => {
                                 // money - binary format is int8 cents
                                 if bytes.len() == 8 {
                                     let cents = i64::from_be_bytes([
@@ -783,7 +783,7 @@ impl ExtendedQueryHandler {
                                     format!("X'{}'", hex::encode(bytes))
                                 }
                             }
-                            1700 => {
+                            t if t == PgType::Numeric.to_oid() => {
                                 // numeric - decode binary format
                                 match DecimalHandler::decode_numeric(bytes) {
                                     Ok(decimal) => {
@@ -808,7 +808,8 @@ impl ExtendedQueryHandler {
                             Ok(s) => {
                                 // Check parameter type to determine handling
                                 match param_type {
-                                    23 | 20 | 21 | 700 | 701 => {
+                                    t if t == PgType::Int4.to_oid() || t == PgType::Int8.to_oid() || t == PgType::Int2.to_oid() || 
+                                         t == PgType::Float4.to_oid() || t == PgType::Float8.to_oid() => {
                                         // Integer and float types - use as-is if valid number
                                         if s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok() {
                                             s
@@ -816,11 +817,11 @@ impl ExtendedQueryHandler {
                                             format!("'{}'", s.replace('\'', "''"))
                                         }
                                     }
-                                    790 => {
+                                    t if t == PgType::Money.to_oid() => {
                                         // MONEY type - always quote
                                         format!("'{}'", s.replace('\'', "''"))
                                     }
-                                    1700 => {
+                                    t if t == PgType::Numeric.to_oid() => {
                                         // NUMERIC type - validate and quote
                                         match DecimalHandler::validate_numeric_string(&s) {
                                             Ok(_) => {
@@ -1099,7 +1100,7 @@ impl ExtendedQueryHandler {
         // Encode lower bound if not infinite
         if !lower_inf {
             let lower_bytes = match element_type {
-                23 => {
+                t if t == PgType::Int4.to_oid() => {
                     // int4
                     if let Ok(val) = lower_str.parse::<i32>() {
                         let mut buf = vec![0u8; 4];
@@ -1109,7 +1110,7 @@ impl ExtendedQueryHandler {
                         return None;
                     }
                 }
-                20 => {
+                t if t == PgType::Int8.to_oid() => {
                     // int8
                     if let Ok(val) = lower_str.parse::<i64>() {
                         let mut buf = vec![0u8; 8];
@@ -1119,7 +1120,7 @@ impl ExtendedQueryHandler {
                         return None;
                     }
                 }
-                1700 => {
+                t if t == PgType::Numeric.to_oid() => {
                     // numeric
                     match DecimalHandler::parse_decimal(lower_str) {
                         Ok(decimal) => DecimalHandler::encode_numeric(&decimal),
@@ -1137,7 +1138,7 @@ impl ExtendedQueryHandler {
         // Encode upper bound if not infinite
         if !upper_inf {
             let upper_bytes = match element_type {
-                23 => {
+                t if t == PgType::Int4.to_oid() => {
                     // int4
                     if let Ok(val) = upper_str.parse::<i32>() {
                         let mut buf = vec![0u8; 4];
@@ -1147,7 +1148,7 @@ impl ExtendedQueryHandler {
                         return None;
                     }
                 }
-                20 => {
+                t if t == PgType::Int8.to_oid() => {
                     // int8
                     if let Ok(val) = upper_str.parse::<i64>() {
                         let mut buf = vec![0u8; 8];
@@ -1157,7 +1158,7 @@ impl ExtendedQueryHandler {
                         return None;
                     }
                 }
-                1700 => {
+                t if t == PgType::Numeric.to_oid() => {
                     // numeric
                     match DecimalHandler::parse_decimal(upper_str) {
                         Ok(decimal) => DecimalHandler::encode_numeric(&decimal),
@@ -1189,7 +1190,7 @@ impl ExtendedQueryHandler {
             } else {
                 result_formats.get(i).copied().unwrap_or(0)
             };
-            let type_oid = field_types.get(i).copied().unwrap_or(25);
+            let type_oid = field_types.get(i).copied().unwrap_or(PgType::Text.to_oid());
             
             let encoded_value = match value {
                 None => None,
@@ -1197,7 +1198,7 @@ impl ExtendedQueryHandler {
                     if format == 1 {
                         // Binary format requested
                         match type_oid {
-                            16 => {
+                            t if t == PgType::Bool.to_oid() => {
                                 // bool - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     let val = match s.trim() {
@@ -1210,7 +1211,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            23 => {
+                            t if t == PgType::Int4.to_oid() => {
                                 // int4 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i32>() {
@@ -1224,7 +1225,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            20 => {
+                            t if t == PgType::Int8.to_oid() => {
                                 // int8 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i64>() {
@@ -1238,7 +1239,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            700 => {
+                            t if t == PgType::Float4.to_oid() => {
                                 // float4 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<f32>() {
@@ -1252,7 +1253,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            701 => {
+                            t if t == PgType::Float8.to_oid() => {
                                 // float8 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<f64>() {
@@ -1266,7 +1267,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            2950 => {
+                            t if t == PgType::Uuid.to_oid() => {
                                 // uuid - convert text to binary (16 bytes)
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(uuid_bytes) = crate::types::uuid::UuidHandler::uuid_to_bytes(&s) {
@@ -1279,7 +1280,7 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Date types
-                            1082 => {
+                            t if t == PgType::Date.to_oid() => {
                                 // date - days since 2000-01-01 as int4
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(days) = Self::date_to_pg_days(&s) {
@@ -1294,7 +1295,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            1083 => {
+                            t if t == PgType::Time.to_oid() => {
                                 // time - microseconds since midnight as int8
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(micros) = Self::time_to_microseconds(&s) {
@@ -1309,7 +1310,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            1114 | 1184 => {
+                            t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
                                 // timestamp/timestamptz - microseconds since 2000-01-01 as int8
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(micros) = Self::timestamp_to_pg_microseconds(&s) {
@@ -1325,7 +1326,7 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Numeric type
-                            1700 => {
+                            t if t == PgType::Numeric.to_oid() => {
                                 // numeric - use DecimalHandler for proper encoding
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     match DecimalHandler::parse_decimal(&s) {
@@ -1343,7 +1344,7 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Money type
-                            790 => {
+                            t if t == PgType::Money.to_oid() => {
                                 // money - int8 representing cents (amount * 100)
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     // Remove currency symbols and convert to cents
@@ -1361,7 +1362,7 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Network types
-                            650 | 869 => {
+                            t if t == PgType::Cidr.to_oid() || t == PgType::Inet.to_oid() => {
                                 // cidr/inet - family(1) + bits(1) + is_cidr(1) + nb(1) + address bytes
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(inet_bytes) = Self::parse_inet(&s) {
@@ -1374,7 +1375,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            829 => {
+                            t if t == PgType::Macaddr.to_oid() => {
                                 // macaddr - 6 bytes
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(mac_bytes) = Self::parse_macaddr(&s) {
@@ -1387,7 +1388,7 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            774 => {
+                            t if t == PgType::Macaddr8.to_oid() => {
                                 // macaddr8 - 8 bytes
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(mac_bytes) = Self::parse_macaddr8(&s) {
@@ -1401,7 +1402,7 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Bit string types
-                            1560 | 1562 => {
+                            t if t == PgType::Bit.to_oid() || t == PgType::Varbit.to_oid() => {
                                 // bit/varbit - length(int4) + bit data
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Some(bit_bytes) = Self::parse_bit_string(&s) {
@@ -1415,10 +1416,10 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Range types
-                            3904 => {
+                            t if t == PgType::Int4range.to_oid() => {
                                 // int4range
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(range_bytes) = Self::encode_range(&s, 23) {
+                                    if let Some(range_bytes) = Self::encode_range(&s, PgType::Int4.to_oid()) {
                                         Some(range_bytes)
                                     } else {
                                         // If parsing fails, keep as text
@@ -1428,10 +1429,10 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            3926 => {
+                            t if t == PgType::Int8range.to_oid() => {
                                 // int8range
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(range_bytes) = Self::encode_range(&s, 20) {
+                                    if let Some(range_bytes) = Self::encode_range(&s, PgType::Int8.to_oid()) {
                                         Some(range_bytes)
                                     } else {
                                         // If parsing fails, keep as text
@@ -1441,10 +1442,10 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            3906 => {
+                            t if t == PgType::Numrange.to_oid() => {
                                 // numrange
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(range_bytes) = Self::encode_range(&s, 1700) {
+                                    if let Some(range_bytes) = Self::encode_range(&s, PgType::Numeric.to_oid()) {
                                         Some(range_bytes)
                                     } else {
                                         // If parsing fails, keep as text
@@ -1455,28 +1456,28 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             // Text types - these are fine as-is in binary format
-                            25 | 1043 | 1042 => {
+                            t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() || t == PgType::Char.to_oid() => {
                                 // text/varchar/char - UTF-8 encoded text
                                 Some(bytes.clone())
                             }
                             // JSON types
-                            114 => {
+                            t if t == PgType::Json.to_oid() => {
                                 // json - UTF-8 encoded JSON text
                                 Some(bytes.clone())
                             }
-                            3802 => {
+                            t if t == PgType::Jsonb.to_oid() => {
                                 // jsonb - version byte (1) + UTF-8 encoded JSON text
                                 let mut result = vec![1u8]; // Version 1
                                 result.extend_from_slice(&bytes);
                                 Some(result)
                             }
                             // Bytea - already binary
-                            17 => {
+                            t if t == PgType::Bytea.to_oid() => {
                                 // bytea - raw bytes
                                 Some(bytes.clone())
                             }
                             // Small integers
-                            21 => {
+                            t if t == PgType::Int2.to_oid() => {
                                 // int2 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i16>() {
@@ -1498,7 +1499,7 @@ impl ExtendedQueryHandler {
                     } else {
                         // Text format
                         match type_oid {
-                            16 => {
+                            t if t == PgType::Bool.to_oid() => {
                                 // bool - convert SQLite's 0/1 to PostgreSQL's f/t format
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     let pg_bool_str = match s.trim() {
@@ -2172,16 +2173,16 @@ impl ExtendedQueryHandler {
                 // For certain PostgreSQL types that tokio-postgres doesn't support in binary format,
                 // use TEXT as the parameter type to allow string representation
                 let param_oid = match col_info.pg_oid {
-                    774 => 25, // MACADDR8 -> TEXT
-                    829 => 25, // MACADDR -> TEXT  
-                    869 => 25, // INET -> TEXT
-                    650 => 25, // CIDR -> TEXT
-                    790 => 25, // MONEY -> TEXT
-                    3904 => 25, // INT4RANGE -> TEXT
-                    3926 => 25, // INT8RANGE -> TEXT
-                    3906 => 25, // NUMRANGE -> TEXT
-                    1560 => 25, // BIT -> TEXT
-                    1562 => 25, // VARBIT -> TEXT
+                    t if t == PgType::Macaddr8.to_oid() => PgType::Text.to_oid(), // MACADDR8 -> TEXT
+                    t if t == PgType::Macaddr.to_oid() => PgType::Text.to_oid(), // MACADDR -> TEXT  
+                    t if t == PgType::Inet.to_oid() => PgType::Text.to_oid(), // INET -> TEXT
+                    t if t == PgType::Cidr.to_oid() => PgType::Text.to_oid(), // CIDR -> TEXT
+                    t if t == PgType::Money.to_oid() => PgType::Text.to_oid(), // MONEY -> TEXT
+                    t if t == PgType::Int4range.to_oid() => PgType::Text.to_oid(), // INT4RANGE -> TEXT
+                    t if t == PgType::Int8range.to_oid() => PgType::Text.to_oid(), // INT8RANGE -> TEXT
+                    t if t == PgType::Numrange.to_oid() => PgType::Text.to_oid(), // NUMRANGE -> TEXT
+                    t if t == PgType::Bit.to_oid() => PgType::Text.to_oid(), // BIT -> TEXT
+                    t if t == PgType::Varbit.to_oid() => PgType::Text.to_oid(), // VARBIT -> TEXT
                     _ => col_info.pg_oid, // Use original OID for supported types
                 };
                 
@@ -2195,8 +2196,8 @@ impl ExtendedQueryHandler {
                 }
             } else {
                 // Default to text if column not found
-                param_types.push(25);
-                original_types.push(25);
+                param_types.push(PgType::Text.to_oid());
+                original_types.push(PgType::Text.to_oid());
                 info!("Column {}.{} not found in schema, defaulting to text", table_name, column);
             }
         }
@@ -2207,40 +2208,40 @@ impl ExtendedQueryHandler {
     /// Convert PostgreSQL type name to OID
     fn pg_type_name_to_oid(type_name: &str) -> i32 {
         match type_name.to_lowercase().as_str() {
-            "bool" | "boolean" => 16,
-            "bytea" => 17,
-            "char" => 18,
-            "name" => 19,
-            "int8" | "bigint" => 20,
-            "int2" | "smallint" => 21,
-            "int4" | "integer" | "int" => 23,
-            "text" => 25,
-            "oid" => 26,
-            "float4" | "real" => 700,
-            "float8" | "double" | "double precision" => 701,
-            "varchar" | "character varying" => 1043,
-            "date" => 1082,
-            "time" => 1083,
-            "timestamp" => 1114,
-            "timestamptz" | "timestamp with time zone" => 1184,
-            "interval" => 1186,
-            "numeric" | "decimal" => 1700,
-            "uuid" => 2950,
-            "json" => 114,
-            "jsonb" => 3802,
-            "money" => 790,
-            "int4range" => 3904,
-            "int8range" => 3926,
-            "numrange" => 3906,
-            "cidr" => 650,
-            "inet" => 869,
-            "macaddr" => 829,
-            "macaddr8" => 774,
-            "bit" => 1560,
-            "varbit" | "bit varying" => 1562,
+            "bool" | "boolean" => PgType::Bool.to_oid(),
+            "bytea" => PgType::Bytea.to_oid(),
+            "char" => PgType::Char.to_oid(),
+            "name" => 19, // Name type not in PgType enum yet
+            "int8" | "bigint" => PgType::Int8.to_oid(),
+            "int2" | "smallint" => PgType::Int2.to_oid(),
+            "int4" | "integer" | "int" => PgType::Int4.to_oid(),
+            "text" => PgType::Text.to_oid(),
+            "oid" => 26, // OID type not in PgType enum yet
+            "float4" | "real" => PgType::Float4.to_oid(),
+            "float8" | "double" | "double precision" => PgType::Float8.to_oid(),
+            "varchar" | "character varying" => PgType::Varchar.to_oid(),
+            "date" => PgType::Date.to_oid(),
+            "time" => PgType::Time.to_oid(),
+            "timestamp" => PgType::Timestamp.to_oid(),
+            "timestamptz" | "timestamp with time zone" => PgType::Timestamptz.to_oid(),
+            "interval" => 1186, // Interval type not in PgType enum yet
+            "numeric" | "decimal" => PgType::Numeric.to_oid(),
+            "uuid" => PgType::Uuid.to_oid(),
+            "json" => PgType::Json.to_oid(),
+            "jsonb" => PgType::Jsonb.to_oid(),
+            "money" => PgType::Money.to_oid(),
+            "int4range" => PgType::Int4range.to_oid(),
+            "int8range" => PgType::Int8range.to_oid(),
+            "numrange" => PgType::Numrange.to_oid(),
+            "cidr" => PgType::Cidr.to_oid(),
+            "inet" => PgType::Inet.to_oid(),
+            "macaddr" => PgType::Macaddr.to_oid(),
+            "macaddr8" => PgType::Macaddr8.to_oid(),
+            "bit" => PgType::Bit.to_oid(),
+            "varbit" | "bit varying" => PgType::Varbit.to_oid(),
             _ => {
                 info!("Unknown PostgreSQL type '{}', defaulting to text", type_name);
-                25 // Default to text
+                PgType::Text.to_oid() // Default to text
             }
         }
     }
@@ -2439,35 +2440,35 @@ impl ExtendedQueryHandler {
     /// Convert a PostgreSQL cast type name to its OID
     fn cast_type_to_oid(cast_type: &str) -> i32 {
         match cast_type {
-            "text" => 25,
-            "int4" | "int" | "integer" => 23,
-            "int8" | "bigint" => 20,
-            "int2" | "smallint" => 21,
-            "float4" | "real" => 700,
-            "float8" | "double precision" => 701,
-            "bool" | "boolean" => 16,
-            "bytea" => 17,
-            "char" => 18,
-            "varchar" => 1043,
-            "date" => 1082,
-            "time" => 1083,
-            "timestamp" => 1114,
-            "timestamptz" => 1184,
-            "numeric" | "decimal" => 1700,
-            "json" => 114,
-            "jsonb" => 3802,
-            "uuid" => 2950,
-            "money" => 790,
-            "int4range" => 3904,
-            "int8range" => 3926,
-            "numrange" => 3906,
-            "cidr" => 650,
-            "inet" => 869,
-            "macaddr" => 829,
-            "macaddr8" => 774,
-            "bit" => 1560,
-            "varbit" | "bit varying" => 1562,
-            _ => 25, // Default to text for unknown types
+            "text" => PgType::Text.to_oid(),
+            "int4" | "int" | "integer" => PgType::Int4.to_oid(),
+            "int8" | "bigint" => PgType::Int8.to_oid(),
+            "int2" | "smallint" => PgType::Int2.to_oid(),
+            "float4" | "real" => PgType::Float4.to_oid(),
+            "float8" | "double precision" => PgType::Float8.to_oid(),
+            "bool" | "boolean" => PgType::Bool.to_oid(),
+            "bytea" => PgType::Bytea.to_oid(),
+            "char" => PgType::Char.to_oid(),
+            "varchar" => PgType::Varchar.to_oid(),
+            "date" => PgType::Date.to_oid(),
+            "time" => PgType::Time.to_oid(),
+            "timestamp" => PgType::Timestamp.to_oid(),
+            "timestamptz" => PgType::Timestamptz.to_oid(),
+            "numeric" | "decimal" => PgType::Numeric.to_oid(),
+            "json" => PgType::Json.to_oid(),
+            "jsonb" => PgType::Jsonb.to_oid(),
+            "uuid" => PgType::Uuid.to_oid(),
+            "money" => PgType::Money.to_oid(),
+            "int4range" => PgType::Int4range.to_oid(),
+            "int8range" => PgType::Int8range.to_oid(),
+            "numrange" => PgType::Numrange.to_oid(),
+            "cidr" => PgType::Cidr.to_oid(),
+            "inet" => PgType::Inet.to_oid(),
+            "macaddr" => PgType::Macaddr.to_oid(),
+            "macaddr8" => PgType::Macaddr8.to_oid(),
+            "bit" => PgType::Bit.to_oid(),
+            "varbit" | "bit varying" => PgType::Varbit.to_oid(),
+            _ => PgType::Text.to_oid(), // Default to text for unknown types
         }
     }
     

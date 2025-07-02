@@ -1,6 +1,7 @@
 use bytes::{BufMut, BytesMut};
 use rust_decimal::Decimal;
 use std::convert::TryInto;
+use crate::types::PgType;
 
 /// Binary format encoders for PostgreSQL types
 pub struct BinaryEncoder;
@@ -79,14 +80,14 @@ impl BinaryEncoder {
 
         // Binary format encoding based on type OID
         match type_oid {
-            16 => {
+            t if t == PgType::Bool.to_oid() => {
                 // BOOL
                 match value {
                     rusqlite::types::Value::Integer(i) => Some(Self::encode_bool(*i != 0)),
                     _ => None,
                 }
             }
-            21 => {
+            t if t == PgType::Int2.to_oid() => {
                 // INT2
                 match value {
                     rusqlite::types::Value::Integer(i) => {
@@ -99,7 +100,7 @@ impl BinaryEncoder {
                     _ => None,
                 }
             }
-            23 => {
+            t if t == PgType::Int4.to_oid() => {
                 // INT4
                 match value {
                     rusqlite::types::Value::Integer(i) => {
@@ -112,14 +113,14 @@ impl BinaryEncoder {
                     _ => None,
                 }
             }
-            20 => {
+            t if t == PgType::Int8.to_oid() => {
                 // INT8
                 match value {
                     rusqlite::types::Value::Integer(i) => Some(Self::encode_int8(*i)),
                     _ => None,
                 }
             }
-            700 => {
+            t if t == PgType::Float4.to_oid() => {
                 // FLOAT4
                 match value {
                     rusqlite::types::Value::Real(f) => Some(Self::encode_float4(*f as f32)),
@@ -127,7 +128,7 @@ impl BinaryEncoder {
                     _ => None,
                 }
             }
-            701 => {
+            t if t == PgType::Float8.to_oid() => {
                 // FLOAT8
                 match value {
                     rusqlite::types::Value::Real(f) => Some(Self::encode_float8(*f)),
@@ -135,14 +136,14 @@ impl BinaryEncoder {
                     _ => None,
                 }
             }
-            17 => {
+            t if t == PgType::Bytea.to_oid() => {
                 // BYTEA
                 match value {
                     rusqlite::types::Value::Blob(b) => Some(Self::encode_bytea(b)),
                     _ => None,
                 }
             }
-            25 | 1043 => {
+            t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
                 // TEXT, VARCHAR - binary format is the same as text
                 match value {
                     rusqlite::types::Value::Text(s) => Some(Self::encode_text(s)),

@@ -567,7 +567,7 @@ fn build_execution_metadata(
         columns,
         boolean_columns,
         type_converters,
-        type_oids: vec![25; column_count], // Default to TEXT, will be populated later
+        type_oids: vec![PgType::Text.to_oid(); column_count], // Default to TEXT, will be populated later
         result_formats: vec![], // Will be populated from Portal when executing
         fast_path_eligible,
         prepared_sql,
@@ -635,7 +635,7 @@ fn is_boolean_column(col_name: &str, query: &str, schema_cache: &SchemaCache) ->
         for table_name in table_names {
             if let Some(schema) = schema_cache.get(&table_name) {
                 if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
-                    return col_info.pg_type.to_lowercase() == "boolean" || col_info.pg_oid == 16;
+                    return col_info.pg_type.to_lowercase() == "boolean" || col_info.pg_oid == PgType::Bool.to_oid();
                 }
             }
         }
