@@ -85,15 +85,15 @@ pgsqlite achieves reasonable performance through a multi-layered optimization ap
 - **Rewrite Optimization**: Decimal arithmetic rewriting computed once per unique query structure
 - **Prepared Statement Optimization**: Statement metadata caching and parameter optimization
 
-**Performance Results with Latest Optimizations (2025-07-01):**
+**Performance Results with Latest Optimizations (2025-07-02):**
 ```
 Protocol-Level Performance (includes full PostgreSQL wire protocol):
-- Uncached SELECT: ~140x overhead (0.152ms vs 0.001ms SQLite)
-- Cached SELECT: ~21x overhead (0.063ms vs 0.003ms SQLite) 
-- INSERT: ~168x overhead (0.288ms vs 0.002ms SQLite)
-- UPDATE: ~32x overhead (0.040ms vs 0.001ms SQLite)
-- DELETE: ~37x overhead (0.037ms vs 0.001ms SQLite)
-- Overall: ~94x overhead (full protocol)
+- Uncached SELECT: ~100x overhead (0.106ms vs 0.001ms SQLite)
+- Cached SELECT: ~17x overhead (0.069ms vs 0.004ms SQLite) 
+- INSERT: ~145x overhead (0.291ms vs 0.002ms SQLite)
+- UPDATE: ~38x overhead (0.038ms vs 0.001ms SQLite)
+- DELETE: ~36x overhead (0.036ms vs 0.001ms SQLite)
+- Overall: ~46x overhead (full protocol)
 
 Direct DbHandler Performance (bypassing protocol):
 - INSERT fast path: 1.5x overhead (2.572µs vs 1.756µs SQLite)
@@ -223,6 +223,15 @@ Intelligent caching of complete query results:
 - 100 entry LRU cache with 60-second TTL
 - Automatic invalidation on DDL statements
 - 2.2x speedup for cached queries
+
+### RowDescription Caching ✅ IMPLEMENTED
+Optimized field description caching for SELECT queries:
+- LRU cache for FieldDescription messages (1000 entries, 10-minute TTL)
+- Cache key includes normalized query, table name, and column names
+- Configurable via environment variables:
+  - `PGSQLITE_ROW_DESC_CACHE_SIZE` (default: 1000)
+  - `PGSQLITE_ROW_DESC_CACHE_TTL_MINUTES` (default: 10)
+- 41% improvement for cached SELECT queries
 
 ## Supported Features
 

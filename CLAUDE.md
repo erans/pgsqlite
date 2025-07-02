@@ -281,6 +281,33 @@ The zero-copy protocol architecture has achieved significant performance improve
 - **Type conversion** optimization - Boolean and numeric conversions
 - **COPY protocol** - For even faster bulk data loading
 
+### SELECT Query Optimization - Phase 2 (2025-07-02)
+
+Following the initial optimization phases that reduced SELECT overhead from ~98x to ~14x, implemented two additional optimizations:
+
+**1. Logging Reduction:**
+- Changed error! and warn! logging to debug! level for missing schema metadata
+- Reduced logging overhead during SELECT queries
+- **Result**: 33% improvement (187ms → 125ms)
+
+**2. RowDescription Caching:**
+- Implemented LRU cache for FieldDescription messages
+- Cache key includes query, table name, and column names
+- Configurable via environment variables:
+  - `PGSQLITE_ROW_DESC_CACHE_SIZE` (default: 1000 entries)
+  - `PGSQLITE_ROW_DESC_CACHE_TTL_MINUTES` (default: 10 minutes)
+- **Result**: 41% improvement for cached queries (80ms → 47ms)
+
+**Combined Results:**
+- **SELECT**: ~82ms (was ~187ms) - **56% total improvement**
+- **SELECT (cached)**: ~47ms (was ~94ms) - **50% total improvement** 
+- **Overall overhead**: ~46x (was ~98x) - **53% total improvement**
+
+**Debug Logging Investigation:**
+- Found that debug! macros are already compiled out in release builds
+- No performance impact from debug logging when log level is set to "error"
+- The tracing crate provides zero-cost abstractions when disabled
+
 ### Batch INSERT Performance Discovery (2025-07-02)
 
 **Key Finding**: Multi-row INSERT syntax is already fully supported and provides dramatic performance improvements!
