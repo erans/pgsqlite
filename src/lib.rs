@@ -224,6 +224,8 @@ pub async fn handle_test_connection_with_pool(
                 framed.send(BackendMessage::ReadyForQuery {
                     status: *session.transaction_status.read().await,
                 }).await?;
+                // Flush to ensure ReadyForQuery is sent immediately
+                framed.flush().await?;
             }
             FrontendMessage::Flush => {
                 framed.flush().await?;

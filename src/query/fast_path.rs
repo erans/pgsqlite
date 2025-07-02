@@ -220,6 +220,15 @@ pub fn can_use_fast_path_enhanced(query: &str) -> Option<FastPathQuery> {
         });
     }
     
+    // Try INSERT - most INSERTs can use fast path
+    if let Some(caps) = INSERT_REGEX.captures(query) {
+        return Some(FastPathQuery {
+            table_name: caps.get(1).unwrap().as_str().to_string(),
+            operation: FastPathOperation::Insert,
+            where_clause: None,
+        });
+    }
+    
     None
 }
 

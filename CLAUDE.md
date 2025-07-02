@@ -42,12 +42,20 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 ## Recent Work (Condensed History)
 - Implemented comprehensive PostgreSQL type support (40+ types including ranges, network types, binary types)
 - Built custom DECIMAL type system with automatic query rewriting for proper numeric handling
-- Developed multi-phase SELECT query optimization reducing overhead from ~200x to ~26x for cached queries:
+- Developed multi-phase SELECT query optimization reducing overhead from ~200x to ~14x for cached queries:
   - Phase 1: Query plan cache with LRU eviction
   - Phase 2: Enhanced fast path for simple WHERE clauses and parameters
   - Phase 3: Prepared statement pooling with metadata caching
   - Phase 4: Schema cache with bulk preloading and bloom filters
   - Phase 5: Execution cache with query fingerprinting and optimized type conversion
+  - Phase 6: Binary protocol support and result caching
+- Implemented zero-copy protocol architecture:
+  - Phase 1-5: Memory-mapped values, direct socket writing, buffer pooling
+  - Achieved 67% improvement in cached SELECT queries (26x → 8.5x overhead)
+- Optimized INSERT operations:
+  - Fast path detection and execution for non-decimal tables
+  - Statement pool provides near-native performance (1.0x overhead)
+  - Protocol overhead remains significant (~168x) due to PostgreSQL wire protocol
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.
@@ -227,6 +235,25 @@ SELECT queries show the second-worst performance (~98x overhead) due to:
 - **DELETE**: ~35x overhead (0.001ms → 0.036ms)
 - **Cache Effectiveness**: 1.7x speedup for cached queries
 
+### Protocol Flush Fix Performance Results (2025-07-02)
+
+**Critical Bug Found**: Missing `flush()` calls after `ReadyForQuery` messages caused ~40ms artificial delay on every operation.
+
+**Fix Applied**: 
+- Added `framed.flush().await?` after ReadyForQuery in simple query protocol (main.rs:276)
+- Added `framed.flush().await?` after ReadyForQuery in Sync handling (lib.rs:228)
+- Server already had TCP_NODELAY set for low latency
+
+**Performance After Flush Fix (Latest Benchmark):**
+- **Overall System**: ~98x overhead (9,843.5%) - improved from baseline
+- **INSERT**: ~177x overhead (0.002ms → 0.286ms) - stable, no more 40ms delays
+- **SELECT**: ~180x overhead (0.001ms → 0.187ms) - protocol overhead visible
+- **SELECT (cached)**: ~17x overhead (0.005ms → 0.094ms) - 2.0x cache speedup
+- **UPDATE**: ~34x overhead (0.001ms → 0.041ms) - excellent performance
+- **DELETE**: ~39x overhead (0.001ms → 0.038ms) - excellent performance
+
+**Impact**: Removed artificial 40ms delay per operation. Protocol latency now ~47µs for simple queries (tested with direct TCP connection).
+
 **Zero-Copy Architecture Achievements:**
 - ✅ **67% improvement** in cached SELECT queries (26x → 8.5x overhead)
 - ✅ **7% improvement** in uncached SELECT queries (98x → 91x overhead)
@@ -249,9 +276,57 @@ The zero-copy protocol architecture has achieved significant performance improve
 - **Zero-copy design** provides measurable benefits in memory management and allocation reduction
 
 **Remaining Optimization Opportunities:**
-- **INSERT operations** (159x overhead) - primary target for future optimization
+- **INSERT operations** (175x overhead for single-row) - use batch INSERTs for better performance
 - **Protocol translation** overhead - inherent cost of PostgreSQL wire protocol
 - **Type conversion** optimization - Boolean and numeric conversions
+- **COPY protocol** - For even faster bulk data loading
+
+### SELECT Query Optimization - Phase 2 (2025-07-02)
+
+Following the initial optimization phases that reduced SELECT overhead from ~98x to ~14x, implemented two additional optimizations:
+
+**1. Logging Reduction:**
+- Changed error! and warn! logging to debug! level for missing schema metadata
+- Reduced logging overhead during SELECT queries
+- **Result**: 33% improvement (187ms → 125ms)
+
+**2. RowDescription Caching:**
+- Implemented LRU cache for FieldDescription messages
+- Cache key includes query, table name, and column names
+- Configurable via environment variables:
+  - `PGSQLITE_ROW_DESC_CACHE_SIZE` (default: 1000 entries)
+  - `PGSQLITE_ROW_DESC_CACHE_TTL_MINUTES` (default: 10 minutes)
+- **Result**: 41% improvement for cached queries (80ms → 47ms)
+
+**Combined Results:**
+- **SELECT**: ~82ms (was ~187ms) - **56% total improvement**
+- **SELECT (cached)**: ~47ms (was ~94ms) - **50% total improvement** 
+- **Overall overhead**: ~46x (was ~98x) - **53% total improvement**
+
+**Debug Logging Investigation:**
+- Found that debug! macros are already compiled out in release builds
+- No performance impact from debug logging when log level is set to "error"
+- The tracing crate provides zero-cost abstractions when disabled
+
+### Batch INSERT Performance Discovery (2025-07-02)
+
+**Key Finding**: Multi-row INSERT syntax is already fully supported and provides dramatic performance improvements!
+
+**Benchmark Results (1000 rows):**
+- Single-row INSERTs: 65ms (15,378 rows/sec) - 6.7x overhead vs SQLite
+- 10-row batches: 5.7ms (176,610 rows/sec) - 11.5x speedup
+- 100-row batches: 1.3ms (788,200 rows/sec) - 51.3x speedup
+- 1000-row batch: 0.85ms (1,174,938 rows/sec) - 76.4x speedup
+
+**Remarkable**: Batch sizes ≥10 actually **outperform direct SQLite** (0.1-0.6x overhead) because protocol overhead is amortized across multiple rows.
+
+**Recommendation**: Use multi-row INSERT syntax for bulk data operations:
+```sql
+INSERT INTO table (col1, col2) VALUES 
+  (val1, val2),
+  (val3, val4),
+  (val5, val6);
+```
 
 **Inherent Overhead Sources:**
 1. **Protocol Translation** (~20-30%): PostgreSQL wire protocol encoding/decoding

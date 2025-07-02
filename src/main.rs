@@ -162,6 +162,10 @@ async fn handle_tcp_connection(
     db_handler: Arc<DbHandler>,
 ) -> Result<()> {
     info!("Handling TCP connection from {}", addr);
+    
+    // Disable Nagle's algorithm for lower latency
+    stream.set_nodelay(true)?;
+    
     handle_connection_generic(stream, &addr.to_string(), db_handler).await
 }
 
@@ -272,6 +276,8 @@ where
                         status: *session.transaction_status.read().await,
                     })
                     .await?;
+                // Flush to ensure message is sent immediately
+                framed.flush().await?;
             }
             FrontendMessage::Parse {
                 name,

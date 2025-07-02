@@ -3,8 +3,9 @@ use crate::session::DbHandler;
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::PgType;
+use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::PgSqliteError;
-use tracing::{info, warn, error};
+use tracing::{info, warn, debug};
 
 /// QueryExecutor V2 - Uses ProtocolWriter trait for zero-copy support
 pub struct QueryExecutorV2;
@@ -84,57 +85,73 @@ impl QueryExecutorV2 {
         // Extract table name from query to look up schema
         let table_name = extract_table_name_from_select(query);
         
-        // Pre-fetch schema types for all columns if we have a table name
-        let mut schema_types = std::collections::HashMap::new();
-        if let Some(ref table) = table_name {
-            for col_name in &response.columns {
-                if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
-                    schema_types.insert(col_name.clone(), pg_type);
+        // Create cache key
+        let cache_key = RowDescriptionKey {
+            query: query.to_string(),
+            table_name: table_name.clone(),
+            columns: response.columns.clone(),
+        };
+        
+        // Check cache first
+        let fields = if let Some(cached_fields) = GLOBAL_ROW_DESCRIPTION_CACHE.get(&cache_key) {
+            cached_fields
+        } else {
+            // Pre-fetch schema types for all columns if we have a table name
+            let mut schema_types = std::collections::HashMap::new();
+            if let Some(ref table) = table_name {
+                for col_name in &response.columns {
+                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                        schema_types.insert(col_name.clone(), pg_type);
+                    }
                 }
             }
-        }
-        
-        // Build field descriptions with proper type inference
-        let fields: Vec<FieldDescription> = response.columns.iter()
-            .enumerate()
-            .map(|(i, name)| {
-                // First priority: Check schema table for stored type mappings
-                let type_oid = if let Some(pg_type) = schema_types.get(name) {
-                    crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
-                } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
-                    // Second priority: Check for aggregate functions
-                    aggregate_oid
-                } else {
-                    // Check if this looks like a user table (not system/catalog queries)
-                    if let Some(ref table) = table_name {
-                        // System/catalog tables are allowed to use type inference
-                        let is_system_table = table.starts_with("pg_") || 
-                                             table.starts_with("information_schema") ||
-                                             table == "__pgsqlite_schema";
-                        
-                        if !is_system_table {
-                            // For user tables, missing metadata is an error
-                            error!("MISSING METADATA: Column '{}' in table '{}' not found in __pgsqlite_schema. This indicates the table was not created through PostgreSQL protocol.", name, table);
-                            error!("Tables must be created using PostgreSQL CREATE TABLE syntax to ensure proper type metadata.");
+            
+            // Build field descriptions with proper type inference
+            let fields: Vec<FieldDescription> = response.columns.iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    // First priority: Check schema table for stored type mappings
+                    let type_oid = if let Some(pg_type) = schema_types.get(name) {
+                        crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                    } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
+                        // Second priority: Check for aggregate functions
+                        aggregate_oid
+                    } else {
+                        // Check if this looks like a user table (not system/catalog queries)
+                        if let Some(ref table) = table_name {
+                            // System/catalog tables are allowed to use type inference
+                            let is_system_table = table.starts_with("pg_") || 
+                                                 table.starts_with("information_schema") ||
+                                                 table == "__pgsqlite_schema";
+                            
+                            if !is_system_table {
+                                // For user tables, missing metadata is an error
+                                debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", name, table);
+                            }
                         }
-                    }
+                        
+                        // Default to text for simple queries without schema info
+                        debug!("Column '{}' using default text type", name);
+                        PgType::Text.to_oid()
+                    };
                     
-                    // Default to text for simple queries without schema info
-                    warn!("Column '{}' using default text type (should have metadata)", name);
-                    PgType::Text.to_oid()
-                };
-                
-                FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid,
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0, // text format
-                }
-            })
-            .collect();
+                    FieldDescription {
+                        name: name.clone(),
+                        table_oid: 0,
+                        column_id: (i + 1) as i16,
+                        type_oid,
+                        type_size: -1,
+                        type_modifier: -1,
+                        format: 0, // text format
+                    }
+                })
+                .collect();
+            
+            // Cache the field descriptions
+            GLOBAL_ROW_DESCRIPTION_CACHE.insert(cache_key, fields.clone());
+            
+            fields
+        };
         
         // Send RowDescription
         writer.send_row_description(&fields).await?;
