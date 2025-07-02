@@ -316,9 +316,19 @@ Missing metadata logging is now at debug level, reducing noise for legitimate ca
 - Tables created outside pgsqlite
 - Queries using type inference
 
+### Performance Results
+**After logging reduction (2025-07-02):**
+- SELECT: ~125ms (was ~187ms) - **33% improvement**
+- SELECT (cached): ~80ms (was ~94ms) - **15% improvement**
+- Overall overhead: ~84x (was ~98x) - **14% improvement**
+
+The logging reduction provided measurable performance gains, particularly for uncached SELECT queries.
+
 ### Next Steps
-- [ ] Benchmark impact of logging reduction on SELECT performance
+- [x] Benchmark impact of logging reduction on SELECT performance - 33% improvement achieved
 - [ ] Implement RowDescription caching to avoid repeated field generation
+- [ ] Remove remaining debug logging from hot paths
+- [ ] Profile protocol serialization overhead
 - [ ] Consider lazy schema loading for better startup performance
 
 ## ✅ Batch INSERT Performance - DISCOVERED (2025-07-02)
