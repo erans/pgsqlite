@@ -135,7 +135,7 @@ async fn benchmark_select_detailed() {
         for i in 0..20 {
             let start = Instant::now();
             send_query(&mut stream, query).await;
-            let row_count = read_until_ready(&mut stream).await;
+            let _row_count = read_until_ready(&mut stream).await;
             let elapsed = start.elapsed();
             
             if i == 0 {
@@ -177,9 +177,9 @@ async fn benchmark_select_detailed() {
             let start = Instant::now();
             let mut stmt = conn.prepare(query).unwrap();
             let mut rows = stmt.query([]).unwrap();
-            let mut count = 0;
+            let mut _count = 0;
             while let Some(_) = rows.next().unwrap() {
-                count += 1;
+                _count += 1;
             }
             let elapsed = start.elapsed();
             times.push(elapsed);
@@ -212,7 +212,7 @@ async fn benchmark_select_detailed() {
         for _ in 0..10 {
             let start = Instant::now();
             send_query(&mut stream, &query).await;
-            let row_count = read_until_ready(&mut stream).await;
+            let _row_count = read_until_ready(&mut stream).await;
             times.push(start.elapsed());
         }
         
