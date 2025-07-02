@@ -1,4 +1,5 @@
 use rusqlite::Connection;
+use crate::types::PgType;
 
 /// Maps between PostgreSQL and SQLite types using actual schema information
 pub struct SchemaTypeMapper;
@@ -52,11 +53,11 @@ impl SchemaTypeMapper {
         let type_upper = sqlite_type.to_uppercase();
         
         match type_upper.as_str() {
-            "INTEGER" => 23, // int4
-            "REAL" => 701, // float8
-            "TEXT" => 25, // text
-            "BLOB" => 17, // bytea
-            _ => 25, // default to text
+            "INTEGER" => PgType::Int4.to_oid(), // int4
+            "REAL" => PgType::Float8.to_oid(), // float8
+            "TEXT" => PgType::Text.to_oid(), // text
+            "BLOB" => PgType::Bytea.to_oid(), // bytea
+            _ => PgType::Text.to_oid(), // default to text
         }
     }
     
@@ -73,95 +74,81 @@ impl SchemaTypeMapper {
         
         match base_type {
             // Integer types
-            "SMALLINT" | "INT2" => 21,
-            "INTEGER" | "INT" | "INT4" => 23,
-            "BIGINT" | "INT8" => 20,
-            "SERIAL" => 23, // Serial is int4 with sequence
-            "BIGSERIAL" => 20, // Bigserial is int8 with sequence
+            "SMALLINT" | "INT2" => PgType::Int2.to_oid(),
+            "INTEGER" | "INT" | "INT4" => PgType::Int4.to_oid(),
+            "BIGINT" | "INT8" => PgType::Int8.to_oid(),
+            "SERIAL" => PgType::Int4.to_oid(), // Serial is int4 with sequence
+            "BIGSERIAL" => PgType::Int8.to_oid(), // Bigserial is int8 with sequence
             
             // Floating point
-            "REAL" | "FLOAT4" => 700,
-            "DOUBLE PRECISION" | "FLOAT8" | "FLOAT" => 701,
-            "NUMERIC" | "DECIMAL" => 1700,
+            "REAL" | "FLOAT4" => PgType::Float4.to_oid(),
+            "DOUBLE PRECISION" | "FLOAT8" | "FLOAT" => PgType::Float8.to_oid(),
+            "NUMERIC" | "DECIMAL" => PgType::Numeric.to_oid(),
             
             // Text types
-            "VARCHAR" | "CHARACTER VARYING" => 1043,
-            "CHAR" | "CHARACTER" => 1042,
-            "TEXT" => 25,
+            "VARCHAR" | "CHARACTER VARYING" => PgType::Varchar.to_oid(),
+            "CHAR" | "CHARACTER" => PgType::Char.to_oid(),
+            "TEXT" => PgType::Text.to_oid(),
             
             // Binary
-            "BYTEA" => 17,
+            "BYTEA" => PgType::Bytea.to_oid(),
             
             // Boolean
-            "BOOLEAN" | "BOOL" => 16,
+            "BOOLEAN" | "BOOL" => PgType::Bool.to_oid(),
             
             // Date/Time
-            "DATE" => 1082,
-            "TIME" | "TIME WITHOUT TIME ZONE" => 1083,
-            "TIME WITH TIME ZONE" => 1266,
-            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => 1114,
-            "TIMESTAMP WITH TIME ZONE" => 1184,
+            "DATE" => PgType::Date.to_oid(),
+            "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time.to_oid(),
+            "TIME WITH TIME ZONE" => 1266, // TIMETZ not in PgType enum yet
+            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp.to_oid(),
+            "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz.to_oid(),
             
             // JSON
-            "JSON" => 114,
-            "JSONB" => 3802,
+            "JSON" => PgType::Json.to_oid(),
+            "JSONB" => PgType::Jsonb.to_oid(),
             
             // UUID
-            "UUID" => 2950,
+            "UUID" => PgType::Uuid.to_oid(),
             
             // Money
-            "MONEY" => 790,
+            "MONEY" => PgType::Money.to_oid(),
             
             // Range types
-            "INT4RANGE" => 3904,
-            "INT8RANGE" => 3926,
-            "NUMRANGE" => 3906,
+            "INT4RANGE" => PgType::Int4range.to_oid(),
+            "INT8RANGE" => PgType::Int8range.to_oid(),
+            "NUMRANGE" => PgType::Numrange.to_oid(),
             
             // Network types
-            "CIDR" => 650,
-            "INET" => 869,
-            "MACADDR" => 829,
-            "MACADDR8" => 774,
+            "CIDR" => PgType::Cidr.to_oid(),
+            "INET" => PgType::Inet.to_oid(),
+            "MACADDR" => PgType::Macaddr.to_oid(),
+            "MACADDR8" => PgType::Macaddr8.to_oid(),
             
             // Bit strings
-            "BIT VARYING" | "VARBIT" => 1562,
-            "BIT" => 1560,
+            "BIT VARYING" | "VARBIT" => PgType::Varbit.to_oid(),
+            "BIT" => PgType::Bit.to_oid(),
             
             // Default
-            _ => 25, // text
+            _ => PgType::Text.to_oid(), // text
         }
     }
     
     /// Convert PostgreSQL OID to type name
     pub fn pg_oid_to_type_name(oid: i32) -> &'static str {
+        // Try to use PgType first
+        if let Some(pg_type) = PgType::from_oid(oid) {
+            return pg_type.name();
+        }
+        
+        // Handle types not in PgType enum
         match oid {
-            16 => "bool",
-            17 => "bytea",
-            20 => "int8",
-            21 => "int2",
-            23 => "int4",
-            25 => "text",
-            700 => "float4",
-            701 => "float8",
-            790 => "money",
-            829 => "macaddr",
-            869 => "inet",
-            774 => "macaddr8",
-            650 => "cidr",
-            1043 => "varchar",
-            1082 => "date",
-            1083 => "time",
-            1114 => "timestamp",
-            1184 => "timestamptz",
+            18 => "char", // single char type
+            19 => "name", 
+            26 => "oid",
+            114 => "json", // JSON (not JSONB)
+            1042 => "bpchar", // blank-padded char
+            1186 => "interval",
             1266 => "timetz",
-            1560 => "bit",
-            1562 => "varbit",
-            1700 => "numeric",
-            2950 => "uuid",
-            3802 => "jsonb",
-            3904 => "int4range",
-            3906 => "numrange",
-            3926 => "int8range",
             _ => "text",
         }
     }
@@ -169,12 +156,12 @@ impl SchemaTypeMapper {
     /// Infer type from value when no schema is available
     pub fn infer_type_from_value(value: Option<&[u8]>) -> i32 {
         match value {
-            None => 25, // NULL defaults to text
+            None => PgType::Text.to_oid(), // NULL defaults to text
             Some(bytes) => {
                 if let Ok(s) = std::str::from_utf8(bytes) {
                     Self::infer_type_from_string(s)
                 } else {
-                    17 // Binary data is bytea
+                    PgType::Bytea.to_oid() // Binary data is bytea
                 }
             }
         }
@@ -185,7 +172,7 @@ impl SchemaTypeMapper {
         // Check for boolean - only treat as bool if it's exactly these strings
         if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") || 
            s.eq_ignore_ascii_case("t") || s.eq_ignore_ascii_case("f") {
-            return 16; // bool
+            return PgType::Bool.to_oid(); // bool
         }
         
         // Check if it looks like a bit string (only 0s and 1s)
@@ -194,7 +181,7 @@ impl SchemaTypeMapper {
             // Additional heuristic: if it's 8, 16, 32, or 64 bits, it's likely a bit string
             // Or if it has leading zeros (uncommon for regular integers)
             if s.len() == 8 || s.len() == 16 || s.len() == 32 || s.len() == 64 || s.starts_with('0') {
-                return 1560; // bit
+                return PgType::Bit.to_oid(); // bit
             }
         }
         
@@ -202,32 +189,32 @@ impl SchemaTypeMapper {
         if let Ok(i) = s.parse::<i64>() {
             // Use int4 for values that fit, int8 for larger
             if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
-                return 23; // int4
+                return PgType::Int4.to_oid(); // int4
             } else {
-                return 20; // int8
+                return PgType::Int8.to_oid(); // int8
             }
         }
         
         if let Ok(_) = s.parse::<f64>() {
-            return 701; // float8
+            return PgType::Float8.to_oid(); // float8
         }
         
         // Check for date/time formats
         if s.len() == 10 && s.chars().filter(|&c| c == '-').count() == 2 {
-            return 1082; // Possibly a date
+            return PgType::Date.to_oid(); // Possibly a date
         }
         
         // Check for UUID format
         if s.len() == 36 && s.chars().filter(|&c| c == '-').count() == 4 {
-            return 2950; // Possibly a UUID
+            return PgType::Uuid.to_oid(); // Possibly a UUID
         }
         
         // Check for JSON
         if (s.starts_with('{') && s.ends_with('}')) || (s.starts_with('[') && s.ends_with(']')) {
-            return 114; // json
+            return PgType::Json.to_oid(); // json
         }
         
-        25 // Default to text
+        PgType::Text.to_oid() // Default to text
     }
     
     /// Get type OID for aggregate functions
@@ -240,18 +227,18 @@ impl SchemaTypeMapper {
         
         // COUNT always returns bigint
         if upper == "COUNT(*)" || upper.starts_with("COUNT(") {
-            return Some(20); // bigint
+            return Some(PgType::Int8.to_oid()); // bigint
         }
         
         // JSON functions that return integers
         if upper.starts_with("JSON_ARRAY_LENGTH(") {
-            return Some(23); // int4
+            return Some(PgType::Int4.to_oid()); // int4
         }
         
         // JSON functions that return text
         if upper.starts_with("JSON_GROUP_ARRAY(") || upper.starts_with("JSON_ARRAY(") || 
            upper.starts_with("JSON_OBJECT(") || upper.starts_with("JSON_EXTRACT(") {
-            return Some(25); // text
+            return Some(PgType::Text.to_oid()); // text
         }
         
         // For other aggregates, we need to know the column type
@@ -263,7 +250,10 @@ impl SchemaTypeMapper {
                     if upper.starts_with("SUM(") || upper.starts_with("AVG(") {
                         // SUM and AVG return numeric for numeric types
                         match base_type {
-                            21 | 23 | 20 | 700 | 701 | 1700 => return Some(1700), // numeric
+                            t if t == PgType::Int2.to_oid() || t == PgType::Int4.to_oid() || t == PgType::Int8.to_oid() ||
+                                 t == PgType::Float4.to_oid() || t == PgType::Float8.to_oid() || t == PgType::Numeric.to_oid() => {
+                                return Some(PgType::Numeric.to_oid()); // numeric
+                            }
                             _ => return Some(base_type), // Keep original type
                         }
                     } else if upper.starts_with("MAX(") || upper.starts_with("MIN(") {
@@ -276,7 +266,7 @@ impl SchemaTypeMapper {
         
         // Default return types when we can't determine from schema
         if upper.starts_with("SUM(") || upper.starts_with("AVG(") {
-            Some(1700) // numeric
+            Some(PgType::Numeric.to_oid()) // numeric
         } else {
             None
         }

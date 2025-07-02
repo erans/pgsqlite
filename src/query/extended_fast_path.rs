@@ -1,6 +1,6 @@
 use crate::protocol::BackendMessage;
 use crate::session::{DbHandler, SessionState};
-use crate::types::DecimalHandler;
+use crate::types::{DecimalHandler, PgType};
 use crate::cache::GLOBAL_PARAM_VALUE_CACHE;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
@@ -83,7 +83,7 @@ impl ExtendedFastPath {
                 None => params.push(rusqlite::types::Value::Null),
                 Some(bytes) => {
                     let format = param_formats.get(i).copied().unwrap_or(0);
-                    let param_type = param_types.get(i).copied().unwrap_or(25); // Default to TEXT
+                    let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to TEXT
                     let original_type = original_types.get(i).copied().unwrap_or(param_type);
                     
                     // Use cache for parameter value conversion, using original type for conversion
@@ -114,7 +114,7 @@ impl ExtendedFastPath {
                 .map_err(|_| PgSqliteError::Protocol("Invalid UTF-8 in parameter".to_string()))?;
             
             match param_type {
-                16 => {
+                t if t == PgType::Bool.to_oid() => {
                     // BOOL
                     let val = match text {
                         "t" | "true" | "TRUE" | "1" => 1,
@@ -122,29 +122,30 @@ impl ExtendedFastPath {
                     };
                     Ok(rusqlite::types::Value::Integer(val))
                 }
-                20 | 23 | 21 => {
+                t if t == PgType::Int8.to_oid() || t == PgType::Int4.to_oid() || t == PgType::Int2.to_oid() => {
                     // INT8, INT4, INT2
                     text.parse::<i64>()
                         .map(rusqlite::types::Value::Integer)
                         .map_err(|_| PgSqliteError::Protocol(format!("Invalid integer: {}", text)))
                 }
-                700 | 701 => {
+                t if t == PgType::Float4.to_oid() || t == PgType::Float8.to_oid() => {
                     // FLOAT4, FLOAT8
                     text.parse::<f64>()
                         .map(rusqlite::types::Value::Real)
                         .map_err(|_| PgSqliteError::Protocol(format!("Invalid float: {}", text)))
                 }
-                1700 => {
+                t if t == PgType::Numeric.to_oid() => {
                     // NUMERIC - validate and store as text
                     match DecimalHandler::validate_numeric_string(text) {
                         Ok(_) => Ok(rusqlite::types::Value::Text(text.to_string())),
                         Err(e) => Err(PgSqliteError::Protocol(format!("Invalid NUMERIC: {}", e))),
                     }
                 }
-                790 | 829 | 774 | 869 | 650 | 3904 | 3926 | 3906 | 1560 | 1562 => {
-                    // Special types that are mapped to TEXT:
-                    // 790: MONEY, 829: MACADDR, 774: MACADDR8, 869: INET, 650: CIDR,
-                    // 3904: INT4RANGE, 3926: INT8RANGE, 3906: NUMRANGE, 1560: BIT, 1562: VARBIT
+                t if t == PgType::Money.to_oid() || t == PgType::Macaddr.to_oid() || t == PgType::Macaddr8.to_oid() ||
+                     t == PgType::Inet.to_oid() || t == PgType::Cidr.to_oid() || t == PgType::Int4range.to_oid() ||
+                     t == PgType::Int8range.to_oid() || t == PgType::Numrange.to_oid() || t == PgType::Bit.to_oid() ||
+                     t == PgType::Varbit.to_oid() => {
+                    // Special types that are mapped to TEXT
                     Ok(rusqlite::types::Value::Text(text.to_string()))
                 }
                 _ => {
@@ -155,7 +156,7 @@ impl ExtendedFastPath {
         } else {
             // Binary format
             match param_type {
-                23 => {
+                t if t == PgType::Int4.to_oid() => {
                     // INT4
                     if bytes.len() == 4 {
                         let val = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64;
@@ -164,7 +165,7 @@ impl ExtendedFastPath {
                         Err(PgSqliteError::Protocol("Invalid INT4 binary format".to_string()))
                     }
                 }
-                20 => {
+                t if t == PgType::Int8.to_oid() => {
                     // INT8
                     if bytes.len() == 8 {
                         let val = i64::from_be_bytes([
@@ -176,7 +177,7 @@ impl ExtendedFastPath {
                         Err(PgSqliteError::Protocol("Invalid INT8 binary format".to_string()))
                     }
                 }
-                700 => {
+                t if t == PgType::Float4.to_oid() => {
                     // FLOAT4
                     if bytes.len() == 4 {
                         let bits = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
@@ -186,7 +187,7 @@ impl ExtendedFastPath {
                         Err(PgSqliteError::Protocol("Invalid FLOAT4 binary format".to_string()))
                     }
                 }
-                701 => {
+                t if t == PgType::Float8.to_oid() => {
                     // FLOAT8
                     if bytes.len() == 8 {
                         let bits = u64::from_be_bytes([
@@ -199,14 +200,14 @@ impl ExtendedFastPath {
                         Err(PgSqliteError::Protocol("Invalid FLOAT8 binary format".to_string()))
                     }
                 }
-                1700 => {
+                t if t == PgType::Numeric.to_oid() => {
                     // NUMERIC
                     match DecimalHandler::decode_numeric(bytes) {
                         Ok(decimal) => Ok(rusqlite::types::Value::Text(decimal.to_string())),
                         Err(e) => Err(PgSqliteError::Protocol(format!("Invalid binary NUMERIC: {}", e))),
                     }
                 }
-                790 => {
+                t if t == PgType::Money.to_oid() => {
                     // MONEY - tokio-postgres sends text even when format is marked as binary
                     // Try to parse as text first
                     if let Ok(text) = std::str::from_utf8(bytes) {
@@ -225,7 +226,9 @@ impl ExtendedFastPath {
                         Err(PgSqliteError::Protocol(format!("Invalid MONEY format, {} bytes", bytes.len())))
                     }
                 }
-                829 | 774 | 869 | 650 | 3904 | 3926 | 3906 | 1560 | 1562 => {
+                t if t == PgType::Macaddr.to_oid() || t == PgType::Macaddr8.to_oid() || t == PgType::Inet.to_oid() ||
+                     t == PgType::Cidr.to_oid() || t == PgType::Int4range.to_oid() || t == PgType::Int8range.to_oid() ||
+                     t == PgType::Numrange.to_oid() || t == PgType::Bit.to_oid() || t == PgType::Varbit.to_oid() => {
                     // Other special types - for now, error out so we can implement them properly
                     Err(PgSqliteError::Protocol(format!("Binary format not implemented for type {}", param_type)))
                 }
