@@ -1,5 +1,5 @@
 use std::time::Instant;
-use tokio_postgres::{NoTls, types::ToSql};
+use tokio_postgres::NoTls;
 use std::process::{Command, Child};
 use std::thread;
 
