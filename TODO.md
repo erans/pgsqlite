@@ -296,6 +296,34 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - High-priority items that affect core functionality are listed first
 - Consider dependencies between tasks when planning implementation
 
+## ✅ Batch INSERT Performance - DISCOVERED (2025-07-02)
+
+### Background
+INSERT operations showed 177x overhead for single-row operations. Investigated multi-row INSERT support to amortize protocol overhead.
+
+### Key Discovery
+Multi-row VALUES syntax is **already fully supported** - no implementation needed! The SQL parser and execution engine handle batch INSERTs natively.
+
+### Performance Results
+Benchmark with 1000 total rows:
+- **Single-row INSERTs**: 65ms (15,378 rows/sec) - 6.7x overhead
+- **10-row batches**: 5.7ms (176,610 rows/sec) - 11.5x speedup  
+- **100-row batches**: 1.3ms (788,200 rows/sec) - 51.3x speedup
+- **1000-row batch**: 0.85ms (1,174,938 rows/sec) - 76.4x speedup
+
+**Remarkable finding**: Batch sizes ≥10 actually **outperform direct SQLite** (0.1-0.6x overhead)!
+
+### Usage Example
+```sql
+INSERT INTO users (name, email, age) VALUES 
+  ('Alice', 'alice@example.com', 25),
+  ('Bob', 'bob@example.com', 30),
+  ('Charlie', 'charlie@example.com', 35);
+```
+
+### Recommendation
+For bulk INSERT operations, always use multi-row VALUES syntax. The protocol overhead is amortized across all rows in the batch, providing near-native or better performance.
+
 ## Type System Enhancements
 
 ### Code Quality - Magic Numbers

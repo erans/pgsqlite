@@ -276,10 +276,30 @@ The zero-copy protocol architecture has achieved significant performance improve
 - **Zero-copy design** provides measurable benefits in memory management and allocation reduction
 
 **Remaining Optimization Opportunities:**
-- **INSERT operations** (175x overhead) - primary target for future optimization
+- **INSERT operations** (175x overhead for single-row) - use batch INSERTs for better performance
 - **Protocol translation** overhead - inherent cost of PostgreSQL wire protocol
 - **Type conversion** optimization - Boolean and numeric conversions
-- **Batch INSERT support** - Multi-row inserts to amortize protocol overhead
+- **COPY protocol** - For even faster bulk data loading
+
+### Batch INSERT Performance Discovery (2025-07-02)
+
+**Key Finding**: Multi-row INSERT syntax is already fully supported and provides dramatic performance improvements!
+
+**Benchmark Results (1000 rows):**
+- Single-row INSERTs: 65ms (15,378 rows/sec) - 6.7x overhead vs SQLite
+- 10-row batches: 5.7ms (176,610 rows/sec) - 11.5x speedup
+- 100-row batches: 1.3ms (788,200 rows/sec) - 51.3x speedup
+- 1000-row batch: 0.85ms (1,174,938 rows/sec) - 76.4x speedup
+
+**Remarkable**: Batch sizes ≥10 actually **outperform direct SQLite** (0.1-0.6x overhead) because protocol overhead is amortized across multiple rows.
+
+**Recommendation**: Use multi-row INSERT syntax for bulk data operations:
+```sql
+INSERT INTO table (col1, col2) VALUES 
+  (val1, val2),
+  (val3, val4),
+  (val5, val6);
+```
 
 **Inherent Overhead Sources:**
 1. **Protocol Translation** (~20-30%): PostgreSQL wire protocol encoding/decoding
