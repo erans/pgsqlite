@@ -361,7 +361,8 @@ impl ExtendedQueryHandler {
         };
         
         // Try optimized extended fast path first for parameterized queries
-        if !bound_values.is_empty() && query.contains('$') {
+        // TODO: Fix handling of special types (MONEY, MACADDR, etc.) before re-enabling
+        if false && !bound_values.is_empty() && query.contains('$') {
             let query_type = super::extended_fast_path::QueryType::from_query(&query);
             
             // Use optimized path for SELECT, INSERT, UPDATE, DELETE
