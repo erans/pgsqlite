@@ -3,6 +3,7 @@ use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::DecimalHandler;
+use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
@@ -1471,85 +1472,24 @@ impl ExtendedQueryHandler {
             // Extract table name from query to look up schema
             let table_name = extract_table_name_from_select(&query);
             
-            // Pre-fetch schema types for all columns if we have a table name
-            let mut schema_types = std::collections::HashMap::new();
-            if let Some(ref table) = table_name {
-                for col_name in &response.columns {
-                    // Try to look up the actual column name (without aliases)
-                    let lookup_col = if col_name.contains('_') {
-                        // For aggregate results like 'value_array', try the base column name
-                        if let Some(base) = col_name.split('_').next() {
-                            base.to_string()
-                        } else {
-                            col_name.clone()
-                        }
-                    } else {
-                        col_name.clone()
-                    };
-                    
-                    if let Ok(Some(pg_type)) = db.get_schema_type(table, &lookup_col).await {
-                        schema_types.insert(col_name.clone(), pg_type);
-                    }
-                }
-            }
+            // Create cache key
+            let cache_key = RowDescriptionKey {
+                query: query.to_string(),
+                table_name: table_name.clone(),
+                columns: response.columns.clone(),
+            };
             
-            // Try to infer field types from data
-            let field_types = response.columns.iter()
-                .enumerate()
-                .map(|(i, col_name)| {
-                    // First priority: Check schema table for stored type mappings
-                    if let Some(pg_type) = schema_types.get(col_name) {
-                        let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
-                        info!("Column '{}' found in schema as type '{}' (OID {})", col_name, pg_type, oid);
-                        return oid;
-                    }
-                    
-                    // Second priority: Check for aggregate functions
-                    let col_lower = col_name.to_lowercase();
-                    if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
-                        info!("Column '{}' is aggregate function with type OID {}", col_name, oid);
-                        return oid;
-                    }
-                    
-                    // Check if this looks like a user table (not system/catalog queries)
-                    if let Some(ref table) = table_name {
-                        // System/catalog tables are allowed to use type inference
-                        let is_system_table = table.starts_with("pg_") || 
-                                             table.starts_with("information_schema") ||
-                                             table == "__pgsqlite_schema";
-                        
-                        if !is_system_table {
-                            // For user tables, missing metadata is an error
-                            debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", col_name, table);
-                            debug!("Falling back to type inference, but this may cause type compatibility issues.");
-                        }
-                    }
-                    
-                    // Last resort: Try to get type from value (with warning for user tables)
-                    let type_oid = if !response.rows.is_empty() {
-                        if let Some(value) = response.rows[0].get(i) {
-                            crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
-                        } else {
-                            25 // text for NULL
-                        }
-                    } else {
-                        25 // text default when no data
-                    };
-                    
-                    warn!("Column '{}' using inferred type OID {} (should have metadata)", col_name, type_oid);
-                    type_oid
-                })
-                .collect::<Vec<_>>();
-            
-            let fields: Vec<FieldDescription> = {
+            // Check cache first
+            let fields = if let Some(cached_fields) = GLOBAL_ROW_DESCRIPTION_CACHE.get(&cache_key) {
+                // Update formats from portal
                 let portals = session.portals.read().await;
                 let portal = portals.get(portal_name).unwrap();
                 let result_formats = &portal.result_formats;
                 
-                response.columns.iter()
+                cached_fields.into_iter()
                     .enumerate()
-                    .map(|(i, col_name)| {
-                        let format = if result_formats.is_empty() {
+                    .map(|(i, mut field)| {
+                        field.format = if result_formats.is_empty() {
                             0 // Default to text if no formats specified
                         } else if result_formats.len() == 1 {
                             result_formats[0] // Single format applies to all columns
@@ -1558,19 +1498,126 @@ impl ExtendedQueryHandler {
                         } else {
                             0 // Default to text if not enough formats
                         };
-                        
-                        FieldDescription {
-                            name: col_name.clone(),
-                            table_oid: 0,
-                            column_id: (i + 1) as i16,
-                            type_oid: *field_types.get(i).unwrap_or(&25),
-                            type_size: -1,
-                            type_modifier: -1,
-                            format,
-                        }
+                        field
                     })
                     .collect()
+            } else {
+                // Pre-fetch schema types for all columns if we have a table name
+                let mut schema_types = std::collections::HashMap::new();
+                if let Some(ref table) = table_name {
+                    for col_name in &response.columns {
+                        // Try to look up the actual column name (without aliases)
+                        let lookup_col = if col_name.contains('_') {
+                            // For aggregate results like 'value_array', try the base column name
+                            if let Some(base) = col_name.split('_').next() {
+                                base.to_string()
+                            } else {
+                                col_name.clone()
+                            }
+                        } else {
+                            col_name.clone()
+                        };
+                        
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, &lookup_col).await {
+                            schema_types.insert(col_name.clone(), pg_type);
+                        }
+                    }
+                }
+                
+                // Try to infer field types from data
+                let field_types = response.columns.iter()
+                    .enumerate()
+                    .map(|(i, col_name)| {
+                        // First priority: Check schema table for stored type mappings
+                        if let Some(pg_type) = schema_types.get(col_name) {
+                            let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                            info!("Column '{}' found in schema as type '{}' (OID {})", col_name, pg_type, oid);
+                            return oid;
+                        }
+                        
+                        // Second priority: Check for aggregate functions
+                        let col_lower = col_name.to_lowercase();
+                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                            info!("Column '{}' is aggregate function with type OID {}", col_name, oid);
+                            return oid;
+                        }
+                        
+                        // Check if this looks like a user table (not system/catalog queries)
+                        if let Some(ref table) = table_name {
+                            // System/catalog tables are allowed to use type inference
+                            let is_system_table = table.starts_with("pg_") || 
+                                                 table.starts_with("information_schema") ||
+                                                 table == "__pgsqlite_schema";
+                            
+                            if !is_system_table {
+                                // For user tables, missing metadata is an error
+                                debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", col_name, table);
+                                debug!("Falling back to type inference, but this may cause type compatibility issues.");
+                            }
+                        }
+                        
+                        // Last resort: Try to get type from value (with warning for user tables)
+                        let type_oid = if !response.rows.is_empty() {
+                            if let Some(value) = response.rows[0].get(i) {
+                                crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                            } else {
+                                25 // text for NULL
+                            }
+                        } else {
+                            25 // text default when no data
+                        };
+                        
+                        warn!("Column '{}' using inferred type OID {} (should have metadata)", col_name, type_oid);
+                        type_oid
+                    })
+                    .collect::<Vec<_>>();
+                
+                let fields: Vec<FieldDescription> = {
+                    let portals = session.portals.read().await;
+                    let portal = portals.get(portal_name).unwrap();
+                    let result_formats = &portal.result_formats;
+                    
+                    response.columns.iter()
+                        .enumerate()
+                        .map(|(i, col_name)| {
+                            let format = if result_formats.is_empty() {
+                                0 // Default to text if no formats specified
+                            } else if result_formats.len() == 1 {
+                                result_formats[0] // Single format applies to all columns
+                            } else if i < result_formats.len() {
+                                result_formats[i] // Use column-specific format
+                            } else {
+                                0 // Default to text if not enough formats
+                            };
+                            
+                            FieldDescription {
+                                name: col_name.clone(),
+                                table_oid: 0,
+                                column_id: (i + 1) as i16,
+                                type_oid: *field_types.get(i).unwrap_or(&25),
+                                type_size: -1,
+                                type_modifier: -1,
+                                format,
+                            }
+                        })
+                        .collect()
+                };
+                
+                // Cache the field descriptions (without format, as that's per-portal)
+                let cache_fields = fields.iter().map(|f| FieldDescription {
+                    name: f.name.clone(),
+                    table_oid: f.table_oid,
+                    column_id: f.column_id,
+                    type_oid: f.type_oid,
+                    type_size: f.type_size,
+                    type_modifier: f.type_modifier,
+                    format: 0, // Default format for cache
+                }).collect::<Vec<_>>();
+                GLOBAL_ROW_DESCRIPTION_CACHE.insert(cache_key, cache_fields);
+                
+                fields
             };
+            
             info!("Sending RowDescription with {} fields during Execute with inferred types", fields.len());
             framed.send(BackendMessage::RowDescription(fields)).await
                 .map_err(|e| PgSqliteError::Io(e))?;
