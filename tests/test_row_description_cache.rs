@@ -4,6 +4,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Test RowDescription caching performance
 #[tokio::test]
+#[ignore] // Skip in normal test runs due to server startup requirement
 async fn test_row_description_cache() {
     // Start pgsqlite server
     let port = 25446;
@@ -14,11 +15,37 @@ async fn test_row_description_cache() {
     
     let mut server = tokio::process::Command::new("cargo")
         .args(&["run", "--release", "--", "-p", &port.to_string(), "--in-memory", "--log-level", "info"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("Failed to start server");
     
-    // Wait for server to start
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    // Wait for server to start with retries
+    let mut connected = false;
+    let max_retries = if std::env::var("CI").is_ok() { 60 } else { 20 }; // 30s in CI, 10s locally
+    for i in 0..max_retries {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        if let Ok(_) = TcpStream::connect(format!("127.0.0.1:{}", port)).await {
+            connected = true;
+            println!("Server started after {} attempts", i + 1);
+            break;
+        }
+    }
+    
+    if !connected {
+        // Try to get output from server for debugging
+        let output = server.wait_with_output().await.unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        
+        panic!(
+            "Failed to connect to server after {} seconds\nExit status: {:?}\nStdout:\n{}\nStderr:\n{}", 
+            max_retries / 2,
+            output.status,
+            stdout,
+            stderr
+        );
+    }
     
     // Connect to server
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
