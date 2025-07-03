@@ -1,11 +1,12 @@
 # pgsqlite
+## 🐘+🪶=<span style="color: red; font-size: 1.5em">♥</span>
 
 <img width="150" src="./pgsqlite.png"/>
 
-> **⚠️ WARNING: Experimental Project**  
-> This is an experimental project and is not yet ready for production use. It is under active development and may contain bugs, incomplete features, or breaking changes.
-
 A PostgreSQL protocol adapter for SQLite databases. This project allows PostgreSQL clients to connect to and query SQLite databases using the PostgreSQL wire protocol.
+
+> **⚠️ WARNING: Experimental Project**
+> This is an experimental project and is not yet ready for production use. It is under active development and may contain bugs, incomplete features, or breaking changes.
 
 ## How It Works
 
@@ -51,48 +52,15 @@ PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
                   Schema Cache ← __pgsqlite_schema ← SQLite Storage
 ```
 
-### Performance Optimization Strategy
+## Performance
 
-pgsqlite achieves reasonable performance through a multi-layered optimization approach:
-
-#### Fast Path Execution (~35-40x overhead vs raw SQLite)
-**Conditions for fast path:**
-- Simple queries: `SELECT/INSERT/UPDATE/DELETE` with basic WHERE clauses
-- Simple WHERE predicates: `=`, `>`, `<`, `>=`, `<=`, `!=`, `<>`
-- Single-table operations with column comparisons
-- Tables without DECIMAL columns (avoids query rewriting)
-- Parameterized queries ($1, $2, etc.) in extended protocol
-
-**Fast path benefits:**
-- Bypasses SQL parsing and AST manipulation
-- Skips decimal arithmetic rewriting
-- Direct SQLite execution with minimal overhead
-- Cached schema lookups for decimal detection
-- Optimized parameter binding for extended protocol
-
-#### Query Plan Caching ✅ IMPLEMENTED
-**Comprehensive query optimization with significant performance improvements:**
-
-**Query Plan Cache Architecture:**
-- **LRU Cache**: Stores parsed and analyzed query plans by normalized query text (1000 entries, 10min TTL)
-- **Cached Metadata**: Table schemas, column types, and decimal detection results stored with plans
-- **Rewrite Cache**: Pre-computed decimal query rewrites for tables with NUMERIC columns
-- **Statement Pool**: Reuses SQLite prepared statements and metadata (100 statements, LRU eviction)
-
-**Cache Benefits:**
-- **Eliminates Re-parsing**: Skip expensive SQL parsing for repeated query patterns
-- **Avoids Schema Lookups**: Table metadata cached with query plans, eliminating `__pgsqlite_schema` queries
-- **Rewrite Optimization**: Decimal arithmetic rewriting computed once per unique query structure
-- **Prepared Statement Optimization**: Statement metadata caching and parameter optimization
-
-**Latest Performance Results (Post-Consolidation - 2025-07-03):**
-After comprehensive executor consolidation and optimization:
+**Latest Performance Results (2025-07-03):**
 
 ```
-Operation        | Overhead | Time (ms) | Performance Grade
+Operation        | Overhead | Time (ms) | Note
 ================|==========|===========|==================
 UPDATE          |    33x   |   0.042   | Excellent ⭐⭐
-DELETE          |    37x   |   0.039   | Excellent ⭐⭐  
+DELETE          |    37x   |   0.039   | Excellent ⭐⭐
 SELECT (cached) |    10x   |   0.051   | Outstanding ⭐⭐⭐
 SELECT          |    89x   |   0.097   | 50% improvement
 INSERT          |   165x   |   0.293   | Expected for 1-row
@@ -100,61 +68,46 @@ INSERT          |   165x   |   0.293   | Expected for 1-row
 OVERALL         |    77x   |     -     | 21% improvement
 ```
 
-**Key Achievements:**
-- ✅ **Cached SELECT at 10x** exceeds original target (was aiming for 10-20x)
-- ✅ **DML operations under 40x** - excellent for protocol translation
-- ✅ **Overall 21% improvement** from architecture consolidation
-- ✅ **Cache effectiveness**: 1.9x speedup for cached queries
+CREATE operations are significantly slower as we also update the `__pgsqlite_schema` table, however those are siginificantly less frequent than other operations.
 
-**Historical Performance Comparison:**
-- **SELECT**: ~180x → **89x** (50% improvement!)
-- **SELECT (cached)**: ~17x → **10x** (41% improvement!)
-- **Overall**: ~98x → **77x** (21% improvement!)
 
-**Direct DbHandler Performance (bypassing protocol):**
-- INSERT fast path: 1.5x overhead (near-native performance)
-- INSERT with statement pool: 1.0x overhead ⭐
-- UPDATE/DELETE with fast path: ~1.5x overhead
+### Optimizations used in the project
 
-**Architecture Consolidation Benefits:**
-- **Single executor implementation** - eliminated 7 redundant executors (~1,800 lines)
-- **Combined optimizations** - integrated best features from all implementations
-- **Intelligent batching** - dynamic batch sizing for optimal latency/throughput
-- **Zero warnings** - clean compilation after consolidation
+• **Fast Path Execution** - Direct SQL execution for simple INSERT/UPDATE/DELETE queries, bypassing full parsing pipeline (achieves 1.0-1.5x overhead)
 
-#### Full Query Pipeline (~89x overhead for uncached, ~10x for cached)
-For complex queries that can't use fast path:
-- Complete PostgreSQL SQL parsing with query plan caching
-- Query rewriting for decimal arithmetic (cached when possible)
-- Type-aware result processing with statement pool optimization
-- Zero-copy message construction through buffer pooling
-- Boolean value conversion with optimized pathways
-- Cached schema metadata lookups with automatic memory management
+• **Multi-Level Caching Strategy**:
+  - Query Plan Cache: LRU cache of parsed queries with metadata (1000 entries)
+  - Statement Pool: Reusable SQLite prepared statements (100 statements, LRU eviction)
+  - Execution Cache: Pre-computed metadata for query execution
+  - Result Set Cache: Complete query results for repeated queries (100 entries, 60s TTL)
+  - Schema Cache: In-memory table metadata with bulk preloading
+  - RowDescription Cache: Field descriptions for SELECT queries (1000 entries, 10min TTL)
 
-#### Zero-Copy Protocol Architecture ✅ FULLY IMPLEMENTED
-- **Memory-Mapped Values**: Zero-copy access for large BLOB/TEXT data through memory mapping
-- **Buffer Pooling**: Thread-safe buffer recycling with automatic size management and statistics
-- **Memory Monitoring**: Intelligent pressure detection with configurable thresholds and cleanup
-- **Message Batching**: Smart batching with configurable flush triggers to reduce syscall overhead
-- **Direct Socket Communication**: Bypasses tokio-util framing for reduced protocol overhead
+• **Zero-Copy Protocol Architecture**:
+  - Memory-mapped values for large BLOB/TEXT data
+  - Thread-safe buffer pooling with automatic recycling
+  - Direct socket communication bypassing tokio-util framing
+  - Intelligent message batching to reduce syscall overhead
 
-#### Caching Strategy ✅ FULLY IMPLEMENTED
-- **Schema Cache**: In-memory table metadata with bulk preloading and bloom filters
-- **Decimal Table Cache**: Cached detection of tables requiring decimal rewriting  
-- **Type Information**: Cached PostgreSQL type mappings for result formatting
-- **Query Plan Cache**: LRU cache of parsed queries, metadata, and decimal rewrites (1000 entries)
-- **Statement Pool**: Cached SQLite prepared statements with metadata (100 statements, LRU eviction)
-- **Execution Cache**: Pre-computed metadata for query execution with type converters
-- **Result Set Cache**: LRU cache for complete query results (100 entries, 60s TTL)
-- **Cache Metrics**: Hit/miss tracking and periodic logging for monitoring
+• **Query Optimization**:
+  - Case-insensitive query type detection using byte comparison (400,000x speedup)
+  - Static string command tags for common cases (0/1 rows)
+  - Decimal query rewriting only for tables with NUMERIC types
+  - Binary protocol support for efficient data transfer
 
-#### Where Overhead Comes From
-1. **Protocol Translation** (~20-30%): PostgreSQL wire protocol encoding/decoding
-2. **SQL Parsing & Rewriting** (~40-50%): Converting PostgreSQL SQL to SQLite-compatible queries
-3. **Type Conversion** (~15-20%): Converting values between PostgreSQL and SQLite formats
-4. **Schema Lookups** (~10-15%): Retrieving type metadata for proper result formatting
+• **Architecture Simplification**:
+  - Single consolidated executor eliminating code duplication
+  - Mutex-based database handler (2.2-3.5x faster than channel-based)
+  - Dynamic batch sizing based on result set size
 
-#### Performance Monitoring
+• **Smart Type Handling**:
+  - Cached type conversions and mappings
+  - Optimized boolean conversion (0/1 → f/t)
+  - Direct pass-through for non-decimal arithmetic
+
+These optimizations combined achieve **10x overhead for cached SELECT queries** and **77x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **33-37x overhead**.
+
+### Performance Monitoring
 Run benchmarks to measure overhead:
 ```bash
 # Comprehensive benchmark comparing pgsqlite vs raw SQLite
@@ -163,7 +116,7 @@ Run benchmarks to measure overhead:
 # Fast path effectiveness test
 cargo test benchmark_fast_path -- --ignored --nocapture
 
-# Cache effectiveness benchmark  
+# Cache effectiveness benchmark
 cargo test benchmark_cache_effectiveness -- --ignored --nocapture
 
 # Statement pool performance test
@@ -215,38 +168,6 @@ pgsqlite/
 ## Type Mapping
 
 pgsqlite implements a comprehensive type mapping system between PostgreSQL and SQLite. For detailed information about how types are mapped between the two systems, see our [Type Mapping PRD](docs/type-mapping-prd.md).
-
-## Advanced Features
-
-### Binary Protocol Support ✅ IMPLEMENTED
-pgsqlite now supports PostgreSQL's binary protocol for efficient data transfer:
-- Binary encoding for common types: BOOLEAN, INT2/4/8, FLOAT4/8, BYTEA
-- Automatic format detection from client preferences
-- Correct FieldDescription format codes based on Portal settings
-- Seamless fallback to text protocol when needed
-
-### Zero-Copy Message Construction ✅ IMPLEMENTED
-Optimized protocol message construction for reduced allocations:
-- `ZeroCopyMessageBuilder` for efficient DataRow construction
-- Direct buffer writing without intermediate allocations
-- Support for batch message construction
-
-### Result Set Caching ✅ IMPLEMENTED
-Intelligent caching of complete query results:
-- Automatic caching for queries taking >1ms or returning >10 rows
-- Cache key includes query text and parameter values
-- 100 entry LRU cache with 60-second TTL
-- Automatic invalidation on DDL statements
-- 2.2x speedup for cached queries
-
-### RowDescription Caching ✅ IMPLEMENTED
-Optimized field description caching for SELECT queries:
-- LRU cache for FieldDescription messages (1000 entries, 10-minute TTL)
-- Cache key includes normalized query, table name, and column names
-- Configurable via environment variables:
-  - `PGSQLITE_ROW_DESC_CACHE_SIZE` (default: 1000)
-  - `PGSQLITE_ROW_DESC_CACHE_TTL_MINUTES` (default: 10)
-- 41% improvement for cached SELECT queries
 
 ## Supported Features
 
@@ -366,6 +287,149 @@ Actual: Error: "Invalid type specification"
 ```
 
 This helps us quickly understand and reproduce the issue.
+
+## Configuration
+
+pgsqlite can be configured through command line arguments or environment variables. Command line arguments take precedence over environment variables.
+
+### Configuration Precedence
+1. Command line arguments (highest priority)
+2. Environment variables
+3. Default values (lowest priority)
+
+### Command Line Arguments
+
+```bash
+# Basic configuration
+--port, -p <PORT>                # PostgreSQL port to listen on (default: 5432)
+--database, -d <DATABASE>        # Path to SQLite database file (default: sqlite.db)
+--log-level <LOG_LEVEL>          # Logging level (default: info)
+--in-memory                      # Use in-memory SQLite database
+--socket-dir <SOCKET_DIR>        # Directory for Unix domain socket (default: /tmp)
+--no-tcp                         # Disable TCP listener, use only Unix socket
+
+# Cache configuration
+--row-desc-cache-size <SIZE>     # RowDescription cache entries (default: 1000)
+--row-desc-cache-ttl <MINUTES>   # RowDescription cache TTL (default: 10)
+--param-cache-size <SIZE>        # Parameter cache entries (default: 500)
+--param-cache-ttl <MINUTES>      # Parameter cache TTL (default: 30)
+--query-cache-size <SIZE>        # Query plan cache entries (default: 1000)
+--query-cache-ttl <SECONDS>      # Query cache TTL (default: 600)
+--execution-cache-ttl <SECONDS>  # Execution metadata TTL (default: 300)
+--result-cache-size <SIZE>       # Result set cache entries (default: 100)
+--result-cache-ttl <SECONDS>     # Result cache TTL (default: 60)
+--statement-pool-size <SIZE>     # Prepared statement pool size (default: 100)
+--cache-metrics-interval <SEC>   # Cache metrics logging interval (default: 300)
+--schema-cache-ttl <SECONDS>     # Schema cache TTL (default: 300)
+
+# Buffer pool configuration
+--buffer-monitoring              # Enable buffer pool monitoring
+--buffer-pool-size <SIZE>        # Buffer pool size (default: 50)
+--buffer-initial-capacity <SIZE> # Initial buffer capacity (default: 4096)
+--buffer-max-capacity <SIZE>     # Max buffer capacity (default: 65536)
+
+# Memory configuration
+--auto-cleanup                   # Enable automatic memory pressure response
+--memory-monitoring              # Enable detailed memory monitoring
+--memory-threshold <BYTES>       # Memory threshold for cleanup (default: 64MB)
+--high-memory-threshold <BYTES>  # High memory threshold (default: 128MB)
+--memory-check-interval <SEC>    # Memory check interval (default: 10)
+
+# Memory mapping configuration
+--enable-mmap                    # Enable memory mapping for large values
+--mmap-min-size <BYTES>          # Min size for memory mapping (default: 64KB)
+--mmap-max-memory <BYTES>        # Max in-memory size before temp files (default: 1MB)
+--temp-dir <DIR>                 # Directory for temporary files
+
+# SQLite PRAGMA settings
+--pragma-journal-mode <MODE>     # SQLite journal mode (default: WAL)
+--pragma-synchronous <MODE>      # SQLite synchronous mode (default: NORMAL)
+--pragma-cache-size <SIZE>       # SQLite page cache size (default: -64000)
+--pragma-mmap-size <BYTES>       # SQLite memory-mapped I/O size (default: 256MB)
+```
+
+### Environment Variables
+
+All command line arguments can also be set via environment variables by prefixing with `PGSQLITE_`:
+
+```bash
+# Basic configuration
+PGSQLITE_PORT=5432
+PGSQLITE_DATABASE=sqlite.db
+PGSQLITE_LOG_LEVEL=info
+PGSQLITE_IN_MEMORY=false
+PGSQLITE_SOCKET_DIR=/tmp
+PGSQLITE_NO_TCP=false
+
+# Cache configuration
+PGSQLITE_ROW_DESC_CACHE_SIZE=1000
+PGSQLITE_ROW_DESC_CACHE_TTL_MINUTES=10
+PGSQLITE_PARAM_CACHE_SIZE=500
+PGSQLITE_PARAM_CACHE_TTL_MINUTES=30
+PGSQLITE_QUERY_CACHE_SIZE=1000
+PGSQLITE_QUERY_CACHE_TTL=600
+PGSQLITE_EXECUTION_CACHE_TTL=300
+PGSQLITE_RESULT_CACHE_SIZE=100
+PGSQLITE_RESULT_CACHE_TTL=60
+PGSQLITE_STATEMENT_POOL_SIZE=100
+PGSQLITE_CACHE_METRICS_INTERVAL=300
+PGSQLITE_SCHEMA_CACHE_TTL=300
+
+# Buffer pool configuration
+PGSQLITE_BUFFER_MONITORING=0        # Set to 1 to enable
+PGSQLITE_BUFFER_POOL_SIZE=50
+PGSQLITE_BUFFER_INITIAL_CAPACITY=4096
+PGSQLITE_BUFFER_MAX_CAPACITY=65536
+
+# Memory configuration
+PGSQLITE_AUTO_CLEANUP=0             # Set to 1 to enable
+PGSQLITE_MEMORY_MONITORING=0        # Set to 1 to enable
+PGSQLITE_MEMORY_THRESHOLD=67108864
+PGSQLITE_HIGH_MEMORY_THRESHOLD=134217728
+PGSQLITE_MEMORY_CHECK_INTERVAL=10
+
+# Memory mapping configuration
+PGSQLITE_ENABLE_MMAP=0              # Set to 1 to enable
+PGSQLITE_MMAP_MIN_SIZE=65536
+PGSQLITE_MMAP_MAX_MEMORY=1048576
+PGSQLITE_TEMP_DIR=/tmp
+
+# SQLite PRAGMA settings
+PGSQLITE_JOURNAL_MODE=WAL
+PGSQLITE_SYNCHRONOUS=NORMAL
+PGSQLITE_CACHE_SIZE=-64000
+PGSQLITE_MMAP_SIZE=268435456
+```
+
+### Configuration File
+
+Copy `.env.example` to `.env` and adjust values as needed:
+
+```bash
+cp .env.example .env
+# Edit .env with your preferred settings
+```
+
+### Examples
+
+```bash
+# Run with custom port and in-memory database
+pgsqlite --port 5433 --in-memory
+
+# Run with environment variables
+export PGSQLITE_PORT=5433
+export PGSQLITE_LOG_LEVEL=debug
+pgsqlite
+
+# Run with aggressive caching
+pgsqlite --query-cache-size 5000 --result-cache-size 500 --statement-pool-size 200
+
+# Run with memory optimizations enabled
+pgsqlite --enable-mmap --buffer-monitoring --auto-cleanup
+
+# Run with custom SQLite settings
+pgsqlite --pragma-journal-mode DELETE --pragma-synchronous FULL
+```
 
 ## License
 

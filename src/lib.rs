@@ -8,6 +8,7 @@ pub mod query;
 pub mod metadata;
 pub mod rewriter;
 pub mod cache;
+pub mod config;
 
 #[cfg(test)]
 pub mod alloc_tracker;
