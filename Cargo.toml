@@ -6,7 +6,6 @@ edition = "2024"
 [features]
 default = []
 use_db_executor = []
-zero-copy-protocol = []
 
 [dependencies]
 # Async runtime

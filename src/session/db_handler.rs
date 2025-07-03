@@ -9,6 +9,7 @@ use crate::cache::{global_result_cache, ResultCacheKey, ResultSetCache};
 use crate::cache::schema::TableSchema;
 use crate::rewriter::DecimalQueryRewriter;
 use crate::types::PgType;
+use crate::query::{QueryTypeDetector, QueryType};
 use tracing::{info, debug};
 
 /// Database response structure
@@ -97,7 +98,7 @@ impl DbHandler {
         }
         
         // For INSERT queries, try statement pool for better performance
-        if query.trim().to_uppercase().starts_with("INSERT") {
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Insert) {
             // First check if we can use fast path with statement pool
             if let Some(table_name) = extract_insert_table_name(query) {
                 if !self.schema_cache.has_decimal_columns(&table_name) {
@@ -351,11 +352,7 @@ impl Clone for DbHandler {
 // Helper functions (previously in db_executor.rs)
 
 pub fn is_ddl_statement(query: &str) -> bool {
-    let query_upper = query.trim().to_uppercase();
-    query_upper.starts_with("CREATE") ||
-    query_upper.starts_with("DROP") ||
-    query_upper.starts_with("ALTER") ||
-    query_upper.starts_with("TRUNCATE")
+    QueryTypeDetector::is_ddl(query)
 }
 
 pub fn execute_dml_sync(
@@ -364,9 +361,8 @@ pub fn execute_dml_sync(
     schema_cache: &SchemaCache,
 ) -> Result<DbResponse, rusqlite::Error> {
     // Fast path: For simple INSERT statements without decimals, execute directly
-    let trimmed = query.trim();
-    if trimmed.to_uppercase().starts_with("INSERT") {
-        if let Some(table_name) = extract_insert_table_name(trimmed) {
+    if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Insert) {
+        if let Some(table_name) = extract_insert_table_name(query) {
             // Check if table has decimal columns using bloom filter
             if !schema_cache.has_decimal_columns(&table_name) {
                 // No decimal columns, execute directly without parsing
@@ -596,11 +592,13 @@ fn needs_decimal_rewriting(query: &str, schema_cache: &SchemaCache) -> bool {
 
 /// Simple table name extraction without full parsing
 fn extract_table_names_simple(query: &str) -> Result<Vec<String>, ()> {
-    let upper_query = query.to_uppercase();
     let mut table_names = Vec::new();
     
-    // Look for "FROM table_name" patterns
-    if let Some(from_pos) = upper_query.find(" FROM ") {
+    // Look for "FROM table_name" patterns - use case-insensitive search
+    let from_pos = query.as_bytes().windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b" FROM "))
+        .ok_or(())?;
+    if from_pos > 0 {
         let after_from = &query[from_pos + 6..];
         if let Some(next_space) = after_from.find(' ') {
             let table_name = after_from[..next_space].trim().to_string();
@@ -611,21 +609,28 @@ fn extract_table_names_simple(query: &str) -> Result<Vec<String>, ()> {
         }
     }
     
-    Ok(table_names)
+    if table_names.is_empty() {
+        Err(())
+    } else {
+        Ok(table_names)
+    }
 }
 
 /// Check if this is a fast path eligible query
 fn is_fast_path_query(query: &str) -> bool {
-    let upper = query.trim().to_uppercase();
+    use crate::query::{QueryTypeDetector, QueryType};
     
-    // Simple SELECT without complex features
-    upper.starts_with("SELECT") &&
-    !upper.contains("JOIN") &&
-    !upper.contains("UNION") &&
-    !upper.contains("SUBQUERY") &&
-    !upper.contains("GROUP BY") &&
-    !upper.contains("ORDER BY") &&
-    !upper.contains("HAVING")
+    let trimmed = query.trim();
+    let query_bytes = trimmed.as_bytes();
+    
+    // Only SELECT queries can use fast path
+    matches!(QueryTypeDetector::detect_query_type(trimmed), QueryType::Select) &&
+    !query_bytes.windows(4).any(|w| w.eq_ignore_ascii_case(b"JOIN")) &&
+    !query_bytes.windows(5).any(|w| w.eq_ignore_ascii_case(b"UNION")) &&
+    !query_bytes.windows(8).any(|w| w.eq_ignore_ascii_case(b"SUBQUERY")) &&
+    !query_bytes.windows(8).any(|w| w.eq_ignore_ascii_case(b"GROUP BY")) &&
+    !query_bytes.windows(8).any(|w| w.eq_ignore_ascii_case(b"ORDER BY")) &&
+    !query_bytes.windows(6).any(|w| w.eq_ignore_ascii_case(b"HAVING"))
 }
 
 /// Check if a column is a boolean type
@@ -735,16 +740,15 @@ pub fn execute_query_sync(
 
 /// Extract table name from INSERT statement
 fn extract_insert_table_name(query: &str) -> Option<String> {
-    // Simple regex-free parsing for performance
-    let upper = query.to_uppercase();
-    if let Some(into_pos) = upper.find(" INTO ") {
-        let after_into = &query[into_pos + 6..].trim();
-        // Find the table name (ends at space or opening parenthesis)
-        let end = after_into.find(' ').or_else(|| after_into.find('(')).unwrap_or(after_into.len());
-        let table_name = after_into[..end].trim();
-        if !table_name.is_empty() {
-            return Some(table_name.to_string());
-        }
+    // Simple regex-free parsing for performance - use case-insensitive search
+    let into_pos = query.as_bytes().windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b" INTO "))?;
+    let after_into = &query[into_pos + 6..].trim();
+    // Find the table name (ends at space or opening parenthesis)
+    let end = after_into.find(' ').or_else(|| after_into.find('(')).unwrap_or(after_into.len());
+    let table_name = after_into[..end].trim();
+    if !table_name.is_empty() {
+        return Some(table_name.to_string());
     }
     None
 }
@@ -851,7 +855,7 @@ fn execute_cached_query_with_statement_pool(
     final_query: &str,
 ) -> Result<DbResponse, rusqlite::Error> {
     // For simple queries, try to use statement pool
-    if !final_query.contains('$') && final_query.trim().to_uppercase().starts_with("SELECT") {
+    if !final_query.contains('$') && matches!(crate::query::QueryTypeDetector::detect_query_type(final_query), crate::query::QueryType::Select) {
         if let Ok((columns, rows)) = StatementPool::global().query_cached(conn, final_query, []) {
             // Update touch for the statement pool entry
             StatementPool::global().touch(final_query);

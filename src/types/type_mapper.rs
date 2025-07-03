@@ -182,6 +182,20 @@ impl TypeMapper {
 
     /// Convert PostgreSQL type name to SQLite type
     pub fn pg_to_sqlite(&self, pg_type: &str) -> &str {
+        // Fast path for common types (case-sensitive match first)
+        match pg_type {
+            "text" | "TEXT" => return "TEXT",
+            "integer" | "INTEGER" | "int4" | "INT4" => return "INTEGER",
+            "bigint" | "BIGINT" | "int8" | "INT8" => return "INTEGER",
+            "boolean" | "BOOLEAN" | "bool" | "BOOL" => return "INTEGER",
+            "real" | "REAL" | "float4" | "FLOAT4" => return "DECIMAL",
+            "double precision" | "DOUBLE PRECISION" | "float8" | "FLOAT8" => return "DECIMAL",
+            "varchar" | "VARCHAR" => return "TEXT",
+            "numeric" | "NUMERIC" | "decimal" | "DECIMAL" => return "DECIMAL",
+            _ => {}
+        }
+        
+        // Fall back to hashmap lookup with lowercasing
         self.pg_to_sqlite
             .get(pg_type.to_lowercase().as_str())
             .map(|s| s.as_str())
@@ -211,13 +225,41 @@ impl TypeMapper {
     /// Normalize parametric types by removing extra spaces
     fn normalize_parametric_type(&self, pg_type: &str) -> String {
         // Handle cases like "CHARACTER VARYING (255)" -> "CHARACTER VARYING(255)"
-        let normalized = pg_type.trim().to_uppercase();
+        // Avoid to_uppercase if possible by checking common patterns
+        let trimmed = pg_type.trim();
+        
+        // Fast check for already normalized
+        if !trimmed.contains(" (") {
+            return trimmed.to_string();
+        }
+        
+        let normalized = trimmed.to_uppercase();
         // Remove spaces before parentheses
         normalized.replace(" (", "(")
     }
     
     /// Extract base type from parametric types like VARCHAR(255) -> VARCHAR
     fn extract_base_type(&self, pg_type: &str) -> Option<String> {
+        // Check common patterns without uppercasing first
+        if pg_type.starts_with("varchar") || pg_type.starts_with("VARCHAR") {
+            return Some("varchar".to_string());
+        }
+        if pg_type.starts_with("character varying") || pg_type.starts_with("CHARACTER VARYING") {
+            return Some("character varying".to_string());
+        }
+        if pg_type.starts_with("char") || pg_type.starts_with("CHAR") {
+            return Some("char".to_string());
+        }
+        if pg_type.starts_with("numeric") || pg_type.starts_with("NUMERIC") {
+            return Some("numeric".to_string());
+        }
+        if pg_type.starts_with("decimal") || pg_type.starts_with("DECIMAL") {
+            return Some("decimal".to_string());
+        }
+        if pg_type.starts_with("bit") || pg_type.starts_with("BIT") {
+            return Some("bit".to_string());
+        }
+        
         let normalized = pg_type.to_uppercase();
         
         // Handle parametric types
@@ -263,6 +305,16 @@ impl TypeMapper {
 
     /// Infer PostgreSQL type from SQLite type name
     pub fn sqlite_to_pg(&self, sqlite_type: &str) -> PgType {
+        // Fast path for common types
+        match sqlite_type {
+            "INTEGER" | "integer" => return PgType::Int4,
+            "REAL" | "real" => return PgType::Float8,
+            "TEXT" | "text" => return PgType::Text,
+            "BLOB" | "blob" => return PgType::Bytea,
+            "DECIMAL" | "decimal" => return PgType::Numeric,
+            _ => {}
+        }
+        
         self.sqlite_to_pg
             .get(sqlite_type.to_uppercase().as_str())
             .copied()
