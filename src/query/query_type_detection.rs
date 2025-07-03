@@ -34,8 +34,11 @@ impl QueryTypeDetector {
             }
         }
         
-        if bytes.len() >= 6 && &bytes[0..6] == b"COMMIT" || &bytes[0..6] == b"commit" || &bytes[0..6] == b"Commit" {
-            return QueryType::Commit;
+        if bytes.len() >= 6 {
+            match &bytes[0..6] {
+                b"COMMIT" | b"commit" | b"Commit" => return QueryType::Commit,
+                _ => {}
+            }
         }
         
         if bytes.len() >= 8 {

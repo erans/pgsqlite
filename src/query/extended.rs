@@ -69,12 +69,20 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        info!("Parsing statement '{}': {}", name, query);
+        // Strip SQL comments first to avoid parsing issues
+        let cleaned_query = crate::query::strip_sql_comments(&query);
+        
+        // Check if query is empty after comment stripping
+        if cleaned_query.trim().is_empty() {
+            return Err(PgSqliteError::Protocol("Empty query".to_string()));
+        }
+        
+        info!("Parsing statement '{}': {}", name, cleaned_query);
         info!("Provided param_types: {:?}", param_types);
         
         // For INSERT and SELECT queries, we need to determine parameter types from the target table schema
         let mut actual_param_types = param_types.clone();
-        if param_types.is_empty() && query.contains('$') {
+        if param_types.is_empty() && cleaned_query.contains('$') {
             // First check parameter cache
             if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
                 actual_param_types = cached_info.param_types;
@@ -144,7 +152,7 @@ impl ExtendedQueryHandler {
                     // Also update query cache if it's a parseable query
                     if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
                         &sqlparser::dialect::PostgreSqlDialect {},
-                        &query
+                        &cleaned_query
                     ) {
                         if let Some(statement) = parsed.first() {
                             let table_names = Self::extract_table_names_from_statement(statement);
@@ -271,11 +279,11 @@ impl ExtendedQueryHandler {
         };
         
         // If param_types is empty but query has parameters, infer basic types
-        if actual_param_types.is_empty() && query.contains('$') {
+        if actual_param_types.is_empty() && cleaned_query.contains('$') {
             // Count parameters in the query
             let mut max_param = 0;
             for i in 1..=99 {
-                if query.contains(&format!("${}", i)) {
+                if cleaned_query.contains(&format!("${}", i)) {
                     max_param = i;
                 } else if max_param > 0 {
                     break;
@@ -291,7 +299,7 @@ impl ExtendedQueryHandler {
         
         // Store the prepared statement
         let stmt = PreparedStatement {
-            query: query.clone(),
+            query: cleaned_query.clone(),
             param_types: actual_param_types.clone(),
             param_formats: vec![0; actual_param_types.len()], // Default to text format
             field_descriptions,

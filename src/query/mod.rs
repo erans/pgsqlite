@@ -5,6 +5,7 @@ mod extended_helpers;
 pub mod fast_path;
 pub mod extended_fast_path;
 pub mod query_type_detection;
+pub mod comment_stripper;
 
 pub use executor::QueryExecutor;
 pub use extended::ExtendedQueryHandler;
@@ -15,3 +16,4 @@ pub use fast_path::{
     clear_decimal_cache, FastPathQuery, FastPathOperation, WhereClause
 };
 pub use query_type_detection::{QueryTypeDetector, QueryType};
+pub use comment_stripper::strip_sql_comments;

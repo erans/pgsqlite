@@ -36,10 +36,19 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        info!("Executing query: {}", query);
+        // Strip SQL comments first to avoid parsing issues
+        let cleaned_query = crate::query::strip_sql_comments(query);
+        let query_to_execute = cleaned_query.trim();
+        
+        // Check if query is empty after comment stripping
+        if query_to_execute.is_empty() {
+            return Err(PgSqliteError::Protocol("Empty query".to_string()));
+        }
+        
+        info!("Executing query: {}", query_to_execute);
         
         // Check if query contains multiple statements
-        let trimmed = query.trim();
+        let trimmed = query_to_execute.trim();
         if trimmed.contains(';') {
             // Split by semicolon and execute each statement
             let statements: Vec<&str> = trimmed.split(';')
@@ -58,7 +67,7 @@ impl QueryExecutor {
         }
         
         // Single statement execution
-        Self::execute_single_statement(framed, db, query).await
+        Self::execute_single_statement(framed, db, query_to_execute).await
     }
     
     async fn execute_single_statement<T>(
