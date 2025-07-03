@@ -577,6 +577,19 @@ Benchmark results comparing implementations (1000 operations each):
 - [x] Skip test_logging_reduced in CI due to server startup requirement (marked with #[ignore])
 - [x] Skip test_row_description_cache in CI due to server startup requirement (marked with #[ignore])
 
+### CI/CD Integration Testing - COMPLETED (2025-07-03)
+- [x] Added PostgreSQL client installation to GitHub Actions workflow
+- [x] Created multi-mode test runner script (run_ssl_tests.sh)
+  - [x] TCP with SSL mode (in-memory database)
+  - [x] TCP without SSL mode (in-memory database)
+  - [x] Unix socket mode (in-memory database)
+  - [x] File database with SSL mode
+  - [x] File database without SSL mode
+- [x] Integrated comprehensive SQL test suite (test_queries.sql) into CI pipeline
+- [x] Proper error handling - any SQL query failure causes build to fail
+- [x] Resource cleanup for all modes (sockets, certificates, databases)
+- [x] Renamed workflow from rust.yml to ci.yml for clarity
+
 ### 🗄️ PostgreSQL System Catalog Foundation - PARTIAL IMPLEMENTATION (2025-07-03)
 
 #### Background
