@@ -34,6 +34,7 @@ pub struct Portal {
     pub bound_values: Vec<Option<Vec<u8>>>,
     pub param_formats: Vec<i16>,
     pub result_formats: Vec<i16>,
+    pub inferred_param_types: Option<Vec<i32>>, // Types inferred from actual values
 }
 
 impl SessionState {

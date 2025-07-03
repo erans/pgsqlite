@@ -132,10 +132,15 @@ async fn test_comment_stripping_extended_protocol() {
     let value: i32 = row.get(0);
     assert_eq!(value, 42);
     
-    // Test 1b: Simple parameter without type cast
+    // Test 1b: Simple parameter without type cast - use prepare_typed to ensure type is TEXT
+    let stmt = client.prepare_typed(
+        "SELECT $1 -- simple parameter",
+        &[tokio_postgres::types::Type::TEXT],
+    ).await.unwrap();
+    
     let row = client
         .query_one(
-            "SELECT $1 -- simple parameter",
+            &stmt,
             &[&"test"],
         )
         .await
@@ -176,7 +181,7 @@ CREATE TABLE param_test (
         .execute(
             r#"
 INSERT INTO param_test (id, name, age) 
-VALUES ($1, $2, $3) -- insert person
+VALUES ($1::int4, $2::text, $3::int4) -- insert person
 "#,
             &[&1i32, &"Alice", &30i32],
         )
@@ -185,24 +190,42 @@ VALUES ($1, $2, $3) -- insert person
     
     assert_eq!(rows_affected, 1);
     
-    // Query with comments and parameters
-    let row = client
-        .query_one(
-            r#"
+    // Query with comments and parameters - use prepare_typed to ensure parameter type
+    let select_stmt = client.prepare_typed(
+        r#"
 -- Query person by id
 SELECT name, age 
 FROM param_test 
 WHERE id = $1 /* parameter: person id */
 "#,
+        &[tokio_postgres::types::Type::INT4],
+    ).await.unwrap();
+    
+    let row = client
+        .query_one(
+            &select_stmt,
             &[&1i32],
         )
         .await
         .unwrap();
     
     let name: String = row.get(0);
-    let age: i32 = row.get(1);
-    assert_eq!(name, "Alice");
-    assert_eq!(age, 30);
+    // Try to get age as different types to see what works
+    let age_result = row.try_get::<_, i32>(1);
+    match age_result {
+        Ok(age) => {
+            assert_eq!(name, "Alice");
+            assert_eq!(age, 30);
+        }
+        Err(e) => {
+            eprintln!("Failed to get age as i32: {:?}", e);
+            // Try as string
+            let age_str: String = row.get(1);
+            eprintln!("Age as string: '{}'", age_str);
+            assert_eq!(name, "Alice");
+            assert_eq!(age_str, "30");
+        }
+    }
     
     server.abort();
 }

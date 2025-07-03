@@ -80,6 +80,11 @@ impl ExtendedQueryHandler {
         info!("Parsing statement '{}': {}", name, cleaned_query);
         info!("Provided param_types: {:?}", param_types);
         
+        // Check if this is a simple parameter SELECT (e.g., SELECT $1, $2)
+        let is_simple_param_select = query_starts_with_ignore_case(&query, "SELECT") && 
+            !query.to_uppercase().contains("FROM") && 
+            query.contains('$');
+        
         // For INSERT and SELECT queries, we need to determine parameter types from the target table schema
         let mut actual_param_types = param_types.clone();
         if param_types.is_empty() && cleaned_query.contains('$') {
@@ -174,6 +179,8 @@ impl ExtendedQueryHandler {
         
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
+        info!("Analyzing query '{}' for field descriptions", cleaned_query);
+        info!("Is simple param select: {}", is_simple_param_select);
         let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
@@ -198,7 +205,8 @@ impl ExtendedQueryHandler {
                 info!("Detected column casts: {:?}", cast_info);
                 
                 // Remove PostgreSQL-style type casts before executing
-                let cast_regex = regex::Regex::new(r"::\w+").unwrap();
+                // Be careful not to match IPv6 addresses like ::1
+                let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
                 test_query = cast_regex.replace_all(&test_query, "").to_string();
                 
                 // Add LIMIT 1 to avoid processing too much data
@@ -207,6 +215,7 @@ impl ExtendedQueryHandler {
                 
                 match test_response {
                     Ok(response) => {
+                        info!("Test query returned {} columns: {:?}", response.columns.len(), response.columns);
                         // Extract table name from query to look up schema
                         let table_name = extract_table_name_from_select(&query);
                         
@@ -229,6 +238,41 @@ impl ExtendedQueryHandler {
                                     return Self::cast_type_to_oid(cast_type);
                                 }
                                 
+                                // For parameter columns (NULL from SELECT $1), try to match with parameters
+                                if col_name == "NULL" || col_name == "?column?" {
+                                    // For queries like SELECT $1, $2, the columns correspond to parameters
+                                    if is_simple_param_select {
+                                        // Count which parameter this column represents
+                                        // For SELECT $1, $2, column 0 = param 0, column 1 = param 1
+                                        info!("Simple parameter SELECT detected, column {} likely corresponds to parameter {}", i, i + 1);
+                                        
+                                        // Check actual_param_types which includes inferred types
+                                        if !actual_param_types.is_empty() && i < actual_param_types.len() {
+                                            let param_type = actual_param_types[i];
+                                            if param_type != 0 && param_type != PgType::Text.to_oid() {
+                                                info!("Using actual param type {} for column {}", param_type, i);
+                                                return param_type;
+                                            }
+                                        }
+                                        
+                                        // If we have param_types provided, use them
+                                        if !param_types.is_empty() && i < param_types.len() {
+                                            let param_type = param_types[i];
+                                            if param_type != 0 {
+                                                info!("Using provided param type {} for column {}", param_type, i);
+                                                return param_type;
+                                            }
+                                        }
+                                        
+                                        // Default to TEXT for now - will be handled during execution
+                                        info!("No specific param type for column {}, defaulting to TEXT", i);
+                                        return PgType::Text.to_oid();
+                                    }
+                                    
+                                    // For other queries with NULL columns, default to TEXT
+                                    return PgType::Text.to_oid();
+                                }
+                                
                                 // Second priority: Check schema table for stored type mappings
                                 if let Some(pg_type) = schema_types.get(col_name) {
                                     return crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
@@ -245,10 +289,10 @@ impl ExtendedQueryHandler {
                                     if let Some(value) = response.rows[0].get(i) {
                                         crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
                                     } else {
-                                        25 // text for NULL
+                                        PgType::Text.to_oid() // text for NULL
                                     }
                                 } else {
-                                    25 // text default when no data
+                                    PgType::Text.to_oid() // text default when no data
                                 }
                             })
                             .collect::<Vec<_>>();
@@ -336,6 +380,41 @@ impl ExtendedQueryHandler {
         info!("Statement has param_types: {:?}", stmt.param_types);
         info!("Received param formats: {:?}", formats);
         
+        // Check if we need to infer types (only when param types are empty or unknown)
+        let needs_inference = stmt.param_types.is_empty() || 
+            stmt.param_types.iter().all(|&t| t == 0);
+        
+        let mut inferred_types = None;
+        
+        if needs_inference && !values.is_empty() {
+            info!("Need to infer parameter types from values");
+            info!("Statement param_types: {:?}", stmt.param_types);
+            let mut types = Vec::new();
+            
+            for (i, val) in values.iter().enumerate() {
+                let format = formats.get(i).copied().unwrap_or(0);
+                let inferred_type = if let Some(v) = val {
+                    // For binary format, check the length to infer integer types
+                    if format == 1 {
+                        match v.len() {
+                            4 => PgType::Int4.to_oid(), // 4 bytes = int32
+                            8 => PgType::Int8.to_oid(), // 8 bytes = int64
+                            _ => Self::infer_type_from_value(v, format)
+                        }
+                    } else {
+                        Self::infer_type_from_value(v, format)
+                    }
+                } else {
+                    PgType::Text.to_oid() // NULL can be any type, default to text
+                };
+                
+                info!("  Param {}: inferred type OID {} from value (format={})", i + 1, inferred_type, format);
+                types.push(inferred_type);
+            }
+            
+            inferred_types = Some(types);
+        }
+        
         for (i, val) in values.iter().enumerate() {
             let expected_type = stmt.param_types.get(i).unwrap_or(&0);
             let format = formats.get(i).copied().unwrap_or(0);
@@ -376,6 +455,7 @@ impl ExtendedQueryHandler {
             } else {
                 result_formats
             },
+            inferred_param_types: inferred_types,
         };
         
         drop(statements);
@@ -401,7 +481,7 @@ impl ExtendedQueryHandler {
         info!("Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
-        let (query, bound_values, param_formats, result_formats, statement_name) = {
+        let (query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(&portal)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {}", portal)))?;
@@ -410,11 +490,15 @@ impl ExtendedQueryHandler {
              portal_obj.bound_values.clone(),
              portal_obj.param_formats.clone(),
              portal_obj.result_formats.clone(),
-             portal_obj.statement_name.clone())
+             portal_obj.statement_name.clone(),
+             portal_obj.inferred_param_types.clone())
         };
         
         // Get parameter types from the prepared statement
-        let param_types = {
+        let param_types = if let Some(inferred) = inferred_param_types {
+            // Use inferred types if available
+            inferred
+        } else {
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&statement_name).unwrap();
             stmt.param_types.clone()
@@ -495,7 +579,10 @@ impl ExtendedQueryHandler {
         let final_query = Self::substitute_parameters(&query, &bound_values, &param_formats, &param_types)?;
         
         info!("Executing query: {}", final_query);
+        info!("Original query: {}", query);
+        info!("Final query after substitution: {}", final_query);
         info!("Original query had {} bound values", bound_values.len());
+        
         
         // Debug: Check if this is a catalog query
         if final_query.contains("pg_catalog") || final_query.contains("pg_type") {
@@ -566,7 +653,44 @@ impl ExtendedQueryHandler {
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {}", portal.statement_name)))?;
             
             if !stmt.field_descriptions.is_empty() {
-                framed.send(BackendMessage::RowDescription(stmt.field_descriptions.clone())).await
+                // If we have inferred parameter types, update field descriptions for parameter columns
+                let mut fields = stmt.field_descriptions.clone();
+                info!("Describe portal: original fields: {:?}", fields);
+                if let Some(ref inferred_types) = portal.inferred_param_types {
+                    info!("Describe portal: inferred types available: {:?}", inferred_types);
+                    info!("Describe portal: field count: {}", fields.len());
+                    
+                    // For queries like SELECT $1, $2, $3, each parameter creates a column
+                    // The columns might be named NULL, ?column?, or $1, $2, etc.
+                    let mut param_column_count = 0;
+                    
+                    for (col_idx, field) in fields.iter_mut().enumerate() {
+                        // Check if this is a parameter column
+                        if field.name == "NULL" || field.name == "?column?" || field.name.starts_with('$') {
+                            // This is a parameter column, use the parameter index
+                            let param_idx = if field.name.starts_with('$') {
+                                // Extract parameter number from name like "$1"
+                                field.name[1..].parse::<usize>().ok().map(|n| n - 1).unwrap_or(param_column_count)
+                            } else {
+                                // For NULL or ?column?, use sequential parameter index
+                                param_column_count
+                            };
+                            
+                            if let Some(&inferred_type) = inferred_types.get(param_idx) {
+                                info!("Updating column '{}' at index {} (param {}) type from {} to {}", 
+                                      field.name, col_idx, param_idx + 1, field.type_oid, inferred_type);
+                                field.type_oid = inferred_type;
+                            } else {
+                                info!("No inferred type for column '{}' at index {} (param {})", 
+                                      field.name, col_idx, param_idx + 1);
+                            }
+                            
+                            param_column_count += 1;
+                        }
+                    }
+                }
+                info!("Describe portal: sending updated fields: {:?}", fields);
+                framed.send(BackendMessage::RowDescription(fields)).await
                     .map_err(|e| PgSqliteError::Io(e))?;
             } else {
                 framed.send(BackendMessage::NoData).await
@@ -781,12 +905,15 @@ impl ExtendedQueryHandler {
     fn substitute_parameters(query: &str, values: &[Option<Vec<u8>>], formats: &[i16], param_types: &[i32]) -> Result<String, PgSqliteError> {
         let mut result = query.to_string();
         
+        
         // Simple parameter substitution - replace $1, $2, etc. with actual values
         // This is a simplified version - a real implementation would parse the SQL
         for (i, value) in values.iter().enumerate() {
             let param = format!("${}", i + 1);
             let format = formats.get(i).copied().unwrap_or(0); // Default to text format
             let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to text
+            
+            
             
             let replacement = match value {
                 None => "NULL".to_string(),
@@ -843,6 +970,20 @@ impl ExtendedQueryHandler {
                                     Err(e) => {
                                         debug!("Failed to decode binary NUMERIC parameter: {}", e);
                                         return Err(PgSqliteError::InvalidParameter(format!("Invalid binary NUMERIC: {}", e)));
+                                    }
+                                }
+                            }
+                            t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
+                                // TEXT/VARCHAR in binary format is just UTF-8 bytes
+                                match String::from_utf8(bytes.clone()) {
+                                    Ok(s) => {
+                                        
+                                        format!("'{}'", s.replace('\'', "''"))
+                                    }
+                                    Err(_) => {
+                                        // Invalid UTF-8, treat as blob
+                                        info!("Failed to decode as UTF-8, treating as blob. Hex: {}", hex::encode(bytes));
+                                        format!("X'{}'", hex::encode(bytes))
                                     }
                                 }
                             }
@@ -906,7 +1047,8 @@ impl ExtendedQueryHandler {
         }
         
         // Remove PostgreSQL-style casts (::type) as SQLite doesn't support them
-        let cast_regex = regex::Regex::new(r"::\w+").unwrap();
+        // Be careful not to match IPv6 addresses like ::1
+        let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
         result = cast_regex.replace_all(&result, "").to_string();
         
         Ok(result)
@@ -1670,10 +1812,37 @@ impl ExtendedQueryHandler {
                     }
                 }
                 
+                // Get inferred types from portal if available
+                let portal_inferred_types = {
+                    let portals = session.portals.read().await;
+                    let portal = portals.get(portal_name).unwrap();
+                    portal.inferred_param_types.clone()
+                };
+                
                 // Try to infer field types from data
                 let field_types = response.columns.iter()
                     .enumerate()
                     .map(|(i, col_name)| {
+                        // Special handling for parameter columns (e.g., $1, ?column?)
+                        if col_name.starts_with('$') || col_name == "?column?" {
+                            // This is a parameter column, get type from portal's inferred types
+                            if let Some(ref inferred_types) = portal_inferred_types {
+                                // Try to extract parameter number from column name
+                                let param_idx = if col_name.starts_with('$') {
+                                    col_name[1..].parse::<usize>().ok().map(|n| n - 1)
+                                } else {
+                                    Some(i) // Use column index for ?column?
+                                };
+                                
+                                if let Some(idx) = param_idx {
+                                    if let Some(&type_oid) = inferred_types.get(idx) {
+                                        info!("Column '{}' is parameter with inferred type OID {}", col_name, type_oid);
+                                        return type_oid;
+                                    }
+                                }
+                            }
+                        }
+                        
                         // First priority: Check schema table for stored type mappings
                         if let Some(pg_type) = schema_types.get(col_name) {
                             let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
@@ -2517,6 +2686,59 @@ impl ExtendedQueryHandler {
             "bit" => PgType::Bit.to_oid(),
             "varbit" | "bit varying" => PgType::Varbit.to_oid(),
             _ => PgType::Text.to_oid(), // Default to text for unknown types
+        }
+    }
+    
+    /// Infer parameter type from the actual value
+    fn infer_type_from_value(value: &[u8], format: i16) -> i32 {
+        if format == 1 {
+            // Binary format - harder to infer, default to text
+            // In a real implementation, we could try to decode common binary formats
+            PgType::Text.to_oid()
+        } else {
+            // Text format - try to parse the value
+            if let Ok(s) = String::from_utf8(value.to_vec()) {
+                let trimmed = s.trim();
+                
+                // Check for boolean values
+                if trimmed == "t" || trimmed == "f" || 
+                   trimmed == "true" || trimmed == "false" || 
+                   trimmed == "1" || trimmed == "0" {
+                    return PgType::Bool.to_oid();
+                }
+                
+                // Check for integer
+                if let Ok(_) = trimmed.parse::<i32>() {
+                    return PgType::Int4.to_oid();
+                }
+                
+                // Check for bigint
+                if let Ok(_) = trimmed.parse::<i64>() {
+                    return PgType::Int8.to_oid();
+                }
+                
+                // Check for float
+                if let Ok(_) = trimmed.parse::<f64>() {
+                    return PgType::Float8.to_oid();
+                }
+                
+                // Check for common date/time patterns
+                if trimmed.len() == 10 && trimmed.chars().filter(|&c| c == '-').count() == 2 {
+                    // Looks like a date (YYYY-MM-DD)
+                    return PgType::Date.to_oid();
+                }
+                
+                if trimmed.contains(':') && (trimmed.contains('-') || trimmed.contains('/')) {
+                    // Looks like a timestamp
+                    return PgType::Timestamp.to_oid();
+                }
+                
+                // Default to text for everything else
+                PgType::Text.to_oid()
+            } else {
+                // Not valid UTF-8, treat as bytea
+                PgType::Bytea.to_oid()
+            }
         }
     }
     

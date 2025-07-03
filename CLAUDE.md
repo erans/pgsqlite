@@ -60,7 +60,10 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.
 - **Array types**: Array handling is not yet implemented
-- **Extended protocol parameter type inference**: Some parameter types may require explicit casts
+- **Extended protocol parameter type inference**: When using queries like `SELECT $1` without explicit type casts, parameters default to TEXT type. This can cause type mismatch errors when trying to retrieve integer values. Workarounds:
+  - Use explicit type casts: `SELECT $1::int4`
+  - Use `prepare_typed()` with explicit parameter types
+  - This is a limitation of PostgreSQL protocol where field types must be determined during Parse phase before actual parameter values are known
 
 ## Important Design Decisions
 - **Type Inference**: NEVER use column names to infer types. Types should be determined from:

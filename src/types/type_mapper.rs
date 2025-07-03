@@ -31,6 +31,7 @@ pub enum PgType {
     Macaddr8 = 774,
     Bit = 1560,
     Varbit = 1562,
+    Unknown = 705,
 }
 
 impl PgType {
@@ -64,6 +65,7 @@ impl PgType {
             774 => Some(PgType::Macaddr8),
             1560 => Some(PgType::Bit),
             1562 => Some(PgType::Varbit),
+            705 => Some(PgType::Unknown),
             _ => None,
         }
     }
@@ -102,6 +104,7 @@ impl PgType {
             PgType::Macaddr8 => "macaddr8",
             PgType::Bit => "bit",
             PgType::Varbit => "varbit",
+            PgType::Unknown => "unknown",
         }
     }
 }
