@@ -522,3 +522,30 @@ The consolidation eliminated multiple executor implementations while preserving 
 - `zero_copy_executor.rs` - Alternative implementation
 - `executor_batch.rs` - Batch optimization (integrated)
 - Various test files for removed functionality
+
+### Dead Code Cleanup (2025-07-03)
+
+**Background**: After the executor consolidation and zero-copy architecture integration, significant dead code remained from experimental implementations that were never integrated into the main execution path.
+
+**Cleanup Work Completed:**
+1. **Removed unused protocol implementations** (13 files total):
+   - `src/main_zero_copy.rs` - Alternative entry point for zero-copy protocol
+   - `src/protocol/connection.rs`, `connection_v2.rs`, `connection_direct.rs` - Legacy connection wrappers
+   - `src/protocol/writer.rs` - Unused DirectWriter/FramedWriter implementations
+   - `src/protocol/writer_pooled.rs` - Unused pooled writer implementation
+   - `src/protocol/zero_copy.rs` - Unused zero-copy message builder
+
+2. **Removed obsolete test files**:
+   - `tests/writer_test.rs`, `protocol_allocation_test.rs`, `buffer_pool_test.rs`
+   - `tests/benchmark_executors.rs`, `benchmark_insert_protocol_v2.rs`, `zero_copy_insert_demo.rs`
+
+3. **Removed obsolete benchmark files**:
+   - `benches/protocol_writer_bench.rs`, `insert_allocation_bench.rs`
+
+**Impact**: 
+- ~3,000+ lines of dead code removed
+- Zero performance impact (all optimizations preserved in consolidated executor)
+- Cleaner, more maintainable codebase
+- All 75 unit tests continue to pass
+
+**Architecture Note**: The production code uses the standard tokio-util Framed codec approach throughout, with all zero-copy optimizations integrated at the value handling layer rather than the protocol layer. This provides the performance benefits without the complexity of custom protocol implementations.

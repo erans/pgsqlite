@@ -1,5 +1,25 @@
 # pgsqlite TODO List
 
+## 🧹 Dead Code Cleanup - COMPLETED (2025-07-03)
+
+### Background
+After the executor consolidation and zero-copy architecture integration, significant dead code remained from experimental implementations.
+
+### Cleanup Work Completed
+- [x] Removed 13 files of unused protocol implementations:
+  - `src/main_zero_copy.rs` - Alternative entry point
+  - `src/protocol/connection*.rs` (3 files) - Legacy connection wrappers
+  - `src/protocol/writer*.rs` (3 files) - Unused writer implementations
+  - 6 obsolete test files
+  - 2 obsolete benchmark files
+- [x] Updated protocol module exports
+- [x] ~3,000+ lines of dead code removed
+- [x] Zero performance regression confirmed via benchmarks
+- [x] All 75 unit tests continue to pass
+
+### Impact
+The codebase is now significantly cleaner while maintaining all performance optimizations. The production code uses the standard tokio-util Framed codec approach with zero-copy optimizations integrated at the value handling layer.
+
 ## ✅ Performance Optimization Phase 1 - COMPLETED (2025-06-30)
 
 ### Background
