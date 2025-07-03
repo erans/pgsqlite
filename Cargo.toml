@@ -59,6 +59,12 @@ lazy_static = "1.5"
 # Metrics
 prometheus = "0.14"
 
+# TLS/SSL support
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2.0"
+rcgen = "0.13"
+
 [dev-dependencies]
 criterion = "0.6"
 pretty_assertions = "1.4"

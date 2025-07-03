@@ -190,12 +190,15 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 #### Security
 - [ ] Row-level security policies
 - [ ] Column-level permissions
-- [ ] SSL/TLS connection support
-  - [ ] Implement SSL negotiation in protocol handler
-  - [ ] Support sslmode options (disable, allow, prefer, require, verify-ca, verify-full)
-  - [ ] Certificate-based authentication
-  - [ ] Configure SSL cert/key paths via command line or config
-  - [ ] Support PostgreSQL SSL protocol flow
+- [x] SSL/TLS connection support - COMPLETED (2025-07-03)
+  - [x] Implement SSL negotiation in protocol handler
+  - [x] Support basic sslmode (enabled/disabled via --ssl flag)
+  - [x] Certificate generation and management
+  - [x] Configure SSL cert/key paths via command line or config
+  - [x] Support PostgreSQL SSL protocol flow
+  - [ ] Full sslmode options support (allow, prefer, require, verify-ca, verify-full)
+  - [ ] Client certificate authentication
+  - [ ] Certificate rotation without restart
 - [ ] Authentication methods (md5, scram-sha-256)
 
 #### Monitoring

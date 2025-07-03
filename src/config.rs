@@ -115,12 +115,36 @@ pub struct Config {
 
     #[arg(long, default_value = "268435456", env = "PGSQLITE_MMAP_SIZE", help = "SQLite memory-mapped I/O size in bytes")]
     pub pragma_mmap_size: u64,
+
+    // SSL/TLS configuration
+    #[arg(long, env = "PGSQLITE_SSL", help = "Enable SSL/TLS support")]
+    pub ssl: bool,
+
+    #[arg(long, env = "PGSQLITE_SSL_CERT", help = "Path to SSL certificate file")]
+    pub ssl_cert: Option<String>,
+
+    #[arg(long, env = "PGSQLITE_SSL_KEY", help = "Path to SSL private key file")]
+    pub ssl_key: Option<String>,
+
+    #[arg(long, env = "PGSQLITE_SSL_CA", help = "Path to CA certificate file")]
+    pub ssl_ca: Option<String>,
+
+    #[arg(long, env = "PGSQLITE_SSL_EPHEMERAL", help = "Generate ephemeral SSL certificates on startup")]
+    pub ssl_ephemeral: bool,
 }
 
 impl Config {
     /// Get a configuration instance with all values resolved from CLI args and environment variables
     pub fn load() -> Self {
-        Config::parse()
+        let config = Config::parse();
+        
+        // Validate SSL configuration
+        if config.ssl && config.no_tcp {
+            eprintln!("Error: SSL cannot be enabled when TCP is disabled (Unix sockets don't support SSL)");
+            std::process::exit(1);
+        }
+        
+        config
     }
 
     /// Get the cache metrics interval as Duration
