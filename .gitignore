@@ -19,3 +19,4 @@ sqlite.db*
 
 test_output.log
 test_db
+pgsqlite_test.log
