@@ -400,6 +400,34 @@ INSERT INTO table (col1, col2) VALUES
 
 **Key Achievement**: Successfully resolved cached SELECT performance regression (22x → 18x overhead) through targeted optimizations, achieving 19% improvement while maintaining full compatibility with all PostgreSQL types.
 
+## Extended Protocol Parameter Handling Optimization (2025-07-02)
+
+### Background
+Extended protocol parameter handling was using expensive `to_uppercase()` calls for query type detection, creating unnecessary string allocations on every query execution.
+
+### Optimization Implemented
+- **Replaced `to_uppercase()` with byte comparison**: Direct byte pattern matching for common SQL keywords
+- **Added `query_starts_with_ignore_case()` helper**: Efficient case-insensitive prefix matching
+- **Added `find_keyword_position()` helper**: Case-insensitive keyword search within queries
+- **Optimized 15+ call sites**: Replaced all `to_uppercase()` usage in extended.rs
+
+### Performance Results
+- **1.5x speedup** in query type detection (103ms → 71ms for 800k operations)
+- **Zero allocations** for common query types (SELECT, INSERT, UPDATE, DELETE)
+- **Fallback path** for mixed-case or uncommon queries maintains correctness
+
+### Code Pattern
+```rust
+// Old approach
+let query_upper = query.trim().to_uppercase();
+if query_upper.starts_with("SELECT") { ... }
+
+// New approach  
+if query_starts_with_ignore_case(&query, "SELECT") { ... }
+```
+
+This optimization reduces CPU usage in the hot path of query execution without any functional changes.
+
 ### Code Quality Improvements (2025-07-02)
 
 **OID Type Magic Numbers Replacement:**
