@@ -11,8 +11,6 @@ pub mod buffer_pool;
 pub mod writer_pooled;
 pub mod memory_monitor;
 
-#[cfg(feature = "zero-copy-protocol")]
-pub mod connection_direct;
 
 pub use messages::*;
 pub use codec::PostgresCodec;
@@ -26,5 +24,3 @@ pub use buffer_pool::{BufferPool, BufferPoolConfig, BufferPoolStats, PooledBytes
 pub use writer_pooled::{PooledDirectWriter, BatchConfig, WriterStats as PooledWriterStats};
 pub use memory_monitor::{MemoryMonitor, MemoryMonitorConfig, MemoryStats, MemoryPressure, global_memory_monitor};
 
-#[cfg(feature = "zero-copy-protocol")]
-pub use connection_direct::DirectConnection;

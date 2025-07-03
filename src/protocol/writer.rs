@@ -421,16 +421,6 @@ pub enum WriterType {
 
 impl WriterType {
     /// Create a protocol writer from the current configuration
-    #[cfg(feature = "zero-copy-protocol")]
-    pub fn from_config() -> Self {
-        if std::env::var("PGSQLITE_ZERO_COPY").unwrap_or_default() == "1" {
-            WriterType::Direct
-        } else {
-            WriterType::Framed
-        }
-    }
-    
-    #[cfg(not(feature = "zero-copy-protocol"))]
     pub fn from_config() -> Self {
         WriterType::Framed
     }

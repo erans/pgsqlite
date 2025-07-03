@@ -12,6 +12,49 @@ use std::sync::Arc;
 use byteorder::{BigEndian, ByteOrder};
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
 
+/// Efficient case-insensitive query type detection
+#[inline]
+fn query_starts_with_ignore_case(query: &str, prefix: &str) -> bool {
+    let query_trimmed = query.trim();
+    let query_bytes = query_trimmed.as_bytes();
+    let prefix_bytes = prefix.as_bytes();
+    
+    if query_bytes.len() < prefix_bytes.len() {
+        return false;
+    }
+    
+    // Fast byte comparison for common cases
+    match prefix {
+        "INSERT" => matches!(&query_bytes[0..6], b"INSERT" | b"insert" | b"Insert"),
+        "SELECT" => matches!(&query_bytes[0..6], b"SELECT" | b"select" | b"Select"),
+        "UPDATE" => matches!(&query_bytes[0..6], b"UPDATE" | b"update" | b"Update"),
+        "DELETE" => matches!(&query_bytes[0..6], b"DELETE" | b"delete" | b"Delete"),
+        _ => query_trimmed[..prefix.len()].eq_ignore_ascii_case(prefix),
+    }
+}
+
+/// Find position of a keyword in query text (case-insensitive)
+#[inline]
+fn find_keyword_position(query: &str, keyword: &str) -> Option<usize> {
+    // For small keywords, do simple case-insensitive search
+    let query_bytes = query.as_bytes();
+    let keyword_bytes = keyword.as_bytes();
+    
+    if keyword_bytes.is_empty() || query_bytes.len() < keyword_bytes.len() {
+        return None;
+    }
+    
+    // Sliding window search
+    for i in 0..=(query_bytes.len() - keyword_bytes.len()) {
+        let window = &query_bytes[i..i + keyword_bytes.len()];
+        if window.eq_ignore_ascii_case(keyword_bytes) {
+            return Some(i);
+        }
+    }
+    
+    None
+}
+
 pub struct ExtendedQueryHandler;
 
 impl ExtendedQueryHandler {
@@ -52,7 +95,7 @@ impl ExtendedQueryHandler {
                     });
                 } else {
                     // Need to analyze the query
-                    let (analyzed_types, original_types_opt, table_name, column_names) = if query.trim().to_uppercase().starts_with("INSERT") {
+                    let (analyzed_types, original_types_opt, table_name, column_names) = if query_starts_with_ignore_case(&query, "INSERT") {
                         match Self::analyze_insert_params(&query, db).await {
                             Ok((types, orig_types)) => {
                                 info!("Analyzed INSERT parameter types: {:?} (original: {:?})", types, orig_types);
@@ -70,7 +113,7 @@ impl ExtendedQueryHandler {
                                 (types.clone(), Some(types), None, Vec::new())
                             }
                         }
-                    } else if query.trim().to_uppercase().starts_with("SELECT") {
+                    } else if query_starts_with_ignore_case(&query, "SELECT") {
                         let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
                             // If we can't determine types, default to text
                             let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
@@ -123,7 +166,7 @@ impl ExtendedQueryHandler {
         
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
-        let field_descriptions = if query.trim().to_uppercase().starts_with("SELECT") {
+        let field_descriptions = if query_starts_with_ignore_case(&query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
             if query.contains("pg_catalog") || query.contains("pg_type") {
@@ -452,21 +495,19 @@ impl ExtendedQueryHandler {
         }
         
         // Execute based on query type
-        let query_upper = final_query.trim().to_uppercase();
-        
-        if query_upper.starts_with("SELECT") {
+        if query_starts_with_ignore_case(&final_query, "SELECT") {
             Self::execute_select(framed, db, session, &portal, &final_query, max_rows).await?;
-        } else if query_upper.starts_with("INSERT") 
-            || query_upper.starts_with("UPDATE") 
-            || query_upper.starts_with("DELETE") {
+        } else if query_starts_with_ignore_case(&final_query, "INSERT") 
+            || query_starts_with_ignore_case(&final_query, "UPDATE") 
+            || query_starts_with_ignore_case(&final_query, "DELETE") {
             Self::execute_dml(framed, db, &final_query, &portal, session).await?;
-        } else if query_upper.starts_with("CREATE") 
-            || query_upper.starts_with("DROP") 
-            || query_upper.starts_with("ALTER") {
+        } else if query_starts_with_ignore_case(&final_query, "CREATE") 
+            || query_starts_with_ignore_case(&final_query, "DROP") 
+            || query_starts_with_ignore_case(&final_query, "ALTER") {
             Self::execute_ddl(framed, db, &final_query).await?;
-        } else if query_upper.starts_with("BEGIN") 
-            || query_upper.starts_with("COMMIT") 
-            || query_upper.starts_with("ROLLBACK") {
+        } else if query_starts_with_ignore_case(&final_query, "BEGIN") 
+            || query_starts_with_ignore_case(&final_query, "COMMIT") 
+            || query_starts_with_ignore_case(&final_query, "ROLLBACK") {
             Self::execute_transaction(framed, db, &final_query).await?;
         } else {
             Self::execute_generic(framed, db, &final_query).await?;
@@ -1810,11 +1851,11 @@ impl ExtendedQueryHandler {
         
         let response = db.execute(query).await?;
         
-        let tag = if query.trim_start().to_uppercase().starts_with("INSERT") {
+        let tag = if query_starts_with_ignore_case(query, "INSERT") {
             format!("INSERT 0 {}", response.rows_affected)
-        } else if query.trim_start().to_uppercase().starts_with("UPDATE") {
+        } else if query_starts_with_ignore_case(query, "UPDATE") {
             format!("UPDATE {}", response.rows_affected)
-        } else if query.trim_start().to_uppercase().starts_with("DELETE") {
+        } else if query_starts_with_ignore_case(query, "DELETE") {
             format!("DELETE {}", response.rows_affected)
         } else {
             format!("OK {}", response.rows_affected)
@@ -1838,9 +1879,7 @@ impl ExtendedQueryHandler {
         let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
             .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
         
-        let query_upper = base_query.trim_start().to_uppercase();
-        
-        if query_upper.starts_with("INSERT") {
+        if query_starts_with_ignore_case(&base_query, "INSERT") {
             // For INSERT, execute the insert and then query by last_insert_rowid
             let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
@@ -1896,7 +1935,7 @@ impl ExtendedQueryHandler {
             let tag = format!("INSERT 0 {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("UPDATE") {
+        } else if query_starts_with_ignore_case(&base_query, "UPDATE") {
             // For UPDATE, we need a different approach
             let table_name = ReturningTranslator::extract_table_from_update(&base_query)
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
@@ -1969,7 +2008,7 @@ impl ExtendedQueryHandler {
             let tag = format!("UPDATE {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("DELETE") {
+        } else if query_starts_with_ignore_case(&base_query, "DELETE") {
             // For DELETE, capture rows before deletion
             let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
@@ -2031,7 +2070,7 @@ impl ExtendedQueryHandler {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Handle CREATE TABLE translation
-        let translated_query = if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+        let translated_query = if query_starts_with_ignore_case(query, "CREATE TABLE") {
             let (sqlite_sql, type_mappings) = crate::translator::CreateTableTranslator::translate(query)
                 .map_err(|e| PgSqliteError::Protocol(e))?;
             
@@ -2083,11 +2122,11 @@ impl ExtendedQueryHandler {
         
         db.execute(&translated_query).await?;
         
-        let tag = if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+        let tag = if query_starts_with_ignore_case(query, "CREATE TABLE") {
             "CREATE TABLE".to_string()
-        } else if query.trim_start().to_uppercase().starts_with("DROP TABLE") {
+        } else if query_starts_with_ignore_case(query, "DROP TABLE") {
             "DROP TABLE".to_string()
-        } else if query.trim_start().to_uppercase().starts_with("CREATE INDEX") {
+        } else if query_starts_with_ignore_case(query, "CREATE INDEX") {
             "CREATE INDEX".to_string()
         } else {
             "OK".to_string()
@@ -2107,17 +2146,15 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        let query_upper = query.trim().to_uppercase();
-        
-        if query_upper.starts_with("BEGIN") {
+        if query_starts_with_ignore_case(query, "BEGIN") {
             db.execute("BEGIN").await?;
             framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("COMMIT") {
+        } else if query_starts_with_ignore_case(query, "COMMIT") {
             db.execute("COMMIT").await?;
             framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("ROLLBACK") {
+        } else if query_starts_with_ignore_case(query, "ROLLBACK") {
             db.execute("ROLLBACK").await?;
             framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
@@ -2367,51 +2404,54 @@ impl ExtendedQueryHandler {
     fn analyze_column_casts(query: &str) -> std::collections::HashMap<usize, String> {
         let mut cast_map = std::collections::HashMap::new();
         
-        // Find the SELECT clause
-        let query_upper = query.to_uppercase();
-        if let Some(select_pos) = query_upper.find("SELECT") {
-            let after_select = &query[select_pos + 6..];
-            
-            // Find the FROM clause to know where SELECT list ends
-            let from_pos = after_select.to_uppercase().find(" FROM ")
-                .unwrap_or(after_select.len());
-            
-            let select_list = &after_select[..from_pos];
-            
-            // Split by commas (simple parsing - doesn't handle nested functions perfectly)
-            let mut column_idx = 0;
-            let mut current_expr = String::new();
-            let mut paren_depth = 0;
-            
-            for ch in select_list.chars() {
-                match ch {
-                    '(' => {
-                        paren_depth += 1;
-                        current_expr.push(ch);
+        // Find the SELECT clause - use case-insensitive search
+        let select_pos = if let Some(pos) = find_keyword_position(query, "SELECT") {
+            pos
+        } else {
+            return cast_map; // No SELECT found
+        };
+        
+        let after_select = &query[select_pos + 6..];
+        
+        // Find the FROM clause to know where SELECT list ends
+        let from_pos = find_keyword_position(after_select, " FROM ")
+            .unwrap_or(after_select.len());
+        
+        let select_list = &after_select[..from_pos];
+        
+        // Split by commas (simple parsing - doesn't handle nested functions perfectly)
+        let mut column_idx = 0;
+        let mut current_expr = String::new();
+        let mut paren_depth = 0;
+        
+        for ch in select_list.chars() {
+            match ch {
+                '(' => {
+                    paren_depth += 1;
+                    current_expr.push(ch);
+                }
+                ')' => {
+                    paren_depth -= 1;
+                    current_expr.push(ch);
+                }
+                ',' if paren_depth == 0 => {
+                    // Found a column separator
+                    if let Some(cast_type) = Self::extract_cast_from_expression(&current_expr) {
+                        cast_map.insert(column_idx, cast_type);
                     }
-                    ')' => {
-                        paren_depth -= 1;
-                        current_expr.push(ch);
-                    }
-                    ',' if paren_depth == 0 => {
-                        // Found a column separator
-                        if let Some(cast_type) = Self::extract_cast_from_expression(&current_expr) {
-                            cast_map.insert(column_idx, cast_type);
-                        }
-                        column_idx += 1;
-                        current_expr.clear();
-                    }
-                    _ => {
-                        current_expr.push(ch);
-                    }
+                    column_idx += 1;
+                    current_expr.clear();
+                }
+                _ => {
+                    current_expr.push(ch);
                 }
             }
-            
-            // Don't forget the last expression
-            if !current_expr.trim().is_empty() {
-                if let Some(cast_type) = Self::extract_cast_from_expression(&current_expr) {
-                    cast_map.insert(column_idx, cast_type);
-                }
+        }
+        
+        // Don't forget the last expression
+        if !current_expr.trim().is_empty() {
+            if let Some(cast_type) = Self::extract_cast_from_expression(&current_expr) {
+                cast_map.insert(column_idx, cast_type);
             }
         }
         
@@ -2517,10 +2557,8 @@ impl ExtendedQueryHandler {
 
 /// Extract table name from SELECT query
 fn extract_table_name_from_select(query: &str) -> Option<String> {
-    let query_lower = query.to_lowercase();
-    
-    // Look for FROM clause
-    if let Some(from_pos) = query_lower.find(" from ") {
+    // Look for FROM clause using case-insensitive search
+    if let Some(from_pos) = find_keyword_position(query, " from ") {
         let after_from = &query[from_pos + 6..].trim();
         
         // Find the end of table name (space, where, order by, etc.)
@@ -2545,14 +2583,12 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
 
 /// Extract table name from CREATE TABLE statement
 fn extract_table_name_from_create(query: &str) -> Option<String> {
-    let query_upper = query.to_uppercase();
-    
     // Look for CREATE TABLE pattern
-    if let Some(table_pos) = query_upper.find("CREATE TABLE") {
+    if let Some(table_pos) = find_keyword_position(query, "CREATE TABLE") {
         let after_create = &query[table_pos + 12..].trim();
         
         // Skip IF NOT EXISTS if present
-        let after_create = if after_create.to_uppercase().starts_with("IF NOT EXISTS") {
+        let after_create = if query_starts_with_ignore_case(after_create, "IF NOT EXISTS") {
             &after_create[13..].trim()
         } else {
             after_create

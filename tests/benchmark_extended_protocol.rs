@@ -2,6 +2,7 @@ use std::time::Instant;
 use tokio_postgres::NoTls;
 use std::process::{Command, Child};
 use std::thread;
+use std::str::FromStr;
 
 #[tokio::test]
 #[ignore] // Run with: cargo test benchmark_extended_protocol -- --ignored --nocapture
@@ -16,7 +17,7 @@ async fn benchmark_extended_protocol_parameters() {
     
     // Connect to the server
     let (client, connection) = tokio_postgres::connect(
-        "host=localhost port=5432 user=postgres dbname=test",
+        "host=localhost port=5433 user=postgres dbname=test",
         NoTls,
     )
     .await
@@ -49,7 +50,7 @@ async fn benchmark_extended_protocol_parameters() {
         client
             .execute(
                 "INSERT INTO bench_params (id, name, value, price) VALUES ($1, $2, $3, $4)",
-                &[&i, &name, &(i * 10), &format!("{}.99", i)],
+                &[&i, &name, &(i * 10), &rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap()],
             )
             .await
             .expect("Failed to insert warmup data");
@@ -66,7 +67,7 @@ async fn benchmark_extended_protocol_parameters() {
             i
         );
         let name = format!("test_{}", i);
-        let price = format!("{}.99", i);
+        let price = rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap();
         
         let start = Instant::now();
         client
@@ -93,7 +94,7 @@ async fn benchmark_extended_protocol_parameters() {
     let mut total_cached_time = std::time::Duration::ZERO;
     for i in 200..300 {
         let name = format!("cached_{}", i);
-        let price = format!("{}.99", i);
+        let price = rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap();
         
         let start = Instant::now();
         client
@@ -158,7 +159,7 @@ async fn benchmark_extended_protocol_parameters() {
     let mut total_binary_time = std::time::Duration::ZERO;
     for i in 300..400 {
         let name = format!("binary_{}", i);
-        let price = format!("{}.99", i);
+        let price = rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap();
         
         let start = Instant::now();
         client
@@ -203,7 +204,7 @@ async fn benchmark_extended_protocol_parameters() {
 
 fn start_server() -> Child {
     Command::new("cargo")
-        .args(&["run", "--", "--port", "5432"])
+        .args(&["run", "--", "--port", "5433"])
         .spawn()
         .expect("Failed to start server")
 }

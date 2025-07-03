@@ -50,8 +50,17 @@ impl SchemaTypeMapper {
     
     /// Map SQLite type declaration to PostgreSQL OID
     pub fn sqlite_type_to_pg_oid(sqlite_type: &str) -> i32 {
-        let type_upper = sqlite_type.to_uppercase();
+        // Fast path for common exact matches
+        match sqlite_type {
+            "INTEGER" | "integer" => return PgType::Int4.to_oid(), // int4
+            "REAL" | "real" => return PgType::Float8.to_oid(), // float8
+            "TEXT" | "text" => return PgType::Text.to_oid(), // text
+            "BLOB" | "blob" => return PgType::Bytea.to_oid(), // bytea
+            _ => {}
+        }
         
+        // Fall back to case-insensitive comparison
+        let type_upper = sqlite_type.to_uppercase();
         match type_upper.as_str() {
             "INTEGER" => PgType::Int4.to_oid(), // int4
             "REAL" => PgType::Float8.to_oid(), // float8
@@ -63,6 +72,28 @@ impl SchemaTypeMapper {
     
     /// Map PostgreSQL type string to OID
     pub fn pg_type_string_to_oid(pg_type: &str) -> i32 {
+        // Fast path for common exact matches (case-sensitive)
+        match pg_type {
+            "text" | "TEXT" => return PgType::Text.to_oid(),
+            "integer" | "INTEGER" | "int4" | "INT4" | "int" | "INT" => return PgType::Int4.to_oid(),
+            "bigint" | "BIGINT" | "int8" | "INT8" => return PgType::Int8.to_oid(),
+            "smallint" | "SMALLINT" | "int2" | "INT2" => return PgType::Int2.to_oid(),
+            "boolean" | "BOOLEAN" | "bool" | "BOOL" => return PgType::Bool.to_oid(),
+            "real" | "REAL" | "float4" | "FLOAT4" => return PgType::Float4.to_oid(),
+            "double precision" | "DOUBLE PRECISION" | "float8" | "FLOAT8" => return PgType::Float8.to_oid(),
+            "numeric" | "NUMERIC" | "decimal" | "DECIMAL" => return PgType::Numeric.to_oid(),
+            "varchar" | "VARCHAR" => return PgType::Varchar.to_oid(),
+            "char" | "CHAR" => return PgType::Char.to_oid(),
+            "bytea" | "BYTEA" => return PgType::Bytea.to_oid(),
+            "date" | "DATE" => return PgType::Date.to_oid(),
+            "time" | "TIME" => return PgType::Time.to_oid(),
+            "timestamp" | "TIMESTAMP" => return PgType::Timestamp.to_oid(),
+            "uuid" | "UUID" => return PgType::Uuid.to_oid(),
+            "json" | "JSON" => return PgType::Json.to_oid(),
+            "jsonb" | "JSONB" => return PgType::Jsonb.to_oid(),
+            _ => {}
+        }
+        
         let upper_type = pg_type.to_uppercase();
         
         // Handle parametric types by removing parameters

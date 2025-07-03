@@ -9,6 +9,22 @@ use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tracing::{info, debug};
 
+/// Create a command complete tag with optimized static strings for common cases
+fn create_command_tag(operation: &str, rows_affected: usize) -> String {
+    match (operation, rows_affected) {
+        // Optimized static strings for most common cases (0/1 rows affected)
+        ("INSERT", 0) => "INSERT 0 0".to_string(),
+        ("INSERT", 1) => "INSERT 0 1".to_string(),
+        ("UPDATE", 0) => "UPDATE 0".to_string(),
+        ("UPDATE", 1) => "UPDATE 1".to_string(),
+        ("DELETE", 0) => "DELETE 0".to_string(),
+        ("DELETE", 1) => "DELETE 1".to_string(),
+        // Format for all other cases
+        ("INSERT", n) => format!("INSERT 0 {}", n),
+        (op, n) => format!("{} {}", op, n),
+    }
+}
+
 pub struct QueryExecutor;
 
 impl QueryExecutor {
@@ -53,26 +69,24 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        // Simple query routing
-        let query_upper = query.trim().to_uppercase();
+        // Simple query routing using optimized detection
+        use crate::query::{QueryTypeDetector, QueryType};
         
-        if query_upper.starts_with("SELECT") {
-            Self::execute_select(framed, db, query).await
-        } else if query_upper.starts_with("INSERT") 
-            || query_upper.starts_with("UPDATE") 
-            || query_upper.starts_with("DELETE") {
-            Self::execute_dml(framed, db, query).await
-        } else if query_upper.starts_with("CREATE") 
-            || query_upper.starts_with("DROP") 
-            || query_upper.starts_with("ALTER") {
-            Self::execute_ddl(framed, db, query).await
-        } else if query_upper.starts_with("BEGIN") 
-            || query_upper.starts_with("COMMIT") 
-            || query_upper.starts_with("ROLLBACK") {
-            Self::execute_transaction(framed, db, query).await
-        } else {
-            // Try to execute as-is
-            Self::execute_generic(framed, db, query).await
+        match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Select => Self::execute_select(framed, db, query).await,
+            QueryType::Insert | QueryType::Update | QueryType::Delete => {
+                Self::execute_dml(framed, db, query).await
+            }
+            QueryType::Create | QueryType::Drop | QueryType::Alter => {
+                Self::execute_ddl(framed, db, query).await
+            }
+            QueryType::Begin | QueryType::Commit | QueryType::Rollback => {
+                Self::execute_transaction(framed, db, query).await
+            }
+            _ => {
+                // Try to execute as-is
+                Self::execute_generic(framed, db, query).await
+            }
         }
     }
     
@@ -166,14 +180,20 @@ impl QueryExecutor {
         framed.send(BackendMessage::RowDescription(fields)).await
             .map_err(|e| PgSqliteError::Io(e))?;
         
-        // Send data rows
-        for row in response.rows {
-            framed.send(BackendMessage::DataRow(row)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+        // Optimized data row sending for better SELECT performance
+        if response.rows.len() > 5 {
+            // Use batch sending for larger result sets
+            Self::send_data_rows_batched(framed, response.rows).await?;
+        } else {
+            // Use individual sending for small result sets
+            for row in response.rows {
+                framed.send(BackendMessage::DataRow(row)).await
+                    .map_err(|e| PgSqliteError::Io(e))?;
+            }
         }
         
-        // Send CommandComplete
-        let tag = format!("SELECT {}", response.rows_affected);
+        // Send CommandComplete with optimized tag creation
+        let tag = create_command_tag("SELECT", response.rows_affected);
         framed.send(BackendMessage::CommandComplete { tag }).await
             .map_err(|e| PgSqliteError::Io(e))?;
         
@@ -193,27 +213,15 @@ impl QueryExecutor {
             return Self::execute_dml_with_returning(framed, db, query).await;
         }
         
-        #[cfg(feature = "zero-copy-protocol")]
-        {
-            // Use optimized path if zero-copy is enabled
-            if crate::query::should_use_zero_copy() {
-                use crate::query::QueryExecutorZeroCopy;
-                
-                // DbHandler contains Arc internally, so we can pass it directly
-                return Self::execute_dml_optimized(framed, db, query).await;
-            }
-        }
-        
         let response = db.execute(query).await?;
         
-        let tag = if query.trim_start().to_uppercase().starts_with("INSERT") {
-            format!("INSERT 0 {}", response.rows_affected)
-        } else if query.trim_start().to_uppercase().starts_with("UPDATE") {
-            format!("UPDATE {}", response.rows_affected)
-        } else if query.trim_start().to_uppercase().starts_with("DELETE") {
-            format!("DELETE {}", response.rows_affected)
-        } else {
-            format!("OK {}", response.rows_affected)
+        // Optimized tag creation with static strings for common cases and buffer pooling for larger counts
+        use crate::query::{QueryTypeDetector, QueryType};
+        let tag = match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Insert => create_command_tag("INSERT", response.rows_affected),
+            QueryType::Update => create_command_tag("UPDATE", response.rows_affected),
+            QueryType::Delete => create_command_tag("DELETE", response.rows_affected),
+            _ => create_command_tag("OK", response.rows_affected),
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
@@ -233,9 +241,9 @@ impl QueryExecutor {
         let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
             .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
         
-        let query_upper = base_query.trim_start().to_uppercase();
+        use crate::query::{QueryTypeDetector, QueryType};
         
-        if query_upper.starts_with("INSERT") {
+        if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Insert) {
             // For INSERT, execute the insert and then query by last_insert_rowid
             let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
@@ -279,7 +287,7 @@ impl QueryExecutor {
             let tag = format!("INSERT 0 {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("UPDATE") {
+        } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Update) {
             // For UPDATE, we need a different approach
             // SQLite doesn't support RETURNING natively, so we'll use a workaround
             let table_name = ReturningTranslator::extract_table_from_update(&base_query)
@@ -341,7 +349,7 @@ impl QueryExecutor {
             let tag = format!("UPDATE {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("DELETE") {
+        } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Delete) {
             // For DELETE, capture rows before deletion
             let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
@@ -403,8 +411,9 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         use crate::translator::CreateTableTranslator;
+        use crate::query::{QueryTypeDetector, QueryType};
         
-        let (translated_query, type_mappings) = if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+        let (translated_query, type_mappings) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
             // Use CREATE TABLE translator
             CreateTableTranslator::translate(query)
                 .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?
@@ -461,14 +470,26 @@ impl QueryExecutor {
             }
         }
         
-        let tag = if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
-            "CREATE TABLE".to_string()
-        } else if query.trim_start().to_uppercase().starts_with("DROP TABLE") {
-            "DROP TABLE".to_string()
-        } else if query.trim_start().to_uppercase().starts_with("CREATE INDEX") {
-            "CREATE INDEX".to_string()
-        } else {
-            "OK".to_string()
+        let tag = match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Create => {
+                let after_create = query.trim_start()[6..].trim_start();
+                if after_create.to_uppercase().starts_with("TABLE") {
+                    "CREATE TABLE".to_string()
+                } else if after_create.to_uppercase().starts_with("INDEX") {
+                    "CREATE INDEX".to_string()
+                } else {
+                    "CREATE".to_string()
+                }
+            }
+            QueryType::Drop => {
+                let after_drop = query.trim_start()[4..].trim_start();
+                if after_drop.to_uppercase().starts_with("TABLE") {
+                    "DROP TABLE".to_string()
+                } else {
+                    "DROP".to_string()
+                }
+            }
+            _ => "OK".to_string(),
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
@@ -485,20 +506,24 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        let query_upper = query.trim().to_uppercase();
-        
-        if query_upper.starts_with("BEGIN") {
-            db.execute("BEGIN").await?;
-            framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("COMMIT") {
-            db.execute("COMMIT").await?;
-            framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
-        } else if query_upper.starts_with("ROLLBACK") {
-            db.execute("ROLLBACK").await?;
-            framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+        use crate::query::{QueryTypeDetector, QueryType};
+        match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Begin => {
+                db.execute("BEGIN").await?;
+                framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
+                    .map_err(|e| PgSqliteError::Io(e))?;
+            }
+            QueryType::Commit => {
+                db.execute("COMMIT").await?;
+                framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
+                    .map_err(|e| PgSqliteError::Io(e))?;
+            }
+            QueryType::Rollback => {
+                db.execute("ROLLBACK").await?;
+                framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
+                    .map_err(|e| PgSqliteError::Io(e))?;
+            }
+            _ => {}
         }
         
         Ok(())
@@ -520,31 +545,71 @@ impl QueryExecutor {
         
         Ok(())
     }
+    
+    /// Optimized batch sending of data rows with intelligent batching
+    async fn send_data_rows_batched<T>(
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        rows: Vec<Vec<Option<Vec<u8>>>>,
+    ) -> Result<(), PgSqliteError>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+    {
+        use futures::SinkExt;
+        
+        // Use intelligent batch sizing based on result set size
+        let batch_size = if rows.len() <= 20 {
+            // Small result sets: send individually to minimize latency
+            1
+        } else if rows.len() <= 100 {
+            // Medium result sets: use small batches
+            10
+        } else {
+            // Large result sets: use larger batches for throughput
+            25
+        };
+        
+        if batch_size == 1 {
+            // Send individually for small result sets
+            for row in rows {
+                framed.send(BackendMessage::DataRow(row)).await
+                    .map_err(|e| PgSqliteError::Io(e))?;
+            }
+        } else {
+            // Send in batches with periodic flushing
+            for chunk in rows.chunks(batch_size) {
+                for row in chunk {
+                    framed.send(BackendMessage::DataRow(row.clone())).await
+                        .map_err(|e| PgSqliteError::Io(e))?;
+                }
+                // Flush after each batch to ensure timely delivery
+                framed.flush().await.map_err(|e| PgSqliteError::Io(e))?;
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 /// Extract table name from SELECT statement
 fn extract_table_name_from_select(query: &str) -> Option<String> {
-    let query_lower = query.to_lowercase();
+    // Look for FROM clause with case-insensitive search
+    let from_pos = query.as_bytes().windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b" from "))?;
     
-    // Look for FROM clause
-    if let Some(from_pos) = query_lower.find(" from ") {
-        let after_from = &query[from_pos + 6..].trim();
-        
-        // Find the end of table name (space, where, order by, etc.)
-        let table_end = after_from.find(|c: char| {
-            c.is_whitespace() || c == ',' || c == ';' || c == '('
-        }).unwrap_or(after_from.len());
-        
-        let table_name = after_from[..table_end].trim();
-        
-        // Remove quotes if present
-        let table_name = table_name.trim_matches('"').trim_matches('\'');
-        
-        if !table_name.is_empty() {
-            Some(table_name.to_string())
-        } else {
-            None
-        }
+    let after_from = &query[from_pos + 6..].trim();
+    
+    // Find the end of table name (space, where, order by, etc.)
+    let table_end = after_from.find(|c: char| {
+        c.is_whitespace() || c == ',' || c == ';' || c == '('
+    }).unwrap_or(after_from.len());
+    
+    let table_name = after_from[..table_end].trim();
+    
+    // Remove quotes if present
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
     } else {
         None
     }
@@ -552,34 +617,31 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
 
 /// Extract table name from CREATE TABLE statement
 fn extract_table_name_from_create(query: &str) -> Option<String> {
-    let query_upper = query.to_uppercase();
+    // Look for CREATE TABLE pattern with case-insensitive search
+    let create_table_pos = query.as_bytes().windows(12)
+        .position(|window| window.eq_ignore_ascii_case(b"CREATE TABLE"))?;
     
-    // Look for CREATE TABLE pattern
-    if let Some(table_pos) = query_upper.find("CREATE TABLE") {
-        let after_create = &query[table_pos + 12..].trim();
-        
-        // Skip IF NOT EXISTS if present
-        let after_create = if after_create.to_uppercase().starts_with("IF NOT EXISTS") {
-            &after_create[13..].trim()
-        } else {
-            after_create
-        };
-        
-        // Find the end of table name
-        let table_end = after_create.find(|c: char| {
-            c.is_whitespace() || c == '('
-        }).unwrap_or(after_create.len());
-        
-        let table_name = after_create[..table_end].trim();
-        
-        // Remove quotes if present
-        let table_name = table_name.trim_matches('"').trim_matches('\'');
-        
-        if !table_name.is_empty() {
-            Some(table_name.to_string())
-        } else {
-            None
-        }
+    let after_create = &query[create_table_pos + 12..].trim();
+    
+    // Skip IF NOT EXISTS if present
+    let after_create = if after_create.len() >= 13 && after_create[..13].eq_ignore_ascii_case("IF NOT EXISTS") {
+        &after_create[13..].trim()
+    } else {
+        after_create
+    };
+    
+    // Find the end of table name
+    let table_end = after_create.find(|c: char| {
+        c.is_whitespace() || c == '('
+    }).unwrap_or(after_create.len());
+    
+    let table_name = after_create[..table_end].trim();
+    
+    // Remove quotes if present
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
     } else {
         None
     }

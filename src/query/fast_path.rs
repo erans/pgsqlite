@@ -303,7 +303,7 @@ pub fn execute_fast_path(
     // Check if query qualifies for fast path
     if let Some(table_name) = can_use_fast_path(query) {
         // Skip SELECT queries here, they need special handling
-        if query.trim().to_uppercase().starts_with("SELECT") {
+        if matches!(crate::query::QueryTypeDetector::detect_query_type(query), crate::query::QueryType::Select) {
             return Ok(None);
         }
         
@@ -333,7 +333,7 @@ pub fn query_fast_path(
     // Check if query qualifies for fast path
     if let Some(table_name) = can_use_fast_path(query) {
         // Only handle SELECT queries
-        if !query.trim().to_uppercase().starts_with("SELECT") {
+        if !matches!(crate::query::QueryTypeDetector::detect_query_type(query), crate::query::QueryType::Select) {
             return Ok(None);
         }
         
