@@ -60,7 +60,10 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.
 - **Array types**: Array handling is not yet implemented
-- **Extended protocol parameter type inference**: Some parameter types may require explicit casts
+- **Extended protocol parameter type inference**: Some limitations remain in parameter type inference:
+  - For queries like `SELECT $1` without table context, field types must be determined during Parse phase before actual parameter values are known
+  - Integer columns are returned as TEXT type in result metadata (SQLite limitation)
+  - Fixed (2025-07-03): Explicit parameter types specified via `prepare_typed()` are now properly respected
 
 ## Important Design Decisions
 - **Type Inference**: NEVER use column names to infer types. Types should be determined from:
@@ -506,6 +509,17 @@ Full benchmark results showing significant improvements across all operations:
 - **UPDATE**: ~34x → **33x** (maintained excellent performance)
 - **DELETE**: ~39x → **37x** (5% improvement)
 - **Overall**: ~98x → **77x** (21% improvement!)
+
+### Extended Protocol Parameter Type Inference Fix (2025-07-03)
+
+**Problem**: When using `prepare_typed()` to explicitly specify TEXT parameter types, the system was incorrectly inferring INT4 from 4-byte binary data, causing "test" to be interpreted as 1952805748.
+
+**Solution**: Modified the parameter type inference logic to respect explicitly specified types:
+- Changed `needs_inference` check to only trigger for empty or unknown (0) param types
+- TEXT parameters specified via `prepare_typed()` are no longer overridden by binary data length inference
+- Fixed IPv6 address preservation in queries (::1 was being stripped as a type cast)
+
+**Result**: No performance regression, all tests passing, explicit parameter types now properly respected.
 
 ### Architecture Simplification
 The consolidation eliminated multiple executor implementations while preserving the best optimizations:

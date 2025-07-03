@@ -108,6 +108,7 @@ impl ExtendedFastPath {
         format: i16,
         param_type: i32,
     ) -> Result<rusqlite::types::Value, PgSqliteError> {
+        
         if format == 0 {
             // Text format
             let text = std::str::from_utf8(bytes)
@@ -226,6 +227,16 @@ impl ExtendedFastPath {
                         Err(PgSqliteError::Protocol(format!("Invalid MONEY format, {} bytes", bytes.len())))
                     }
                 }
+                t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
+                    // TEXT/VARCHAR - binary format is just UTF-8 bytes
+                    match std::str::from_utf8(bytes) {
+                        Ok(text) => Ok(rusqlite::types::Value::Text(text.to_string())),
+                        Err(_) => {
+                            // Invalid UTF-8, store as blob
+                            Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
+                        }
+                    }
+                }
                 t if t == PgType::Macaddr.to_oid() || t == PgType::Macaddr8.to_oid() || t == PgType::Inet.to_oid() ||
                      t == PgType::Cidr.to_oid() || t == PgType::Int4range.to_oid() || t == PgType::Int8range.to_oid() ||
                      t == PgType::Numrange.to_oid() || t == PgType::Bit.to_oid() || t == PgType::Varbit.to_oid() => {
@@ -234,6 +245,10 @@ impl ExtendedFastPath {
                 }
                 _ => {
                     // Store as BLOB for unsupported binary types
+                    eprintln!("DEBUG: Unknown binary type OID {}, storing as blob. Bytes: {:?}", param_type, bytes);
+                    if bytes == b"test" {
+                        eprintln!("DEBUG: This is 'test' being stored as blob!");
+                    }
                     Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
                 }
             }
@@ -243,8 +258,8 @@ impl ExtendedFastPath {
     async fn execute_select_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
-        _session: &Arc<SessionState>,
-        _portal_name: &str,
+        session: &Arc<SessionState>,
+        portal_name: &str,
         query: &str,
         params: Vec<rusqlite::types::Value>,
         result_formats: &[i16],
@@ -258,6 +273,64 @@ impl ExtendedFastPath {
             Ok(None) => return Err(PgSqliteError::Protocol("Fast path failed".to_string())),
             Err(e) => return Err(PgSqliteError::Sqlite(e)),
         };
+        
+        // Check if we need to send RowDescription
+        let send_row_desc = {
+            let portals = session.portals.read().await;
+            let portal = portals.get(portal_name).unwrap();
+            let statements = session.prepared_statements.read().await;
+            let stmt = statements.get(&portal.statement_name).unwrap();
+            stmt.field_descriptions.is_empty() && !response.columns.is_empty()
+        };
+        
+        if send_row_desc {
+            // Build field descriptions based on the response columns and inferred types
+            let portal_inferred_types = {
+                let portals = session.portals.read().await;
+                let portal = portals.get(portal_name).unwrap();
+                portal.inferred_param_types.clone()
+            };
+            
+            let fields: Vec<crate::protocol::FieldDescription> = response.columns.iter()
+                .enumerate()
+                .map(|(i, col_name)| {
+                    // For parameter columns, use inferred type
+                    let type_oid = if col_name.starts_with('$') || col_name == "?column?" || col_name == "NULL" {
+                        if let Some(ref inferred_types) = portal_inferred_types {
+                            let param_idx = if col_name.starts_with('$') {
+                                col_name[1..].parse::<usize>().ok().map(|n| n - 1).unwrap_or(i)
+                            } else {
+                                i
+                            };
+                            *inferred_types.get(param_idx).unwrap_or(&PgType::Text.to_oid())
+                        } else {
+                            PgType::Text.to_oid()
+                        }
+                    } else {
+                        PgType::Text.to_oid() // Default for other columns
+                    };
+                    
+                    crate::protocol::FieldDescription {
+                        name: col_name.clone(),
+                        table_oid: 0,
+                        column_id: (i + 1) as i16,
+                        type_oid,
+                        type_size: -1,
+                        type_modifier: -1,
+                        format: if result_formats.is_empty() {
+                            0
+                        } else if result_formats.len() == 1 {
+                            result_formats[0]
+                        } else {
+                            *result_formats.get(i).unwrap_or(&0)
+                        },
+                    }
+                })
+                .collect();
+            
+            framed.send(BackendMessage::RowDescription(fields)).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+        }
         
         // TODO: Handle result_formats for binary encoding
         // For now, we only support text format (handled by falling back earlier)

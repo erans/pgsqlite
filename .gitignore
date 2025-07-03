@@ -16,3 +16,5 @@ __pycache__/
 benchmarks/.venv/
 
 sqlite.db*
+
+test_output.log
