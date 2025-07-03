@@ -156,7 +156,7 @@ impl ExtendedQueryHandler {
                     ) {
                         if let Some(statement) = parsed.first() {
                             let table_names = Self::extract_table_names_from_statement(statement);
-                            GLOBAL_QUERY_CACHE.insert(query.clone(), crate::cache::CachedQuery {
+                            GLOBAL_QUERY_CACHE.insert(cleaned_query.clone(), crate::cache::CachedQuery {
                                 statement: statement.clone(),
                                 param_types: actual_param_types.clone(),
                                 is_decimal_query: false, // Will be determined later
@@ -164,7 +164,7 @@ impl ExtendedQueryHandler {
                                 column_types: Vec::new(), // Will be filled when query is executed
                                 has_decimal_columns: false,
                                 rewritten_query: None,
-                                normalized_query: crate::cache::QueryCache::normalize_query(&query),
+                                normalized_query: crate::cache::QueryCache::normalize_query(&cleaned_query),
                             });
                         }
                     }
@@ -174,17 +174,17 @@ impl ExtendedQueryHandler {
         
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
-        let field_descriptions = if query_starts_with_ignore_case(&query, "SELECT") {
+        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
-            if query.contains("pg_catalog") || query.contains("pg_type") {
+            if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") {
                 info!("Skipping field description for catalog query");
                 Vec::new()
             } else {
                 // Try to get field descriptions
                 // For parameterized queries, substitute dummy values
-                let mut test_query = query.to_string();
-                let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                let mut test_query = cleaned_query.to_string();
+                let param_count = (1..=99).filter(|i| cleaned_query.contains(&format!("${}", i))).count();
                 
                 if param_count > 0 {
                     // Replace parameters with dummy values
@@ -194,7 +194,7 @@ impl ExtendedQueryHandler {
                 }
                 
                 // First, analyze the original query for type casts in the SELECT clause
-                let cast_info = Self::analyze_column_casts(&query);
+                let cast_info = Self::analyze_column_casts(&cleaned_query);
                 info!("Detected column casts: {:?}", cast_info);
                 
                 // Remove PostgreSQL-style type casts before executing
