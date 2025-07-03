@@ -4,6 +4,8 @@
 
 The zero-copy protocol architecture is a comprehensive performance optimization system designed to minimize memory allocations and copying overhead in the PostgreSQL wire protocol implementation. This architecture achieves significant performance improvements through intelligent memory management and zero-copy data access patterns.
 
+**Note**: The zero-copy optimizations described in this document have been fully integrated into the consolidated query executor (`src/query/executor.rs`). The separate experimental implementations referenced in earlier documentation have been removed as part of the codebase cleanup (July 2025).
+
 ## Architecture Components
 
 ### Phase 1: Memory-Mapped Value Access
@@ -165,55 +167,16 @@ export PGSQLITE_ENABLE_MMAP=1
 
 ### Basic Usage
 
-The zero-copy architecture is automatically enabled when using the standard pgsqlite connection:
+The zero-copy architecture is automatically enabled when using the standard pgsqlite connection. The optimizations are integrated into the main query executor and do not require special configuration:
 
 ```rust
-use pgsqlite::protocol::{DirectConnection, PooledDirectWriter};
-use tokio::net::UnixStream;
-
-// Connection automatically uses zero-copy architecture
-let stream = UnixStream::connect("/tmp/pgsqlite.sock").await?;
-let connection = DirectConnection::new(stream);
+// Zero-copy optimizations are automatically applied by the query executor
+// No special configuration needed - just use pgsqlite normally
 ```
 
 ### Advanced Configuration
 
-```rust
-use pgsqlite::protocol::{
-    BufferPool, BufferPoolConfig, 
-    MemoryMonitor, MemoryMonitorConfig,
-    PooledDirectWriter, BatchConfig
-};
-
-// Custom buffer pool configuration
-let pool_config = BufferPoolConfig {
-    max_pool_size: 100,
-    initial_buffer_capacity: 8192,
-    max_buffer_capacity: 131072,
-    enable_monitoring: true,
-    ..Default::default()
-};
-
-// Custom memory monitor configuration
-let monitor_config = MemoryMonitorConfig {
-    memory_threshold: 128 * 1024 * 1024, // 128MB
-    high_memory_threshold: 256 * 1024 * 1024, // 256MB
-    enable_auto_cleanup: true,
-    enable_detailed_monitoring: true,
-    ..Default::default()
-};
-
-// Custom batch configuration
-let batch_config = BatchConfig {
-    max_batch_size: 100,
-    max_batch_bytes: 65536,
-    enable_batching: true,
-    ..Default::default()
-};
-
-// Create writer with custom configuration
-let writer = PooledDirectWriter::with_config(stream, pool_config, batch_config);
-```
+The zero-copy optimizations can be configured through environment variables as shown above. The buffer pool and memory monitoring systems work automatically within the consolidated executor to provide optimal performance.
 
 ### Monitoring and Statistics
 
@@ -233,16 +196,16 @@ println!("Memory pressure: {:?}", memory_stats.pressure_level);
 
 ## Testing
 
-The zero-copy architecture includes comprehensive test coverage:
+The zero-copy architecture includes comprehensive test coverage integrated into the main test suite:
 
 ```bash
-# Run all zero-copy architecture tests
-cargo test --test buffer_pool_test
+# Run all tests including zero-copy components
+cargo test
 
 # Run specific component tests
 cargo test protocol::buffer_pool::tests
 cargo test protocol::memory_monitor::tests
-cargo test protocol::writer_pooled::tests
+cargo test protocol::value_handler::tests
 ```
 
 ## Future Optimization Opportunities
