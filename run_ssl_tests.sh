@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# pgsqlite SSL Test Runner
-# This script runs pgsqlite server in release mode with SSL and executes comprehensive tests
+# pgsqlite Test Runner
+# This script runs pgsqlite server in various modes and executes comprehensive tests
 
 set -euo pipefail
 
@@ -11,8 +11,10 @@ DB_NAME=":memory:"
 SQL_FILE="test_queries.sql"
 LOG_FILE="pgsqlite_test.log"
 PID_FILE="/tmp/pgsqlite_test.pid"
+SOCKET_DIR="/tmp"
 VERBOSE=${VERBOSE:-0}
 EPHEMERAL_SSL=0
+CONNECTION_MODE="tcp-ssl"  # Default mode: tcp-ssl, tcp-no-ssl, unix-socket, file-ssl, file-no-ssl
 
 # Colors for output
 RED='\033[0;31m'
@@ -69,6 +71,11 @@ cleanup() {
     if [ "$EPHEMERAL_SSL" = "1" ]; then
         rm -f "${DB_NAME%.db}.crt" "${DB_NAME%.db}.key"
     fi
+    
+    # Remove Unix socket
+    if [ -f "$SOCKET_DIR/.s.PGSQL.$PORT" ]; then
+        rm -f "$SOCKET_DIR/.s.PGSQL.$PORT"
+    fi
 }
 
 # Set up signal handlers
@@ -93,12 +100,17 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=1
             shift
             ;;
+        -m|--mode)
+            CONNECTION_MODE="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
             echo "  -p, --port PORT        Port to run server on (default: 10543)"
             echo "  -d, --database DB      Database file to use (default: :memory:)"
             echo "  -s, --sql-file FILE    SQL file to execute (default: test_queries.sql)"
+            echo "  -m, --mode MODE        Connection mode: tcp-ssl, tcp-no-ssl, unix-socket, file-ssl, file-no-ssl"
             echo "  -v, --verbose          Enable verbose output"
             echo "  -h, --help             Show this help message"
             exit 0
@@ -145,32 +157,58 @@ log_success "Build completed"
 # Ensure clean start
 cleanup
 
-# Generate or use SSL certificates
-SSL_ARGS="--ssl"
-
-if [ ! -f "${DB_NAME%.db}.crt" ] || [ ! -f "${DB_NAME%.db}.key" ]; then
-    log_info "SSL certificates not found, will generate ephemeral certificates"
-    SSL_ARGS="--ssl --ssl-ephemeral"
-    EPHEMERAL_SSL=1
-else
-    log_info "Using existing SSL certificates: ${DB_NAME%.db}.crt and ${DB_NAME%.db}.key"
-fi
+# Configure based on connection mode
+case "$CONNECTION_MODE" in
+    "tcp-ssl")
+        log_info "Mode: TCP with SSL (in-memory database)"
+        DB_NAME=":memory:"
+        SERVER_ARGS="--port $PORT --database $DB_NAME --ssl --ssl-ephemeral"
+        EPHEMERAL_SSL=1
+        CONNECTION_STRING="host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=require"
+        ;;
+    "tcp-no-ssl")
+        log_info "Mode: TCP without SSL (in-memory database)"
+        DB_NAME=":memory:"
+        SERVER_ARGS="--port $PORT --database $DB_NAME"
+        CONNECTION_STRING="host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=disable"
+        ;;
+    "unix-socket")
+        log_info "Mode: Unix socket (in-memory database)"
+        DB_NAME=":memory:"
+        SERVER_ARGS="--socket-dir $SOCKET_DIR --port $PORT --database $DB_NAME"
+        CONNECTION_STRING="host=$SOCKET_DIR port=$PORT dbname=$DB_NAME"
+        ;;
+    "file-ssl")
+        log_info "Mode: TCP with SSL (file database)"
+        DB_NAME="test_db.sqlite"
+        SERVER_ARGS="--port $PORT --database $DB_NAME --ssl"
+        # Check for existing certificates
+        if [ ! -f "${DB_NAME%.sqlite}.crt" ] || [ ! -f "${DB_NAME%.sqlite}.key" ]; then
+            log_info "SSL certificates not found, will generate ephemeral certificates"
+            SERVER_ARGS="$SERVER_ARGS --ssl-ephemeral"
+            EPHEMERAL_SSL=1
+        fi
+        CONNECTION_STRING="host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=require"
+        ;;
+    "file-no-ssl")
+        log_info "Mode: TCP without SSL (file database)"
+        DB_NAME="test_db.sqlite"
+        SERVER_ARGS="--port $PORT --database $DB_NAME"
+        CONNECTION_STRING="host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=disable"
+        ;;
+    *)
+        log_error "Invalid connection mode: $CONNECTION_MODE"
+        exit 1
+        ;;
+esac
 
 # Start pgsqlite server
-log_info "Starting pgsqlite server on port $PORT with SSL..."
+log_info "Starting pgsqlite server..."
 
 if [ "$VERBOSE" = "1" ]; then
-    ./target/release/pgsqlite \
-        --port "$PORT" \
-        --database "$DB_NAME" \
-        $SSL_ARGS \
-        2>&1 | tee "$LOG_FILE" &
+    ./target/release/pgsqlite $SERVER_ARGS 2>&1 | tee "$LOG_FILE" &
 else
-    ./target/release/pgsqlite \
-        --port "$PORT" \
-        --database "$DB_NAME" \
-        $SSL_ARGS \
-        > "$LOG_FILE" 2>&1 &
+    ./target/release/pgsqlite $SERVER_ARGS > "$LOG_FILE" 2>&1 &
 fi
 
 SERVER_PID=$!
@@ -182,7 +220,7 @@ MAX_RETRIES=30
 RETRY_COUNT=0
 
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if psql "host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=require" -c "SELECT 1" &>/dev/null; then
+    if psql "$CONNECTION_STRING" -c "SELECT 1" &>/dev/null; then
         log_success "Server is ready"
         break
     fi
@@ -214,7 +252,7 @@ START_TIME=$(date +%s.%N)
 # Execute with timing and expanded output
 if [ "$VERBOSE" = "1" ]; then
     PGOPTIONS='--client-min-messages=debug' psql \
-        "host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=require" \
+        "$CONNECTION_STRING" \
         -f "$SQL_FILE" \
         -e \
         --echo-queries \
@@ -223,7 +261,7 @@ if [ "$VERBOSE" = "1" ]; then
         2>&1 | tee test_output.log
 else
     psql \
-        "host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=require" \
+        "$CONNECTION_STRING" \
         -f "$SQL_FILE" \
         --set ON_ERROR_STOP=1 \
         -q \
