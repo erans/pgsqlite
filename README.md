@@ -186,6 +186,15 @@ pgsqlite implements a comprehensive type mapping system between PostgreSQL and S
   - SERIAL/BIGSERIAL (mapped to AUTOINCREMENT)
 - Type preservation through metadata registry
 
+### Supported SQL Features
+- **SELECT queries**: All standard SELECT features including JOINs, subqueries, GROUP BY, ORDER BY, LIMIT
+- **Common Table Expressions (CTEs)**: WITH and WITH RECURSIVE queries
+- **Subqueries**: Correlated and non-correlated subqueries in SELECT, FROM, and WHERE clauses
+- **UNION/INTERSECT/EXCEPT**: Set operations
+- **Window functions**: SQLite's window function support
+- **Aggregate functions**: All standard aggregates (COUNT, SUM, AVG, MIN, MAX, etc.)
+- **RETURNING clause**: Simulated support for INSERT/UPDATE/DELETE RETURNING
+
 ### Supported PostgreSQL Functions
 
 #### Custom Implementations
