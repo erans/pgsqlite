@@ -108,7 +108,7 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Check if this is a catalog query first
-        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query) {
+        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db).await {
             catalog_result?
         } else {
             db.query(query).await?

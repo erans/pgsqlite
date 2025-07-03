@@ -1733,7 +1733,7 @@ impl ExtendedQueryHandler {
     {
         // Check if this is a catalog query first
         info!("Checking if query is catalog query: {}", query);
-        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query) {
+        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db).await {
             info!("Query intercepted by catalog handler");
             catalog_result?
         } else {

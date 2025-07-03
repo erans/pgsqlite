@@ -564,3 +564,53 @@ The consolidation eliminated multiple executor implementations while preserving 
 - All 75 unit tests continue to pass
 
 **Architecture Note**: The production code uses the standard tokio-util Framed codec approach throughout, with all zero-copy optimizations integrated at the value handling layer rather than the protocol layer. This provides the performance benefits without the complexity of custom protocol implementations.
+
+## PostgreSQL System Catalog Support (2025-07-03)
+
+### Background
+PostgreSQL clients like psql use system catalog queries to discover database schema and metadata. This implementation provides basic catalog support by intercepting queries to pg_catalog tables and returning SQLite metadata in PostgreSQL format.
+
+### Implementation Overview
+The catalog support is implemented through a query interception layer that:
+1. Detects queries targeting pg_catalog tables
+2. Routes them to specialized handlers instead of SQLite
+3. Maps SQLite metadata (PRAGMA commands) to PostgreSQL catalog format
+4. Returns results in the expected PostgreSQL format
+
+### Current Implementation
+- **CatalogInterceptor** (`src/catalog/query_interceptor.rs`): 
+  - Main entry point that detects catalog queries
+  - Routes to appropriate handlers based on table name
+  - Now async and accepts DbHandler for database access
+  
+- **pg_class handler** (`src/catalog/pg_class.rs`):
+  - Maps SQLite tables and indexes to PostgreSQL pg_class format
+  - Generates stable OIDs from object names
+  - Queries sqlite_master and PRAGMA commands for metadata
+  - Returns all 28 pg_class columns
+  
+- **pg_attribute handler** (`src/catalog/pg_attribute.rs`):
+  - Maps SQLite columns to PostgreSQL pg_attribute format
+  - Integrates with __pgsqlite_schema for type information
+  - Falls back to intelligent type inference when schema unavailable
+  - Handles type modifiers (VARCHAR length, NUMERIC precision/scale)
+
+### Key Design Decisions
+1. **Stable OID Generation**: OIDs are generated from object names using a hash function to ensure consistency across queries
+2. **Type Mapping**: Leverages existing __pgsqlite_schema when available, falls back to SQLite type inference
+3. **Async Design**: Handlers are async to allow database queries for metadata
+
+### Current Limitations
+1. **No Query Processing**: Returns all columns/rows regardless of SELECT projection or WHERE clause
+2. **No JOIN Support**: Cannot handle multi-table queries that psql uses
+3. **Missing System Functions**: pg_table_is_visible(), format_type(), etc.
+4. **Incomplete Catalogs**: Only pg_class and pg_attribute implemented
+
+### Future Work
+Full psql compatibility requires:
+- Query processing capabilities (projection, filtering, joins)
+- Additional catalog tables (pg_index, pg_constraint, pg_am, etc.)
+- System function implementations
+- Performance optimizations for catalog queries
+
+See TODO.md section "PostgreSQL Compatibility - System Catalogs" for detailed task list.

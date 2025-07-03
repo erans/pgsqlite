@@ -218,8 +218,75 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] VALUES lists as tables
 - [ ] Full MERGE statement support
 
-#### PostgreSQL Compatibility
+#### PostgreSQL Compatibility - System Catalogs (Partial - 2025-07-03)
 - [ ] System catalogs (pg_class, pg_attribute, etc.)
+  - [x] Basic CatalogInterceptor framework - COMPLETED (2025-07-03)
+  - [x] Implement pg_class queries for table/relation listing - COMPLETED (2025-07-03)
+    - Returns all tables and indexes from SQLite
+    - Generates stable OIDs from names
+    - Maps SQLite metadata to PostgreSQL format
+  - [x] Implement pg_attribute queries for column details - COMPLETED (2025-07-03)
+    - Maps PRAGMA table_info to pg_attribute format
+    - Integrates with __pgsqlite_schema for type information
+    - Supports type modifiers (VARCHAR length, NUMERIC precision/scale)
+  - [ ] **Column Projection Support** - CRITICAL FOR PSQL
+    - Currently returns all columns regardless of SELECT clause
+    - Need to parse SELECT projections and return only requested columns
+    - Handle column aliases and expressions
+  - [ ] **WHERE Clause Filtering** - CRITICAL FOR PSQL
+    - Currently returns all rows regardless of WHERE conditions
+    - Need to evaluate WHERE clauses against catalog data
+    - Support filtering by OID, name patterns, and other conditions
+  - [ ] **JOIN Query Support** - CRITICAL FOR PSQL
+    - psql \d commands use complex JOINs between catalog tables
+    - Need to handle joins between pg_class, pg_namespace, pg_attribute, etc.
+    - Current implementation only handles single-table queries
+  - [ ] **Enhance pg_namespace implementation**
+    - Currently returns minimal hardcoded data
+    - Need to map SQLite schemas/databases if available
+    - Support namespace visibility checks
+  - [ ] Implement pg_index queries for index information
+    - Map PRAGMA index_list and index_info to pg_index format
+    - Include index expressions and predicate information
+    - Support unique, primary key, and exclusion constraints
+  - [ ] Implement pg_constraint queries for constraint details
+    - Extract PRIMARY KEY constraints from PRAGMA table_info
+    - Map FOREIGN KEY constraints from PRAGMA foreign_key_list
+    - Parse CHECK constraints from sqlite_master.sql
+    - Support UNIQUE constraints from indexes
+  - [ ] **PostgreSQL System Functions** - REQUIRED FOR PSQL
+    - [ ] pg_table_is_visible(oid) - Check if table is in search path
+    - [ ] pg_get_userbyid(oid) - Return user name for OID
+    - [ ] format_type(oid, typmod) - Format type name with modifiers
+    - [ ] pg_get_indexdef(oid) - Return CREATE INDEX statement
+    - [ ] pg_get_constraintdef(oid) - Return constraint definition
+    - [ ] regclass type casting support (e.g., 'tablename'::regclass)
+  - [ ] **Additional System Catalogs**
+    - [ ] pg_am (access methods) - Required for index queries
+    - [ ] pg_proc (functions) - For \df command
+    - [ ] pg_type enhancements - Support for all PostgreSQL types
+    - [ ] pg_database - Database information
+    - [ ] pg_roles/pg_user - User information
+    - [ ] pg_tablespace - Tablespace information
+  - [ ] **Query Optimization for Catalog Queries**
+    - Catalog queries should bypass normal query processing
+    - Implement specialized handlers for common patterns
+    - Cache catalog data for repeated access
+  - [ ] **psql Slash Command Support**
+    - [ ] \d - List all relations (partially works, formatting issues)
+    - [ ] \dt - List tables only (partially works)
+    - [ ] \di - List indexes
+    - [ ] \dv - List views
+    - [ ] \ds - List sequences
+    - [ ] \df - List functions
+    - [ ] \d tablename - Describe specific table (needs multiple queries)
+    - [ ] \l - List databases
+    - [ ] \dn - List schemas
+    - [ ] \du - List users/roles
+  - [ ] Add comprehensive tests for catalog query compatibility
+    - Test all common psql queries
+    - Test edge cases (empty tables, special characters, etc.)
+    - Performance tests for catalog queries
 - [ ] Information schema views
 - [ ] PostgreSQL-specific functions
 - [ ] Extension mechanism (CREATE EXTENSION)
@@ -506,3 +573,40 @@ Benchmark results comparing implementations (1000 operations each):
 - [x] Skip test_flush_performance in CI due to long execution time (marked with #[ignore])
 - [x] Skip test_logging_reduced in CI due to server startup requirement (marked with #[ignore])
 - [x] Skip test_row_description_cache in CI due to server startup requirement (marked with #[ignore])
+
+### 🗄️ PostgreSQL System Catalog Foundation - PARTIAL IMPLEMENTATION (2025-07-03)
+
+#### Background
+Started implementation of PostgreSQL system catalogs to support psql \d commands and other PostgreSQL tools that query catalog tables.
+
+#### Work Completed
+- [x] Created comprehensive research document (docs/pg_catalog_research.md)
+  - Documented PostgreSQL catalog table structures
+  - Analyzed psql \d command queries
+  - Mapped SQLite metadata to PostgreSQL catalogs
+- [x] Implemented pg_class handler (src/catalog/pg_class.rs)
+  - Maps SQLite tables and indexes to pg_class format
+  - Generates stable OIDs from object names
+  - Queries SQLite metadata for relnatts, relhasindex
+  - Returns all 28 pg_class columns with appropriate values
+- [x] Implemented pg_attribute handler (src/catalog/pg_attribute.rs)
+  - Maps PRAGMA table_info to pg_attribute format
+  - Integrates with __pgsqlite_schema for PostgreSQL types
+  - Falls back to intelligent type inference for unmapped types
+  - Handles type modifiers (VARCHAR length, NUMERIC precision/scale)
+- [x] Updated CatalogInterceptor to be async and accept DbHandler
+  - Routes pg_class and pg_attribute queries to handlers
+  - Maintains existing pg_type, pg_namespace support
+
+#### Current Limitations
+1. **No Column Projection** - SELECT relname returns all columns
+2. **No WHERE Filtering** - WHERE relkind = 'r' returns all rows
+3. **No JOIN Support** - Cannot handle psql's complex JOIN queries
+4. **Missing System Functions** - pg_table_is_visible(), format_type(), etc.
+5. **Incomplete Catalog Tables** - Need pg_index, pg_constraint, pg_am, etc.
+
+#### Testing Results
+- Basic pg_class queries work (returns tables and indexes)
+- Basic pg_attribute queries work (returns column information)
+- psql can connect and query catalogs but \d commands show raw data
+- Need proper query processing for full psql compatibility
