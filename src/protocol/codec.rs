@@ -85,6 +85,12 @@ fn decode_startup_message(src: &mut BytesMut) -> io::Result<Option<FrontendMessa
     let mut msg_buf = &msg_bytes[4..]; // Skip length
     
     let protocol_version = msg_buf.get_i32();
+    
+    // Check for SSL request (protocol version 80877103)
+    if protocol_version == 80877103 {
+        return Ok(Some(FrontendMessage::SslRequest));
+    }
+    
     let mut parameters = HashMap::new();
     
     // Read parameter pairs until we hit null terminator

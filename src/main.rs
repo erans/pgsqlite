@@ -1,11 +1,16 @@
 use anyhow::Result;
+use bytes::{Buf, BytesMut};
 use futures::SinkExt;
 use futures::StreamExt;
 use std::sync::Arc;
 use std::path::PathBuf;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, UnixListener};
 use tokio_util::codec::Framed;
 use tracing::{error, info};
+use tokio_rustls::TlsAcceptor;
 
 use pgsqlite::config::Config;
 use pgsqlite::protocol::{
@@ -14,6 +19,7 @@ use pgsqlite::protocol::{
 };
 use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
 use pgsqlite::session::{DbHandler, SessionState};
+use pgsqlite::ssl::CertificateManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -73,6 +79,19 @@ async fn main() -> Result<()> {
         info!("Using database: {}", config.database);
     }
 
+    // Initialize SSL if enabled
+    let tls_acceptor = if config.ssl {
+        if config.no_tcp {
+            return Err(anyhow::anyhow!("SSL cannot be enabled when TCP is disabled"));
+        }
+        let cert_manager = CertificateManager::new(Arc::new(config.clone()));
+        let (acceptor, _cert_source) = cert_manager.initialize().await?;
+        Some(acceptor)
+    } else {
+        info!("SSL disabled - using unencrypted connections");
+        None
+    };
+
     // Handle cleanup on shutdown
     let socket_path_cleanup = socket_path.clone();
     tokio::spawn(async move {
@@ -110,8 +129,9 @@ async fn main() -> Result<()> {
                 if let Ok((stream, addr)) = result {
                     info!("New TCP connection from {}", addr);
                     let db_handler = db_handler.clone();
+                    let tls_acceptor = tls_acceptor.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_tcp_connection(stream, addr, db_handler).await {
+                        if let Err(e) = handle_tcp_connection(stream, addr, db_handler, tls_acceptor).await {
                             error!("TCP connection error from {}: {}", addr, e);
                         }
                     });
@@ -138,13 +158,57 @@ async fn handle_tcp_connection(
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
     db_handler: Arc<DbHandler>,
+    tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     info!("Handling TCP connection from {}", addr);
     
     // Disable Nagle's algorithm for lower latency
     stream.set_nodelay(true)?;
     
-    handle_connection_generic(stream, &addr.to_string(), db_handler).await
+    // Handle SSL negotiation if SSL is enabled
+    if tls_acceptor.is_some() {
+        handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor.unwrap()).await
+    } else {
+        handle_connection_generic(stream, &addr.to_string(), db_handler).await
+    }
+}
+
+async fn handle_ssl_negotiation(
+    mut stream: tokio::net::TcpStream,
+    addr: std::net::SocketAddr,
+    db_handler: Arc<DbHandler>,
+    tls_acceptor: TlsAcceptor,
+) -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    
+    // Read the first message to check if it's an SSL request
+    let mut buf = vec![0u8; 8];
+    stream.read_exact(&mut buf).await?;
+    
+    // Check if this is an SSL request
+    let len = i32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let code = i32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+    
+    if len == 8 && code == 80877103 {
+        // This is an SSL request, send 'S' to indicate SSL is available
+        stream.write_all(b"S").await?;
+        stream.flush().await?;
+        
+        // Perform TLS handshake
+        let tls_stream = tls_acceptor.accept(stream).await?;
+        info!("SSL connection established with {}", addr);
+        
+        // Handle the connection with TLS
+        handle_connection_generic(tls_stream, &addr.to_string(), db_handler).await
+    } else {
+        // Not an SSL request, we need to handle this as a regular startup message
+        // Create a new buffer with the data we already read
+        let initial_data = BytesMut::from(&buf[..]);
+        
+        // Create a custom stream that will first return our buffered data
+        let stream_with_buffer = StreamWithBuffer::new(stream, initial_data);
+        handle_connection_generic(stream_with_buffer, &addr.to_string(), db_handler).await
+    }
 }
 
 async fn handle_unix_connection(
@@ -414,4 +478,53 @@ where
 
     info!("Connection from {} closed", connection_info);
     Ok(())
+}
+
+// Helper struct to handle streams with pre-read data
+struct StreamWithBuffer<S> {
+    stream: S,
+    buffer: BytesMut,
+}
+
+impl<S> StreamWithBuffer<S> {
+    fn new(stream: S, buffer: BytesMut) -> Self {
+        Self { stream, buffer }
+    }
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for StreamWithBuffer<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        // First, drain any buffered data
+        if !self.buffer.is_empty() {
+            let len = std::cmp::min(buf.remaining(), self.buffer.len());
+            buf.put_slice(&self.buffer[..len]);
+            self.buffer.advance(len);
+            return Poll::Ready(Ok(()));
+        }
+        
+        // Then read from the underlying stream
+        Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for StreamWithBuffer<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.stream).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.stream).poll_shutdown(cx)
+    }
 }

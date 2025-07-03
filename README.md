@@ -174,6 +174,8 @@ pgsqlite implements a comprehensive type mapping system between PostgreSQL and S
 ### ✅ Supported
 - Basic CRUD operations (CREATE, INSERT, SELECT, UPDATE, DELETE)
 - PostgreSQL wire protocol communication
+- SSL/TLS encryption for secure connections (TCP only)
+- Unix domain socket support for local connections
 - Type mapping for common PostgreSQL types:
   - Basic types: BOOLEAN, SMALLINT, INTEGER, BIGINT, REAL, DOUBLE PRECISION
   - Text types: CHAR, VARCHAR, TEXT
@@ -271,6 +273,73 @@ conn = psycopg2.connect(host='/tmp', port=5432, dbname='your_database')
 
 The socket file is created as `.s.PGSQL.{port}` in the specified directory. Both TCP and Unix socket listeners run simultaneously by default, or you can use `--no-tcp` to disable TCP.
 
+### SSL/TLS Support
+
+pgsqlite supports SSL/TLS encryption for secure connections over TCP. SSL is not available for Unix socket connections.
+
+#### Quick Start
+
+```bash
+# Enable SSL with auto-generated certificates
+pgsqlite --ssl
+
+# Use existing certificates
+pgsqlite --ssl --ssl-cert /path/to/server.crt --ssl-key /path/to/server.key
+
+# Generate ephemeral certificates (not saved to disk)
+pgsqlite --ssl --ssl-ephemeral
+```
+
+#### Certificate Management
+
+pgsqlite handles SSL certificates in the following priority order:
+
+1. **Provided Certificates**: Use paths specified via `--ssl-cert` and `--ssl-key`
+2. **File System Discovery**: Look for certificates next to the database file
+   - For `mydb.sqlite`, looks for `mydb.crt` and `mydb.key`
+3. **Auto-Generation**: Generate self-signed certificates if not found
+
+#### Certificate Behavior
+
+- **Memory Databases** (`:memory:`): Always use ephemeral in-memory certificates
+- **File Databases with `--ssl-ephemeral`**: Generate temporary certificates (not saved)
+- **File Databases without ephemeral**: Generate and save certificates next to database file
+
+#### Connecting with SSL
+
+```bash
+# Connect with psql requiring SSL
+psql "postgresql://localhost:5432/mydb?sslmode=require"
+
+# Connect with Python (psycopg2)
+import psycopg2
+conn = psycopg2.connect(
+    host="localhost",
+    port=5432,
+    database="mydb",
+    sslmode="require"
+)
+```
+
+#### SSL Configuration Examples
+
+```bash
+# Use SSL with in-memory database (auto-generates ephemeral certificates)
+pgsqlite --in-memory --ssl
+
+# Use SSL with file database (generates and saves certificates if missing)
+pgsqlite --database /path/to/data.db --ssl
+
+# Use existing certificates from custom location
+pgsqlite --ssl --ssl-cert /etc/pgsqlite/server.crt --ssl-key /etc/pgsqlite/server.key
+
+# Environment variable configuration
+export PGSQLITE_SSL=true
+export PGSQLITE_SSL_CERT=/etc/pgsqlite/server.crt
+export PGSQLITE_SSL_KEY=/etc/pgsqlite/server.key
+pgsqlite
+```
+
 ## Reporting Issues
 
 We welcome bug reports and feature requests! When reporting an issue, please include:
@@ -355,6 +424,13 @@ pgsqlite can be configured through command line arguments or environment variabl
 --pragma-synchronous <MODE>      # SQLite synchronous mode (default: NORMAL)
 --pragma-cache-size <SIZE>       # SQLite page cache size (default: -64000)
 --pragma-mmap-size <BYTES>       # SQLite memory-mapped I/O size (default: 256MB)
+
+# SSL/TLS configuration
+--ssl                            # Enable SSL/TLS support (TCP only)
+--ssl-cert <PATH>                # Path to SSL certificate file
+--ssl-key <PATH>                 # Path to SSL private key file
+--ssl-ca <PATH>                  # Path to CA certificate file (optional)
+--ssl-ephemeral                  # Generate ephemeral certificates on startup
 ```
 
 ### Environment Variables
@@ -408,6 +484,13 @@ PGSQLITE_JOURNAL_MODE=WAL
 PGSQLITE_SYNCHRONOUS=NORMAL
 PGSQLITE_CACHE_SIZE=-64000
 PGSQLITE_MMAP_SIZE=268435456
+
+# SSL/TLS configuration
+PGSQLITE_SSL=true                   # Set to true to enable SSL
+PGSQLITE_SSL_CERT=/path/to/cert.pem # Path to SSL certificate
+PGSQLITE_SSL_KEY=/path/to/key.pem   # Path to SSL private key
+PGSQLITE_SSL_CA=/path/to/ca.pem     # Path to CA certificate (optional)
+PGSQLITE_SSL_EPHEMERAL=true         # Set to true for ephemeral certificates
 ```
 
 ### Configuration File

@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub enum FrontendMessage {
+    SslRequest,
     StartupMessage(StartupMessage),
     Query(String),
     Parse {

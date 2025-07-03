@@ -66,6 +66,34 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - Fixed (2025-07-03): Explicit parameter types specified via `prepare_typed()` are now properly respected
   - Fixed (2025-07-03): CTE (WITH) queries are now properly recognized as SELECT queries
 
+## SSL/TLS Support (2025-07-03)
+
+### Configuration
+SSL support can be enabled via command line arguments or environment variables:
+- `--ssl` / `PGSQLITE_SSL=true` - Enable SSL support
+- `--ssl-cert` / `PGSQLITE_SSL_CERT` - Path to SSL certificate
+- `--ssl-key` / `PGSQLITE_SSL_KEY` - Path to SSL private key
+- `--ssl-ca` / `PGSQLITE_SSL_CA` - Path to CA certificate (optional)
+- `--ssl-ephemeral` / `PGSQLITE_SSL_EPHEMERAL` - Generate ephemeral certificates
+
+### Certificate Management
+The SSL implementation follows this priority order:
+1. **Provided paths** - Use certificates specified via command line/env vars
+2. **File system** - Look for certificates next to database file (`<db_name>.crt` and `<db_name>.key`)
+3. **Generated** - Generate self-signed certificates if not found
+
+Certificate behavior:
+- `:memory:` databases always use ephemeral in-memory certificates
+- File-based databases with `--ssl-ephemeral` use temporary certificates
+- File-based databases without ephemeral flag generate and save certificates if missing
+
+### Implementation Details
+- SSL is only available for TCP connections (not Unix sockets)
+- Uses `tokio-rustls` for async TLS support
+- Supports PostgreSQL SSL negotiation protocol
+- Self-signed certificates use RSA 2048-bit keys
+- Logs certificate source (existing/generated/ephemeral) on startup
+
 ## Important Design Decisions
 - **Type Inference**: NEVER use column names to infer types. Types should be determined from:
   - Explicit PostgreSQL type declarations in CREATE TABLE statements
