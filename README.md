@@ -244,6 +244,38 @@ cargo run -- --socket-dir /tmp
 cargo run -- --socket-dir /tmp --no-tcp
 ```
 
+### Integration Testing
+
+pgsqlite includes comprehensive integration tests that verify PostgreSQL client compatibility across multiple connection modes:
+
+```bash
+# Run all integration tests (requires psql client)
+./run_ssl_tests.sh
+
+# Run specific connection mode tests
+./run_ssl_tests.sh --mode tcp-ssl      # TCP with SSL (in-memory)
+./run_ssl_tests.sh --mode tcp-no-ssl   # TCP without SSL (in-memory)
+./run_ssl_tests.sh --mode unix-socket  # Unix socket (in-memory)
+./run_ssl_tests.sh --mode file-ssl     # File database with SSL
+./run_ssl_tests.sh --mode file-no-ssl  # File database without SSL
+
+# Run with verbose output
+./run_ssl_tests.sh --mode tcp-ssl --verbose
+
+# Run with custom SQL test file
+./run_ssl_tests.sh --sql-file my_tests.sql
+```
+
+The integration test suite (`test_queries.sql`) includes:
+- Schema operations (CREATE TABLE with 40+ PostgreSQL types)
+- Data manipulation (INSERT, UPDATE, DELETE)
+- Complex queries (JOINs, CTEs, subqueries, window functions)
+- Transaction tests (BEGIN, COMMIT, ROLLBACK)
+- Type conversion verification
+- System catalog queries
+
+All integration tests are automatically run in CI/CD across all connection modes.
+
 ### In-Memory Mode
 
 pgsqlite supports an in-memory SQLite database mode for testing and benchmarking purposes. This mode eliminates disk I/O overhead, making it ideal for measuring the pure protocol translation overhead.
