@@ -1,16 +1,17 @@
-use crate::session::db_handler::DbResponse;
+use crate::session::db_handler::{DbHandler, DbResponse};
 use crate::PgSqliteError;
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use tracing::debug;
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler};
 
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
 
 impl CatalogInterceptor {
     /// Check if a query is targeting pg_catalog and handle it
-    pub fn intercept_query(query: &str) -> Option<Result<DbResponse, PgSqliteError>> {
+    pub async fn intercept_query(query: &str, db: &DbHandler) -> Option<Result<DbResponse, PgSqliteError>> {
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
         
@@ -25,7 +26,9 @@ impl CatalogInterceptor {
             }));
         }
         
-        if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") {
+        if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && 
+           !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") &&
+           !lower_query.contains("pg_class") && !lower_query.contains("pg_attribute") {
             return None;
         }
         
@@ -43,7 +46,7 @@ impl CatalogInterceptor {
             Ok(statements) => {
                 if statements.len() == 1 {
                     if let Statement::Query(query) = &statements[0] {
-                        if let Some(response) = Self::handle_catalog_query(query) {
+                        if let Some(response) = Self::handle_catalog_query(query, db).await {
                             return Some(Ok(response));
                         }
                     }
@@ -55,7 +58,7 @@ impl CatalogInterceptor {
         None
     }
 
-    fn handle_catalog_query(query: &sqlparser::ast::Query) -> Option<DbResponse> {
+    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: &DbHandler) -> Option<DbResponse> {
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
             // Check if this is a JOIN query involving pg_type
@@ -73,13 +76,13 @@ impl CatalogInterceptor {
             // For simple queries, check each table
             for table_ref in &select.from {
                 // Check main table
-                if let Some(response) = Self::check_table_factor(&table_ref.relation, select) {
+                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db).await {
                     return Some(response);
                 }
                 
                 // Check joined tables
                 for join in &table_ref.joins {
-                    if let Some(response) = Self::check_table_factor(&join.relation, select) {
+                    if let Some(response) = Self::check_table_factor(&join.relation, select, db).await {
                         return Some(response);
                     }
                 }
@@ -89,7 +92,7 @@ impl CatalogInterceptor {
         None
     }
     
-    fn check_table_factor(table_factor: &TableFactor, select: &Select) -> Option<DbResponse> {
+    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: &DbHandler) -> Option<DbResponse> {
         if let TableFactor::Table { name, .. } = table_factor {
             let table_name = name.to_string().to_lowercase();
             
@@ -106,6 +109,22 @@ impl CatalogInterceptor {
             // Handle pg_range queries (usually empty)
             if table_name.contains("pg_range") || table_name.contains("pg_catalog.pg_range") {
                 return Some(Self::handle_pg_range_query(select));
+            }
+            
+            // Handle pg_class queries
+            if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
+                return match PgClassHandler::handle_query(select, db).await {
+                    Ok(response) => Some(response),
+                    Err(_) => None,
+                };
+            }
+            
+            // Handle pg_attribute queries
+            if table_name.contains("pg_attribute") || table_name.contains("pg_catalog.pg_attribute") {
+                return match PgAttributeHandler::handle_query(select, db).await {
+                    Ok(response) => Some(response),
+                    Err(_) => None,
+                };
             }
         }
         None
