@@ -447,6 +447,15 @@ Benchmark results comparing implementations (1000 operations each):
 - [x] Modified `needs_inference` check to only trigger for empty or unknown (0) param types
 - [x] Added proper handling for simple parameter SELECT queries (e.g., SELECT $1)
 - [x] Fixed regex for PostgreSQL type casts to avoid matching IPv6 addresses (::1)
+
+### ✅ CTE Query Support Fixed - COMPLETED (2025-07-03)
+
+#### CTE (WITH) Query Recognition
+- [x] Updated QueryTypeDetector to recognize queries starting with "WITH" as SELECT queries
+- [x] Fixed "Execute returned results - did you mean to call query?" error for CTE queries
+- [x] Added support for WITH RECURSIVE queries
+- [x] Added comprehensive test coverage for CTE query detection
+- [x] Verified complex CTE queries with JOINs now work correctly
 - [x] Added `inferred_param_types` field to Portal for better type tracking
 - [x] Resolved issue where 'SELECT $1' with TEXT parameter incorrectly interpreted 4-byte strings as INT4
 - [x] Full test coverage with improved test_comment_stripping.rs

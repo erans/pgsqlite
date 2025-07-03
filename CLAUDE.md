@@ -64,6 +64,7 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - For queries like `SELECT $1` without table context, field types must be determined during Parse phase before actual parameter values are known
   - Integer columns are returned as TEXT type in result metadata (SQLite limitation)
   - Fixed (2025-07-03): Explicit parameter types specified via `prepare_typed()` are now properly respected
+  - Fixed (2025-07-03): CTE (WITH) queries are now properly recognized as SELECT queries
 
 ## Important Design Decisions
 - **Type Inference**: NEVER use column names to infer types. Types should be determined from:

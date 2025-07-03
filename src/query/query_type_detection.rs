@@ -8,6 +8,14 @@ impl QueryTypeDetector {
         let trimmed = query.trim();
         let bytes = trimmed.as_bytes();
         
+        // Check for WITH (CTE) queries first - these are SELECT queries
+        if bytes.len() >= 4 {
+            match &bytes[0..4] {
+                b"WITH" | b"with" | b"With" => return QueryType::Select,
+                _ => {}
+            }
+        }
+        
         if bytes.len() >= 6 {
             match &bytes[0..6] {
                 b"SELECT" | b"select" | b"Select" => return QueryType::Select,
@@ -50,7 +58,9 @@ impl QueryTypeDetector {
         }
         
         // Fall back to eq_ignore_ascii_case for less common or mixed case patterns
-        if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("SELECT") {
+        if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("WITH") {
+            QueryType::Select
+        } else if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("SELECT") {
             QueryType::Select
         } else if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("INSERT") {
             QueryType::Insert
@@ -213,6 +223,12 @@ mod tests {
         
         assert_eq!(QueryTypeDetector::detect_query_type("EXPLAIN SELECT * FROM test"), QueryType::Other);
         assert_eq!(QueryTypeDetector::detect_query_type("   SELECT * FROM test"), QueryType::Select);
+        
+        // Test CTE (WITH) queries
+        assert_eq!(QueryTypeDetector::detect_query_type("WITH cte AS (SELECT 1) SELECT * FROM cte"), QueryType::Select);
+        assert_eq!(QueryTypeDetector::detect_query_type("with cte as (select 1) select * from cte"), QueryType::Select);
+        assert_eq!(QueryTypeDetector::detect_query_type("With Cte As (Select 1) Select * From Cte"), QueryType::Select);
+        assert_eq!(QueryTypeDetector::detect_query_type("WiTh cte AS (SELECT 1) SELECT * FROM cte"), QueryType::Select);
     }
     
     #[test]
