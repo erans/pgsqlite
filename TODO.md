@@ -90,7 +90,10 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 #### Prepared Statements
 - [ ] Full support for prepared statement lifecycle
-- [ ] Parameter type inference improvements
+- [x] Parameter type inference improvements - COMPLETED (2025-07-03)
+  - Fixed explicit type specification via prepare_typed
+  - Proper handling of binary format parameters
+  - Correct type inference for simple parameter queries
 - [ ] Named prepared statements
 - [ ] DEALLOCATE support
 
@@ -166,7 +169,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Integrated into QueryExecutor and ExtendedQueryHandler
   - Preserves string literals correctly
   - Handles empty queries after comment stripping with proper error
-  - Unit tests pass, integration tests need refinement
+  - Full test coverage with test_comment_stripping.rs
 - [ ] Cost-based query planning
 - [ ] Join order optimization
 - [ ] Subquery unnesting
@@ -436,6 +439,18 @@ Benchmark results comparing implementations (1000 operations each):
 - [x] ~3,000+ lines of dead code removed
 - [x] Zero performance regression confirmed via benchmarks
 - [x] All 75 unit tests continue to pass
+
+### ✅ Extended Protocol Parameter Type Inference - COMPLETED (2025-07-03)
+
+#### Parameter Type Handling Fixed
+- [x] Fixed parameter type inference to respect explicitly specified TEXT types
+- [x] Modified `needs_inference` check to only trigger for empty or unknown (0) param types
+- [x] Added proper handling for simple parameter SELECT queries (e.g., SELECT $1)
+- [x] Fixed regex for PostgreSQL type casts to avoid matching IPv6 addresses (::1)
+- [x] Added `inferred_param_types` field to Portal for better type tracking
+- [x] Resolved issue where 'SELECT $1' with TEXT parameter incorrectly interpreted 4-byte strings as INT4
+- [x] Full test coverage with improved test_comment_stripping.rs
+- [x] No performance regression - benchmarks show consistent results
 
 ### Type System Enhancements
 
