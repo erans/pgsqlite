@@ -1,5 +1,4 @@
 use anyhow::Result;
-use clap::Parser;
 use futures::SinkExt;
 use futures::StreamExt;
 use std::sync::Arc;
@@ -8,6 +7,7 @@ use tokio::net::{TcpListener, UnixListener};
 use tokio_util::codec::Framed;
 use tracing::{error, info};
 
+use pgsqlite::config::Config;
 use pgsqlite::protocol::{
     AuthenticationMessage, BackendMessage, ErrorResponse, FrontendMessage, PostgresCodec,
     TransactionStatus,
@@ -15,36 +15,13 @@ use pgsqlite::protocol::{
 use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
 use pgsqlite::session::{DbHandler, SessionState};
 
-#[derive(Parser, Debug)]
-#[command(name = "pgsqlite")]
-#[command(about = "pgsqlite - 🐘 PostgreSQL + 🪶 SQLite = ♥\nPostgreSQL wire protocol server on top of SQLite", long_about = None)]
-struct Config {
-    #[arg(short, long, default_value = "5432")]
-    port: u16,
-
-    #[arg(short, long, default_value = "sqlite.db")]
-    database: String,
-
-    #[arg(long, default_value = "info")]
-    log_level: String,
-
-    #[arg(long, help = "Use in-memory SQLite database (for testing/benchmarking only)")]
-    in_memory: bool,
-
-    #[arg(long, default_value = "/tmp", help = "Directory for Unix domain socket")]
-    socket_dir: String,
-
-    #[arg(long, help = "Disable TCP listener and use only Unix socket")]
-    no_tcp: bool,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = Config::parse();
+    let config = Config::load();
 
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter(config.log_level)
+        .with_env_filter(config.log_level.clone())
         .init();
 
     // Determine database path based on --in-memory flag
@@ -57,7 +34,7 @@ async fn main() -> Result<()> {
 
     // Initialize database handler with direct executor
     let db_handler = Arc::new(
-        DbHandler::new(&db_path)
+        DbHandler::new_with_config(&db_path, &config)
             .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
     );
 
@@ -108,8 +85,9 @@ async fn main() -> Result<()> {
     });
     
     // Start periodic cache metrics logging
+    let cache_metrics_interval = config.cache_metrics_interval_duration();
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(300)); // Log every 5 minutes
+        let mut interval = tokio::time::interval(cache_metrics_interval);
         loop {
             interval.tick().await;
             pgsqlite::cache::log_cache_status();

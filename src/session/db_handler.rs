@@ -10,6 +10,7 @@ use crate::cache::schema::TableSchema;
 use crate::rewriter::DecimalQueryRewriter;
 use crate::types::PgType;
 use crate::query::{QueryTypeDetector, QueryType};
+use crate::config::Config;
 use tracing::{info, debug};
 
 /// Database response structure
@@ -34,6 +35,10 @@ pub struct DbHandler {
 
 impl DbHandler {
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
+        Self::new_with_config(db_path, &Config::load())
+    }
+    
+    pub fn new_with_config(db_path: &str, config: &Config) -> Result<Self, rusqlite::Error> {
         // Use FULLMUTEX for SQLite's internal thread safety
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE 
             | OpenFlags::SQLITE_OPEN_CREATE 
@@ -51,14 +56,19 @@ impl DbHandler {
             Connection::open_with_flags(db_path, flags)?
         };
         
-        // Set pragmas for performance
-        conn.execute_batch("
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-            PRAGMA cache_size = -64000;
-            PRAGMA temp_store = MEMORY;
-            PRAGMA mmap_size = 268435456;
-        ")?;
+        // Set pragmas for performance using config values
+        let pragma_sql = format!(
+            "PRAGMA journal_mode = {};
+             PRAGMA synchronous = {};
+             PRAGMA cache_size = {};
+             PRAGMA temp_store = MEMORY;
+             PRAGMA mmap_size = {};",
+            config.pragma_journal_mode,
+            config.pragma_synchronous,
+            config.pragma_cache_size,
+            config.pragma_mmap_size
+        );
+        conn.execute_batch(&pragma_sql)?;
         
         // Initialize functions and metadata
         crate::functions::register_all_functions(&conn)?;
@@ -68,7 +78,7 @@ impl DbHandler {
         
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
-            schema_cache: Arc::new(SchemaCache::new(300)),
+            schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
         })
     }
     

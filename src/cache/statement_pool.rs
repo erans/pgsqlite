@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use rusqlite::{Connection, Statement, Params};
 use once_cell::sync::Lazy;
+use crate::config::CONFIG;
 
 /// A pool of prepared SQLite statements for reuse
 /// This avoids the overhead of preparing the same statement multiple times
@@ -29,7 +30,7 @@ struct CachedStatement {
 
 /// Global statement pool instance
 static GLOBAL_STATEMENT_POOL: Lazy<StatementPool> = Lazy::new(|| {
-    StatementPool::new(100) // Cache up to 100 prepared statements
+    StatementPool::new(CONFIG.statement_pool_size)
 });
 
 impl StatementPool {

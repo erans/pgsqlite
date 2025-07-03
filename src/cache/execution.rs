@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use crate::protocol::binary::BinaryEncoder;
+use crate::config::CONFIG;
 
 /// Pre-computed execution metadata for a query
 #[derive(Clone, Debug)]
@@ -106,7 +107,7 @@ pub struct CacheStats {
 
 /// Global execution cache instance
 static GLOBAL_EXECUTION_CACHE: std::sync::LazyLock<ExecutionCache> = 
-    std::sync::LazyLock::new(|| ExecutionCache::new(300));
+    std::sync::LazyLock::new(|| ExecutionCache::new(CONFIG.execution_cache_ttl));
 
 /// Get the global execution cache
 pub fn global_execution_cache() -> &'static ExecutionCache {

@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
+use crate::config::CONFIG;
 
 /// Cached result set for a query
 #[derive(Clone, Debug)]
@@ -239,7 +240,7 @@ fn estimate_result_size(result: &CachedResultSet) -> u64 {
 
 /// Global result cache instance
 static GLOBAL_RESULT_CACHE: std::sync::LazyLock<ResultSetCache> = 
-    std::sync::LazyLock::new(|| ResultSetCache::new(100, 10000, 60)); // 100 entries, max 10k rows, 60s TTL
+    std::sync::LazyLock::new(|| ResultSetCache::new(CONFIG.result_cache_size, 10000, CONFIG.result_cache_ttl));
 
 /// Get the global result cache
 pub fn global_result_cache() -> &'static ResultSetCache {
