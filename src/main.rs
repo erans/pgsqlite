@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::TcpListener;
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio_util::codec::Framed;
 use tracing::{error, info};
 use tokio_rustls::TlsAcceptor;
@@ -44,24 +46,26 @@ async fn main() -> Result<()> {
             .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
     );
 
-    // Build socket path
-    let socket_path = PathBuf::from(&config.socket_dir).join(format!(".s.PGSQL.{}", config.port));
-    
-    // Remove existing socket file if it exists
-    if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
-    }
-
-    // Create Unix socket listener
-    let unix_listener = UnixListener::bind(&socket_path)?;
-    info!("Unix socket created at: {}", socket_path.display());
-    
-    // Set socket permissions to 0777 for compatibility
+    // Unix socket setup (only on Unix platforms)
     #[cfg(unix)]
-    {
+    let (socket_path, unix_listener) = {
+        let socket_path = PathBuf::from(&config.socket_dir).join(format!(".s.PGSQL.{}", config.port));
+        
+        // Remove existing socket file if it exists
+        if socket_path.exists() {
+            std::fs::remove_file(&socket_path)?;
+        }
+
+        // Create Unix socket listener
+        let unix_listener = UnixListener::bind(&socket_path)?;
+        info!("Unix socket created at: {}", socket_path.display());
+        
+        // Set socket permissions to 0777 for compatibility
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o777))?;
-    }
+        
+        (socket_path, unix_listener)
+    };
 
     // Create TCP listener if not disabled
     let tcp_listener = if !config.no_tcp {
@@ -93,15 +97,26 @@ async fn main() -> Result<()> {
     };
 
     // Handle cleanup on shutdown
-    let socket_path_cleanup = socket_path.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        if socket_path_cleanup.exists() {
-            let _ = std::fs::remove_file(&socket_path_cleanup);
-            info!("Cleaned up Unix socket file");
-        }
-        std::process::exit(0);
-    });
+    #[cfg(unix)]
+    {
+        let socket_path_cleanup = socket_path.clone();
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            if socket_path_cleanup.exists() {
+                let _ = std::fs::remove_file(&socket_path_cleanup);
+                info!("Cleaned up Unix socket file");
+            }
+            std::process::exit(0);
+        });
+    }
+    
+    #[cfg(not(unix))]
+    {
+        tokio::spawn(async move {
+            tokio::signal::ctrl_c().await.ok();
+            std::process::exit(0);
+        });
+    }
     
     // Start periodic cache metrics logging
     let cache_metrics_interval = config.cache_metrics_interval_duration();
@@ -114,19 +129,56 @@ async fn main() -> Result<()> {
     });
 
     // Accept connections from both TCP and Unix sockets
-    loop {
-        let db_handler = db_handler.clone();
-        
-        tokio::select! {
-            // Handle TCP connections
-            result = async {
-                if let Some(ref listener) = tcp_listener {
-                    listener.accept().await
-                } else {
-                    std::future::pending::<Result<(tokio::net::TcpStream, std::net::SocketAddr), std::io::Error>>().await
+    #[cfg(unix)]
+    {
+        loop {
+            let db_handler = db_handler.clone();
+            
+            tokio::select! {
+                // Handle TCP connections
+                result = async {
+                    if let Some(ref listener) = tcp_listener {
+                        listener.accept().await
+                    } else {
+                        std::future::pending::<Result<(tokio::net::TcpStream, std::net::SocketAddr), std::io::Error>>().await
+                    }
+                } => {
+                    if let Ok((stream, addr)) = result {
+                        info!("New TCP connection from {}", addr);
+                        let db_handler = db_handler.clone();
+                        let tls_acceptor = tls_acceptor.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_tcp_connection(stream, addr, db_handler, tls_acceptor).await {
+                                error!("TCP connection error from {}: {}", addr, e);
+                            }
+                        });
+                    }
                 }
-            } => {
-                if let Ok((stream, addr)) = result {
+                
+                // Handle Unix socket connections
+                result = unix_listener.accept() => {
+                    if let Ok((stream, _addr)) = result {
+                        info!("New Unix socket connection");
+                        let db_handler = db_handler.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_unix_connection(stream, db_handler).await {
+                                error!("Unix socket connection error: {}", e);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(not(unix))]
+    {
+        // Windows/non-Unix: only handle TCP connections
+        loop {
+            let db_handler = db_handler.clone();
+            
+            if let Some(ref listener) = tcp_listener {
+                if let Ok((stream, addr)) = listener.accept().await {
                     info!("New TCP connection from {}", addr);
                     let db_handler = db_handler.clone();
                     let tls_acceptor = tls_acceptor.clone();
@@ -136,19 +188,10 @@ async fn main() -> Result<()> {
                         }
                     });
                 }
-            }
-            
-            // Handle Unix socket connections
-            result = unix_listener.accept() => {
-                if let Ok((stream, _addr)) = result {
-                    info!("New Unix socket connection");
-                    let db_handler = db_handler.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = handle_unix_connection(stream, db_handler).await {
-                            error!("Unix socket connection error: {}", e);
-                        }
-                    });
-                }
+            } else {
+                // No TCP listener and no Unix sockets on Windows
+                error!("No listeners available on Windows when TCP is disabled");
+                return Err(anyhow::anyhow!("Cannot run without TCP on Windows"));
             }
         }
     }
@@ -211,6 +254,7 @@ async fn handle_ssl_negotiation(
     }
 }
 
+#[cfg(unix)]
 async fn handle_unix_connection(
     stream: tokio::net::UnixStream,
     db_handler: Arc<DbHandler>,
