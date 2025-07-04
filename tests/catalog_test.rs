@@ -1,15 +1,16 @@
 use pgsqlite::catalog::CatalogInterceptor;
 use pgsqlite::session::db_handler::DbHandler;
 use tokio;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_catalog_interceptor() {
     // Create a test database handler
-    let db = DbHandler::new(":memory:").unwrap();
+    let db = Arc::new(DbHandler::new(":memory:").unwrap());
     
     // Test simple pg_type query
     let query = "SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = 25";
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -20,7 +21,7 @@ async fn test_catalog_interceptor() {
     
     // Test pg_type query with parameter placeholder
     let query = "SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = $1";
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -32,7 +33,7 @@ async fn test_catalog_interceptor() {
                  FROM pg_catalog.pg_type t 
                  INNER JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid 
                  WHERE t.oid = $1";
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -40,14 +41,14 @@ async fn test_catalog_interceptor() {
     
     // Test non-catalog query
     let query = "SELECT * FROM users";
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_none());
 }
 
 #[tokio::test]
 async fn test_catalog_with_joins() {
     // Create a test database handler
-    let db = DbHandler::new(":memory:").unwrap();
+    let db = Arc::new(DbHandler::new(":memory:").unwrap());
     
     let query = "SELECT t.typname, t.typtype, t.typelem, r.rngsubtype, t.typbasetype, n.nspname, t.typrelid
                  FROM pg_catalog.pg_type t
@@ -55,7 +56,7 @@ async fn test_catalog_with_joins() {
                  INNER JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid
                  WHERE t.oid = $1";
     
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -75,14 +76,14 @@ async fn test_catalog_with_joins() {
 #[tokio::test]
 async fn test_pg_class_queries() {
     // Create a test database handler
-    let db = DbHandler::new(":memory:").unwrap();
+    let db = Arc::new(DbHandler::new(":memory:").unwrap());
     
     // Create a test table
     db.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
     
     // Test pg_class query
     let query = "SELECT relname, relkind FROM pg_catalog.pg_class";
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -110,14 +111,14 @@ async fn test_pg_class_queries() {
 #[tokio::test]
 async fn test_pg_attribute_queries() {
     // Create a test database handler
-    let db = DbHandler::new(":memory:").unwrap();
+    let db = Arc::new(DbHandler::new(":memory:").unwrap());
     
     // Create a test table
     db.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)").await.unwrap();
     
     // Test pg_attribute query
     let query = "SELECT attname, atttypid, attnotnull FROM pg_catalog.pg_attribute";
-    let result = CatalogInterceptor::intercept_query(query, &db).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();

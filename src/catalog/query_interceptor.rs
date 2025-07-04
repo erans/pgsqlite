@@ -1,17 +1,21 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
 use crate::PgSqliteError;
-use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr};
+use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
+use sqlparser::tokenizer::{Location, Span};
 use tracing::debug;
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, system_functions::SystemFunctions};
+use std::sync::Arc;
+use std::pin::Pin;
+use std::future::Future;
 
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
 
 impl CatalogInterceptor {
     /// Check if a query is targeting pg_catalog and handle it
-    pub async fn intercept_query(query: &str, db: &DbHandler) -> Option<Result<DbResponse, PgSqliteError>> {
+    pub async fn intercept_query(query: &str, db: Arc<DbHandler>) -> Option<Result<DbResponse, PgSqliteError>> {
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
         
@@ -43,10 +47,29 @@ impl CatalogInterceptor {
         // Parse the query
         let dialect = PostgreSqlDialect {};
         match Parser::parse_sql(&dialect, query) {
-            Ok(statements) => {
+            Ok(mut statements) => {
                 if statements.len() == 1 {
-                    if let Statement::Query(query) = &statements[0] {
-                        if let Some(response) = Self::handle_catalog_query(query, db).await {
+                    if let Statement::Query(query_stmt) = &mut statements[0] {
+                        // First check if query contains system functions that need processing
+                        if Self::query_contains_system_functions(query_stmt) {
+                            // Clone the query and process system functions
+                            match Self::process_system_functions_in_query(query_stmt.clone(), db.clone()).await {
+                                Ok(processed_query) => {
+                                    // Convert the processed query back to SQL and execute
+                                    let processed_sql = processed_query.to_string();
+                                    debug!("Processed query with system functions: {}", processed_sql);
+                                    // Let the normal SQLite handler process the rewritten query
+                                    return None;
+                                }
+                                Err(e) => {
+                                    debug!("Error processing system functions: {}", e);
+                                    // Continue with normal catalog handling
+                                }
+                            }
+                        }
+                        
+                        // Normal catalog table handling
+                        if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone()).await {
                             return Some(Ok(response));
                         }
                     }
@@ -58,7 +81,7 @@ impl CatalogInterceptor {
         None
     }
 
-    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: &DbHandler) -> Option<DbResponse> {
+    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>) -> Option<DbResponse> {
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
             // Check if this is a JOIN query involving pg_type
@@ -76,13 +99,13 @@ impl CatalogInterceptor {
             // For simple queries, check each table
             for table_ref in &select.from {
                 // Check main table
-                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db).await {
+                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db.clone()).await {
                     return Some(response);
                 }
                 
                 // Check joined tables
                 for join in &table_ref.joins {
-                    if let Some(response) = Self::check_table_factor(&join.relation, select, db).await {
+                    if let Some(response) = Self::check_table_factor(&join.relation, select, db.clone()).await {
                         return Some(response);
                     }
                 }
@@ -92,7 +115,7 @@ impl CatalogInterceptor {
         None
     }
     
-    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: &DbHandler) -> Option<DbResponse> {
+    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: Arc<DbHandler>) -> Option<DbResponse> {
         if let TableFactor::Table { name, .. } = table_factor {
             let table_name = name.to_string().to_lowercase();
             
@@ -113,7 +136,7 @@ impl CatalogInterceptor {
             
             // Handle pg_class queries
             if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
-                return match PgClassHandler::handle_query(select, db).await {
+                return match PgClassHandler::handle_query(select, &*db).await {
                     Ok(response) => Some(response),
                     Err(_) => None,
                 };
@@ -121,7 +144,7 @@ impl CatalogInterceptor {
             
             // Handle pg_attribute queries
             if table_name.contains("pg_attribute") || table_name.contains("pg_catalog.pg_attribute") {
-                return match PgAttributeHandler::handle_query(select, db).await {
+                return match PgAttributeHandler::handle_query(select, &*db).await {
                     Ok(response) => Some(response),
                     Err(_) => None,
                 };
@@ -443,5 +466,174 @@ impl CatalogInterceptor {
             rows,
             rows_affected,
         }
+    }
+
+    /// Check if a query contains system function calls
+    fn query_contains_system_functions(query: &sqlparser::ast::Query) -> bool {
+        if let SetExpr::Select(select) = &*query.body {
+            // Check projections
+            for item in &select.projection {
+                if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item {
+                    if Self::expression_contains_system_function(expr) {
+                        return true;
+                    }
+                }
+            }
+            
+            // Check WHERE clause
+            if let Some(selection) = &select.selection {
+                if Self::expression_contains_system_function(selection) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Check if an expression contains system function calls
+    fn expression_contains_system_function(expr: &Expr) -> bool {
+        match expr {
+            Expr::Function(func) => {
+                let func_name = func.name.to_string().to_lowercase();
+                // Check if it's a known system function
+                matches!(func_name.as_str(), 
+                    "pg_get_constraintdef" | "pg_table_is_visible" | "format_type" |
+                    "pg_get_expr" | "pg_get_userbyid" | "pg_get_indexdef" |
+                    "pg_catalog.pg_get_constraintdef" | "pg_catalog.pg_table_is_visible" |
+                    "pg_catalog.format_type" | "pg_catalog.pg_get_expr" |
+                    "pg_catalog.pg_get_userbyid" | "pg_catalog.pg_get_indexdef"
+                )
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::expression_contains_system_function(left) || 
+                Self::expression_contains_system_function(right)
+            }
+            Expr::UnaryOp { expr, .. } => Self::expression_contains_system_function(expr),
+            Expr::Cast { expr, .. } => Self::expression_contains_system_function(expr),
+            Expr::Case { operand, conditions, else_result, .. } => {
+                operand.as_ref().map_or(false, |e| Self::expression_contains_system_function(e)) ||
+                conditions.iter().any(|when| Self::expression_contains_system_function(&when.condition) || 
+                                           Self::expression_contains_system_function(&when.result)) ||
+                else_result.as_ref().map_or(false, |e| Self::expression_contains_system_function(e))
+            }
+            Expr::InList { expr, list, .. } => {
+                Self::expression_contains_system_function(expr) ||
+                list.iter().any(|e| Self::expression_contains_system_function(e))
+            }
+            Expr::InSubquery { expr, subquery: _, .. } => Self::expression_contains_system_function(expr),
+            Expr::Between { expr, low, high, .. } => {
+                Self::expression_contains_system_function(expr) ||
+                Self::expression_contains_system_function(low) ||
+                Self::expression_contains_system_function(high)
+            }
+            _ => false,
+        }
+    }
+
+    /// Process system functions in a query by replacing them with their results
+    async fn process_system_functions_in_query(
+        mut query: Box<sqlparser::ast::Query>,
+        db: Arc<DbHandler>,
+    ) -> Result<Box<sqlparser::ast::Query>, Box<dyn std::error::Error + Send + Sync>> {
+        
+        if let SetExpr::Select(select) = &mut *query.body {
+            // Process projections
+            for item in &mut select.projection {
+                match item {
+                    SelectItem::UnnamedExpr(expr) => {
+                        Self::process_expression(expr, db.clone()).await?;
+                    }
+                    SelectItem::ExprWithAlias { expr, .. } => {
+                        Self::process_expression(expr, db.clone()).await?;
+                    }
+                    _ => {}
+                }
+            }
+            
+            // Process WHERE clause
+            if let Some(selection) = &mut select.selection {
+                Self::process_expression(selection, db.clone()).await?;
+            }
+        }
+        
+        Ok(query)
+    }
+
+    /// Process an expression and replace system function calls with their results
+    fn process_expression<'a>(
+        expr: &'a mut Expr,
+        db: Arc<DbHandler>,
+    ) -> Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>> {
+        Box::pin(async move {
+        match expr {
+            Expr::Function(func) => {
+                let func_name = func.name.to_string().to_lowercase();
+                let base_name = if let Some(pos) = func_name.rfind('.') {
+                    &func_name[pos + 1..]
+                } else {
+                    &func_name
+                };
+                
+                // Extract arguments
+                let mut args = Vec::new();
+                if let sqlparser::ast::FunctionArguments::List(func_arg_list) = &func.args {
+                    for arg in &func_arg_list.args {
+                        match arg {
+                            FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => args.push(e.clone()),
+                            FunctionArg::Named { arg: FunctionArgExpr::Expr(e), .. } => args.push(e.clone()),
+                            _ => {}
+                        }
+                    }
+                }
+                
+                // Process the function call
+                if let Some(result) = SystemFunctions::process_function_call(base_name, &args, db).await? {
+                    // Replace the function call with its result
+                    *expr = Expr::Value(sqlparser::ast::ValueWithSpan { 
+                        value: sqlparser::ast::Value::SingleQuotedString(result),
+                        span: Span {
+                            start: Location { line: 1, column: 1 },
+                            end: Location { line: 1, column: 1 }
+                        }
+                    });
+                }
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                Self::process_expression(left, db.clone()).await?;
+                Self::process_expression(right, db.clone()).await?;
+            }
+            Expr::UnaryOp { expr: inner_expr, .. } => {
+                Self::process_expression(inner_expr, db.clone()).await?;
+            }
+            Expr::Cast { expr: inner_expr, .. } => {
+                Self::process_expression(inner_expr, db.clone()).await?;
+            }
+            Expr::Case { operand, conditions, else_result, .. } => {
+                if let Some(op) = operand {
+                    Self::process_expression(op, db.clone()).await?;
+                }
+                for when in conditions {
+                    Self::process_expression(&mut when.condition, db.clone()).await?;
+                    Self::process_expression(&mut when.result, db.clone()).await?;
+                }
+                if let Some(else_res) = else_result {
+                    Self::process_expression(else_res, db.clone()).await?;
+                }
+            }
+            Expr::InList { expr: inner_expr, list, .. } => {
+                Self::process_expression(inner_expr, db.clone()).await?;
+                for item in list {
+                    Self::process_expression(item, db.clone()).await?;
+                }
+            }
+            Expr::Between { expr: inner_expr, low, high, .. } => {
+                Self::process_expression(inner_expr, db.clone()).await?;
+                Self::process_expression(low, db.clone()).await?;
+                Self::process_expression(high, db.clone()).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+        })
     }
 }

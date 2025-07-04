@@ -8,6 +8,7 @@ use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tracing::{info, debug};
+use std::sync::Arc;
 
 /// Create a command complete tag with optimized static strings for common cases
 fn create_command_tag(operation: &str, rows_affected: usize) -> String {
@@ -108,7 +109,7 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Check if this is a catalog query first
-        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db).await {
+        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, Arc::new(db.clone())).await {
             catalog_result?
         } else {
             db.query(query).await?

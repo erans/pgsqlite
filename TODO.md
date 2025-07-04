@@ -257,13 +257,15 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - Map FOREIGN KEY constraints from PRAGMA foreign_key_list
     - Parse CHECK constraints from sqlite_master.sql
     - Support UNIQUE constraints from indexes
-  - [ ] **PostgreSQL System Functions** - REQUIRED FOR PSQL
-    - [ ] pg_table_is_visible(oid) - Check if table is in search path
-    - [ ] pg_get_userbyid(oid) - Return user name for OID
-    - [ ] format_type(oid, typmod) - Format type name with modifiers
-    - [ ] pg_get_indexdef(oid) - Return CREATE INDEX statement
-    - [ ] pg_get_constraintdef(oid) - Return constraint definition
+  - [x] **PostgreSQL System Functions** - REQUIRED FOR PSQL (2025-07-04)
+    - [x] pg_table_is_visible(oid) - Check if table is in search path
+    - [x] pg_get_userbyid(oid) - Return user name for OID
+    - [x] format_type(oid, typmod) - Format type name with modifiers
+    - [x] pg_get_indexdef(oid) - Return CREATE INDEX statement
+    - [x] pg_get_constraintdef(oid) - Return constraint definition
+    - [x] pg_get_expr(node, relation) - Return expression from node tree
     - [ ] regclass type casting support (e.g., 'tablename'::regclass)
+    - **Note**: System functions are detected and processed in query interceptor, replaced with their results before execution
   - [ ] **Additional System Catalogs**
     - [ ] pg_am (access methods) - Required for index queries
     - [ ] pg_proc (functions) - For \df command
@@ -618,7 +620,7 @@ Started implementation of PostgreSQL system catalogs to support psql \d commands
 1. **No Column Projection** - SELECT relname returns all columns
 2. **No WHERE Filtering** - WHERE relkind = 'r' returns all rows
 3. **No JOIN Support** - Cannot handle psql's complex JOIN queries
-4. **Missing System Functions** - pg_table_is_visible(), format_type(), etc.
+4. **Missing System Functions** - COMPLETED (2025-07-04)
 5. **Incomplete Catalog Tables** - Need pg_index, pg_constraint, pg_am, etc.
 
 #### Testing Results
