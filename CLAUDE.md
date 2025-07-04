@@ -610,6 +610,7 @@ The catalog support is implemented through a query interception layer that:
   - Main entry point that detects catalog queries
   - Routes to appropriate handlers based on table name
   - Now async and accepts DbHandler for database access
+  - **NEW (2025-07-04)**: Detects and processes PostgreSQL system functions
   
 - **pg_class handler** (`src/catalog/pg_class.rs`):
   - Maps SQLite tables and indexes to PostgreSQL pg_class format
@@ -623,22 +624,35 @@ The catalog support is implemented through a query interception layer that:
   - Falls back to intelligent type inference when schema unavailable
   - Handles type modifiers (VARCHAR length, NUMERIC precision/scale)
 
+- **system_functions module** (`src/catalog/system_functions.rs`) - **NEW (2025-07-04)**:
+  - Implements PostgreSQL system functions required by psql
+  - Supported functions:
+    - `pg_get_constraintdef(oid)` - Returns constraint definitions (currently returns empty as pg_constraint not implemented)
+    - `pg_table_is_visible(oid)` - Always returns 't' (all tables visible in SQLite)
+    - `format_type(oid, typmod)` - Formats PostgreSQL type names with modifiers
+    - `pg_get_expr(node, relation)` - Returns empty (no expression trees in SQLite)
+    - `pg_get_userbyid(oid)` - Returns 'sqlite' (no users in SQLite)
+    - `pg_get_indexdef(oid)` - Returns index definitions (currently returns empty)
+  - Functions are detected and processed before query execution
+  - Function calls are replaced with their string results in the SQL
+
 ### Key Design Decisions
 1. **Stable OID Generation**: OIDs are generated from object names using a hash function to ensure consistency across queries
 2. **Type Mapping**: Leverages existing __pgsqlite_schema when available, falls back to SQLite type inference
 3. **Async Design**: Handlers are async to allow database queries for metadata
+4. **Function Processing**: System functions are detected and evaluated during query interception, replaced with literal values
 
 ### Current Limitations
 1. **No Query Processing**: Returns all columns/rows regardless of SELECT projection or WHERE clause
 2. **No JOIN Support**: Cannot handle multi-table queries that psql uses
-3. **Missing System Functions**: pg_table_is_visible(), format_type(), etc.
-4. **Incomplete Catalogs**: Only pg_class and pg_attribute implemented
+3. **Incomplete Catalogs**: Only pg_class and pg_attribute implemented, pg_constraint needed for full constraint support
+4. **Limited Function Results**: Some functions return placeholder values due to missing catalog tables
 
 ### Future Work
 Full psql compatibility requires:
 - Query processing capabilities (projection, filtering, joins)
 - Additional catalog tables (pg_index, pg_constraint, pg_am, etc.)
-- System function implementations
+- regclass type casting support
 - Performance optimizations for catalog queries
 
 See TODO.md section "PostgreSQL Compatibility - System Catalogs" for detailed task list.
