@@ -275,6 +275,10 @@ impl ExtendedQueryHandler {
                                 
                                 // Second priority: Check schema table for stored type mappings
                                 if let Some(pg_type) = schema_types.get(col_name) {
+                                    // Need to check if this is an ENUM type
+                                    if let Ok(conn) = db.get_mut_connection() {
+                                        return crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn);
+                                    }
                                     return crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
                                 }
                                 
@@ -2152,7 +2156,12 @@ impl ExtendedQueryHandler {
                         
                         // First priority: Check schema table for stored type mappings
                         if let Some(pg_type) = schema_types.get(col_name) {
-                            let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                            // Need to check if this is an ENUM type
+                            let oid = if let Ok(conn) = db.get_mut_connection() {
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn)
+                            } else {
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                            };
                             info!("Column '{}' found in schema as type '{}' (OID {})", col_name, pg_type, oid);
                             return oid;
                         }

@@ -145,7 +145,13 @@ impl QueryExecutor {
                 .map(|(i, name)| {
                     // First priority: Check schema table for stored type mappings
                     let type_oid = if let Some(pg_type) = schema_types.get(name) {
-                        crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                        // Need to check if this is an ENUM type
+                        // Get a connection to check ENUM metadata
+                        if let Ok(conn) = db.get_mut_connection() {
+                            crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn)
+                        } else {
+                            crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                        }
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid

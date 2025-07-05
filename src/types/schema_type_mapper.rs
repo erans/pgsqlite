@@ -1,5 +1,6 @@
 use rusqlite::Connection;
 use crate::types::PgType;
+use crate::metadata::EnumMetadata;
 
 /// Maps between PostgreSQL and SQLite types using actual schema information
 pub struct SchemaTypeMapper;
@@ -159,9 +160,29 @@ impl SchemaTypeMapper {
             "BIT VARYING" | "VARBIT" => PgType::Varbit.to_oid(),
             "BIT" => PgType::Bit.to_oid(),
             
-            // Default
-            _ => PgType::Text.to_oid(), // text
+            // Default - might be an ENUM type, return a special marker
+            _ => {
+                // For unknown types, we'll return TEXT but the caller should check
+                // if it's actually an ENUM type
+                PgType::Text.to_oid()
+            }
         }
+    }
+    
+    /// Get PostgreSQL type OID, checking for ENUM types
+    pub fn pg_type_string_to_oid_with_enum_check(pg_type: &str, conn: &Connection) -> i32 {
+        // First try standard types
+        let oid = Self::pg_type_string_to_oid(pg_type);
+        
+        // If we got TEXT OID, check if it's actually an ENUM
+        if oid == PgType::Text.to_oid() as i32 {
+            // Check if this is an ENUM type
+            if let Ok(Some(enum_type)) = EnumMetadata::get_enum_type(conn, pg_type) {
+                return enum_type.type_oid;
+            }
+        }
+        
+        oid
     }
     
     /// Convert PostgreSQL OID to type name
