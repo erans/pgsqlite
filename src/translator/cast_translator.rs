@@ -104,8 +104,20 @@ impl CastTranslator {
             let type_end = Self::find_type_end(after);
             
             // Extract expression and type
-            let expr = &result[expr_start..cast_pos];
+            let mut expr = &result[expr_start..cast_pos];
             let type_name = &result[cast_pos + 2..cast_pos + 2 + type_end];
+            
+            // Fix for extra closing paren
+            // This happens when we have (expr)::type and extract starting after the (
+            let mut trimmed_paren = false;
+            if expr.ends_with(')') && !expr.starts_with('(') {
+                let open_count = expr.matches('(').count();
+                let close_count = expr.matches(')').count();
+                if close_count > open_count {
+                    expr = &expr[..expr.len()-1];
+                    trimmed_paren = true;
+                }
+            }
             
             // Check if this is an ENUM type cast
             let translated_cast = if let Some(conn) = conn {
@@ -113,12 +125,19 @@ impl CastTranslator {
                     // For ENUM types, we validate the value
                     Self::translate_enum_cast(expr, type_name, conn)
                 } else if type_name.eq_ignore_ascii_case("text") {
-                    // For text cast, keep it if the expression might be a special type
-                    // that needs explicit casting (like MONEY, INET, etc.)
-                    if Self::might_need_text_cast(expr) {
-                        format!("CAST({} AS TEXT)", expr)
+                    // For text cast, we need to handle parenthesized expressions carefully
+                    // Remove outer parentheses if present to avoid (CAST(...))
+                    let clean_expr = if expr.starts_with('(') && expr.ends_with(')') {
+                        &expr[1..expr.len()-1]
                     } else {
-                        expr.to_string()
+                        expr
+                    };
+                    
+                    // Always preserve cast for aggregate functions or complex expressions
+                    if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
+                        format!("CAST({} AS TEXT)", clean_expr)
+                    } else {
+                        clean_expr.to_string()
                     }
                 } else {
                     // For other types, check if SQLite supports them
@@ -139,17 +158,35 @@ impl CastTranslator {
             } else {
                 // No connection, use standard SQL cast
                 if type_name.eq_ignore_ascii_case("text") {
-                    expr.to_string()
+                    // Remove outer parentheses if present
+                    let clean_expr = if expr.starts_with('(') && expr.ends_with(')') {
+                        &expr[1..expr.len()-1]
+                    } else {
+                        expr
+                    };
+                    // Keep CAST for expressions with function calls
+                    if clean_expr.contains('(') && clean_expr.contains(')') {
+                        format!("CAST({} AS TEXT)", clean_expr)
+                    } else {
+                        clean_expr.to_string()
+                    }
                 } else {
                     format!("CAST({} AS {})", expr, type_name)
                 }
             };
             
+            // If we trimmed a paren, add it back after the CAST
+            let final_replacement = if trimmed_paren {
+                format!("{})", translated_cast)
+            } else {
+                translated_cast
+            };
+            
             // Replace the PostgreSQL cast with the translated version
-            result.replace_range(expr_start..cast_pos + 2 + type_end, &translated_cast);
+            result.replace_range(expr_start..cast_pos + 2 + type_end, &final_replacement);
             
             // Update search position to after the replacement
-            let new_search_from = expr_start + translated_cast.len();
+            let new_search_from = expr_start + final_replacement.len();
             
             // Ensure we always move forward to avoid infinite loops
             if new_search_from <= search_from {
@@ -228,7 +265,9 @@ impl CastTranslator {
             } else if ch == b'(' {
                 paren_depth -= 1;
                 if paren_depth < 0 {
-                    return i + 1;  // Return position after the '('
+                    // Found unmatched opening paren - this is the start
+                    // Return position after the '('
+                    return i + 1;
                 }
             }
             
@@ -286,6 +325,21 @@ impl CastTranslator {
         // If it's a column name (not a literal), it might be a special type
         // that needs explicit casting
         !expr.starts_with('\'') && !expr.starts_with('"') && !expr.parse::<f64>().is_ok()
+    }
+    
+    /// Check if an expression is an aggregate function
+    fn is_aggregate_function(expr: &str) -> bool {
+        let expr_upper = expr.to_uppercase();
+        expr_upper.starts_with("SUM(") || 
+        expr_upper.starts_with("AVG(") || 
+        expr_upper.starts_with("COUNT(") || 
+        expr_upper.starts_with("MIN(") || 
+        expr_upper.starts_with("MAX(") ||
+        expr_upper.starts_with("(SUM(") ||
+        expr_upper.starts_with("(AVG(") ||
+        expr_upper.starts_with("(COUNT(") ||
+        expr_upper.starts_with("(MIN(") ||
+        expr_upper.starts_with("(MAX(")
     }
     
     /// Convert PostgreSQL type names to SQLite type names
@@ -356,11 +410,19 @@ impl CastTranslator {
                     // For ENUM types, just return the expression
                     Self::translate_enum_cast(expr, type_name, conn)
                 } else if type_name.eq_ignore_ascii_case("text") {
-                    // For text cast, keep it if the expression might be a special type
-                    if Self::might_need_text_cast(expr) {
-                        format!("CAST({} AS TEXT)", expr)
+                    // For text cast, we need to handle parenthesized expressions carefully
+                    // Remove outer parentheses if present to avoid (CAST(...))
+                    let clean_expr = if expr.starts_with('(') && expr.ends_with(')') {
+                        &expr[1..expr.len()-1]
                     } else {
-                        expr.to_string()
+                        expr
+                    };
+                    
+                    // Always preserve cast for aggregate functions or complex expressions
+                    if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
+                        format!("CAST({} AS TEXT)", clean_expr)
+                    } else {
+                        clean_expr.to_string()
                     }
                 } else {
                     // Check if SQLite supports this type
