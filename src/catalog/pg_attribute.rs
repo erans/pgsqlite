@@ -172,6 +172,11 @@ async fn add_table_attributes(
             // PRIMARY KEY columns are implicitly NOT NULL in PostgreSQL
             let notnull = notnull || is_primary_key;
             
+            // Debug logging for test failures
+            if col_name == "id" && table_name.contains("pgattr_test") {
+                debug!("pgattr_test_attrs.id: notnull={}, is_primary_key={}", notnull, is_primary_key);
+            }
+            
             // Determine PostgreSQL type
             let (pg_type_oid, attlen, atttypmod) = if let Some(pg_type_str) = type_map.get(col_name.as_ref()) {
                 parse_pg_type(pg_type_str)
