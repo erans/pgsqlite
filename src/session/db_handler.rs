@@ -863,7 +863,9 @@ pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<Strin
         return Ok(query.to_string());
     }
     
-    Ok(statements[0].to_string())
+    let rewritten = statements[0].to_string();
+    tracing::debug!("Decimal rewriter output: {}", rewritten);
+    Ok(rewritten)
 }
 
 struct ParsedQueryInfo {

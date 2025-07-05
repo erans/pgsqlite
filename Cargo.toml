@@ -46,6 +46,7 @@ hex = "0.4"
 regex = "1.11"
 byteorder = "1.5"
 parking_lot = "0.12"
+memchr = "2.7"
 
 # Memory mapping for zero-copy operations
 memmap2 = "0.9"

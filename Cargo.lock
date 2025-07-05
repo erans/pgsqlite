@@ -1370,6 +1370,7 @@ dependencies = [
  "futures",
  "hex",
  "lazy_static",
+ "memchr",
  "memmap2",
  "once_cell",
  "parking_lot",

@@ -1,62 +1,21 @@
 use crate::metadata::EnumMetadata;
 use rusqlite::Connection;
+use super::SimdCastSearch;
 
 /// Translates PostgreSQL cast syntax to SQLite-compatible syntax
 pub struct CastTranslator;
 
 impl CastTranslator {
-    /// Quick check if translation is needed (avoiding uppercase allocation)
+    /// Quick check if translation is needed (using SIMD acceleration)
     #[inline]
     pub fn needs_translation(query: &str) -> bool {
-        // Fast path: check for :: first (most common cast syntax)
-        if query.contains("::") {
-            // Make sure it's not inside a string literal (for IPv6)
-            return !Self::all_casts_in_strings(query);
+        // Fast path: check for :: first using SIMD (most common cast syntax)
+        if SimdCastSearch::has_cast_outside_strings(query) {
+            return true;
         }
         
-        // Slower path: check for CAST (less common, needs case-insensitive check)
-        // Use manual case-insensitive search to avoid allocation
-        Self::contains_cast_keyword(query)
-    }
-    
-    /// Check if all :: occurrences are inside string literals
-    #[inline]
-    fn all_casts_in_strings(query: &str) -> bool {
-        let mut in_string = false;
-        let mut prev_char = '\0';
-        
-        for (i, ch) in query.chars().enumerate() {
-            match ch {
-                '\'' if prev_char != '\\' => in_string = !in_string,
-                ':' if !in_string && query[i..].starts_with("::") => return false,
-                _ => {}
-            }
-            prev_char = ch;
-        }
-        
-        true
-    }
-    
-    /// Case-insensitive check for CAST keyword without allocation
-    #[inline]
-    fn contains_cast_keyword(query: &str) -> bool {
-        let bytes = query.as_bytes();
-        let cast_bytes = b"CAST";
-        
-        if bytes.len() < cast_bytes.len() {
-            return false;
-        }
-        
-        for i in 0..=(bytes.len() - cast_bytes.len()) {
-            if bytes[i..i + cast_bytes.len()].eq_ignore_ascii_case(cast_bytes) {
-                // Check if it's followed by '(' to avoid matching words like "CASTLE"
-                if i + cast_bytes.len() < bytes.len() && bytes[i + cast_bytes.len()] == b'(' {
-                    return true;
-                }
-            }
-        }
-        
-        false
+        // Slower path: check for CAST using SIMD (less common)
+        SimdCastSearch::contains_cast_keyword(query)
     }
     
     /// Translate a query containing PostgreSQL cast syntax
@@ -72,26 +31,19 @@ impl CastTranslator {
         // First handle CAST syntax
         result = Self::translate_cast_syntax(&result, conn);
         
-        // Then handle :: cast syntax
-        let mut search_from = 0;
+        // Then handle :: cast syntax using SIMD to find all positions
+        let cast_positions = SimdCastSearch::find_all_double_colons(&result);
         let mut iterations = 0;
         const MAX_ITERATIONS: usize = 100;
         
-        while search_from < result.len() && iterations < MAX_ITERATIONS {
+        for &cast_pos in &cast_positions {
+            if iterations >= MAX_ITERATIONS {
+                break;
+            }
             iterations += 1;
-            let remaining = &result[search_from..];
-            let cast_pos_offset = match remaining.find("::") {
-                Some(pos) => pos,
-                None => break,
-            };
-            let cast_pos = search_from + cast_pos_offset;
             
             // Check if this :: is inside a string literal (for IPv6 addresses)
             if Self::is_inside_string(&result, cast_pos) {
-                search_from = cast_pos + 2;
-                if search_from > result.len() {
-                    break;
-                }
                 continue;
             }
             
@@ -185,20 +137,15 @@ impl CastTranslator {
             // Replace the PostgreSQL cast with the translated version
             result.replace_range(expr_start..cast_pos + 2 + type_end, &final_replacement);
             
-            // Update search position to after the replacement
-            let new_search_from = expr_start + final_replacement.len();
-            
-            // Ensure we always move forward to avoid infinite loops
-            if new_search_from <= search_from {
-                search_from = cast_pos + 2; // Move past the :: we just processed
-            } else {
-                search_from = new_search_from;
-            }
-            
-            // Ensure we don't go past the end of the string
-            if search_from >= result.len() {
-                break;
-            }
+            // Since we modified the string, we need to recalculate positions for the next iteration
+            // Break and re-find positions (this is safe because we limit iterations)
+            break;
+        }
+        
+        // If we made changes, we might need to process more casts
+        if iterations > 0 && iterations < MAX_ITERATIONS {
+            // Recursively process any remaining casts
+            return Self::translate_query(&result, conn);
         }
         
         // Cache the translation if it changed

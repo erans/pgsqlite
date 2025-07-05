@@ -69,10 +69,12 @@ impl<'a> LazyQueryProcessor<'a> {
             if let Some(cached) = crate::cache::global_translation_cache().get(self.original_query) {
                 current_query = Cow::Owned(cached);
             } else {
+                tracing::debug!("Before cast translation: {}", self.original_query);
                 let translated = crate::translator::CastTranslator::translate_query(
                     self.original_query,
                     Some(conn)
                 );
+                tracing::debug!("After cast translation: {}", translated);
                 // Cache the translation
                 crate::cache::global_translation_cache().insert(
                     self.original_query.to_string(),
@@ -102,7 +104,13 @@ impl<'a> LazyQueryProcessor<'a> {
         
         if needs_decimal {
             // Apply decimal rewriting
+            tracing::debug!("Before decimal rewrite: {}", current_query);
             let rewritten = rewrite_query_for_decimal(&current_query, conn)?;
+            tracing::debug!("After decimal rewrite: {}", rewritten);
+            // Check if the rewritten query might have parsing issues
+            if rewritten.contains(")) AS") || rewritten.contains(")) as") {
+                tracing::warn!("Potential parsing issue detected in rewritten query: {}", rewritten);
+            }
             current_query = Cow::Owned(rewritten);
         }
         
