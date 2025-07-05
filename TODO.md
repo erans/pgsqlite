@@ -239,7 +239,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - Implemented column projection for pg_attribute handler
     - Parses SELECT clauses and returns only requested columns
     - Handles column aliases and wildcard (*) selection
-    - pg_class handler still needs column projection support
+    - **UPDATED (2025-07-05)**: pg_class handler now also has column projection support
   - [x] **WHERE Clause Filtering** - CRITICAL FOR PSQL - COMPLETED (2025-07-04)
     - Implemented WhereEvaluator module for evaluating WHERE clauses
     - Added WHERE clause support to pg_class and pg_attribute handlers
