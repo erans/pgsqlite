@@ -122,7 +122,9 @@ impl PgClassHandler {
                 
                 // Evaluate WHERE clause if present
                 let include_row = if let Some(selection) = &select.selection {
-                    WhereEvaluator::evaluate(selection, &row_data, &column_mapping)
+                    let result = WhereEvaluator::evaluate(selection, &row_data, &column_mapping);
+                    debug!("WHERE evaluation for table '{}': {} (selection: {:?})", table_name, result, selection);
+                    result
                 } else {
                     true
                 };
@@ -225,7 +227,9 @@ impl PgClassHandler {
                 
                 // Evaluate WHERE clause if present
                 let include_row = if let Some(selection) = &select.selection {
-                    WhereEvaluator::evaluate(selection, &row_data, &column_mapping)
+                    let result = WhereEvaluator::evaluate(selection, &row_data, &column_mapping);
+                    debug!("WHERE evaluation for table '{}': {} (selection: {:?})", table_name, result, selection);
+                    result
                 } else {
                     true
                 };

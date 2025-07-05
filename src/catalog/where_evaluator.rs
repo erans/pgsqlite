@@ -187,12 +187,14 @@ impl WhereEvaluator {
             Self::get_expression_value(pattern, row_data),
         ) {
             let matches = Self::like_match(&value, &pattern_str);
+            debug!("LIKE evaluation: '{}' LIKE '{}' = {}", value, pattern_str, matches);
             if negated {
                 !matches
             } else {
                 matches
             }
         } else {
+            debug!("LIKE evaluation failed to get values from expressions");
             false
         }
     }
@@ -424,6 +426,18 @@ mod tests {
     }
 
     #[test]
+    fn test_like_match_function() {
+        // Test basic like patterns
+        assert!(WhereEvaluator::like_match("pgclass_test_table1", "pgclass_test_%"));
+        assert!(WhereEvaluator::like_match("pgclass_test_table2", "pgclass_test_%"));
+        assert!(!WhereEvaluator::like_match("other_table", "pgclass_test_%"));
+        assert!(WhereEvaluator::like_match("test", "test"));
+        assert!(WhereEvaluator::like_match("test", "te%"));
+        assert!(WhereEvaluator::like_match("test", "%st"));
+        assert!(WhereEvaluator::like_match("test", "t_st"));
+    }
+    
+    #[test]
     fn test_like_pattern() {
         let mut row_data = HashMap::new();
         row_data.insert("nspname".to_string(), "pg_toast".to_string());
@@ -444,5 +458,26 @@ mod tests {
 
         let column_mapping = HashMap::new();
         assert!(WhereEvaluator::evaluate(&expr, &row_data, &column_mapping));
+        
+        // Test our specific case
+        let mut row_data2 = HashMap::new();
+        row_data2.insert("relname".to_string(), "pgclass_test_table1".to_string());
+        
+        let expr2 = Expr::Like {
+            expr: Box::new(Expr::Identifier(sqlparser::ast::Ident::new("relname"))),
+            pattern: Box::new(Expr::Value(sqlparser::ast::ValueWithSpan {
+                value: SqlValue::SingleQuotedString("pgclass_test_%".to_string()),
+                span: sqlparser::tokenizer::Span {
+                    start: sqlparser::tokenizer::Location { line: 1, column: 1 },
+                    end: sqlparser::tokenizer::Location { line: 1, column: 1 },
+                },
+            })),
+            negated: false,
+            escape_char: None,
+            any: false,
+        };
+        
+        assert!(WhereEvaluator::evaluate(&expr2, &row_data2, &column_mapping),
+            "pgclass_test_table1 should match pgclass_test_%");
     }
 }
