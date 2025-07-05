@@ -20,6 +20,16 @@ pub struct QueryContext {
     pub derived_table_columns: HashMap<String, Vec<(String, PgType)>>,
 }
 
+impl QueryContext {
+    /// Find the table name for an unqualified column
+    pub fn find_table_for_column(&self, _column: &str) -> Option<String> {
+        // For now, return the default table if available
+        // In a more sophisticated implementation, we would search all tables
+        // to find which one contains this column
+        self.default_table.clone()
+    }
+}
+
 /// Resolves expression types by analyzing the query and schema
 pub struct ExpressionTypeResolver<'a> {
     conn: &'a Connection,

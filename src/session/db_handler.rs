@@ -7,7 +7,7 @@ use sqlparser::ast::Statement;
 use crate::cache::{SchemaCache, CachedQuery, StatementPool, global_execution_cache, global_type_converter_table, ExecutionMetadata, ExecutionCache};
 use crate::cache::{global_result_cache, ResultCacheKey, ResultSetCache};
 use crate::cache::schema::TableSchema;
-use crate::rewriter::DecimalQueryRewriter;
+use crate::rewriter::{DecimalQueryRewriter, EnumQueryRewriter};
 use crate::types::PgType;
 use crate::query::{QueryTypeDetector, QueryType};
 use crate::config::Config;
