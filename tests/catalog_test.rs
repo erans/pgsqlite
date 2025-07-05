@@ -87,19 +87,20 @@ async fn test_pg_class_queries() {
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
-    // We return all columns regardless of projection (limitation)
-    assert!(response.columns.contains(&"relname".to_string()));
-    assert!(response.columns.contains(&"relkind".to_string()));
+    // Now we properly implement column projection
+    assert_eq!(response.columns, vec!["relname", "relkind"]);
+    assert_eq!(response.columns.len(), 2);
     
     // Find our test table
     let mut found_table = false;
     for row in &response.rows {
-        if let Some(Some(name_bytes)) = row.get(1) { // relname is at index 1
+        assert_eq!(row.len(), 2, "Should only have 2 columns");
+        if let Some(Some(name_bytes)) = row.get(0) { // relname is at index 0 now
             let name = String::from_utf8_lossy(name_bytes);
             if name == "test_table" {
                 found_table = true;
                 // Check relkind is 'r' for regular table
-                if let Some(Some(kind_bytes)) = row.get(14) { // relkind is at index 14
+                if let Some(Some(kind_bytes)) = row.get(1) { // relkind is at index 1 now
                     assert_eq!(kind_bytes, b"r");
                 }
             }
@@ -122,10 +123,8 @@ async fn test_pg_attribute_queries() {
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
-    // We return all columns regardless of projection (limitation)
-    assert!(response.columns.contains(&"attname".to_string()));
-    assert!(response.columns.contains(&"atttypid".to_string()));
-    assert!(response.columns.contains(&"attnotnull".to_string()));
+    // With column projection, we now only get the requested columns
+    assert_eq!(response.columns, vec!["attname", "atttypid", "attnotnull"]);
     
     // Count columns for test_table
     let mut column_count = 0;
@@ -133,7 +132,7 @@ async fn test_pg_attribute_queries() {
     let mut found_name = false;
     
     for row in &response.rows {
-        if let Some(Some(name_bytes)) = row.get(1) { // attname is at index 1
+        if let Some(Some(name_bytes)) = row.get(0) { // attname is at index 0 (first selected column)
             let col_name = String::from_utf8_lossy(name_bytes);
             if col_name == "id" {
                 found_id = true;
@@ -142,7 +141,7 @@ async fn test_pg_attribute_queries() {
                 found_name = true;
                 column_count += 1;
                 // Check NOT NULL constraint
-                if let Some(Some(notnull_bytes)) = row.get(12) { // attnotnull is at index 12
+                if let Some(Some(notnull_bytes)) = row.get(2) { // attnotnull is at index 2 (third selected column)
                     assert_eq!(notnull_bytes, b"t");
                 }
             } else if col_name == "created_at" {

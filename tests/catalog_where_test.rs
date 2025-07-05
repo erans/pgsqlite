@@ -1,0 +1,139 @@
+mod common;
+use common::setup_test_server_with_init;
+
+#[tokio::test]
+async fn test_pg_class_where_filtering() {
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            // Create some test tables
+            db.execute("CREATE TABLE test_table1 (id INTEGER PRIMARY KEY, name TEXT)").await?;
+            db.execute("CREATE TABLE test_table2 (id INTEGER PRIMARY KEY, value REAL)").await?;
+            db.execute("CREATE INDEX idx_test ON test_table1(name)").await?;
+            Ok(())
+        })
+    }).await;
+
+    let client = &server.client;
+
+    // Test 1: Filter by relkind = 'r' (tables only)
+    let rows = client.query(
+        "SELECT relname, relkind FROM pg_catalog.pg_class WHERE relkind = 'r'",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 2, "Should find exactly 2 tables");
+    for row in &rows {
+        let relkind: &str = row.get(1);
+        assert_eq!(relkind, "r", "All results should be tables");
+    }
+
+    // Test 2: Filter by relkind IN ('r', 'i') (tables and indexes)
+    let rows = client.query(
+        "SELECT relname, relkind FROM pg_catalog.pg_class WHERE relkind IN ('r', 'i')",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 3, "Should find 2 tables and 1 index");
+    
+    // Test 3: Filter by relname LIKE pattern
+    let rows = client.query(
+        "SELECT relname FROM pg_catalog.pg_class WHERE relname LIKE 'test_%'",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 2, "Should find 2 tables matching pattern");
+    
+    // Test 4: Complex WHERE with AND
+    let rows = client.query(
+        "SELECT relname FROM pg_catalog.pg_class WHERE relkind = 'r' AND relname = 'test_table1'",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 1, "Should find exactly 1 table");
+    let relname: &str = rows[0].get(0);
+    assert_eq!(relname, "test_table1");
+    
+    server.abort();
+}
+
+#[tokio::test]
+async fn test_pg_attribute_where_filtering() {
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            // Create a test table with PostgreSQL types
+            db.execute("CREATE TABLE test_attrs (id INTEGER PRIMARY KEY, name VARCHAR(50), active BOOLEAN)").await?;
+            Ok(())
+        })
+    }).await;
+
+    let client = &server.client;
+
+    // Test 1: Filter by attnum > 0 (exclude system columns)
+    let rows = client.query(
+        "SELECT attname, attnum FROM pg_catalog.pg_attribute WHERE attnum > 0",
+        &[]
+    ).await.unwrap();
+    
+    assert!(rows.len() >= 3, "Should find at least 3 columns");
+    for row in &rows {
+        let attnum: i16 = row.get(1);
+        assert!(attnum > 0, "All attnums should be positive");
+    }
+
+    // Test 2: Filter by attnotnull = true
+    let rows = client.query(
+        "SELECT attname FROM pg_catalog.pg_attribute WHERE attnotnull = 't'",
+        &[]
+    ).await.unwrap();
+    
+    // Should at least find the PRIMARY KEY column
+    assert!(rows.len() >= 1, "Should find at least 1 NOT NULL column");
+
+    // Test 3: Complex filter combining conditions
+    let rows = client.query(
+        "SELECT attname FROM pg_catalog.pg_attribute WHERE attnum > 0 AND attisdropped = 'f'",
+        &[]
+    ).await.unwrap();
+    
+    // All non-system columns that aren't dropped
+    assert!(rows.len() >= 3, "Should find at least 3 active columns");
+    
+    server.abort();
+}
+
+#[tokio::test]  
+async fn test_psql_common_patterns() {
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            // Create some test tables
+            db.execute("CREATE TABLE public_table (id INTEGER)").await?;
+            db.execute("CREATE TABLE pg_internal (id INTEGER)").await?;
+            Ok(())
+        })
+    }).await;
+
+    let client = &server.client;
+    
+    // Test psql \dt pattern: Filter tables only, excluding system schemas
+    let rows = client.query(
+        "SELECT relname FROM pg_catalog.pg_class WHERE relkind IN ('r','p') AND relnamespace = 2200",
+        &[]
+    ).await.unwrap();
+    
+    // Should find both tables (we don't actually filter by namespace pattern yet)
+    assert!(rows.len() >= 2, "Should find at least 2 tables");
+    
+    // Test NOT EQUAL pattern
+    let rows = client.query(
+        "SELECT relname FROM pg_catalog.pg_class WHERE relkind != 'i'",
+        &[]
+    ).await.unwrap();
+    
+    // Should find only tables, not indexes
+    for row in &rows {
+        let relname: &str = row.get(0);
+        assert!(!relname.starts_with("idx_"), "Should not include indexes");
+    }
+    
+    server.abort();
+}
