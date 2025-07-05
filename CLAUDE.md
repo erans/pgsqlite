@@ -616,13 +616,16 @@ The catalog support is implemented through a query interception layer that:
   - Maps SQLite tables and indexes to PostgreSQL pg_class format
   - Generates stable OIDs from object names
   - Queries sqlite_master and PRAGMA commands for metadata
-  - Returns all 28 pg_class columns
+  - **UPDATED (2025-07-05)**: Returns all 33 pg_class columns per PostgreSQL 14+ specification
+  - Added missing columns: reloftype, relallvisible, relacl, reloptions, relpartbound
   
 - **pg_attribute handler** (`src/catalog/pg_attribute.rs`):
   - Maps SQLite columns to PostgreSQL pg_attribute format
   - Integrates with __pgsqlite_schema for type information
   - Falls back to intelligent type inference when schema unavailable
   - Handles type modifiers (VARCHAR length, NUMERIC precision/scale)
+  - **NEW (2025-07-05)**: Supports column projection (SELECT specific columns)
+  - **NEW (2025-07-05)**: PRIMARY KEY columns are correctly marked as NOT NULL
 
 - **system_functions module** (`src/catalog/system_functions.rs`) - **NEW (2025-07-04)**:
   - Implements PostgreSQL system functions required by psql
@@ -641,17 +644,25 @@ The catalog support is implemented through a query interception layer that:
 2. **Type Mapping**: Leverages existing __pgsqlite_schema when available, falls back to SQLite type inference
 3. **Async Design**: Handlers are async to allow database queries for metadata
 4. **Function Processing**: System functions are detected and evaluated during query interception, replaced with literal values
+5. **Binary Protocol Support**: Catalog queries now properly support binary result formats in extended protocol
+
+### Recent Improvements (2025-07-05)
+1. **Column Projection**: pg_attribute handler now supports SELECT with specific columns instead of always returning all columns
+2. **Extended Protocol Fix**: Fixed UnexpectedMessage errors by ensuring field descriptions are available during Execute phase
+3. **Binary Encoding**: Catalog data is properly formatted for binary encoding when requested by clients
+4. **NOT NULL Detection**: PRIMARY KEY columns are now correctly identified as NOT NULL
+5. **Test Infrastructure**: Diagnostic trace tests are now marked as `#[ignore]` to avoid false failures
 
 ### Current Limitations
-1. **No Query Processing**: Returns all columns/rows regardless of SELECT projection or WHERE clause
-2. **No JOIN Support**: Cannot handle multi-table queries that psql uses
-3. **Incomplete Catalogs**: Only pg_class and pg_attribute implemented, pg_constraint needed for full constraint support
-4. **Limited Function Results**: Some functions return placeholder values due to missing catalog tables
+1. **No JOIN Support**: Cannot handle multi-table queries that psql uses
+2. **Incomplete Catalogs**: Only pg_class and pg_attribute implemented, pg_constraint needed for full constraint support
+3. **Limited Function Results**: Some functions return placeholder values due to missing catalog tables
+4. **WHERE Clause Support**: Basic WHERE filtering is supported but complex expressions may not work
 
 ### Future Work
 Full psql compatibility requires:
-- Query processing capabilities (projection, filtering, joins)
 - Additional catalog tables (pg_index, pg_constraint, pg_am, etc.)
+- JOIN support for multi-table catalog queries
 - regclass type casting support
 - Performance optimizations for catalog queries
 

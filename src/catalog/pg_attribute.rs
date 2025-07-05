@@ -1,8 +1,10 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
 use crate::PgSqliteError;
 use crate::types::PgType;
-use sqlparser::ast::{Select, Expr, Value as SqlValue};
+use sqlparser::ast::{Select, Expr, Value as SqlValue, SelectItem};
 use tracing::debug;
+use std::collections::HashMap;
+use super::where_evaluator::WhereEvaluator;
 
 pub struct PgAttributeHandler;
 
@@ -13,7 +15,8 @@ impl PgAttributeHandler {
     ) -> Result<DbResponse, PgSqliteError> {
         debug!("Handling pg_attribute query");
         
-        let columns = vec![
+        // All available columns in pg_attribute
+        let all_columns = vec![
             "attrelid".to_string(),
             "attname".to_string(),
             "atttypid".to_string(),
@@ -41,6 +44,46 @@ impl PgAttributeHandler {
             "attmissingval".to_string(),
         ];
         
+        // Determine which columns are selected
+        let (selected_columns, selected_indices) = if select.projection.is_empty() || 
+            (select.projection.len() == 1 && matches!(&select.projection[0], SelectItem::Wildcard(_))) {
+            // SELECT * or no projection - return all columns
+            let indices: Vec<usize> = (0..all_columns.len()).collect();
+            (all_columns.clone(), indices)
+        } else {
+            // Specific columns selected
+            let mut columns = Vec::new();
+            let mut indices = Vec::new();
+            
+            for item in &select.projection {
+                match item {
+                    SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
+                        let col_name = ident.value.to_lowercase();
+                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                            columns.push(col_name);
+                            indices.push(idx);
+                        }
+                    }
+                    SelectItem::ExprWithAlias { expr: Expr::Identifier(ident), alias } => {
+                        let col_name = ident.value.to_lowercase();
+                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                            columns.push(alias.value.clone());
+                            indices.push(idx);
+                        }
+                    }
+                    _ => {} // Ignore other types for now
+                }
+            }
+            (columns, indices)
+        };
+        
+        // Create column mapping for WHERE evaluation (using all columns)
+        let column_mapping: HashMap<String, usize> = all_columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.clone(), i))
+            .collect();
+        
         // Check if there's a WHERE clause filtering by attrelid
         let filter_table = extract_table_filter(select);
         
@@ -48,7 +91,7 @@ impl PgAttributeHandler {
         
         if let Some(table_name) = filter_table {
             // Query specific table
-            add_table_attributes(&table_name, db, &mut rows).await?;
+            add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices).await?;
         } else {
             // Query all tables
             let tables_response = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await?;
@@ -56,7 +99,7 @@ impl PgAttributeHandler {
             for table_row in &tables_response.rows {
                 if let Some(Some(table_name_bytes)) = table_row.get(0) {
                     let table_name = String::from_utf8_lossy(table_name_bytes);
-                    add_table_attributes(&table_name, db, &mut rows).await?;
+                    add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices).await?;
                 }
             }
         }
@@ -64,7 +107,7 @@ impl PgAttributeHandler {
         let rows_affected = rows.len();
         
         Ok(DbResponse {
-            columns,
+            columns: selected_columns,
             rows,
             rows_affected,
         })
@@ -75,6 +118,9 @@ async fn add_table_attributes(
     table_name: &str,
     db: &DbHandler,
     rows: &mut Vec<Vec<Option<Vec<u8>>>>,
+    select: &Select,
+    column_mapping: &HashMap<String, usize>,
+    selected_indices: &[usize],
 ) -> Result<(), PgSqliteError> {
     let table_oid = generate_oid_from_name(table_name);
     
@@ -117,6 +163,20 @@ async fn add_table_attributes(
                 
             let has_default = col_row.get(4).and_then(|v| v.as_ref()).is_some();
             
+            // Check if this column is a primary key (pk flag is at index 5)
+            let is_primary_key = col_row.get(5)
+                .and_then(|v| v.as_ref())
+                .map(|v| String::from_utf8_lossy(v) == "1")
+                .unwrap_or(false);
+            
+            // PRIMARY KEY columns are implicitly NOT NULL in PostgreSQL
+            let notnull = notnull || is_primary_key;
+            
+            // Debug logging for test failures
+            if col_name == "id" && table_name.contains("pgattr_test") {
+                debug!("pgattr_test_attrs.id: notnull={}, is_primary_key={}", notnull, is_primary_key);
+            }
+            
             // Determine PostgreSQL type
             let (pg_type_oid, attlen, atttypmod) = if let Some(pg_type_str) = type_map.get(col_name.as_ref()) {
                 parse_pg_type(pg_type_str)
@@ -124,35 +184,75 @@ async fn add_table_attributes(
                 map_sqlite_to_pg_type(&sqlite_type)
             };
             
-            let row = vec![
-                Some(table_oid.to_string().into_bytes()),              // attrelid
-                Some(col_name.to_string().into_bytes()),               // attname
-                Some(pg_type_oid.to_string().into_bytes()),            // atttypid
-                Some("-1".to_string().into_bytes()),                   // attstattarget
-                Some(attlen.to_string().into_bytes()),                 // attlen
-                Some(((idx + 1) as i16).to_string().into_bytes()),    // attnum (1-based)
-                Some("0".to_string().into_bytes()),                    // attndims
-                Some("-1".to_string().into_bytes()),                   // attcacheoff
-                Some(atttypmod.to_string().into_bytes()),              // atttypmod
-                Some(b"f".to_vec()),                                // attbyval
-                Some(b"p".to_vec()),                                // attstorage (plain)
-                Some(b"i".to_vec()),                                // attalign
-                Some(if notnull { b"t".to_vec() } else { b"f".to_vec() }),   // attnotnull
-                Some(if has_default { b"t".to_vec() } else { b"f".to_vec() }), // atthasdef
-                Some(b"f".to_vec()),                                // atthasmissing
-                Some(b"".to_vec()),                                 // attidentity
-                Some(b"".to_vec()),                                 // attgenerated
-                Some(b"f".to_vec()),                                // attisdropped
-                Some(b"t".to_vec()),                                // attislocal
-                Some("0".to_string().into_bytes()),                    // attinhcount
-                Some("0".to_string().into_bytes()),                    // attcollation
-                None,                                                  // attacl
-                None,                                                  // attoptions
-                None,                                                  // attfdwoptions
-                None,                                                  // attmissingval
-            ];
+            // Build row data for WHERE evaluation
+            let mut row_data = HashMap::new();
+            row_data.insert("attrelid".to_string(), table_oid.to_string());
+            row_data.insert("attname".to_string(), col_name.to_string());
+            row_data.insert("atttypid".to_string(), pg_type_oid.to_string());
+            row_data.insert("attstattarget".to_string(), "-1".to_string());
+            row_data.insert("attlen".to_string(), attlen.to_string());
+            row_data.insert("attnum".to_string(), ((idx + 1) as i16).to_string());
+            row_data.insert("attndims".to_string(), "0".to_string());
+            row_data.insert("attcacheoff".to_string(), "-1".to_string());
+            row_data.insert("atttypmod".to_string(), atttypmod.to_string());
+            row_data.insert("attbyval".to_string(), "f".to_string());
+            row_data.insert("attstorage".to_string(), "p".to_string());
+            row_data.insert("attalign".to_string(), "i".to_string());
+            row_data.insert("attnotnull".to_string(), if notnull { "t" } else { "f" }.to_string());
+            row_data.insert("atthasdef".to_string(), if has_default { "t" } else { "f" }.to_string());
+            row_data.insert("atthasmissing".to_string(), "f".to_string());
+            row_data.insert("attidentity".to_string(), "".to_string());
+            row_data.insert("attgenerated".to_string(), "".to_string());
+            row_data.insert("attisdropped".to_string(), "f".to_string());
+            row_data.insert("attislocal".to_string(), "t".to_string());
+            row_data.insert("attinhcount".to_string(), "0".to_string());
+            row_data.insert("attcollation".to_string(), "0".to_string());
             
-            rows.push(row);
+            // Evaluate WHERE clause if present
+            let include_row = if let Some(selection) = &select.selection {
+                WhereEvaluator::evaluate(selection, &row_data, column_mapping)
+            } else {
+                true
+            };
+            
+            if include_row {
+                // Build the complete row first
+                let full_row = vec![
+                    Some(table_oid.to_string().into_bytes()),              // 0: attrelid
+                    Some(col_name.to_string().into_bytes()),               // 1: attname
+                    Some(pg_type_oid.to_string().into_bytes()),            // 2: atttypid
+                    Some("-1".to_string().into_bytes()),                   // 3: attstattarget
+                    Some(attlen.to_string().into_bytes()),                 // 4: attlen
+                    Some(((idx + 1) as i16).to_string().into_bytes()),    // 5: attnum (1-based)
+                    Some("0".to_string().into_bytes()),                    // 6: attndims
+                    Some("-1".to_string().into_bytes()),                   // 7: attcacheoff
+                    Some(atttypmod.to_string().into_bytes()),              // 8: atttypmod
+                    Some(b"f".to_vec()),                                // 9: attbyval
+                    Some(b"p".to_vec()),                                // 10: attstorage (plain)
+                    Some(b"i".to_vec()),                                // 11: attalign
+                    Some(if notnull { b"t".to_vec() } else { b"f".to_vec() }),   // 12: attnotnull
+                    Some(if has_default { b"t".to_vec() } else { b"f".to_vec() }), // 13: atthasdef
+                    Some(b"f".to_vec()),                                // 14: atthasmissing
+                    Some(b"".to_vec()),                                 // 15: attidentity
+                    Some(b"".to_vec()),                                 // 16: attgenerated
+                    Some(b"f".to_vec()),                                // 17: attisdropped
+                    Some(b"t".to_vec()),                                // 18: attislocal
+                    Some("0".to_string().into_bytes()),                    // 19: attinhcount
+                    Some("0".to_string().into_bytes()),                    // 20: attcollation
+                    None,                                                  // 21: attacl
+                    None,                                                  // 22: attoptions
+                    None,                                                  // 23: attfdwoptions
+                    None,                                                  // 24: attmissingval
+                ];
+                
+                // Project only the selected columns
+                let mut projected_row = Vec::new();
+                for &idx in selected_indices {
+                    projected_row.push(full_row.get(idx).cloned().flatten());
+                }
+                
+                rows.push(projected_row);
+            }
         }
     }
     

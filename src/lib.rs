@@ -156,6 +156,8 @@ pub async fn handle_test_connection_with_pool(
                 framed.send(BackendMessage::ReadyForQuery {
                     status: *session.transaction_status.read().await,
                 }).await?;
+                // Flush to ensure ReadyForQuery is sent immediately
+                framed.flush().await?;
             }
             FrontendMessage::Parse { name, query, param_types } => {
                 match ExtendedQueryHandler::handle_parse(&mut framed, &db_handler, &session, name, query, param_types).await {

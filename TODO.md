@@ -228,18 +228,23 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - Returns all tables and indexes from SQLite
     - Generates stable OIDs from names
     - Maps SQLite metadata to PostgreSQL format
+    - **UPDATED (2025-07-05)**: Now returns all 33 columns per PostgreSQL 14+ specification
+    - Added missing columns: reloftype, relallvisible, relacl, reloptions, relpartbound
   - [x] Implement pg_attribute queries for column details - COMPLETED (2025-07-03)
     - Maps PRAGMA table_info to pg_attribute format
     - Integrates with __pgsqlite_schema for type information
     - Supports type modifiers (VARCHAR length, NUMERIC precision/scale)
-  - [ ] **Column Projection Support** - CRITICAL FOR PSQL
-    - Currently returns all columns regardless of SELECT clause
-    - Need to parse SELECT projections and return only requested columns
-    - Handle column aliases and expressions
-  - [ ] **WHERE Clause Filtering** - CRITICAL FOR PSQL
-    - Currently returns all rows regardless of WHERE conditions
-    - Need to evaluate WHERE clauses against catalog data
-    - Support filtering by OID, name patterns, and other conditions
+    - **UPDATED (2025-07-05)**: PRIMARY KEY columns are now correctly marked as NOT NULL
+  - [x] **Column Projection Support** - CRITICAL FOR PSQL - COMPLETED (2025-07-05)
+    - Implemented column projection for pg_attribute handler
+    - Parses SELECT clauses and returns only requested columns
+    - Handles column aliases and wildcard (*) selection
+    - **UPDATED (2025-07-05)**: pg_class handler now also has column projection support
+  - [x] **WHERE Clause Filtering** - CRITICAL FOR PSQL - COMPLETED (2025-07-04)
+    - Implemented WhereEvaluator module for evaluating WHERE clauses
+    - Added WHERE clause support to pg_class and pg_attribute handlers
+    - Supports common operators: =, !=, <, >, <=, >=, IN, LIKE, ILIKE, IS NULL, IS NOT NULL
+    - Evaluates WHERE conditions against catalog data before returning rows
   - [ ] **JOIN Query Support** - CRITICAL FOR PSQL
     - psql \d commands use complex JOINs between catalog tables
     - Need to handle joins between pg_class, pg_namespace, pg_attribute, etc.
@@ -628,3 +633,32 @@ Started implementation of PostgreSQL system catalogs to support psql \d commands
 - Basic pg_attribute queries work (returns column information)
 - psql can connect and query catalogs but \d commands show raw data
 - Need proper query processing for full psql compatibility
+
+### ✅ System Catalog Extended Protocol Support - COMPLETED (2025-07-05)
+
+#### Background
+Catalog queries were failing with UnexpectedMessage errors when using the extended protocol (prepared statements). This affected tools that use prepared statements to query system catalogs.
+
+#### Issues Fixed
+1. **pg_class Column Count**: Updated from 28 to 33 columns per PostgreSQL 14+ specification
+   - Added missing columns: reloftype, relallvisible, relacl, reloptions, relpartbound
+   - Updated all related type mappings and handlers
+
+2. **Extended Protocol Field Descriptions**: Fixed UnexpectedMessage errors
+   - Field descriptions generated during Describe phase are now properly stored in prepared statements
+   - Available during Execute phase for correct protocol handling
+   - Catalog queries now work correctly with both simple and extended protocols
+
+3. **Binary Encoding Support**: Fixed "invalid buffer size" errors
+   - Catalog data is now properly formatted for binary result encoding
+   - Added special handling for numeric columns (attnum, attlen, etc.)
+   - PRIMARY KEY columns are correctly identified as NOT NULL
+
+4. **Column Projection**: Implemented for pg_attribute handler
+   - SELECT specific columns now returns only those columns
+   - Handles wildcard (*) and column aliases correctly
+   - Fixed test failures related to column index mismatches
+
+5. **Test Infrastructure**: Improved diagnostic test handling
+   - Trace tests that intentionally panic are now marked with #[ignore]
+   - Can still be run manually for debugging with --ignored flag
