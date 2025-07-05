@@ -52,15 +52,26 @@ impl QueryFingerprint {
                     }
                 }
                 
-                // Handle numbers
+                // Handle numbers (but only standalone numbers, not parts of identifiers)
                 '0'..='9' if !in_string => {
-                    result.push('?');
-                    // Skip rest of number (including decimals, scientific notation)
-                    while let Some(&next_ch) = chars.peek() {
-                        if matches!(next_ch, '0'..='9' | '.' | 'e' | 'E' | '+' | '-') {
-                            chars.next();
-                        } else {
-                            break;
+                    // Check if this is part of an identifier by looking at what came before
+                    let last_char = result.chars().last();
+                    let is_identifier = matches!(last_char, Some('A'..='Z') | Some('_'));
+                    
+                    if is_identifier {
+                        // Part of identifier, keep as-is
+                        after_whitespace = false;
+                        result.push(ch.to_ascii_uppercase());
+                    } else {
+                        // Standalone number, replace with placeholder
+                        result.push('?');
+                        // Skip rest of number (including decimals, scientific notation)
+                        while let Some(&next_ch) = chars.peek() {
+                            if matches!(next_ch, '0'..='9' | '.' | 'e' | 'E' | '+' | '-') {
+                                chars.next();
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
