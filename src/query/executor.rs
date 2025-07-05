@@ -80,7 +80,7 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Translate PostgreSQL cast syntax if present
-        let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
+        let translated_query = if crate::translator::CastTranslator::needs_translation(query) {
             use crate::translator::CastTranslator;
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;

@@ -11,6 +11,7 @@ pub mod result_cache;
 pub mod row_description;
 pub mod parameter_cache;
 pub mod enum_cache;
+pub mod translation_cache;
 
 pub use schema::SchemaCache;
 pub use query::{QueryCache, CachedQuery, CacheMetrics};
@@ -21,6 +22,7 @@ pub use result_cache::{ResultSetCache, ResultCacheKey, CachedResultSet, global_r
 pub use row_description::{RowDescriptionCache, RowDescriptionKey, CachedRowDescription, GLOBAL_ROW_DESCRIPTION_CACHE};
 pub use parameter_cache::{ParameterTypeCache, CachedParameterInfo, GLOBAL_PARAMETER_CACHE, GLOBAL_PARAM_VALUE_CACHE};
 pub use enum_cache::{EnumCache, global_enum_cache};
+pub use translation_cache::{TranslationCache, global_translation_cache};
 
 /// Simple LRU cache with TTL support
 pub struct LruCache<K, V> {

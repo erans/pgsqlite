@@ -5,12 +5,69 @@ use rusqlite::Connection;
 pub struct CastTranslator;
 
 impl CastTranslator {
+    /// Quick check if translation is needed (avoiding uppercase allocation)
+    #[inline]
+    pub fn needs_translation(query: &str) -> bool {
+        // Fast path: check for :: first (most common cast syntax)
+        if query.contains("::") {
+            // Make sure it's not inside a string literal (for IPv6)
+            return !Self::all_casts_in_strings(query);
+        }
+        
+        // Slower path: check for CAST (less common, needs case-insensitive check)
+        // Use manual case-insensitive search to avoid allocation
+        Self::contains_cast_keyword(query)
+    }
+    
+    /// Check if all :: occurrences are inside string literals
+    #[inline]
+    fn all_casts_in_strings(query: &str) -> bool {
+        let mut in_string = false;
+        let mut prev_char = '\0';
+        
+        for (i, ch) in query.chars().enumerate() {
+            match ch {
+                '\'' if prev_char != '\\' => in_string = !in_string,
+                ':' if !in_string && query[i..].starts_with("::") => return false,
+                _ => {}
+            }
+            prev_char = ch;
+        }
+        
+        true
+    }
+    
+    /// Case-insensitive check for CAST keyword without allocation
+    #[inline]
+    fn contains_cast_keyword(query: &str) -> bool {
+        let bytes = query.as_bytes();
+        let cast_bytes = b"CAST";
+        
+        if bytes.len() < cast_bytes.len() {
+            return false;
+        }
+        
+        for i in 0..=(bytes.len() - cast_bytes.len()) {
+            if bytes[i..i + cast_bytes.len()].eq_ignore_ascii_case(cast_bytes) {
+                // Check if it's followed by '(' to avoid matching words like "CASTLE"
+                if i + cast_bytes.len() < bytes.len() && bytes[i + cast_bytes.len()] == b'(' {
+                    return true;
+                }
+            }
+        }
+        
+        false
+    }
+    
     /// Translate a query containing PostgreSQL cast syntax
     pub fn translate_query(query: &str, conn: Option<&Connection>) -> String {
+        // Check translation cache first
+        if let Some(cached) = crate::cache::global_translation_cache().get(query) {
+            return cached;
+        }
         
         // Handle both :: and CAST syntax
         let mut result = query.to_string();
-        
         
         // First handle CAST syntax
         result = Self::translate_cast_syntax(&result, conn);
@@ -107,6 +164,10 @@ impl CastTranslator {
             }
         }
         
+        // Cache the translation if it changed
+        if result != query {
+            crate::cache::global_translation_cache().insert(query.to_string(), result.clone());
+        }
         
         result
     }
