@@ -1,14 +1,24 @@
 use regex::Regex;
 use std::collections::HashMap;
-use crate::metadata::TypeMapping;
+use crate::metadata::{TypeMapping, EnumMetadata};
 use crate::types::TypeMapper;
+use rusqlite::Connection;
 
 pub struct CreateTableTranslator;
 
 impl CreateTableTranslator {
     /// Translate PostgreSQL CREATE TABLE statement to SQLite
     pub fn translate(pg_sql: &str) -> Result<(String, HashMap<String, TypeMapping>), String> {
+        Self::translate_with_connection(pg_sql, None)
+    }
+    
+    /// Translate PostgreSQL CREATE TABLE statement to SQLite with connection for ENUM support
+    pub fn translate_with_connection(
+        pg_sql: &str, 
+        conn: Option<&Connection>
+    ) -> Result<(String, HashMap<String, TypeMapping>), String> {
         let mut type_mapping = HashMap::new();
+        let mut check_constraints = Vec::new();
         
         // Basic regex to match CREATE TABLE - use DOTALL flag to match newlines
         let create_regex = Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap();
@@ -18,10 +28,23 @@ impl CreateTableTranslator {
             let columns_str = captures.get(2).unwrap().as_str();
             
             // Parse columns
-            let sqlite_columns = Self::parse_and_translate_columns(columns_str, table_name, &mut type_mapping)?;
+            let sqlite_columns = Self::parse_and_translate_columns(
+                columns_str, 
+                table_name, 
+                &mut type_mapping,
+                &mut check_constraints,
+                conn
+            )?;
+            
+            // Add CHECK constraints for ENUMs
+            let mut final_columns = sqlite_columns;
+            for constraint in check_constraints {
+                final_columns.push_str(", ");
+                final_columns.push_str(&constraint);
+            }
             
             // Reconstruct CREATE TABLE
-            let sqlite_sql = format!("CREATE TABLE {} ({})", table_name, sqlite_columns);
+            let sqlite_sql = format!("CREATE TABLE {} ({})", table_name, final_columns);
             
             Ok((sqlite_sql, type_mapping))
         } else {
@@ -33,7 +56,9 @@ impl CreateTableTranslator {
     fn parse_and_translate_columns(
         columns_str: &str,
         table_name: &str,
-        type_mapping: &mut HashMap<String, TypeMapping>
+        type_mapping: &mut HashMap<String, TypeMapping>,
+        check_constraints: &mut Vec<String>,
+        conn: Option<&Connection>
     ) -> Result<String, String> {
         let mut sqlite_columns = Vec::new();
         let mut paren_depth = 0;
@@ -54,7 +79,9 @@ impl CreateTableTranslator {
                     let translated = Self::translate_column_definition(
                         current_column.trim(),
                         table_name,
-                        type_mapping
+                        type_mapping,
+                        check_constraints,
+                        conn
                     )?;
                     sqlite_columns.push(translated);
                     current_column.clear();
@@ -70,7 +97,9 @@ impl CreateTableTranslator {
             let translated = Self::translate_column_definition(
                 current_column.trim(),
                 table_name,
-                type_mapping
+                type_mapping,
+                check_constraints,
+                conn
             )?;
             sqlite_columns.push(translated);
         }
@@ -81,7 +110,9 @@ impl CreateTableTranslator {
     fn translate_column_definition(
         column_def: &str,
         table_name: &str,
-        type_mapping: &mut HashMap<String, TypeMapping>
+        type_mapping: &mut HashMap<String, TypeMapping>,
+        check_constraints: &mut Vec<String>,
+        conn: Option<&Connection>
     ) -> Result<String, String> {
         // Handle constraints (PRIMARY KEY, FOREIGN KEY, etc.)
         if column_def.to_uppercase().starts_with("PRIMARY KEY") 
@@ -149,12 +180,45 @@ impl CreateTableTranslator {
             pg_type = combined;
         }
         
-        // Translate to SQLite type using TypeMapper
-        let type_mapper = TypeMapper::new();
-        let sqlite_type = type_mapper.pg_to_sqlite_for_create_table(&pg_type);
-        
-        // Normalize the PostgreSQL type name (convert SQLite-style names to PostgreSQL equivalents)
-        let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
+        // Check if this is an ENUM type
+        let (sqlite_type, normalized_pg_type) = if let Some(conn) = conn {
+            // Check if the type is an ENUM
+            match EnumMetadata::get_enum_type(conn, &pg_type.to_lowercase()) {
+                Ok(Some(enum_type)) => {
+                    // It's an ENUM type - store as TEXT and add CHECK constraint
+                    let sqlite_type = "TEXT".to_string();
+                    
+                    // Get ENUM values for CHECK constraint
+                    if let Ok(values) = EnumMetadata::get_enum_values(conn, enum_type.type_oid) {
+                        let value_list: Vec<String> = values.iter()
+                            .map(|v| format!("'{}'", v.label.replace("'", "''")))
+                            .collect();
+                        
+                        let check_constraint = format!(
+                            "CHECK ({} IN ({}))",
+                            column_name,
+                            value_list.join(", ")
+                        );
+                        check_constraints.push(check_constraint);
+                    }
+                    
+                    (sqlite_type, pg_type.to_lowercase())
+                }
+                _ => {
+                    // Not an ENUM, use regular type mapping
+                    let type_mapper = TypeMapper::new();
+                    let sqlite_type = type_mapper.pg_to_sqlite_for_create_table(&pg_type);
+                    let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
+                    (sqlite_type, normalized_pg_type)
+                }
+            }
+        } else {
+            // No connection available, use regular type mapping
+            let type_mapper = TypeMapper::new();
+            let sqlite_type = type_mapper.pg_to_sqlite_for_create_table(&pg_type);
+            let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
+            (sqlite_type, normalized_pg_type)
+        };
         
         // Store both PostgreSQL and SQLite types
         let mapping_key = format!("{}.{}", table_name, column_name);

@@ -456,9 +456,15 @@ impl QueryExecutor {
         }
         
         let (translated_query, type_mappings) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
-            // Use CREATE TABLE translator
-            CreateTableTranslator::translate(query)
-                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?
+            // Use CREATE TABLE translator with connection for ENUM support
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            
+            let result = CreateTableTranslator::translate_with_connection(query, Some(&*conn))
+                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?;
+            
+            // Connection guard is dropped here
+            result
         } else {
             // For other DDL, check for JSON/JSONB types
             let translated = if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {

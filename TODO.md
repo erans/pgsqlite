@@ -139,10 +139,12 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Handle DROP TYPE with IF EXISTS support
   - Regex-based parsing for ENUM DDL statements
   - Integration with query executor in execute_ddl method
-- [ ] Phase 3: Table Column Support
-  - Modify CREATE TABLE parser for ENUM columns
-  - Generate CHECK constraints for validation
-  - Store type mappings in __pgsqlite_schema
+- [x] Phase 3: Table Column Support - COMPLETED (2025-07-05)
+  - Modified CREATE TABLE translator to recognize ENUM columns
+  - Generate CHECK constraints automatically for ENUM validation
+  - Store ENUM type mappings in __pgsqlite_schema
+  - Support multiple ENUM columns in same table
+  - Handle ENUM values with quotes properly
 - [ ] Phase 4: System Catalog Implementation
   - Create pg_enum handler for catalog queries
   - Enhance pg_type to include ENUM types
