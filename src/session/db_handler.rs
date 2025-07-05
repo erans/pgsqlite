@@ -102,32 +102,34 @@ impl DbHandler {
         
         let conn = self.conn.lock();
         
-        // Fast check for cast translation need
-        let query_to_execute = if crate::translator::CastTranslator::needs_translation(query) {
-            use crate::translator::CastTranslator;
-            let translated = CastTranslator::translate_query(query, Some(&*conn));
-            // Store the translated query to avoid re-allocation
-            std::borrow::Cow::Owned(translated)
-        } else {
-            std::borrow::Cow::Borrowed(query)
-        };
+        // Create lazy processor
+        let mut processor = crate::query::LazyQueryProcessor::new(query);
         
-        // Try enhanced fast path first
-        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, &query_to_execute, &self.schema_cache) {
-            return Ok(DbResponse {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected,
-            });
+        // Check if we need any processing
+        if !processor.needs_processing(&self.schema_cache) {
+            // Fast path - no processing needed
+            let query_to_execute = processor.get_unprocessed();
+            
+            // Try enhanced fast path first
+            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+                return Ok(DbResponse {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected,
+                });
+            }
         }
         
+        // Process the query if needed
+        let query_to_execute = processor.process(&*conn, &self.schema_cache)?;
+        
         // For INSERT queries, try statement pool for better performance
-        if matches!(QueryTypeDetector::detect_query_type(&query_to_execute), QueryType::Insert) {
+        if matches!(QueryTypeDetector::detect_query_type(query_to_execute), QueryType::Insert) {
             // First check if we can use fast path with statement pool
-            if let Some(table_name) = extract_insert_table_name(&query_to_execute) {
+            if let Some(table_name) = extract_insert_table_name(query_to_execute) {
                 if !self.schema_cache.has_decimal_columns(&table_name) {
                     // No decimal columns, use statement pool for optimal performance
-                    match StatementPool::global().execute_cached(&*conn, &query_to_execute, []) {
+                    match StatementPool::global().execute_cached(&*conn, query_to_execute, []) {
                         Ok(rows_affected) => {
                             return Ok(DbResponse {
                                 columns: Vec::new(),
@@ -144,7 +146,7 @@ impl DbHandler {
             }
             
             // Check INSERT query cache to avoid re-parsing
-            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(&query_to_execute) {
+            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
                 // Use cached rewritten query if available
                 let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
                 let rows_affected = conn.execute(final_query, [])?;
@@ -156,13 +158,21 @@ impl DbHandler {
             }
         }
         
-        // Fall back to normal execution
-        execute_dml_sync(&*conn, &query_to_execute, &self.schema_cache)
+        // Fall back to normal execution - but skip decimal rewriting since processor already did it
+        let rows_affected = conn.execute(query_to_execute, [])?;
+        Ok(DbResponse {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            rows_affected,
+        })
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        // Check result cache first BEFORE any translation
-        let cache_key = ResultCacheKey::new(query, &[]);
+        // Create lazy processor for the query
+        let mut processor = crate::query::LazyQueryProcessor::new(query);
+        
+        // Check result cache first with original query
+        let cache_key = ResultCacheKey::new(processor.cache_key(), &[]);
         if let Some(cached_result) = global_result_cache().get(&cache_key) {
             debug!("Result cache hit for query: {}", query);
             return Ok(DbResponse {
@@ -174,44 +184,59 @@ impl DbHandler {
         
         let conn = self.conn.lock();
         
-        // Only translate if we have a cache miss
-        let query_to_execute = if crate::translator::CastTranslator::needs_translation(query) {
-            use crate::translator::CastTranslator;
-            let translated = CastTranslator::translate_query(query, Some(&*conn));
-            std::borrow::Cow::Owned(translated)
-        } else {
-            std::borrow::Cow::Borrowed(query)
-        };
+        // Check if we need any processing at all
+        if !processor.needs_processing(&self.schema_cache) {
+            // Fast path - no processing needed, use original query
+            let query_to_execute = processor.get_unprocessed();
+            
+            // Try enhanced fast path first
+            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+                let execution_time_us = 0; // Fast path doesn't track time
+                
+                // Cache the result
+                if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
+                    global_result_cache().insert(
+                        cache_key,
+                        response.columns.clone(),
+                        response.rows.clone(),
+                        response.rows_affected as u64,
+                        execution_time_us,
+                    );
+                }
+                
+                return Ok(response);
+            }
+        }
         
-        // Update cache key with translated query if needed
-        let cache_key = if matches!(query_to_execute, std::borrow::Cow::Owned(_)) {
-            ResultCacheKey::new(&query_to_execute, &[])
-        } else {
-            cache_key  // Reuse the original
-        };
+        let start = std::time::Instant::now();
         
-        // Re-check cache with translated query
-        if matches!(query_to_execute, std::borrow::Cow::Owned(_)) {
-            if let Some(cached_result) = global_result_cache().get(&cache_key) {
-                debug!("Result cache hit for translated query: {}", query_to_execute);
+        // Process the query (lazy - only does work if needed)
+        let query_to_execute = processor.process(&*conn, &self.schema_cache)?;
+        
+        // Check cache again with processed query if it changed
+        let final_cache_key = if query_to_execute != query {
+            let new_key = ResultCacheKey::new(query_to_execute, &[]);
+            if let Some(cached_result) = global_result_cache().get(&new_key) {
+                debug!("Result cache hit for processed query: {}", query_to_execute);
                 return Ok(DbResponse {
                     columns: cached_result.columns,
                     rows: cached_result.rows,
                     rows_affected: cached_result.rows_affected as usize,
                 });
             }
-        }
+            new_key
+        } else {
+            cache_key
+        };
         
-        let start = std::time::Instant::now();
-        
-        // Try enhanced fast path first for queries
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, &query_to_execute, &self.schema_cache) {
+        // Try enhanced fast path with processed query
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
             let execution_time_us = start.elapsed().as_micros() as u64;
             
-            // Cache the result if appropriate
-            if ResultSetCache::should_cache(&query_to_execute, execution_time_us, response.rows.len()) {
+            // Cache the result
+            if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
                 global_result_cache().insert(
-                    cache_key,
+                    final_cache_key,
                     response.columns.clone(),
                     response.rows.clone(),
                     response.rows_affected as u64,
@@ -223,13 +248,13 @@ impl DbHandler {
         }
         
         // Fall back to normal query execution
-        let response = execute_query_sync(&*conn, &query_to_execute, &self.schema_cache)?;
+        let response = execute_query_optimized(&*conn, query_to_execute, &self.schema_cache)?;
         let execution_time_us = start.elapsed().as_micros() as u64;
         
-        // Cache the result if appropriate
-        if ResultSetCache::should_cache(&query_to_execute, execution_time_us, response.rows.len()) {
+        // Cache the result
+        if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
             global_result_cache().insert(
-                cache_key,
+                final_cache_key,
                 response.columns.clone(),
                 response.rows.clone(),
                 response.rows_affected as u64,
@@ -805,7 +830,7 @@ pub fn execute_query_sync(
 
 
 /// Extract table name from INSERT statement
-fn extract_insert_table_name(query: &str) -> Option<String> {
+pub fn extract_insert_table_name(query: &str) -> Option<String> {
     // Simple regex-free parsing for performance - use case-insensitive search
     let into_pos = query.as_bytes().windows(6)
         .position(|window| window.eq_ignore_ascii_case(b" INTO "))?;
@@ -820,7 +845,7 @@ fn extract_insert_table_name(query: &str) -> Option<String> {
 }
 
 /// Rewrite query to handle DECIMAL types if needed
-fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
+pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
     // Parse the SQL statement
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, query)

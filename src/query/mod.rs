@@ -6,6 +6,7 @@ pub mod fast_path;
 pub mod extended_fast_path;
 pub mod query_type_detection;
 pub mod comment_stripper;
+pub mod lazy_processor;
 
 pub use executor::QueryExecutor;
 pub use extended::ExtendedQueryHandler;
@@ -17,3 +18,4 @@ pub use fast_path::{
 };
 pub use query_type_detection::{QueryTypeDetector, QueryType};
 pub use comment_stripper::strip_sql_comments;
+pub use lazy_processor::LazyQueryProcessor;

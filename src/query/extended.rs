@@ -346,8 +346,20 @@ impl ExtendedQueryHandler {
         info!("Final param_types for statement: {:?}", actual_param_types);
         
         // Store the prepared statement
+        // Pre-translate the query for prepared statements to avoid repeated translation
+        let translated_query = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&*conn));
+            drop(conn);
+            Some(translated)
+        } else {
+            None
+        };
+        
         let stmt = PreparedStatement {
             query: cleaned_query.clone(),
+            translated_query,
             param_types: actual_param_types.clone(),
             param_formats: vec![0; actual_param_types.len()], // Default to text format
             field_descriptions,
@@ -446,6 +458,7 @@ impl ExtendedQueryHandler {
         let portal_obj = Portal {
             statement_name: statement.clone(),
             query: stmt.query.clone(),
+            translated_query: stmt.translated_query.clone(), // Use pre-translated query
             bound_values: values,
             param_formats: if formats.is_empty() {
                 vec![0; stmt.param_types.len()] // Default to text format for all params
@@ -485,12 +498,13 @@ impl ExtendedQueryHandler {
         info!("Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
-        let (query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
+        let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(&portal)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {}", portal)))?;
             
-            (portal_obj.query.clone(), 
+            (portal_obj.query.clone(),
+             portal_obj.translated_query.clone(),
              portal_obj.bound_values.clone(),
              portal_obj.param_formats.clone(),
              portal_obj.result_formats.clone(),
@@ -579,8 +593,11 @@ impl ExtendedQueryHandler {
             }
         }
 
+        // Use translated query if available, otherwise use original
+        let query_to_use = translated_query.as_ref().unwrap_or(&query);
+        
         // Convert bound values and substitute parameters
-        let final_query = Self::substitute_parameters(&query, &bound_values, &param_formats, &param_types)?;
+        let final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
         
         info!("Executing query: {}", final_query);
         debug!("Original query: {}", query);

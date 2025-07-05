@@ -23,6 +23,7 @@ pub struct SessionState {
 
 pub struct PreparedStatement {
     pub query: String,
+    pub translated_query: Option<String>, // Cached translation of the query
     pub param_types: Vec<i32>,
     pub param_formats: Vec<i16>,
     pub field_descriptions: Vec<crate::protocol::FieldDescription>,
@@ -31,6 +32,7 @@ pub struct PreparedStatement {
 pub struct Portal {
     pub statement_name: String,
     pub query: String,
+    pub translated_query: Option<String>, // Cached translation from prepared statement
     pub bound_values: Vec<Option<Vec<u8>>>,
     pub param_formats: Vec<i16>,
     pub result_formats: Vec<i16>,
