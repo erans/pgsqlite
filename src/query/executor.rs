@@ -422,6 +422,38 @@ impl QueryExecutor {
     {
         use crate::translator::CreateTableTranslator;
         use crate::query::{QueryTypeDetector, QueryType};
+        use crate::ddl::EnumDdlHandler;
+        
+        // Check if this is an ENUM DDL statement
+        if EnumDdlHandler::is_enum_ddl(query) {
+            // Handle the ENUM DDL in a scope to ensure the mutex guard is dropped
+            let command_tag = {
+                let mut conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                // Handle the ENUM DDL
+                EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
+                
+                // Determine command tag
+                if query.trim().to_uppercase().starts_with("CREATE TYPE") {
+                    "CREATE TYPE"
+                } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {
+                    "ALTER TYPE"
+                } else if query.trim().to_uppercase().starts_with("DROP TYPE") {
+                    "DROP TYPE"
+                } else {
+                    "OK"
+                }
+            }; // Mutex guard is dropped here
+            
+            // Send command complete
+            framed.send(BackendMessage::CommandComplete { 
+                tag: command_tag.to_string() 
+            }).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            
+            return Ok(());
+        }
         
         let (translated_query, type_mappings) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
             // Use CREATE TABLE translator

@@ -10,6 +10,7 @@ pub mod rewriter;
 pub mod cache;
 pub mod config;
 pub mod ssl;
+pub mod ddl;
 
 #[cfg(test)]
 pub mod alloc_tracker;

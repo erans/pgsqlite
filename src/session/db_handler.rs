@@ -241,6 +241,11 @@ impl DbHandler {
         Ok(())
     }
     
+    /// Get a mutable connection for operations that require &mut Connection
+    pub fn get_mut_connection(&self) -> Result<parking_lot::MutexGuard<Connection>, rusqlite::Error> {
+        Ok(self.conn.lock())
+    }
+    
     /// Try executing a query with parameters using the fast path
     pub async fn try_execute_fast_path_with_params(
         &self, 
