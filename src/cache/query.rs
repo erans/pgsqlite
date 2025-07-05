@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use sqlparser::ast::Statement;
 use crate::types::type_mapper::PgType;
+use super::QueryFingerprint;
 
 /// Represents a cached parsed query with full analysis results
 #[derive(Clone)]
@@ -19,7 +20,7 @@ pub struct CachedQuery {
 
 /// Cache for parsed queries to avoid re-parsing
 pub struct QueryCache {
-    cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    cache: Arc<RwLock<HashMap<u64, CacheEntry>>>,
     capacity: usize,
     ttl: Duration,
     metrics: Arc<RwLock<CacheMetrics>>,
@@ -54,13 +55,13 @@ impl QueryCache {
 
     /// Get a cached query
     pub fn get(&self, query_text: &str) -> Option<CachedQuery> {
-        let normalized_key = Self::normalize_query(query_text);
+        let fingerprint = QueryFingerprint::generate(query_text);
         let mut cache = self.cache.write().unwrap();
         let mut metrics = self.metrics.write().unwrap();
         
         metrics.total_queries += 1;
         
-        if let Some(entry) = cache.get_mut(&normalized_key) {
+        if let Some(entry) = cache.get_mut(&fingerprint) {
             if entry.last_accessed.elapsed() < self.ttl {
                 entry.access_count += 1;
                 entry.hit_count += 1;
@@ -68,7 +69,7 @@ impl QueryCache {
                 metrics.cache_hits += 1;
                 return Some(entry.query.clone());
             } else {
-                cache.remove(&normalized_key);
+                cache.remove(&fingerprint);
                 metrics.evictions += 1;
             }
         }
@@ -79,21 +80,21 @@ impl QueryCache {
 
     /// Cache a parsed query
     pub fn insert(&self, query_text: String, query: CachedQuery) {
-        let normalized_key = Self::normalize_query(&query_text);
+        let fingerprint = QueryFingerprint::generate(&query_text);
         let mut cache = self.cache.write().unwrap();
         let mut metrics = self.metrics.write().unwrap();
         
         // LRU eviction: remove least recently used entry if at capacity
-        if cache.len() >= self.capacity && !cache.contains_key(&normalized_key) {
+        if cache.len() >= self.capacity && !cache.contains_key(&fingerprint) {
             if let Some((key_to_remove, _)) = cache.iter()
                 .min_by_key(|(_, entry)| entry.last_accessed) {
-                let key_to_remove = key_to_remove.clone();
+                let key_to_remove = *key_to_remove;
                 cache.remove(&key_to_remove);
                 metrics.evictions += 1;
             }
         }
         
-        cache.insert(normalized_key, CacheEntry {
+        cache.insert(fingerprint, CacheEntry {
             query,
             last_accessed: Instant::now(),
             access_count: 1,

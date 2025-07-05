@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use crate::protocol::binary::BinaryEncoder;
 use crate::config::CONFIG;
+use super::QueryFingerprint;
 
 /// Pre-computed execution metadata for a query
 #[derive(Clone, Debug)]
@@ -27,7 +28,7 @@ pub struct ExecutionMetadata {
 
 /// Optimized execution cache that stores complete execution context
 pub struct ExecutionCache {
-    cache: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    cache: Arc<RwLock<HashMap<u64, CacheEntry>>>,
     ttl: Duration,
 }
 
@@ -47,15 +48,16 @@ impl ExecutionCache {
 
     /// Get cached execution metadata for a query
     pub fn get(&self, query_key: &str) -> Option<ExecutionMetadata> {
+        let fingerprint = QueryFingerprint::generate(query_key);
         let mut cache = self.cache.write().unwrap();
         
-        if let Some(entry) = cache.get_mut(query_key) {
+        if let Some(entry) = cache.get_mut(&fingerprint) {
             if entry.cached_at.elapsed() < self.ttl {
                 entry.hit_count += 1;
                 return Some(entry.metadata.clone());
             } else {
                 // Entry expired, remove it
-                cache.remove(query_key);
+                cache.remove(&fingerprint);
             }
         }
         
@@ -64,9 +66,10 @@ impl ExecutionCache {
 
     /// Cache execution metadata for a query
     pub fn insert(&self, query_key: String, metadata: ExecutionMetadata) {
+        let fingerprint = QueryFingerprint::generate(&query_key);
         let mut cache = self.cache.write().unwrap();
         
-        cache.insert(query_key, CacheEntry {
+        cache.insert(fingerprint, CacheEntry {
             metadata,
             cached_at: Instant::now(),
             hit_count: 0,
