@@ -4,8 +4,8 @@ use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, 
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
-use tracing::debug;
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, system_functions::SystemFunctions};
+use tracing::{debug, info};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_enum::PgEnumHandler, system_functions::SystemFunctions};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -32,11 +32,12 @@ impl CatalogInterceptor {
         
         if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && 
            !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") &&
-           !lower_query.contains("pg_class") && !lower_query.contains("pg_attribute") {
+           !lower_query.contains("pg_class") && !lower_query.contains("pg_attribute") &&
+           !lower_query.contains("pg_enum") {
             return None;
         }
         
-        debug!("Intercepting catalog query: {}", query);
+        info!("Intercepting catalog query: {}", query);
         
         // Special handling for LIMIT 0 queries used for metadata
         if query.contains("LIMIT 0") {
@@ -121,7 +122,7 @@ impl CatalogInterceptor {
             
             // Handle pg_type queries
             if table_name.contains("pg_type") || table_name.contains("pg_catalog.pg_type") {
-                return Some(Self::handle_pg_type_query(select));
+                return Some(Self::handle_pg_type_query(select, db.clone()));
             }
             
             // Handle pg_namespace queries
@@ -149,11 +150,19 @@ impl CatalogInterceptor {
                     Err(_) => None,
                 };
             }
+            
+            // Handle pg_enum queries
+            if table_name.contains("pg_enum") || table_name.contains("pg_catalog.pg_enum") {
+                return match PgEnumHandler::handle_query(select, &*db).await {
+                    Ok(response) => Some(response),
+                    Err(_) => None,
+                };
+            }
         }
         None
     }
 
-    fn handle_pg_type_query(select: &Select) -> DbResponse {
+    fn handle_pg_type_query(select: &Select, db: Arc<DbHandler>) -> DbResponse {
         // Extract which columns are being selected
         let mut columns = Vec::new();
         let mut column_indices = Vec::new();
@@ -174,40 +183,62 @@ impl CatalogInterceptor {
                     columns.push(col_name.clone());
                     column_indices.push(i);
                 }
+                SelectItem::UnnamedExpr(Expr::Cast { expr, .. }) => {
+                    // Handle CAST expressions like CAST(oid AS TEXT)
+                    match expr.as_ref() {
+                        Expr::Identifier(ident) => {
+                            let col_name = ident.value.to_lowercase();
+                            debug!("  Column {} (CAST): {}", i, col_name);
+                            columns.push(col_name.clone());
+                            column_indices.push(i);
+                        }
+                        Expr::CompoundIdentifier(parts) => {
+                            let col_name = parts.last().unwrap().value.to_lowercase();
+                            debug!("  Column {} (CAST): {}", i, col_name);
+                            columns.push(col_name.clone());
+                            column_indices.push(i);
+                        }
+                        _ => {
+                            debug!("  Column {}: unknown CAST expression", i);
+                        }
+                    }
+                }
+                SelectItem::Wildcard(_) => {
+                    // Handle SELECT * queries - return all columns
+                    debug!("  Wildcard selection - returning all columns");
+                    columns = vec![
+                        "oid".to_string(),
+                        "typname".to_string(),
+                        "typtype".to_string(),
+                        "typelem".to_string(),
+                        "typbasetype".to_string(),
+                        "typnamespace".to_string(),
+                        "typrelid".to_string(),
+                    ];
+                    break;
+                }
                 _ => {
                     debug!("  Column {}: unknown projection type", i);
                 }
             }
         }
+        
+        // If no columns were detected, default to common columns for pg_type
+        if columns.is_empty() && !select.projection.is_empty() {
+            debug!("No columns detected from projections, using default pg_type columns");
+            columns = vec!["oid".to_string(), "typname".to_string()];
+        }
 
-        // Check if there's a WHERE clause filtering by OID
+        // Check if there's a WHERE clause filtering by OID or typtype
         let mut filter_oid = None;
         let mut has_placeholder = false;
+        let mut filter_typtype = None;
         
         if let Some(selection) = &select.selection {
-            if let Expr::BinaryOp { left, op, right } = selection {
-                if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
-                    // Check both patterns: t.oid and just oid
-                    let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
-                        left_parts.last().unwrap().value.to_lowercase() == "oid"
-                    } else if let Expr::Identifier(ident) = left.as_ref() {
-                        ident.value.to_lowercase() == "oid"
-                    } else {
-                        false
-                    };
-                    
-                    if is_oid_column {
-                        // Check if right side is a number (not a placeholder)
-                        if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) = right.as_ref() {
-                            filter_oid = n.parse::<i32>().ok();
-                        } else if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) = right.as_ref() {
-                            // If it's a placeholder like $1, return empty result to avoid infinite loops
-                            has_placeholder = true;
-                        }
-                    }
-                }
-            }
+            Self::extract_filters(selection, &mut filter_oid, &mut has_placeholder, &mut filter_typtype);
         }
+        
+        debug!("Filters - OID: {:?}, typtype: {:?}, has_placeholder: {}", filter_oid, filter_typtype, has_placeholder);
         
         // If query has a placeholder, we need to handle it differently
         // Don't return empty result as tokio-postgres needs the type info
@@ -259,9 +290,16 @@ impl CatalogInterceptor {
         ];
 
         for (oid, typname, typtype, typelem, typbasetype, _typnamespace, typrelid) in types {
-            // Apply filter if specified
+            // Apply OID filter if specified
             if let Some(filter) = filter_oid {
                 if oid != filter {
+                    continue;
+                }
+            }
+            
+            // Apply typtype filter if specified
+            if let Some(ref filter) = filter_typtype {
+                if typtype != filter {
                     continue;
                 }
             }
@@ -287,9 +325,49 @@ impl CatalogInterceptor {
                 rows.push(row);
             }
         }
+        
+        // Add ENUM types from metadata only if typtype filter allows it
+        if filter_typtype.is_none() || filter_typtype.as_ref() == Some(&"e".to_string()) {
+            if let Ok(conn) = db.get_mut_connection() {
+                if let Ok(enum_types) = crate::metadata::EnumMetadata::get_all_enum_types(&*conn) {
+                    debug!("Found {} enum types in metadata", enum_types.len());
+                    for enum_type in enum_types {
+                        debug!("Processing enum type: {} (OID: {})", enum_type.type_name, enum_type.type_oid);
+                        // Apply OID filter if specified
+                        if let Some(filter) = filter_oid {
+                            if enum_type.type_oid != filter {
+                                continue;
+                            }
+                        }
+                        
+                        let mut row = Vec::new();
+                        for col in &columns {
+                            let value = match col.as_str() {
+                                "oid" => Some(enum_type.type_oid.to_string().into_bytes()),
+                                "typname" => Some(enum_type.type_name.clone().into_bytes()),
+                                "typtype" => Some("e".to_string().into_bytes()), // 'e' for enum
+                                "typelem" => Some("0".to_string().into_bytes()),
+                                "typbasetype" => Some("0".to_string().into_bytes()),
+                                "typnamespace" => Some(enum_type.namespace_oid.to_string().into_bytes()),
+                                "typrelid" => Some("0".to_string().into_bytes()),
+                                "nspname" => Some("public".to_string().into_bytes()),
+                                "rngsubtype" => None, // NULL for non-range types
+                                _ => None,
+                            };
+                            row.push(value);
+                        }
+                        
+                        if !row.is_empty() {
+                            rows.push(row);
+                        }
+                    }
+                }
+            }
+        }
 
         let rows_affected = rows.len();
-        debug!("Returning {} rows for pg_type query", rows_affected);
+        info!("pg_type query: filter_oid={:?}, filter_typtype={:?}, has_placeholder={}", filter_oid, filter_typtype, has_placeholder);
+        info!("Returning {} rows for pg_type query with {} columns: {:?}", rows_affected, columns.len(), columns);
         DbResponse {
             columns,
             rows,
@@ -312,7 +390,7 @@ impl CatalogInterceptor {
         ];
 
         let rows_affected = rows.len();
-        debug!("Returning {} rows for pg_type query", rows_affected);
+        debug!("Returning {} rows for pg_type query with {} columns: {:?}", rows_affected, columns.len(), columns);
         DbResponse {
             columns,
             rows,
@@ -557,6 +635,66 @@ impl CatalogInterceptor {
         }
         
         Ok(query)
+    }
+
+    /// Extract filter conditions from WHERE clause
+    fn extract_filters(expr: &Expr, filter_oid: &mut Option<i32>, has_placeholder: &mut bool, filter_typtype: &mut Option<String>) {
+        match expr {
+            Expr::BinaryOp { left, op, right } => {
+                if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
+                    // Check for OID filter
+                    let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
+                        left_parts.last().unwrap().value.to_lowercase() == "oid"
+                    } else if let Expr::Identifier(ident) = left.as_ref() {
+                        ident.value.to_lowercase() == "oid"
+                    } else {
+                        false
+                    };
+                    
+                    if is_oid_column {
+                        // Check if right side is a number (not a placeholder)
+                        match right.as_ref() {
+                            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) => {
+                                *filter_oid = n.parse::<i32>().ok();
+                                debug!("Extracted numeric OID filter: {:?}", filter_oid);
+                            }
+                            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => {
+                                // Handle quoted numeric strings (from parameter substitution)
+                                *filter_oid = s.parse::<i32>().ok();
+                                debug!("Extracted string OID filter: {:?}", filter_oid);
+                            }
+                            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) => {
+                                *has_placeholder = true;
+                                debug!("Found placeholder for OID filter");
+                            }
+                            _ => {
+                                debug!("Unknown expression type for OID filter: {:?}", right);
+                            }
+                        }
+                    }
+                    
+                    // Check for typtype filter
+                    let is_typtype_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
+                        left_parts.last().unwrap().value.to_lowercase() == "typtype"
+                    } else if let Expr::Identifier(ident) = left.as_ref() {
+                        ident.value.to_lowercase() == "typtype"
+                    } else {
+                        false
+                    };
+                    
+                    if is_typtype_column {
+                        if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) = right.as_ref() {
+                            *filter_typtype = Some(s.clone());
+                        }
+                    }
+                } else if matches!(op, sqlparser::ast::BinaryOperator::And) {
+                    // Recursively check both sides of AND
+                    Self::extract_filters(left, filter_oid, has_placeholder, filter_typtype);
+                    Self::extract_filters(right, filter_oid, has_placeholder, filter_typtype);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Process an expression and replace system function calls with their results

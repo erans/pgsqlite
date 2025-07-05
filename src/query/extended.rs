@@ -579,9 +579,9 @@ impl ExtendedQueryHandler {
         let final_query = Self::substitute_parameters(&query, &bound_values, &param_formats, &param_types)?;
         
         info!("Executing query: {}", final_query);
-        info!("Original query: {}", query);
-        info!("Final query after substitution: {}", final_query);
-        info!("Original query had {} bound values", bound_values.len());
+        debug!("Original query: {}", query);
+        debug!("Final query after substitution: {}", final_query);
+        debug!("Original query had {} bound values", bound_values.len());
         
         
         // Debug: Check if this is a catalog query
@@ -2014,9 +2014,9 @@ impl ExtendedQueryHandler {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Check if this is a catalog query first
-        info!("Checking if query is catalog query: {}", query);
+        info!("execute_select: Checking if query is catalog query: {}", query);
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, Arc::new(db.clone())).await {
-            info!("Query intercepted by catalog handler");
+            info!("execute_select: Query intercepted by catalog handler");
             let mut catalog_response = catalog_result?;
             
             // For catalog queries with binary result formats, we need to ensure the data
@@ -2576,10 +2576,43 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        use crate::ddl::EnumDdlHandler;
+        
+        // Check if this is an ENUM DDL statement first
+        if EnumDdlHandler::is_enum_ddl(query) {
+            // Handle the ENUM DDL
+            {
+                let mut conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
+            } // Mutex guard is dropped here
+            
+            // Send command complete
+            let command_tag = if query.trim().to_uppercase().starts_with("CREATE TYPE") {
+                "CREATE TYPE"
+            } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {
+                "ALTER TYPE"
+            } else if query.trim().to_uppercase().starts_with("DROP TYPE") {
+                "DROP TYPE"
+            } else {
+                "OK"
+            };
+            
+            framed.send(BackendMessage::CommandComplete { tag: command_tag.to_string() }).await?;
+            return Ok(());
+        }
+        
         // Handle CREATE TABLE translation
         let translated_query = if query_starts_with_ignore_case(query, "CREATE TABLE") {
-            let (sqlite_sql, type_mappings) = crate::translator::CreateTableTranslator::translate(query)
-                .map_err(|e| PgSqliteError::Protocol(e))?;
+            // Use translator with connection for ENUM support
+            let (sqlite_sql, type_mappings) = {
+                let conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                crate::translator::CreateTableTranslator::translate_with_connection(query, Some(&*conn))
+                    .map_err(|e| PgSqliteError::Protocol(e))?
+            }; // Drop connection guard here
             
             // Execute the translated CREATE TABLE
             db.execute(&sqlite_sql).await?;

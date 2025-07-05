@@ -79,6 +79,9 @@ impl EnumMetadata {
         values: &[&str],
         namespace_oid: Option<i32>,
     ) -> Result<i32> {
+        // Ensure metadata tables exist
+        Self::init(conn)?;
+        
         let tx = conn.transaction()?;
         
         // Generate type OID
@@ -195,6 +198,17 @@ impl EnumMetadata {
     
     /// Get ENUM type information by name
     pub fn get_enum_type(conn: &Connection, type_name: &str) -> Result<Option<EnumType>> {
+        // Check if tables exist first
+        let table_exists: bool = conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='__pgsqlite_enum_types' LIMIT 1",
+            [],
+            |_| Ok(true)
+        ).unwrap_or(false);
+        
+        if !table_exists {
+            return Ok(None);
+        }
+        
         conn.query_row(
             "SELECT type_oid, type_name, namespace_oid 
              FROM __pgsqlite_enum_types WHERE type_name = ?1",
@@ -322,6 +336,17 @@ impl EnumMetadata {
     
     /// Get all ENUM types
     pub fn get_all_enum_types(conn: &Connection) -> Result<Vec<EnumType>> {
+        // Check if tables exist first
+        let table_exists: bool = conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='__pgsqlite_enum_types' LIMIT 1",
+            [],
+            |_| Ok(true)
+        ).unwrap_or(false);
+        
+        if !table_exists {
+            return Ok(Vec::new());
+        }
+        
         let mut stmt = conn.prepare(
             "SELECT type_oid, type_name, namespace_oid 
              FROM __pgsqlite_enum_types 

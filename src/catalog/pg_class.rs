@@ -353,6 +353,10 @@ impl PgClassHandler {
                 // For table.column, return just the column name
                 parts.last().map(|ident| ident.value.to_lowercase())
             }
+            Expr::Cast { expr, .. } => {
+                // Handle CAST expressions like CAST(oid AS TEXT)
+                Self::extract_column_name(expr)
+            }
             _ => None,
         }
     }
