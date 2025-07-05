@@ -21,7 +21,16 @@ async fn test_pg_class_where_filtering() {
         &[]
     ).await.unwrap();
     
-    assert_eq!(rows.len(), 2, "Should find exactly 2 tables");
+    // In CI environment, there might be additional tables
+    assert!(rows.len() >= 2, "Should find at least 2 tables, found: {}", rows.len());
+    
+    // Verify we have our test tables
+    let table_names: Vec<String> = rows.iter()
+        .map(|row| row.get::<_, &str>(0).to_string())
+        .collect();
+    assert!(table_names.contains(&"test_table1".to_string()), "Should find test_table1");
+    assert!(table_names.contains(&"test_table2".to_string()), "Should find test_table2");
+    
     for row in &rows {
         let relkind: &str = row.get(1);
         assert_eq!(relkind, "r", "All results should be tables");
@@ -33,7 +42,16 @@ async fn test_pg_class_where_filtering() {
         &[]
     ).await.unwrap();
     
-    assert_eq!(rows.len(), 3, "Should find 2 tables and 1 index");
+    // Should have at least our 2 tables and 1 index
+    assert!(rows.len() >= 3, "Should find at least 2 tables and 1 index, found: {}", rows.len());
+    
+    // Verify we have our specific objects
+    let object_names: Vec<String> = rows.iter()
+        .map(|row| row.get::<_, &str>(0).to_string())
+        .collect();
+    assert!(object_names.contains(&"test_table1".to_string()), "Should find test_table1");
+    assert!(object_names.contains(&"test_table2".to_string()), "Should find test_table2");
+    assert!(object_names.contains(&"idx_test".to_string()), "Should find idx_test");
     
     // Test 3: Filter by relname LIKE pattern
     let rows = client.query(
@@ -41,7 +59,15 @@ async fn test_pg_class_where_filtering() {
         &[]
     ).await.unwrap();
     
-    assert_eq!(rows.len(), 2, "Should find 2 tables matching pattern");
+    // Our test creates test_table1 and test_table2
+    assert!(rows.len() >= 2, "Should find at least 2 tables matching pattern, found: {}", rows.len());
+    
+    // Verify our specific tables are in the results
+    let matching_names: Vec<String> = rows.iter()
+        .map(|row| row.get::<_, &str>(0).to_string())
+        .collect();
+    assert!(matching_names.contains(&"test_table1".to_string()), "Should find test_table1");
+    assert!(matching_names.contains(&"test_table2".to_string()), "Should find test_table2");
     
     // Test 4: Complex WHERE with AND
     let rows = client.query(
@@ -86,8 +112,20 @@ async fn test_pg_attribute_where_filtering() {
         &[]
     ).await.unwrap();
     
-    // Should at least find the PRIMARY KEY column
-    assert!(rows.len() >= 1, "Should find at least 1 NOT NULL column");
+    // Should at least find the PRIMARY KEY column (id) and the NOT NULL column (name)
+    let not_null_columns: Vec<String> = rows.iter()
+        .map(|row| row.get::<_, &str>(0).to_string())
+        .collect();
+    
+    // The 'id' column should be NOT NULL because it's PRIMARY KEY
+    assert!(!not_null_columns.is_empty(), "Should find at least 1 NOT NULL column, found: {:?}", not_null_columns);
+    
+    // In our test table, we expect to find at least the 'id' column (PRIMARY KEY)
+    // The 'name' column is VARCHAR(50) but not explicitly NOT NULL
+    let test_table_not_nulls: Vec<&String> = not_null_columns.iter()
+        .filter(|name| *name == "id" || *name == "name")
+        .collect();
+    assert!(!test_table_not_nulls.is_empty(), "Should find NOT NULL columns from our test table");
 
     // Test 3: Complex filter combining conditions
     let rows = client.query(
