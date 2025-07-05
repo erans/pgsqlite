@@ -1,5 +1,3 @@
-use tokio::net::TcpStream;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use pgsqlite::session::DbHandler;
 use std::sync::Arc;
 
@@ -32,7 +30,7 @@ async fn test_catalog_extended_protocol() {
         let mut framed = Framed::new(stream, codec);
         
         // Wait for startup message
-        let startup = match framed.next().await {
+        let _startup = match framed.next().await {
             Some(Ok(FrontendMessage::StartupMessage(msg))) => {
                 eprintln!("Server: Received startup message");
                 msg

@@ -16,7 +16,7 @@ async fn trace_extended_catalog() {
     let port = listener.local_addr().unwrap().port();
     eprintln!("Test server on port {}", port);
     
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         let db_handler = Arc::new(DbHandler::new(":memory:").unwrap());
         
         // Create test table

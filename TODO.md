@@ -126,6 +126,38 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Implement array operators and functions
 - [ ] Handle array literals in queries
 
+#### ENUM Types
+- [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
+  - Created __pgsqlite_enum_types and __pgsqlite_enum_values tables
+  - Implemented EnumMetadata module with full CRUD operations
+  - Added EnumCache for performance optimization
+  - Stable OID generation for types and values
+  - Comprehensive unit tests
+- [ ] Phase 2: DDL Statement Handling
+  - Implement CREATE TYPE AS ENUM interception
+  - Support ALTER TYPE for adding/renaming values
+  - Handle DROP TYPE with dependency checking
+  - Transaction support for DDL operations
+- [ ] Phase 3: Table Column Support
+  - Modify CREATE TABLE parser for ENUM columns
+  - Generate CHECK constraints for validation
+  - Store type mappings in __pgsqlite_schema
+- [ ] Phase 4: System Catalog Implementation
+  - Create pg_enum handler for catalog queries
+  - Enhance pg_type to include ENUM types
+  - Update pg_attribute for ENUM columns
+- [ ] Phase 5: Query Execution Support
+  - Type resolution in Parse phase
+  - Text/binary protocol conversion
+  - Parameter type inference for ENUMs
+- [ ] Phase 6: WHERE Clause & Operators
+  - Query rewriting for ENUM comparisons
+  - Custom SQLite collation for ordering
+  - Support comparison operators
+- [ ] Phase 7: Type Casting & Error Handling
+  - Explicit casting support (::enum_type)
+  - PostgreSQL-compatible error messages
+
 #### JSON/JSONB
 - [ ] Implement JSONB type (binary JSON)
 - [ ] Add JSON operators (->, ->>, @>, etc.)

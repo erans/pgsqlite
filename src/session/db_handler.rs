@@ -94,6 +94,8 @@ impl DbHandler {
             StatementPool::global().clear();
             // Clear result cache
             global_result_cache().clear();
+            // Clear ENUM cache
+            crate::cache::global_enum_cache().clear();
         }
         
         let conn = self.conn.lock();

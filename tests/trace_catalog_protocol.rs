@@ -1,5 +1,4 @@
 use tokio::net::TcpListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::codec::Framed;
 use pgsqlite::protocol::{PostgresCodec, FrontendMessage, BackendMessage, FieldDescription};
 use pgsqlite::session::DbHandler;
@@ -17,7 +16,7 @@ async fn trace_catalog_protocol() {
     let port = listener.local_addr().unwrap().port();
     eprintln!("Test server on port {}", port);
     
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         let db_handler = Arc::new(DbHandler::new(":memory:").unwrap());
         
         // Create test table

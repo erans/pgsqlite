@@ -1,6 +1,9 @@
 use rusqlite::{Connection, Result};
 use std::collections::HashMap;
 
+pub mod enum_metadata;
+pub use enum_metadata::{EnumMetadata, EnumType, EnumValue};
+
 /// Represents a type mapping between PostgreSQL and SQLite
 #[derive(Debug, Clone)]
 pub struct TypeMapping {
@@ -23,6 +26,10 @@ impl TypeMetadata {
             )",
             [],
         )?;
+        
+        // Initialize ENUM metadata tables
+        EnumMetadata::init(conn)?;
+        
         Ok(())
     }
     
