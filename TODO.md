@@ -145,21 +145,30 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Store ENUM type mappings in __pgsqlite_schema
   - Support multiple ENUM columns in same table
   - Handle ENUM values with quotes properly
-- [ ] Phase 4: System Catalog Implementation
-  - Create pg_enum handler for catalog queries
-  - Enhance pg_type to include ENUM types
-  - Update pg_attribute for ENUM columns
-- [ ] Phase 5: Query Execution Support
-  - Type resolution in Parse phase
-  - Text/binary protocol conversion
-  - Parameter type inference for ENUMs
-- [ ] Phase 6: WHERE Clause & Operators
-  - Query rewriting for ENUM comparisons
-  - Custom SQLite collation for ordering
-  - Support comparison operators
-- [ ] Phase 7: Type Casting & Error Handling
-  - Explicit casting support (::enum_type)
-  - PostgreSQL-compatible error messages
+- [x] Phase 4: System Catalog Implementation - COMPLETED (2025-07-05)
+  - Created pg_enum handler for catalog queries
+  - Enhanced pg_type to include ENUM types (OID assignment)
+  - Updated pg_attribute for ENUM columns with proper type OIDs
+  - Full integration with catalog interceptor
+- [x] Phase 5: Query Execution Support - COMPLETED (2025-07-05)
+  - Type resolution in Parse phase with OID mapping
+  - Text/binary protocol conversion working correctly
+  - Parameter type inference for ENUMs in extended protocol
+  - Always send ENUMs as TEXT OID (25) in wire protocol
+- [x] Phase 6: WHERE Clause Support - COMPLETED (2025-07-05)
+  - WHERE clauses work natively through CHECK constraints
+  - No query rewriting needed - SQLite handles via CHECK
+  - Equality, IN/NOT IN, and NULL comparisons all working
+  - Ordering works alphabetically by default
+- [x] Phase 7: Type Casting - COMPLETED (2025-07-05)
+  - Explicit casting support for both :: and CAST() syntax
+  - CastTranslator handles PostgreSQL cast syntax translation
+  - Integration with both simple and extended protocol
+  - CHECK constraints validate cast values at runtime
+- [ ] Phase 8: Error Handling & Polish
+  - PostgreSQL-compatible error messages for constraint violations
+  - Better error formatting for invalid enum values
+  - Performance optimization for enum operations
 
 #### JSON/JSONB
 - [ ] Implement JSONB type (binary JSON)

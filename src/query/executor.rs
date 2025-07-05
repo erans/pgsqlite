@@ -79,23 +79,37 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // Translate PostgreSQL cast syntax if present
+        let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
+            use crate::translator::CastTranslator;
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            let translated = CastTranslator::translate_query(query, Some(&*conn));
+            drop(conn); // Release the connection
+            translated
+        } else {
+            query.to_string()
+        };
+        
+        let query_to_execute = translated_query.as_str();
+        
         // Simple query routing using optimized detection
         use crate::query::{QueryTypeDetector, QueryType};
         
-        match QueryTypeDetector::detect_query_type(query) {
-            QueryType::Select => Self::execute_select(framed, db, query).await,
+        match QueryTypeDetector::detect_query_type(query_to_execute) {
+            QueryType::Select => Self::execute_select(framed, db, query_to_execute).await,
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                Self::execute_dml(framed, db, query).await
+                Self::execute_dml(framed, db, query_to_execute).await
             }
             QueryType::Create | QueryType::Drop | QueryType::Alter => {
-                Self::execute_ddl(framed, db, query).await
+                Self::execute_ddl(framed, db, query_to_execute).await
             }
             QueryType::Begin | QueryType::Commit | QueryType::Rollback => {
-                Self::execute_transaction(framed, db, query).await
+                Self::execute_transaction(framed, db, query_to_execute).await
             }
             _ => {
                 // Try to execute as-is
-                Self::execute_generic(framed, db, query).await
+                Self::execute_generic(framed, db, query_to_execute).await
             }
         }
     }

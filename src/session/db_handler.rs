@@ -100,8 +100,18 @@ impl DbHandler {
         
         let conn = self.conn.lock();
         
+        // Translate PostgreSQL cast syntax if present
+        let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
+            use crate::translator::CastTranslator;
+            CastTranslator::translate_query(query, Some(&*conn))
+        } else {
+            query.to_string()
+        };
+        
+        let query_to_execute = translated_query.as_str();
+        
         // Try enhanced fast path first
-        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query, &self.schema_cache) {
+        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
             return Ok(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -110,12 +120,12 @@ impl DbHandler {
         }
         
         // For INSERT queries, try statement pool for better performance
-        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Insert) {
+        if matches!(QueryTypeDetector::detect_query_type(query_to_execute), QueryType::Insert) {
             // First check if we can use fast path with statement pool
-            if let Some(table_name) = extract_insert_table_name(query) {
+            if let Some(table_name) = extract_insert_table_name(query_to_execute) {
                 if !self.schema_cache.has_decimal_columns(&table_name) {
                     // No decimal columns, use statement pool for optimal performance
-                    match StatementPool::global().execute_cached(&*conn, query, []) {
+                    match StatementPool::global().execute_cached(&*conn, query_to_execute, []) {
                         Ok(rows_affected) => {
                             return Ok(DbResponse {
                                 columns: Vec::new(),
@@ -132,7 +142,7 @@ impl DbHandler {
             }
             
             // Check INSERT query cache to avoid re-parsing
-            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
+            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
                 // Use cached rewritten query if available
                 let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
                 let rows_affected = conn.execute(final_query, [])?;
@@ -145,14 +155,26 @@ impl DbHandler {
         }
         
         // Fall back to normal execution
-        execute_dml_sync(&*conn, query, &self.schema_cache)
+        execute_dml_sync(&*conn, query_to_execute, &self.schema_cache)
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        let conn = self.conn.lock();
+        
+        // Translate PostgreSQL cast syntax if present
+        let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
+            use crate::translator::CastTranslator;
+            CastTranslator::translate_query(query, Some(&*conn))
+        } else {
+            query.to_string()
+        };
+        
+        let query_to_execute = translated_query.as_str();
+        
         // Check result cache first for non-parameterized queries
-        let cache_key = ResultCacheKey::new(query, &[]);
+        let cache_key = ResultCacheKey::new(query_to_execute, &[]);
         if let Some(cached_result) = global_result_cache().get(&cache_key) {
-            debug!("Result cache hit for query: {}", query);
+            debug!("Result cache hit for query: {}", query_to_execute);
             return Ok(DbResponse {
                 columns: cached_result.columns,
                 rows: cached_result.rows,
@@ -161,14 +183,13 @@ impl DbHandler {
         }
         
         let start = std::time::Instant::now();
-        let conn = self.conn.lock();
         
         // Try enhanced fast path first for queries
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query, &self.schema_cache) {
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
             let execution_time_us = start.elapsed().as_micros() as u64;
             
             // Cache the result if appropriate
-            if ResultSetCache::should_cache(query, execution_time_us, response.rows.len()) {
+            if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
                 global_result_cache().insert(
                     cache_key,
                     response.columns.clone(),
@@ -182,11 +203,11 @@ impl DbHandler {
         }
         
         // Fall back to normal query execution
-        let response = execute_query_sync(&*conn, query, &self.schema_cache)?;
+        let response = execute_query_sync(&*conn, query_to_execute, &self.schema_cache)?;
         let execution_time_us = start.elapsed().as_micros() as u64;
         
         // Cache the result if appropriate
-        if ResultSetCache::should_cache(query, execution_time_us, response.rows.len()) {
+        if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
             global_result_cache().insert(
                 cache_key,
                 response.columns.clone(),
@@ -687,22 +708,30 @@ pub fn execute_query_sync(
     query: &str,
     schema_cache: &SchemaCache,
 ) -> Result<DbResponse, rusqlite::Error> {
-    // Try ultra-fast execution path first - but skip for queries with casts for now
-    if !query.contains("::") {
-        match execute_query_optimized(conn, query, schema_cache) {
-            Ok(result) => return Ok(result),
-            Err(_) => {
-                // Fall back to original path if optimized path fails
-                debug!("Optimized execution failed, falling back to original path for: {}", query);
-            }
+    // Translate PostgreSQL cast syntax if present
+    let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
+        use crate::translator::CastTranslator;
+        CastTranslator::translate_query(query, Some(conn))
+    } else {
+        query.to_string()
+    };
+    
+    let query_to_execute = translated_query.as_str();
+    
+    // Try ultra-fast execution path first
+    match execute_query_optimized(conn, query_to_execute, schema_cache) {
+        Ok(result) => return Ok(result),
+        Err(_) => {
+            // Fall back to original path if optimized path fails
+            debug!("Optimized execution failed, falling back to original path for: {}", query_to_execute);
         }
     }
     
     // Check global query cache first
-    if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
+    if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
         // Use cached rewritten query if available
         let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-        debug!("Query cache HIT for: {}", query);
+        debug!("Query cache HIT for: {}", query_to_execute);
         
         // Log metrics periodically (every 100 queries)
         let metrics = crate::session::GLOBAL_QUERY_CACHE.get_metrics();
@@ -717,13 +746,13 @@ pub fn execute_query_sync(
         }
         
         // For cached queries, try to use statement pool for better performance
-        return execute_cached_query_with_statement_pool(conn, query, &cached, final_query);
+        return execute_cached_query_with_statement_pool(conn, query_to_execute, &cached, final_query);
     }
     
-    debug!("Query cache MISS for: {}", query);
+    debug!("Query cache MISS for: {}", query_to_execute);
     
     // Parse and rewrite query for DECIMAL types if needed
-    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query, conn, schema_cache)?;
+    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query_to_execute, conn, schema_cache)?;
     
     // Cache the parsed query for future use
     let cached_query = CachedQuery {
@@ -733,16 +762,16 @@ pub fn execute_query_sync(
         table_names: parsed_info.table_names,
         column_types: parsed_info.column_types,
         has_decimal_columns: parsed_info.has_decimal_columns,
-        rewritten_query: if parsed_info.is_decimal_query && rewritten_query != query {
+        rewritten_query: if parsed_info.is_decimal_query && rewritten_query != query_to_execute {
             Some(rewritten_query.clone())
         } else {
             None
         },
-        normalized_query: crate::cache::QueryCache::normalize_query(query),
+        normalized_query: crate::cache::QueryCache::normalize_query(query_to_execute),
     };
     
-    // Insert into global cache
-    crate::session::GLOBAL_QUERY_CACHE.insert(query.to_string(), cached_query.clone());
+    // Insert into global cache using the translated query as key
+    crate::session::GLOBAL_QUERY_CACHE.insert(query_to_execute.to_string(), cached_query.clone());
     debug!(
         "Cached query - Tables: {:?}, Decimal: {}, Column types: {}",
         cached_query.table_names,
@@ -751,7 +780,7 @@ pub fn execute_query_sync(
     );
     
     // Execute using cached information and statement pool
-    execute_cached_query_with_statement_pool(conn, query, &cached_query, &rewritten_query)
+    execute_cached_query_with_statement_pool(conn, query_to_execute, &cached_query, &rewritten_query)
 }
 
 
