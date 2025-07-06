@@ -644,10 +644,20 @@ impl QueryExecutor {
             }
         } else {
             // Send in batches with periodic flushing
-            for chunk in rows.chunks(batch_size) {
-                for row in chunk {
-                    framed.send(BackendMessage::DataRow(row.clone())).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+            let mut row_iter = rows.into_iter();
+            loop {
+                let mut batch_sent = false;
+                for _ in 0..batch_size {
+                    if let Some(row) = row_iter.next() {
+                        framed.send(BackendMessage::DataRow(row)).await
+                            .map_err(|e| PgSqliteError::Io(e))?;
+                        batch_sent = true;
+                    } else {
+                        break;
+                    }
+                }
+                if !batch_sent {
+                    break;
                 }
                 // Flush after each batch to ensure timely delivery
                 framed.flush().await.map_err(|e| PgSqliteError::Io(e))?;

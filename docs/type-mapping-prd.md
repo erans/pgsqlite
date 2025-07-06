@@ -32,7 +32,7 @@ The following table maps supported PostgreSQL types to SQLite storage representa
 | TIME            | TEXT        | -           | HH:MM[:SS[.fff]] |
 | BYTEA           | BLOB        | -           | Binary |
 | JSON/JSONB      | TEXT        | -           | Validated/serialized in code |
-| ENUM            | TEXT        | -           | String variant |
+| ENUM            | TEXT        | ENUM        | Full PostgreSQL ENUM support with CHECK constraints |
 | ARRAY           | TEXT        | -           | JSON string |
 | SERIAL/BIGSERIAL| INTEGER     | -           | Use AUTOINCREMENT |
 | MONEY           | TEXT        | -           | Currency values with validation |
@@ -64,6 +64,21 @@ The DECIMAL custom type provides arbitrary precision decimal arithmetic using th
 - `decimal_avg()` - Aggregate AVG
 - `decimal_min()` - Aggregate MIN
 - `decimal_max()` - Aggregate MAX
+
+#### ENUM Type
+PostgreSQL ENUM types are fully supported with automatic CHECK constraint generation:
+
+**DDL Support:**
+- `CREATE TYPE name AS ENUM ('value1', 'value2', ...)` - Create new ENUM type
+- `ALTER TYPE name ADD VALUE 'new_value' [BEFORE|AFTER 'existing_value']` - Add enum values
+- `DROP TYPE name [IF EXISTS]` - Drop ENUM type with dependency checking
+
+**Implementation:**
+- ENUM values are stored as TEXT in SQLite
+- CHECK constraints enforce valid values at the database level
+- Metadata stored in `__pgsqlite_enum_types` and `__pgsqlite_enum_values` tables
+- Full system catalog integration (pg_type, pg_enum)
+- Type casting support with both `::` and `CAST()` syntax
 
 ### Unmapped PostgreSQL Types
 The following PostgreSQL native types are not yet mapped to SQLite equivalents:
@@ -108,9 +123,10 @@ The following PostgreSQL native types are not yet mapped to SQLite equivalents:
 ## CREATE TABLE Handling
 When receiving a `CREATE TABLE` statement via the PostgreSQL protocol, the original column types should be parsed and stored in a metadata registry. This registry serves as the source of truth for type mapping.
 
-### Metadata Table
-To persist this across restarts, introduce a special metadata table:
+### Metadata Tables
+To persist type information across restarts, pgsqlite uses special metadata tables:
 
+#### Schema Metadata
 ```sql
 CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
   table_name TEXT NOT NULL,
@@ -118,6 +134,23 @@ CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
   pg_type TEXT NOT NULL,
   sqlite_type TEXT NOT NULL,
   PRIMARY KEY (table_name, column_name)
+);
+```
+
+#### ENUM Type Metadata
+```sql
+CREATE TABLE IF NOT EXISTS __pgsqlite_enum_types (
+  type_name TEXT PRIMARY KEY,
+  type_oid INTEGER NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS __pgsqlite_enum_values (
+  type_name TEXT NOT NULL,
+  enum_value TEXT NOT NULL,
+  enum_label_oid INTEGER NOT NULL UNIQUE,
+  sort_order INTEGER NOT NULL,
+  PRIMARY KEY (type_name, enum_value),
+  FOREIGN KEY (type_name) REFERENCES __pgsqlite_enum_types(type_name)
 );
 ```
 

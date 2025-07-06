@@ -76,8 +76,12 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Optimize context merging performance for deeply nested subqueries
 
 #### Performance Enhancements
-- [ ] Remove remaining debug logging from hot paths
-- [ ] Profile protocol serialization overhead
+- [x] Profile protocol serialization overhead - COMPLETED (2025-07-06)
+  - Identified protocol framing (20-30%), type conversions (30-40%) as main bottlenecks
+  - Added itoa for 21% faster integer formatting
+  - Fixed unnecessary clones in batch sending
+  - Determined ryu float formatting is slower than stdlib
+- [ ] Implement small value optimization to avoid heap allocations
 - [ ] Consider lazy schema loading for better startup performance
 - [ ] Implement connection pooling with warm statement caches
 - [ ] Add query pattern recognition for automatic optimization hints
