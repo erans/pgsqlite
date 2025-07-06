@@ -3,7 +3,8 @@ use std::env;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "pgsqlite")]
-#[command(about = "pgsqlite - 🐘 PostgreSQL + 🪶 SQLite = ♥\nPostgreSQL wire protocol server on top of SQLite", long_about = None)]
+#[command(about = concat!("pgsqlite v", env!("CARGO_PKG_VERSION"), " - 🐘 PostgreSQL + 🪶 SQLite = ♥\nPostgreSQL wire protocol server on top of SQLite"), long_about = None)]
+#[command(version)]
 pub struct Config {
     // Basic configuration
     #[arg(short, long, default_value = "5432", env = "PGSQLITE_PORT")]

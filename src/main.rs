@@ -32,6 +32,9 @@ async fn main() -> Result<()> {
         .with_env_filter(config.log_level.clone())
         .init();
 
+    // Display version
+    info!("pgsqlite v{}", env!("CARGO_PKG_VERSION"));
+
     // Determine database path based on --in-memory flag
     let db_path = if config.in_memory {
         info!("Using in-memory SQLite database (testing mode)");
