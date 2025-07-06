@@ -48,7 +48,15 @@ impl ExecutionCache {
 
     /// Get cached execution metadata for a query
     pub fn get(&self, query_key: &str) -> Option<ExecutionMetadata> {
-        let fingerprint = QueryFingerprint::generate(query_key);
+        // Use fingerprint with literals for queries without parameters
+        // to avoid cache collisions between queries like "SELECT 42" and "SELECT 9999"
+        let fingerprint = if query_key.contains('#') {
+            // Has parameter types, use regular fingerprint
+            QueryFingerprint::generate(query_key)
+        } else {
+            // No parameters, preserve literals to avoid collisions
+            QueryFingerprint::generate_with_literals(query_key)
+        };
         let mut cache = self.cache.write().unwrap();
         
         if let Some(entry) = cache.get_mut(&fingerprint) {
@@ -66,7 +74,15 @@ impl ExecutionCache {
 
     /// Cache execution metadata for a query
     pub fn insert(&self, query_key: String, metadata: ExecutionMetadata) {
-        let fingerprint = QueryFingerprint::generate(&query_key);
+        // Use fingerprint with literals for queries without parameters
+        // to avoid cache collisions between queries like "SELECT 42" and "SELECT 9999"
+        let fingerprint = if query_key.contains('#') {
+            // Has parameter types, use regular fingerprint
+            QueryFingerprint::generate(&query_key)
+        } else {
+            // No parameters, preserve literals to avoid collisions
+            QueryFingerprint::generate_with_literals(&query_key)
+        };
         let mut cache = self.cache.write().unwrap();
         
         cache.insert(fingerprint, CacheEntry {

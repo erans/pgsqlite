@@ -972,8 +972,6 @@ fn execute_cached_query(
     cached: &CachedQuery,
     final_query: &str,
 ) -> Result<DbResponse, rusqlite::Error> {
-    
-    eprintln!("DEBUG: execute_cached_query executing: '{}'", final_query);
     let mut stmt = conn.prepare(final_query)?;
     let column_count = stmt.column_count();
     
@@ -1000,10 +998,6 @@ fn execute_cached_query(
                 rusqlite::types::ValueRef::Null => row_data.push(None),
                 rusqlite::types::ValueRef::Integer(int_val) => {
                     // Debug for integer values
-                    if int_val == 1952805748 {
-                        eprintln!("WARNING: Found 1952805748 as INTEGER in SQLite result!");
-                        eprintln!("This is 0x{:x} which is 'test' as bytes!", int_val);
-                    }
                     
                     if is_boolean_col[i] {
                         // Convert SQLite's 0/1 to PostgreSQL's f/t format
@@ -1018,19 +1012,9 @@ fn execute_cached_query(
                     row_data.push(Some(f.to_string().into_bytes()));
                 },
                 rusqlite::types::ValueRef::Text(s) => {
-                    // Debug for text values
-                    if s == b"1952805748" {
-                        eprintln!("WARNING: Found '1952805748' as TEXT in SQLite result!");
-                        eprintln!("This should have been 'test'!");
-                    }
                     row_data.push(Some(s.to_vec()));
                 },
                 rusqlite::types::ValueRef::Blob(b) => {
-                    // Debug for blob values
-                    if b.len() == 4 && b == b"test" {
-                        eprintln!("WARNING: Found 'test' as BLOB in SQLite result!");
-                        eprintln!("This will be misinterpreted. Hex: {}", hex::encode(b));
-                    }
                     row_data.push(Some(b.to_vec()));
                 },
             }
