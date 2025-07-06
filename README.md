@@ -564,6 +564,15 @@ pgsqlite --enable-mmap --buffer-monitoring --auto-cleanup
 pgsqlite --pragma-journal-mode DELETE --pragma-synchronous FULL
 ```
 
+## Documentation
+
+For detailed information about specific features and implementation details, see:
+
+- [Type Mapping](docs/type-mapping-prd.md) - PostgreSQL to SQLite type mappings
+- [ENUM Type Implementation](docs/enum-type-implementation.md) - How ENUM types are implemented using triggers
+- [Zero-Copy Architecture](docs/zero-copy-architecture.md) - Performance optimizations
+- [System Catalog Research](docs/pg_catalog_research.md) - PostgreSQL catalog emulation
+
 ## License
 
 This project is licensed under the Apache License, Version 2.0 - see the [LICENSE](LICENSE) file for details.
