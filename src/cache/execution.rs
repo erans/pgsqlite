@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use crate::protocol::binary::BinaryEncoder;
 use crate::config::CONFIG;
 use super::QueryFingerprint;
+use itoa;
 
 /// Pre-computed execution metadata for a query
 #[derive(Clone, Debug)]
@@ -155,7 +156,10 @@ impl TypeConverterTable {
                         // Fall back to text encoding
                         match value {
                             rusqlite::types::Value::Text(s) => Ok(s.as_bytes().to_vec()),
-                            rusqlite::types::Value::Integer(i) => Ok(i.to_string().as_bytes().to_vec()),
+                            rusqlite::types::Value::Integer(i) => {
+                                let mut buf = itoa::Buffer::new();
+                                Ok(buf.format(*i).as_bytes().to_vec())
+                            },
                             rusqlite::types::Value::Real(r) => Ok(r.to_string().as_bytes().to_vec()),
                             rusqlite::types::Value::Null => Ok(Vec::new()),
                             rusqlite::types::Value::Blob(b) => Ok(b.clone()),
@@ -167,14 +171,20 @@ impl TypeConverterTable {
                 // 0: Text/String converter
                 |value| match value {
                     rusqlite::types::Value::Text(s) => Ok(s.as_bytes().to_vec()),
-                    rusqlite::types::Value::Integer(i) => Ok(i.to_string().as_bytes().to_vec()),
+                    rusqlite::types::Value::Integer(i) => {
+                        let mut buf = itoa::Buffer::new();
+                        Ok(buf.format(*i).as_bytes().to_vec())
+                    },
                     rusqlite::types::Value::Real(r) => Ok(r.to_string().as_bytes().to_vec()),
                     rusqlite::types::Value::Null => Ok(Vec::new()),
                     _ => Ok("".as_bytes().to_vec()),
                 },
                 // 1: Integer converter  
                 |value| match value {
-                    rusqlite::types::Value::Integer(i) => Ok(i.to_string().as_bytes().to_vec()),
+                    rusqlite::types::Value::Integer(i) => {
+                        let mut buf = itoa::Buffer::new();
+                        Ok(buf.format(*i).as_bytes().to_vec())
+                    },
                     rusqlite::types::Value::Text(s) => Ok(s.as_bytes().to_vec()),
                     rusqlite::types::Value::Null => Ok(Vec::new()),
                     _ => Ok("0".as_bytes().to_vec()),
@@ -221,7 +231,10 @@ impl TypeConverterTable {
             // Fallback to text conversion
             match value {
                 rusqlite::types::Value::Text(s) => Ok(s.as_bytes().to_vec()),
-                rusqlite::types::Value::Integer(i) => Ok(i.to_string().as_bytes().to_vec()),
+                rusqlite::types::Value::Integer(i) => {
+                    let mut buf = itoa::Buffer::new();
+                    Ok(buf.format(*i).as_bytes().to_vec())
+                },
                 rusqlite::types::Value::Real(r) => Ok(r.to_string().as_bytes().to_vec()),
                 rusqlite::types::Value::Null => Ok(Vec::new()),
                 _ => Ok("".as_bytes().to_vec()),
