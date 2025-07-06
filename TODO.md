@@ -126,6 +126,51 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Implement array operators and functions
 - [ ] Handle array literals in queries
 
+#### ENUM Types
+- [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
+  - Created __pgsqlite_enum_types and __pgsqlite_enum_values tables
+  - Implemented EnumMetadata module with full CRUD operations
+  - Added EnumCache for performance optimization
+  - Stable OID generation for types and values
+  - Comprehensive unit tests
+- [x] Phase 2: DDL Statement Handling - COMPLETED (2025-07-05)
+  - Implemented CREATE TYPE AS ENUM interception
+  - Support ALTER TYPE ADD VALUE with BEFORE/AFTER positioning
+  - Handle DROP TYPE with IF EXISTS support
+  - Regex-based parsing for ENUM DDL statements
+  - Integration with query executor in execute_ddl method
+- [x] Phase 3: Table Column Support - COMPLETED (2025-07-05)
+  - Modified CREATE TABLE translator to recognize ENUM columns
+  - Generate CHECK constraints automatically for ENUM validation
+  - Store ENUM type mappings in __pgsqlite_schema
+  - Support multiple ENUM columns in same table
+  - Handle ENUM values with quotes properly
+- [x] Phase 4: System Catalog Implementation - COMPLETED (2025-07-05)
+  - Created pg_enum handler for catalog queries
+  - Enhanced pg_type to include ENUM types (OID assignment)
+  - Updated pg_attribute for ENUM columns with proper type OIDs
+  - Full integration with catalog interceptor
+- [x] Phase 5: Query Execution Support - COMPLETED (2025-07-05)
+  - Type resolution in Parse phase with OID mapping
+  - Text/binary protocol conversion working correctly
+  - Parameter type inference for ENUMs in extended protocol
+  - Always send ENUMs as TEXT OID (25) in wire protocol
+- [x] Phase 6: WHERE Clause Support - COMPLETED (2025-07-05)
+  - WHERE clauses work natively through CHECK constraints
+  - No query rewriting needed - SQLite handles via CHECK
+  - Equality, IN/NOT IN, and NULL comparisons all working
+  - Ordering works alphabetically by default
+- [x] Phase 7: Type Casting - COMPLETED (2025-07-05)
+  - Explicit casting support for both :: and CAST() syntax
+  - CastTranslator handles PostgreSQL cast syntax translation
+  - Integration with both simple and extended protocol
+  - CHECK constraints validate cast values at runtime
+- [x] Phase 8: Error Handling & Polish - COMPLETED (2025-07-06)
+  - PostgreSQL-compatible error messages for constraint violations
+  - Better error formatting for invalid enum values (e.g., "invalid input value for enum mood: 'angry'")
+  - DROP TYPE dependency checking with proper error messages
+  - Automatic conversion of SQLite CHECK constraint errors to PostgreSQL format
+
 #### JSON/JSONB
 - [ ] Implement JSONB type (binary JSON)
 - [ ] Add JSON operators (->, ->>, @>, etc.)

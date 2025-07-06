@@ -14,6 +14,10 @@ impl PgAttributeHandler {
         db: &DbHandler,
     ) -> Result<DbResponse, PgSqliteError> {
         debug!("Handling pg_attribute query");
+        debug!("SELECT clause: {:?}", select);
+        if let Some(selection) = &select.selection {
+            debug!("WHERE clause present: {:?}", selection);
+        }
         
         // All available columns in pg_attribute
         let all_columns = vec![
@@ -62,6 +66,16 @@ impl PgAttributeHandler {
                         if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
                             columns.push(col_name);
                             indices.push(idx);
+                        }
+                    }
+                    SelectItem::UnnamedExpr(Expr::Cast { expr, .. }) => {
+                        // Handle CAST expressions like CAST(atttypid AS TEXT)
+                        if let Expr::Identifier(ident) = expr.as_ref() {
+                            let col_name = ident.value.to_lowercase();
+                            if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                                columns.push(col_name);
+                                indices.push(idx);
+                            }
                         }
                     }
                     SelectItem::ExprWithAlias { expr: Expr::Identifier(ident), alias } => {
@@ -124,9 +138,13 @@ async fn add_table_attributes(
 ) -> Result<(), PgSqliteError> {
     let table_oid = generate_oid_from_name(table_name);
     
+    debug!("Getting column info for table: {}", table_name);
+    
     // Get column information from PRAGMA
     let col_info_query = format!("PRAGMA table_info({})", table_name);
     let col_info = db.query(&col_info_query).await?;
+    
+    debug!("PRAGMA table_info returned {} columns for table {}", col_info.rows.len(), table_name);
     
     // Also check if we have type info in __pgsqlite_schema
     let schema_query = format!(
@@ -179,7 +197,54 @@ async fn add_table_attributes(
             
             // Determine PostgreSQL type
             let (pg_type_oid, attlen, atttypmod) = if let Some(pg_type_str) = type_map.get(col_name.as_ref()) {
-                parse_pg_type(pg_type_str)
+                // Check if this is an ENUM type
+                let type_upper = pg_type_str.to_uppercase();
+                let base_type = if let Some(paren_pos) = type_upper.find('(') {
+                    type_upper[..paren_pos].trim()
+                } else {
+                    type_upper.trim()
+                };
+                
+                // First try to parse as a known type
+                let (oid, attlen, atttypmod) = parse_pg_type(pg_type_str);
+                
+                // If it's TEXT (default for unknown types), check if it's an ENUM
+                if oid == PgType::Text.to_oid() as i32 && !matches!(base_type, "TEXT" | "VARCHAR" | "CHAR") {
+                    // Query the ENUM metadata to see if this is an ENUM type
+                    let enum_query = format!(
+                        "SELECT type_oid FROM __pgsqlite_enum_types WHERE UPPER(type_name) = '{}'",
+                        base_type
+                    );
+                    
+                    // Check if the enum types table exists first
+                    let check_table = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='__pgsqlite_enum_types' LIMIT 1").await;
+                    
+                    if check_table.is_ok() && check_table.unwrap().rows.len() > 0 {
+                        if let Ok(enum_result) = db.query(&enum_query).await {
+                            if let Some(row) = enum_result.rows.first() {
+                                if let Some(Some(oid_bytes)) = row.get(0) {
+                                    if let Ok(enum_oid) = String::from_utf8_lossy(oid_bytes).parse::<i32>() {
+                                        // This is an ENUM type
+                                        (enum_oid, -1, -1)
+                                    } else {
+                                        (oid, attlen, atttypmod)
+                                    }
+                                } else {
+                                    (oid, attlen, atttypmod)
+                                }
+                            } else {
+                                (oid, attlen, atttypmod)
+                            }
+                        } else {
+                            (oid, attlen, atttypmod)
+                        }
+                    } else {
+                        // Enum tables don't exist yet
+                        (oid, attlen, atttypmod)
+                    }
+                } else {
+                    (oid, attlen, atttypmod)
+                }
             } else {
                 map_sqlite_to_pg_type(&sqlite_type)
             };
@@ -327,7 +392,12 @@ fn parse_pg_type(pg_type_str: &str) -> (i32, i16, i32) {
         "JSON" => (PgType::Json.to_oid(), -1),
         "JSONB" => (PgType::Jsonb.to_oid(), -1),
         "NUMERIC" | "DECIMAL" => (PgType::Numeric.to_oid(), -1),
-        _ => (PgType::Text.to_oid(), -1), // Default to text
+        _ => {
+            // For unknown types, return the original type name's OID if it looks like an ENUM
+            // ENUMs are stored as the type name itself in __pgsqlite_schema
+            // We'll need to look it up from the database, but for now return TEXT
+            (PgType::Text.to_oid(), -1)
+        }
     };
     
     // Calculate atttypmod

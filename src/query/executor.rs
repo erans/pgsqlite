@@ -79,23 +79,37 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // Translate PostgreSQL cast syntax if present
+        let translated_query = if crate::translator::CastTranslator::needs_translation(query) {
+            use crate::translator::CastTranslator;
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            let translated = CastTranslator::translate_query(query, Some(&*conn));
+            drop(conn); // Release the connection
+            translated
+        } else {
+            query.to_string()
+        };
+        
+        let query_to_execute = translated_query.as_str();
+        
         // Simple query routing using optimized detection
         use crate::query::{QueryTypeDetector, QueryType};
         
-        match QueryTypeDetector::detect_query_type(query) {
-            QueryType::Select => Self::execute_select(framed, db, query).await,
+        match QueryTypeDetector::detect_query_type(query_to_execute) {
+            QueryType::Select => Self::execute_select(framed, db, query_to_execute).await,
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                Self::execute_dml(framed, db, query).await
+                Self::execute_dml(framed, db, query_to_execute).await
             }
             QueryType::Create | QueryType::Drop | QueryType::Alter => {
-                Self::execute_ddl(framed, db, query).await
+                Self::execute_ddl(framed, db, query_to_execute).await
             }
             QueryType::Begin | QueryType::Commit | QueryType::Rollback => {
-                Self::execute_transaction(framed, db, query).await
+                Self::execute_transaction(framed, db, query_to_execute).await
             }
             _ => {
                 // Try to execute as-is
-                Self::execute_generic(framed, db, query).await
+                Self::execute_generic(framed, db, query_to_execute).await
             }
         }
     }
@@ -145,7 +159,13 @@ impl QueryExecutor {
                 .map(|(i, name)| {
                     // First priority: Check schema table for stored type mappings
                     let type_oid = if let Some(pg_type) = schema_types.get(name) {
-                        crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                        // Need to check if this is an ENUM type
+                        // Get a connection to check ENUM metadata
+                        if let Ok(conn) = db.get_mut_connection() {
+                            crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn)
+                        } else {
+                            crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                        }
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
@@ -422,11 +442,49 @@ impl QueryExecutor {
     {
         use crate::translator::CreateTableTranslator;
         use crate::query::{QueryTypeDetector, QueryType};
+        use crate::ddl::EnumDdlHandler;
+        
+        // Check if this is an ENUM DDL statement
+        if EnumDdlHandler::is_enum_ddl(query) {
+            // Handle the ENUM DDL in a scope to ensure the mutex guard is dropped
+            let command_tag = {
+                let mut conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                // Handle the ENUM DDL
+                EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
+                
+                // Determine command tag
+                if query.trim().to_uppercase().starts_with("CREATE TYPE") {
+                    "CREATE TYPE"
+                } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {
+                    "ALTER TYPE"
+                } else if query.trim().to_uppercase().starts_with("DROP TYPE") {
+                    "DROP TYPE"
+                } else {
+                    "OK"
+                }
+            }; // Mutex guard is dropped here
+            
+            // Send command complete
+            framed.send(BackendMessage::CommandComplete { 
+                tag: command_tag.to_string() 
+            }).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            
+            return Ok(());
+        }
         
         let (translated_query, type_mappings) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
-            // Use CREATE TABLE translator
-            CreateTableTranslator::translate(query)
-                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?
+            // Use CREATE TABLE translator with connection for ENUM support
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            
+            let result = CreateTableTranslator::translate_with_connection(query, Some(&*conn))
+                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?;
+            
+            // Connection guard is dropped here
+            result
         } else {
             // For other DDL, check for JSON/JSONB types
             let translated = if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {

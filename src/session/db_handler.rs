@@ -94,26 +94,42 @@ impl DbHandler {
             StatementPool::global().clear();
             // Clear result cache
             global_result_cache().clear();
+            // Clear ENUM cache
+            crate::cache::global_enum_cache().clear();
+            // Clear translation cache
+            crate::cache::global_translation_cache().clear();
         }
         
         let conn = self.conn.lock();
         
-        // Try enhanced fast path first
-        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query, &self.schema_cache) {
-            return Ok(DbResponse {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected,
-            });
+        // Create lazy processor
+        let mut processor = crate::query::LazyQueryProcessor::new(query);
+        
+        // Check if we need any processing
+        if !processor.needs_processing(&self.schema_cache) {
+            // Fast path - no processing needed
+            let query_to_execute = processor.get_unprocessed();
+            
+            // Try enhanced fast path first
+            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+                return Ok(DbResponse {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected,
+                });
+            }
         }
         
+        // Process the query if needed
+        let query_to_execute = processor.process(&*conn, &self.schema_cache)?;
+        
         // For INSERT queries, try statement pool for better performance
-        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Insert) {
+        if matches!(QueryTypeDetector::detect_query_type(query_to_execute), QueryType::Insert) {
             // First check if we can use fast path with statement pool
-            if let Some(table_name) = extract_insert_table_name(query) {
+            if let Some(table_name) = extract_insert_table_name(query_to_execute) {
                 if !self.schema_cache.has_decimal_columns(&table_name) {
                     // No decimal columns, use statement pool for optimal performance
-                    match StatementPool::global().execute_cached(&*conn, query, []) {
+                    match StatementPool::global().execute_cached(&*conn, query_to_execute, []) {
                         Ok(rows_affected) => {
                             return Ok(DbResponse {
                                 columns: Vec::new(),
@@ -130,25 +146,43 @@ impl DbHandler {
             }
             
             // Check INSERT query cache to avoid re-parsing
-            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
+            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
                 // Use cached rewritten query if available
                 let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-                let rows_affected = conn.execute(final_query, [])?;
-                return Ok(DbResponse {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    rows_affected,
-                });
+                match conn.execute(final_query, []) {
+                    Ok(rows_affected) => return Ok(DbResponse {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        rows_affected,
+                    }),
+                    Err(e) => {
+                        // Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
+                        return Err(convert_enum_error(e, query_to_execute));
+                    }
+                }
             }
         }
         
-        // Fall back to normal execution
-        execute_dml_sync(&*conn, query, &self.schema_cache)
+        // Fall back to normal execution - but skip decimal rewriting since processor already did it
+        match conn.execute(query_to_execute, []) {
+            Ok(rows_affected) => Ok(DbResponse {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                rows_affected,
+            }),
+            Err(e) => {
+                // Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
+                Err(convert_enum_error(e, query_to_execute))
+            }
+        }
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        // Check result cache first for non-parameterized queries
-        let cache_key = ResultCacheKey::new(query, &[]);
+        // Create lazy processor for the query
+        let mut processor = crate::query::LazyQueryProcessor::new(query);
+        
+        // Check result cache first with original query
+        let cache_key = ResultCacheKey::new(processor.cache_key(), &[]);
         if let Some(cached_result) = global_result_cache().get(&cache_key) {
             debug!("Result cache hit for query: {}", query);
             return Ok(DbResponse {
@@ -158,17 +192,61 @@ impl DbHandler {
             });
         }
         
-        let start = std::time::Instant::now();
         let conn = self.conn.lock();
         
-        // Try enhanced fast path first for queries
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query, &self.schema_cache) {
+        // Check if we need any processing at all
+        if !processor.needs_processing(&self.schema_cache) {
+            // Fast path - no processing needed, use original query
+            let query_to_execute = processor.get_unprocessed();
+            
+            // Try enhanced fast path first
+            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+                let execution_time_us = 0; // Fast path doesn't track time
+                
+                // Cache the result
+                if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
+                    global_result_cache().insert(
+                        cache_key,
+                        response.columns.clone(),
+                        response.rows.clone(),
+                        response.rows_affected as u64,
+                        execution_time_us,
+                    );
+                }
+                
+                return Ok(response);
+            }
+        }
+        
+        let start = std::time::Instant::now();
+        
+        // Process the query (lazy - only does work if needed)
+        let query_to_execute = processor.process(&*conn, &self.schema_cache)?;
+        
+        // Check cache again with processed query if it changed
+        let final_cache_key = if query_to_execute != query {
+            let new_key = ResultCacheKey::new(query_to_execute, &[]);
+            if let Some(cached_result) = global_result_cache().get(&new_key) {
+                debug!("Result cache hit for processed query: {}", query_to_execute);
+                return Ok(DbResponse {
+                    columns: cached_result.columns,
+                    rows: cached_result.rows,
+                    rows_affected: cached_result.rows_affected as usize,
+                });
+            }
+            new_key
+        } else {
+            cache_key
+        };
+        
+        // Try enhanced fast path with processed query
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
             let execution_time_us = start.elapsed().as_micros() as u64;
             
-            // Cache the result if appropriate
-            if ResultSetCache::should_cache(query, execution_time_us, response.rows.len()) {
+            // Cache the result
+            if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
                 global_result_cache().insert(
-                    cache_key,
+                    final_cache_key,
                     response.columns.clone(),
                     response.rows.clone(),
                     response.rows_affected as u64,
@@ -180,13 +258,13 @@ impl DbHandler {
         }
         
         // Fall back to normal query execution
-        let response = execute_query_sync(&*conn, query, &self.schema_cache)?;
+        let response = execute_query_optimized(&*conn, query_to_execute, &self.schema_cache)?;
         let execution_time_us = start.elapsed().as_micros() as u64;
         
-        // Cache the result if appropriate
-        if ResultSetCache::should_cache(query, execution_time_us, response.rows.len()) {
+        // Cache the result
+        if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
             global_result_cache().insert(
-                cache_key,
+                final_cache_key,
                 response.columns.clone(),
                 response.rows.clone(),
                 response.rows_affected as u64,
@@ -237,6 +315,11 @@ impl DbHandler {
         let conn = self.conn.lock();
         conn.execute("ROLLBACK", [])?;
         Ok(())
+    }
+    
+    /// Get a mutable connection for operations that require &mut Connection
+    pub fn get_mut_connection(&self) -> Result<parking_lot::MutexGuard<Connection>, rusqlite::Error> {
+        Ok(self.conn.lock())
     }
     
     /// Try executing a query with parameters using the fast path
@@ -680,22 +763,30 @@ pub fn execute_query_sync(
     query: &str,
     schema_cache: &SchemaCache,
 ) -> Result<DbResponse, rusqlite::Error> {
-    // Try ultra-fast execution path first - but skip for queries with casts for now
-    if !query.contains("::") {
-        match execute_query_optimized(conn, query, schema_cache) {
-            Ok(result) => return Ok(result),
-            Err(_) => {
-                // Fall back to original path if optimized path fails
-                debug!("Optimized execution failed, falling back to original path for: {}", query);
-            }
+    // Translate PostgreSQL cast syntax if present
+    let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
+        use crate::translator::CastTranslator;
+        CastTranslator::translate_query(query, Some(conn))
+    } else {
+        query.to_string()
+    };
+    
+    let query_to_execute = translated_query.as_str();
+    
+    // Try ultra-fast execution path first
+    match execute_query_optimized(conn, query_to_execute, schema_cache) {
+        Ok(result) => return Ok(result),
+        Err(_) => {
+            // Fall back to original path if optimized path fails
+            debug!("Optimized execution failed, falling back to original path for: {}", query_to_execute);
         }
     }
     
     // Check global query cache first
-    if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query) {
+    if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
         // Use cached rewritten query if available
         let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-        debug!("Query cache HIT for: {}", query);
+        debug!("Query cache HIT for: {}", query_to_execute);
         
         // Log metrics periodically (every 100 queries)
         let metrics = crate::session::GLOBAL_QUERY_CACHE.get_metrics();
@@ -710,13 +801,13 @@ pub fn execute_query_sync(
         }
         
         // For cached queries, try to use statement pool for better performance
-        return execute_cached_query_with_statement_pool(conn, query, &cached, final_query);
+        return execute_cached_query_with_statement_pool(conn, query_to_execute, &cached, final_query);
     }
     
-    debug!("Query cache MISS for: {}", query);
+    debug!("Query cache MISS for: {}", query_to_execute);
     
     // Parse and rewrite query for DECIMAL types if needed
-    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query, conn, schema_cache)?;
+    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query_to_execute, conn, schema_cache)?;
     
     // Cache the parsed query for future use
     let cached_query = CachedQuery {
@@ -726,16 +817,16 @@ pub fn execute_query_sync(
         table_names: parsed_info.table_names,
         column_types: parsed_info.column_types,
         has_decimal_columns: parsed_info.has_decimal_columns,
-        rewritten_query: if parsed_info.is_decimal_query && rewritten_query != query {
+        rewritten_query: if parsed_info.is_decimal_query && rewritten_query != query_to_execute {
             Some(rewritten_query.clone())
         } else {
             None
         },
-        normalized_query: crate::cache::QueryCache::normalize_query(query),
+        normalized_query: crate::cache::QueryCache::normalize_query(query_to_execute),
     };
     
-    // Insert into global cache
-    crate::session::GLOBAL_QUERY_CACHE.insert(query.to_string(), cached_query.clone());
+    // Insert into global cache using the translated query as key
+    crate::session::GLOBAL_QUERY_CACHE.insert(query_to_execute.to_string(), cached_query.clone());
     debug!(
         "Cached query - Tables: {:?}, Decimal: {}, Column types: {}",
         cached_query.table_names,
@@ -744,12 +835,12 @@ pub fn execute_query_sync(
     );
     
     // Execute using cached information and statement pool
-    execute_cached_query_with_statement_pool(conn, query, &cached_query, &rewritten_query)
+    execute_cached_query_with_statement_pool(conn, query_to_execute, &cached_query, &rewritten_query)
 }
 
 
 /// Extract table name from INSERT statement
-fn extract_insert_table_name(query: &str) -> Option<String> {
+pub fn extract_insert_table_name(query: &str) -> Option<String> {
     // Simple regex-free parsing for performance - use case-insensitive search
     let into_pos = query.as_bytes().windows(6)
         .position(|window| window.eq_ignore_ascii_case(b" INTO "))?;
@@ -764,7 +855,7 @@ fn extract_insert_table_name(query: &str) -> Option<String> {
 }
 
 /// Rewrite query to handle DECIMAL types if needed
-fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
+pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
     // Parse the SQL statement
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, query)
@@ -782,7 +873,9 @@ fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, r
         return Ok(query.to_string());
     }
     
-    Ok(statements[0].to_string())
+    let rewritten = statements[0].to_string();
+    tracing::debug!("Decimal rewriter output: {}", rewritten);
+    Ok(rewritten)
 }
 
 struct ParsedQueryInfo {
@@ -889,8 +982,6 @@ fn execute_cached_query(
     cached: &CachedQuery,
     final_query: &str,
 ) -> Result<DbResponse, rusqlite::Error> {
-    
-    eprintln!("DEBUG: execute_cached_query executing: '{}'", final_query);
     let mut stmt = conn.prepare(final_query)?;
     let column_count = stmt.column_count();
     
@@ -917,10 +1008,6 @@ fn execute_cached_query(
                 rusqlite::types::ValueRef::Null => row_data.push(None),
                 rusqlite::types::ValueRef::Integer(int_val) => {
                     // Debug for integer values
-                    if int_val == 1952805748 {
-                        eprintln!("WARNING: Found 1952805748 as INTEGER in SQLite result!");
-                        eprintln!("This is 0x{:x} which is 'test' as bytes!", int_val);
-                    }
                     
                     if is_boolean_col[i] {
                         // Convert SQLite's 0/1 to PostgreSQL's f/t format
@@ -935,19 +1022,9 @@ fn execute_cached_query(
                     row_data.push(Some(f.to_string().into_bytes()));
                 },
                 rusqlite::types::ValueRef::Text(s) => {
-                    // Debug for text values
-                    if s == b"1952805748" {
-                        eprintln!("WARNING: Found '1952805748' as TEXT in SQLite result!");
-                        eprintln!("This should have been 'test'!");
-                    }
                     row_data.push(Some(s.to_vec()));
                 },
                 rusqlite::types::ValueRef::Blob(b) => {
-                    // Debug for blob values
-                    if b.len() == 4 && b == b"test" {
-                        eprintln!("WARNING: Found 'test' as BLOB in SQLite result!");
-                        eprintln!("This will be misinterpreted. Hex: {}", hex::encode(b));
-                    }
                     row_data.push(Some(b.to_vec()));
                 },
             }
@@ -1010,4 +1087,78 @@ fn pg_type_from_string(type_str: &str) -> Option<PgType> {
         "money" => Some(PgType::Money),
         _ => None,
     }
+}
+
+/// Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
+fn convert_enum_error(error: rusqlite::Error, query: &str) -> rusqlite::Error {
+    if let rusqlite::Error::SqliteFailure(sqlite_error, Some(msg)) = &error {
+        if sqlite_error.code == rusqlite::ErrorCode::ConstraintViolation && msg.contains("CHECK constraint failed") {
+            // Try to extract the enum type and value from the error message
+            // SQLite error format: "CHECK constraint failed: column_name IN ('val1', 'val2', ...)"
+            if let Some(start) = msg.find("CHECK constraint failed: ") {
+                let constraint_part = &msg[start + 25..];
+                if let Some(space_pos) = constraint_part.find(' ') {
+                    let column_name = &constraint_part[..space_pos];
+                    
+                    // Try to extract the value from the INSERT query
+                    if let Some(value) = extract_enum_value_from_query(query, column_name) {
+                        // Try to find the enum type name from the constraint
+                        if let Some(enum_type) = extract_enum_type_from_constraint(constraint_part) {
+                            return rusqlite::Error::SqliteFailure(
+                                *sqlite_error,
+                                Some(format!("invalid input value for enum {}: \"{}\"", enum_type, value))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    error
+}
+
+/// Extract the enum value being inserted from the query
+fn extract_enum_value_from_query(query: &str, column_name: &str) -> Option<String> {
+    // Parse INSERT statement to find column position and corresponding value
+    let insert_re = regex::Regex::new(r"(?i)INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)").ok()?;
+    let captures = insert_re.captures(query)?;
+    
+    let columns_str = captures.get(1)?.as_str();
+    let values_str = captures.get(2)?.as_str();
+    
+    // Find column index
+    let columns: Vec<&str> = columns_str.split(',').map(|c| c.trim()).collect();
+    let column_index = columns.iter().position(|&c| c == column_name)?;
+    
+    // Extract corresponding value
+    let values: Vec<&str> = values_str.split(',').map(|v| v.trim()).collect();
+    let value = values.get(column_index)?;
+    
+    // Remove quotes from value
+    let trimmed = value.trim_matches('\'').trim_matches('"');
+    Some(trimmed.to_string())
+}
+
+/// Extract enum type name from CHECK constraint
+fn extract_enum_type_from_constraint(constraint: &str) -> Option<String> {
+    // Try to infer the enum type from the column name
+    // In our implementation, column names often match or relate to enum type names
+    if let Some(column_start) = constraint.find(' ') {
+        let column_part = &constraint[..column_start];
+        // Remove common suffixes like _status, _type, _mood, etc.
+        let type_name = column_part
+            .trim_end_matches("_status")
+            .trim_end_matches("_type")
+            .trim_end_matches("_state")
+            .trim_end_matches("_mood")
+            .trim_end_matches("_level");
+        
+        // If it ends with the column name pattern, just use it
+        if column_part.contains('_') {
+            return Some(column_part.split('_').last()?.to_string());
+        }
+        
+        return Some(type_name.to_string());
+    }
+    None
 }

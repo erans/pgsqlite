@@ -275,6 +275,10 @@ impl ExtendedQueryHandler {
                                 
                                 // Second priority: Check schema table for stored type mappings
                                 if let Some(pg_type) = schema_types.get(col_name) {
+                                    // Need to check if this is an ENUM type
+                                    if let Ok(conn) = db.get_mut_connection() {
+                                        return crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn);
+                                    }
                                     return crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
                                 }
                                 
@@ -342,8 +346,20 @@ impl ExtendedQueryHandler {
         info!("Final param_types for statement: {:?}", actual_param_types);
         
         // Store the prepared statement
+        // Pre-translate the query for prepared statements to avoid repeated translation
+        let translated_query = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&*conn));
+            drop(conn);
+            Some(translated)
+        } else {
+            None
+        };
+        
         let stmt = PreparedStatement {
             query: cleaned_query.clone(),
+            translated_query,
             param_types: actual_param_types.clone(),
             param_formats: vec![0; actual_param_types.len()], // Default to text format
             field_descriptions,
@@ -442,6 +458,7 @@ impl ExtendedQueryHandler {
         let portal_obj = Portal {
             statement_name: statement.clone(),
             query: stmt.query.clone(),
+            translated_query: stmt.translated_query.clone(), // Use pre-translated query
             bound_values: values,
             param_formats: if formats.is_empty() {
                 vec![0; stmt.param_types.len()] // Default to text format for all params
@@ -481,12 +498,13 @@ impl ExtendedQueryHandler {
         info!("Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
-        let (query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
+        let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(&portal)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {}", portal)))?;
             
-            (portal_obj.query.clone(), 
+            (portal_obj.query.clone(),
+             portal_obj.translated_query.clone(),
              portal_obj.bound_values.clone(),
              portal_obj.param_formats.clone(),
              portal_obj.result_formats.clone(),
@@ -575,13 +593,16 @@ impl ExtendedQueryHandler {
             }
         }
 
+        // Use translated query if available, otherwise use original
+        let query_to_use = translated_query.as_ref().unwrap_or(&query);
+        
         // Convert bound values and substitute parameters
-        let final_query = Self::substitute_parameters(&query, &bound_values, &param_formats, &param_types)?;
+        let final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
         
         info!("Executing query: {}", final_query);
-        info!("Original query: {}", query);
-        info!("Final query after substitution: {}", final_query);
-        info!("Original query had {} bound values", bound_values.len());
+        debug!("Original query: {}", query);
+        debug!("Final query after substitution: {}", final_query);
+        debug!("Original query had {} bound values", bound_values.len());
         
         
         // Debug: Check if this is a catalog query
@@ -2014,9 +2035,9 @@ impl ExtendedQueryHandler {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Check if this is a catalog query first
-        info!("Checking if query is catalog query: {}", query);
+        info!("execute_select: Checking if query is catalog query: {}", query);
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, Arc::new(db.clone())).await {
-            info!("Query intercepted by catalog handler");
+            info!("execute_select: Query intercepted by catalog handler");
             let mut catalog_response = catalog_result?;
             
             // For catalog queries with binary result formats, we need to ensure the data
@@ -2152,7 +2173,12 @@ impl ExtendedQueryHandler {
                         
                         // First priority: Check schema table for stored type mappings
                         if let Some(pg_type) = schema_types.get(col_name) {
-                            let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                            // Need to check if this is an ENUM type
+                            let oid = if let Ok(conn) = db.get_mut_connection() {
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn)
+                            } else {
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                            };
                             info!("Column '{}' found in schema as type '{}' (OID {})", col_name, pg_type, oid);
                             return oid;
                         }
@@ -2576,10 +2602,43 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        use crate::ddl::EnumDdlHandler;
+        
+        // Check if this is an ENUM DDL statement first
+        if EnumDdlHandler::is_enum_ddl(query) {
+            // Handle the ENUM DDL
+            {
+                let mut conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
+            } // Mutex guard is dropped here
+            
+            // Send command complete
+            let command_tag = if query.trim().to_uppercase().starts_with("CREATE TYPE") {
+                "CREATE TYPE"
+            } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {
+                "ALTER TYPE"
+            } else if query.trim().to_uppercase().starts_with("DROP TYPE") {
+                "DROP TYPE"
+            } else {
+                "OK"
+            };
+            
+            framed.send(BackendMessage::CommandComplete { tag: command_tag.to_string() }).await?;
+            return Ok(());
+        }
+        
         // Handle CREATE TABLE translation
         let translated_query = if query_starts_with_ignore_case(query, "CREATE TABLE") {
-            let (sqlite_sql, type_mappings) = crate::translator::CreateTableTranslator::translate(query)
-                .map_err(|e| PgSqliteError::Protocol(e))?;
+            // Use translator with connection for ENUM support
+            let (sqlite_sql, type_mappings) = {
+                let conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                crate::translator::CreateTableTranslator::translate_with_connection(query, Some(&*conn))
+                    .map_err(|e| PgSqliteError::Protocol(e))?
+            }; // Drop connection guard here
             
             // Execute the translated CREATE TABLE
             db.execute(&sqlite_sql).await?;

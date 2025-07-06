@@ -56,6 +56,18 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - Fast path detection and execution for non-decimal tables
   - Statement pool provides near-native performance (1.0x overhead)
   - Protocol overhead remains significant (~168x) due to PostgreSQL wire protocol
+- **ENUM Type Support (2025-07-05 to 2025-07-06)**:
+  - Full PostgreSQL ENUM type implementation with CREATE TYPE AS ENUM
+  - Automatic CHECK constraint generation for ENUM validation
+  - System catalog support (pg_enum, pg_type integration)
+  - Type casting support (:: and CAST syntax)
+  - PostgreSQL-compatible error messages
+  - DROP TYPE dependency checking
+- **Performance Optimization Phase 3 (2025-07-06)**:
+  - SIMD-accelerated cast operator search using memchr crate
+  - Query fingerprinting for better cache keys
+  - Fixed execution cache collision bug for queries with literal values
+  - Current performance: ~24x overhead for cached SELECT queries
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.

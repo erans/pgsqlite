@@ -1,6 +1,5 @@
 mod common;
 use common::setup_test_server_with_init;
-use tokio_postgres::types::ToSql;
 
 #[tokio::test]
 async fn test_catalog_text_format() {
