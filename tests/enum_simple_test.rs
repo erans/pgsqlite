@@ -74,7 +74,12 @@ async fn test_enum_check_constraint() {
     
     assert!(result.is_err(), "Should fail to insert invalid ENUM value");
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("CHECK constraint"), "Error should mention CHECK constraint");
+    let err_str = err.to_string();
+    assert!(
+        err_str.contains("invalid input value for enum") || err_str.contains("CHECK constraint"),
+        "Error should mention invalid enum value or CHECK constraint. Got: {}",
+        err_str
+    );
     
     // Test that valid values work
     client.simple_query("INSERT INTO items (id, priority) VALUES (1, 'high')")

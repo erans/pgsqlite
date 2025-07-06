@@ -149,22 +149,32 @@ impl DbHandler {
             if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
                 // Use cached rewritten query if available
                 let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-                let rows_affected = conn.execute(final_query, [])?;
-                return Ok(DbResponse {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    rows_affected,
-                });
+                match conn.execute(final_query, []) {
+                    Ok(rows_affected) => return Ok(DbResponse {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        rows_affected,
+                    }),
+                    Err(e) => {
+                        // Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
+                        return Err(convert_enum_error(e, query_to_execute));
+                    }
+                }
             }
         }
         
         // Fall back to normal execution - but skip decimal rewriting since processor already did it
-        let rows_affected = conn.execute(query_to_execute, [])?;
-        Ok(DbResponse {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            rows_affected,
-        })
+        match conn.execute(query_to_execute, []) {
+            Ok(rows_affected) => Ok(DbResponse {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                rows_affected,
+            }),
+            Err(e) => {
+                // Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
+                Err(convert_enum_error(e, query_to_execute))
+            }
+        }
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
@@ -1077,4 +1087,78 @@ fn pg_type_from_string(type_str: &str) -> Option<PgType> {
         "money" => Some(PgType::Money),
         _ => None,
     }
+}
+
+/// Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
+fn convert_enum_error(error: rusqlite::Error, query: &str) -> rusqlite::Error {
+    if let rusqlite::Error::SqliteFailure(sqlite_error, Some(msg)) = &error {
+        if sqlite_error.code == rusqlite::ErrorCode::ConstraintViolation && msg.contains("CHECK constraint failed") {
+            // Try to extract the enum type and value from the error message
+            // SQLite error format: "CHECK constraint failed: column_name IN ('val1', 'val2', ...)"
+            if let Some(start) = msg.find("CHECK constraint failed: ") {
+                let constraint_part = &msg[start + 25..];
+                if let Some(space_pos) = constraint_part.find(' ') {
+                    let column_name = &constraint_part[..space_pos];
+                    
+                    // Try to extract the value from the INSERT query
+                    if let Some(value) = extract_enum_value_from_query(query, column_name) {
+                        // Try to find the enum type name from the constraint
+                        if let Some(enum_type) = extract_enum_type_from_constraint(constraint_part) {
+                            return rusqlite::Error::SqliteFailure(
+                                *sqlite_error,
+                                Some(format!("invalid input value for enum {}: \"{}\"", enum_type, value))
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    error
+}
+
+/// Extract the enum value being inserted from the query
+fn extract_enum_value_from_query(query: &str, column_name: &str) -> Option<String> {
+    // Parse INSERT statement to find column position and corresponding value
+    let insert_re = regex::Regex::new(r"(?i)INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)").ok()?;
+    let captures = insert_re.captures(query)?;
+    
+    let columns_str = captures.get(1)?.as_str();
+    let values_str = captures.get(2)?.as_str();
+    
+    // Find column index
+    let columns: Vec<&str> = columns_str.split(',').map(|c| c.trim()).collect();
+    let column_index = columns.iter().position(|&c| c == column_name)?;
+    
+    // Extract corresponding value
+    let values: Vec<&str> = values_str.split(',').map(|v| v.trim()).collect();
+    let value = values.get(column_index)?;
+    
+    // Remove quotes from value
+    let trimmed = value.trim_matches('\'').trim_matches('"');
+    Some(trimmed.to_string())
+}
+
+/// Extract enum type name from CHECK constraint
+fn extract_enum_type_from_constraint(constraint: &str) -> Option<String> {
+    // Try to infer the enum type from the column name
+    // In our implementation, column names often match or relate to enum type names
+    if let Some(column_start) = constraint.find(' ') {
+        let column_part = &constraint[..column_start];
+        // Remove common suffixes like _status, _type, _mood, etc.
+        let type_name = column_part
+            .trim_end_matches("_status")
+            .trim_end_matches("_type")
+            .trim_end_matches("_state")
+            .trim_end_matches("_mood")
+            .trim_end_matches("_level");
+        
+        // If it ends with the column name pattern, just use it
+        if column_part.contains('_') {
+            return Some(column_part.split('_').last()?.to_string());
+        }
+        
+        return Some(type_name.to_string());
+    }
+    None
 }
