@@ -184,7 +184,7 @@ impl DecimalHandler {
                 all_digits.push_str(&digit.to_string());
             } else {
                 // Subsequent groups - pad with zeros to ensure 4 digits
-                all_digits.push_str(&format!("{:04}", digit));
+                all_digits.push_str(&format!("{digit:04}"));
             }
         }
         

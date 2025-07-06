@@ -24,6 +24,12 @@ impl PostgresCodec {
     }
 }
 
+impl Default for PostgresCodec {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Decoder for PostgresCodec {
     type Item = FrontendMessage;
     type Error = io::Error;

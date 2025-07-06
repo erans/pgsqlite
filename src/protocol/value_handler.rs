@@ -123,7 +123,7 @@ impl ValueHandler {
         &self,
         text_data: &str,
         _pg_type_oid: i32,
-        binary_format: bool,
+        _binary_format: bool,
     ) -> io::Result<Option<MappedValue>> {
         if text_data.is_empty() {
             return Ok(Some(MappedValue::Memory(Vec::new())));
@@ -135,11 +135,7 @@ impl ValueHandler {
             Ok(Some(self.mmap_factory.create_from_text(text_data)?))
         } else {
             // Use regular memory storage
-            let pg_data = if binary_format {
-                text_data.as_bytes().to_vec()
-            } else {
-                text_data.as_bytes().to_vec()
-            };
+            let pg_data = text_data.as_bytes().to_vec();
             Ok(Some(MappedValue::Memory(pg_data)))
         }
     }
@@ -151,6 +147,25 @@ impl ValueHandler {
         pg_type_oid: i32,
         binary_format: bool,
     ) -> io::Result<Option<MappedValue>> {
+        // Handle boolean type specially
+        if pg_type_oid == PgType::Bool.to_oid() {
+            if binary_format {
+                let pg_data = self.convert_integer_binary(int_val, pg_type_oid);
+                return Ok(Some(MappedValue::Memory(pg_data)));
+            } else {
+                // Use small value optimization for boolean text format
+                let small = crate::protocol::SmallValue::from_bool(int_val != 0);
+                return Ok(Some(MappedValue::Small(small)));
+            }
+        }
+        
+        // Try to use small value optimization for text format
+        if !binary_format {
+            if let Some(small) = crate::protocol::SmallValue::from_integer(int_val) {
+                return Ok(Some(MappedValue::Small(small)));
+            }
+        }
+        
         let pg_data = if binary_format {
             self.convert_integer_binary(int_val, pg_type_oid)
         } else {
@@ -167,6 +182,13 @@ impl ValueHandler {
         pg_type_oid: i32,
         binary_format: bool,
     ) -> io::Result<Option<MappedValue>> {
+        // Try to use small value optimization for text format
+        if !binary_format {
+            if let Some(small) = crate::protocol::SmallValue::from_float(real_val) {
+                return Ok(Some(MappedValue::Small(small)));
+            }
+        }
+        
         let pg_data = if binary_format {
             self.convert_real_binary(real_val, pg_type_oid)
         } else {
@@ -333,10 +355,13 @@ mod tests {
         let result = handler.convert_value(&int_value, 23, false).unwrap(); // INT4
         
         match result {
-            Some(MappedValue::Memory(data)) => {
-                assert_eq!(data, b"42");
+            Some(MappedValue::Small(small)) => {
+                // Verify it's a small int with value 42
+                let mut buffer = [0u8; 32];
+                let len = small.write_text_to_buffer(&mut buffer);
+                assert_eq!(&buffer[..len], b"42");
             }
-            _ => panic!("Expected memory storage for integer"),
+            _ => panic!("Expected small value storage for integer 42"),
         }
     }
     
