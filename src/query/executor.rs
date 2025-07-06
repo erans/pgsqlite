@@ -4,6 +4,7 @@ use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::PgType;
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
+use crate::metadata::EnumTriggers;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
@@ -475,16 +476,16 @@ impl QueryExecutor {
             return Ok(());
         }
         
-        let (translated_query, type_mappings) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
+        let (translated_query, type_mappings, enum_columns) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
             // Use CREATE TABLE translator with connection for ENUM support
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
             
-            let result = CreateTableTranslator::translate_with_connection(query, Some(&*conn))
+            let result = CreateTableTranslator::translate_with_connection_full(query, Some(&*conn))
                 .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?;
             
             // Connection guard is dropped here
-            result
+            (result.sql, result.type_mappings, result.enum_columns)
         } else {
             // For other DDL, check for JSON/JSONB types
             let translated = if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {
@@ -492,7 +493,7 @@ impl QueryExecutor {
             } else {
                 query.to_string()
             };
-            (translated, std::collections::HashMap::new())
+            (translated, std::collections::HashMap::new(), Vec::new())
         };
         
         // Execute the translated query
@@ -535,6 +536,24 @@ impl QueryExecutor {
                 }
                 
                 info!("Stored type mappings for table {} (simple query protocol)", table_name);
+                
+                // Create triggers for ENUM columns
+                if !enum_columns.is_empty() {
+                    let conn = db.get_mut_connection()
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {}", e)))?;
+                    
+                    for (column_name, enum_type) in &enum_columns {
+                        // Record enum usage
+                        EnumTriggers::record_enum_usage(&conn, &table_name, column_name, enum_type)
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {}", e)))?;
+                        
+                        // Create validation triggers
+                        EnumTriggers::create_enum_validation_triggers(&conn, &table_name, column_name, enum_type)
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
+                        
+                        info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                    }
+                }
             }
         }
         

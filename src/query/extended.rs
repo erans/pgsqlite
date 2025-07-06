@@ -2632,12 +2632,14 @@ impl ExtendedQueryHandler {
         // Handle CREATE TABLE translation
         let translated_query = if query_starts_with_ignore_case(query, "CREATE TABLE") {
             // Use translator with connection for ENUM support
-            let (sqlite_sql, type_mappings) = {
+            let (sqlite_sql, type_mappings, enum_columns) = {
                 let conn = db.get_mut_connection()
                     .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
                 
-                crate::translator::CreateTableTranslator::translate_with_connection(query, Some(&*conn))
-                    .map_err(|e| PgSqliteError::Protocol(e))?
+                let result = crate::translator::CreateTableTranslator::translate_with_connection_full(query, Some(&*conn))
+                    .map_err(|e| PgSqliteError::Protocol(e))?;
+                
+                (result.sql, result.type_mappings, result.enum_columns)
             }; // Drop connection guard here
             
             // Execute the translated CREATE TABLE
@@ -2672,6 +2674,24 @@ impl ExtendedQueryHandler {
                     }
                     
                     info!("Stored type mappings for table {} (extended query protocol)", table_name);
+                    
+                    // Create triggers for ENUM columns
+                    if !enum_columns.is_empty() {
+                        let conn = db.get_mut_connection()
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {}", e)))?;
+                        
+                        for (column_name, enum_type) in &enum_columns {
+                            // Record enum usage
+                            crate::metadata::EnumTriggers::record_enum_usage(&conn, &table_name, column_name, enum_type)
+                                .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {}", e)))?;
+                            
+                            // Create validation triggers
+                            crate::metadata::EnumTriggers::create_enum_validation_triggers(&conn, &table_name, column_name, enum_type)
+                                .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
+                            
+                            info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                        }
+                    }
                 }
             }
             

@@ -225,59 +225,54 @@ impl EnumDdlHandler {
         if let Some(et) = enum_type {
             // Check if type is used in any tables (unless CASCADE)
             if !cascade {
-                // Check for dependencies by looking for CHECK constraints that reference this enum
+                // Check for dependencies in __pgsqlite_enum_usage table
                 let check_sql = "
-                    SELECT DISTINCT m.name AS table_name, m.sql
-                    FROM sqlite_master m
-                    WHERE m.type = 'table' 
-                    AND m.sql LIKE '%CHECK%'
+                    SELECT table_name 
+                    FROM __pgsqlite_enum_usage 
+                    WHERE enum_type = ?1
                 ";
                 
                 let mut stmt = conn.prepare(check_sql)
                     .map_err(|e| PgSqliteError::Protocol(format!("Failed to prepare dependency check: {}", e)))?;
                 
-                // Get all enum values for this type to check in constraints
-                let enum_values = EnumMetadata::get_enum_values(conn, et.type_oid)
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get enum values: {}", e)))?;
-                
-                let dependent_tables: Vec<String> = stmt.query_map([], |row| {
-                    let table_name: String = row.get(0)?;
-                    let sql: String = row.get(1)?;
-                    Ok((table_name, sql))
+                let dependent_tables: Vec<String> = stmt.query_map([type_name], |row| {
+                    row.get::<_, String>(0)
                 }).map_err(|e| PgSqliteError::Protocol(format!("Failed to check dependencies: {}", e)))?
-                    .filter_map(|result| {
-                        if let Ok((table_name, sql)) = result {
-                            // Check if this table's CHECK constraint references our enum type
-                            // Look for CHECK constraints that contain all the enum values
-                            if !enum_values.is_empty() {
-                                // Check if all enum values appear in the constraint
-                                let has_enum_constraint = enum_values.iter().all(|v| {
-                                    sql.contains(&format!("'{}'", v.label))
-                                });
-                                
-                                if has_enum_constraint && sql.contains("CHECK") {
-                                    return Some(table_name);
-                                }
-                            }
-                            
-                            // Also check for OID-based constraints (future-proofing)
-                            if sql.contains(&format!("type_oid = {}", et.type_oid)) ||
-                               sql.contains(&format!("__pgsqlite_validate_enum({}, ", et.type_oid)) {
-                                return Some(table_name);
-                            }
-                            
-                            None
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to collect dependencies: {}", e)))?;
                 
                 if !dependent_tables.is_empty() {
                     return Err(PgSqliteError::Protocol(
                         format!("cannot drop type {} because other objects depend on it", type_name)
                     ));
                 }
+            } else {
+                // CASCADE specified - drop all triggers and clean up usage
+                let usage_sql = "
+                    SELECT table_name, column_name 
+                    FROM __pgsqlite_enum_usage 
+                    WHERE enum_type = ?1
+                ";
+                
+                let mut stmt = conn.prepare(usage_sql)
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to prepare usage query: {}", e)))?;
+                
+                let usages: Vec<(String, String)> = stmt.query_map([type_name], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                }).map_err(|e| PgSqliteError::Protocol(format!("Failed to query usage: {}", e)))?
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to collect usage: {}", e)))?;
+                
+                // Drop all triggers
+                for (table_name, column_name) in usages {
+                    crate::metadata::EnumTriggers::drop_enum_validation_triggers(
+                        conn, &table_name, &column_name, type_name
+                    ).ok(); // Ignore errors on trigger drop
+                }
+                
+                // Clean up enum usage records
+                conn.execute("DELETE FROM __pgsqlite_enum_usage WHERE enum_type = ?1", [type_name])
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to clean enum usage: {}", e)))?;
             }
             
             // Drop the type

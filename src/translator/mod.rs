@@ -9,7 +9,7 @@ mod simd_search;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
-pub use create_table_translator::CreateTableTranslator;
+pub use create_table_translator::{CreateTableTranslator, CreateTableResult};
 pub use enum_validator::EnumValidator;
 pub use cast_translator::CastTranslator;
 pub use simd_search::SimdCastSearch;

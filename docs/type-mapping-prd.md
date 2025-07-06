@@ -75,8 +75,9 @@ PostgreSQL ENUM types are fully supported with automatic CHECK constraint genera
 
 **Implementation:**
 - ENUM values are stored as TEXT in SQLite
-- CHECK constraints enforce valid values at the database level
+- Trigger-based validation enforces valid values (enables ALTER TYPE ADD VALUE on existing tables)
 - Metadata stored in `__pgsqlite_enum_types` and `__pgsqlite_enum_values` tables
+- Usage tracking in `__pgsqlite_enum_usage` for dependency checking
 - Full system catalog integration (pg_type, pg_enum)
 - Type casting support with both `::` and `CAST()` syntax
 

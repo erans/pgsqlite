@@ -27,12 +27,10 @@ fn test_create_table_with_enum() {
     
     println!("Translated SQL: {}", translated_sql);
     
-    // Verify the translation includes CHECK constraint
+    // Verify the translation includes TEXT type for ENUM column
     assert!(translated_sql.contains("TEXT"));
-    assert!(translated_sql.contains("CHECK"));
-    assert!(translated_sql.contains("'happy'"));
-    assert!(translated_sql.contains("'sad'"));
-    assert!(translated_sql.contains("'angry'"));
+    // With trigger-based validation, CHECK constraints are not added to CREATE TABLE
+    assert!(!translated_sql.contains("CHECK"));
     
     // Execute the translated SQL
     conn.execute(&translated_sql, []).unwrap();
@@ -59,10 +57,18 @@ fn test_enum_check_constraint() {
     // Valid insert should succeed
     conn.execute("INSERT INTO task (id, status) VALUES (1, 'active')", []).unwrap();
     
-    // Invalid value should fail due to CHECK constraint
+    // With trigger-based validation, we need to create the triggers manually in this test
+    // In production, the QueryExecutor would handle this
+    use pgsqlite::metadata::EnumTriggers;
+    EnumTriggers::init_enum_usage_table(&conn).unwrap();
+    EnumTriggers::record_enum_usage(&conn, "task", "status", "status").unwrap();
+    EnumTriggers::create_enum_validation_triggers(&conn, "task", "status", "status").unwrap();
+    
+    // Invalid value should fail due to trigger validation
     let result = conn.execute("INSERT INTO task (id, status) VALUES (2, 'invalid')", []);
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("CHECK constraint failed"));
+    let error_msg = result.unwrap_err().to_string();
+    assert!(error_msg.contains("invalid input value for enum status") || error_msg.contains("ABORT"));
 }
 
 #[test]
@@ -87,9 +93,9 @@ fn test_multiple_enum_columns() {
         Some(&conn)
     ).unwrap();
     
-    // Should have two CHECK constraints
+    // With trigger-based validation, no CHECK constraints should be in the CREATE TABLE
     let check_count = translated_sql.matches("CHECK").count();
-    assert_eq!(check_count, 2);
+    assert_eq!(check_count, 0);
     
     // Verify type mappings
     assert_eq!(type_mappings.get("product.color").unwrap().pg_type, "color");
@@ -107,7 +113,8 @@ fn test_enum_with_quotes() {
     let create_table_sql = "CREATE TABLE test_table (id INTEGER PRIMARY KEY, value quote_test)";
     let (translated_sql, _) = CreateTableTranslator::translate_with_connection(create_table_sql, Some(&conn)).unwrap();
     
-    // Verify proper escaping in CHECK constraint
-    assert!(translated_sql.contains("'it''s'")); // Should be double-quoted for SQL
-    assert!(translated_sql.contains("'quote\"test'"));
+    // With trigger-based validation, the SQL should not contain CHECK constraints
+    // The ENUM values are validated by triggers, not in the CREATE TABLE statement
+    assert!(!translated_sql.contains("CHECK"));
+    assert!(translated_sql.contains("TEXT")); // ENUM columns are stored as TEXT
 }
