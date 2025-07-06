@@ -59,13 +59,13 @@ PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
 ```
 Operation        | Overhead | Time (ms) | Note
 ================|==========|===========|==================
-UPDATE          |    33x   |   0.037   | Excellent ⭐⭐
-DELETE          |    35x   |   0.033   | Excellent ⭐⭐
-SELECT (cached) |    26x   |   0.083   | Good cache speedup
-SELECT          |   161x   |   0.164   | Protocol overhead
-INSERT          |   172x   |   0.314   | Expected for 1-row
+UPDATE          |    36x   |   0.042   | Excellent ⭐⭐
+DELETE          |    42x   |   0.039   | Excellent ⭐⭐
+SELECT (cached) |    20x   |   0.073   | Good cache speedup
+SELECT          |   144x   |   0.145   | Protocol overhead
+INSERT          |   199x   |   0.314   | Expected for 1-row
 ----------------+----------+-----------+------------------
-OVERALL         |   107x   |     -     | Stable performance
+OVERALL         |   ~100x  |     -     | Stable performance
 ```
 
 CREATE operations are significantly slower as we also update the `__pgsqlite_schema` table, however those are siginificantly less frequent than other operations.
@@ -111,7 +111,7 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
   - Added itoa for faster integer-to-string conversion
   - Profiled and identified protocol overhead distribution
 
-These optimizations combined achieve **26x overhead for cached SELECT queries** and **107x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **33-35x overhead**.
+These optimizations combined achieve **20x overhead for cached SELECT queries** and **~100x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **36-42x overhead**.
 
 ### Performance Monitoring
 Run benchmarks to measure overhead:
