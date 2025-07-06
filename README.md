@@ -54,18 +54,18 @@ PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
 
 ## Performance
 
-**Latest Performance Results (2025-07-03):**
+**Latest Performance Results (2025-07-06):**
 
 ```
 Operation        | Overhead | Time (ms) | Note
 ================|==========|===========|==================
-UPDATE          |    33x   |   0.042   | Excellent ⭐⭐
-DELETE          |    37x   |   0.039   | Excellent ⭐⭐
-SELECT (cached) |    10x   |   0.051   | Outstanding ⭐⭐⭐
-SELECT          |    89x   |   0.097   | 50% improvement
-INSERT          |   165x   |   0.293   | Expected for 1-row
+UPDATE          |    33x   |   0.037   | Excellent ⭐⭐
+DELETE          |    35x   |   0.033   | Excellent ⭐⭐
+SELECT (cached) |    26x   |   0.083   | Good cache speedup
+SELECT          |   161x   |   0.164   | Protocol overhead
+INSERT          |   172x   |   0.314   | Expected for 1-row
 ----------------+----------+-----------+------------------
-OVERALL         |    77x   |     -     | 21% improvement
+OVERALL         |   107x   |     -     | Stable performance
 ```
 
 CREATE operations are significantly slower as we also update the `__pgsqlite_schema` table, however those are siginificantly less frequent than other operations.
@@ -104,8 +104,14 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
   - Cached type conversions and mappings
   - Optimized boolean conversion (0/1 → f/t)
   - Direct pass-through for non-decimal arithmetic
+  - Fast integer formatting with itoa library (21% speedup)
 
-These optimizations combined achieve **10x overhead for cached SELECT queries** and **77x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **33-37x overhead**.
+• **Protocol Serialization Optimizations** (2025-07-06):
+  - Eliminated unnecessary clones in batch row sending
+  - Added itoa for faster integer-to-string conversion
+  - Profiled and identified protocol overhead distribution
+
+These optimizations combined achieve **26x overhead for cached SELECT queries** and **107x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **33-35x overhead**.
 
 ### Performance Monitoring
 Run benchmarks to measure overhead:
@@ -186,6 +192,7 @@ pgsqlite implements a comprehensive type mapping system between PostgreSQL and S
   - Other types: UUID, MONEY, NUMERIC/DECIMAL, BIT, BIT VARYING
   - Range types: INT4RANGE, INT8RANGE, NUMRANGE
   - SERIAL/BIGSERIAL (mapped to AUTOINCREMENT)
+  - **ENUM types**: Full PostgreSQL ENUM support with CREATE TYPE AS ENUM
 - Type preservation through metadata registry
 
 ### Supported SQL Features
@@ -196,6 +203,8 @@ pgsqlite implements a comprehensive type mapping system between PostgreSQL and S
 - **Window functions**: SQLite's window function support
 - **Aggregate functions**: All standard aggregates (COUNT, SUM, AVG, MIN, MAX, etc.)
 - **RETURNING clause**: Simulated support for INSERT/UPDATE/DELETE RETURNING
+- **ENUM support**: CREATE TYPE AS ENUM, ALTER TYPE ADD VALUE, DROP TYPE
+- **Type casting**: Both PostgreSQL cast operators (::) and CAST() syntax
 
 ### Supported PostgreSQL Functions
 
