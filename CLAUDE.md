@@ -69,7 +69,15 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - SIMD-accelerated cast operator search using memchr crate
   - Query fingerprinting for better cache keys
   - Fixed execution cache collision bug for queries with literal values
-  - Current performance: ~24x overhead for cached SELECT queries
+  - **Small Value Optimization**: Added SmallValue enum to avoid heap allocations for:
+    - Booleans (t/f) - no allocation, static references
+    - Common integers (0, 1, -1) - no allocation  
+    - Small integers (< 20 digits) - stack-based formatting with itoa
+    - Small floats - stack-based formatting
+    - Empty strings - static reference
+    - Achieved 8% improvement in cached SELECT queries
+    - 3% improvement in UPDATE/DELETE operations
+  - Current performance: ~15x overhead for cached SELECT queries (improved from ~24x)
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.

@@ -277,7 +277,7 @@ impl ExtendedQueryHandler {
                                 if let Some(pg_type) = schema_types.get(col_name) {
                                     // Need to check if this is an ENUM type
                                     if let Ok(conn) = db.get_mut_connection() {
-                                        return crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn);
+                                        return crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &conn);
                                     }
                                     return crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
                                 }
@@ -350,7 +350,7 @@ impl ExtendedQueryHandler {
         let translated_query = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
-            let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&*conn));
+            let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&conn));
             drop(conn);
             Some(translated)
         } else {
@@ -2175,7 +2175,7 @@ impl ExtendedQueryHandler {
                         if let Some(pg_type) = schema_types.get(col_name) {
                             // Need to check if this is an ENUM type
                             let oid = if let Ok(conn) = db.get_mut_connection() {
-                                crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn)
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &conn)
                             } else {
                                 crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                             };
@@ -2636,7 +2636,7 @@ impl ExtendedQueryHandler {
                 let conn = db.get_mut_connection()
                     .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
                 
-                let result = crate::translator::CreateTableTranslator::translate_with_connection_full(query, Some(&*conn))
+                let result = crate::translator::CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
                     .map_err(|e| PgSqliteError::Protocol(e))?;
                 
                 (result.sql, result.type_mappings, result.enum_columns)

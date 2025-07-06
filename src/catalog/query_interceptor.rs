@@ -137,7 +137,7 @@ impl CatalogInterceptor {
             
             // Handle pg_class queries
             if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
-                return match PgClassHandler::handle_query(select, &*db).await {
+                return match PgClassHandler::handle_query(select, &db).await {
                     Ok(response) => Some(response),
                     Err(_) => None,
                 };
@@ -145,7 +145,7 @@ impl CatalogInterceptor {
             
             // Handle pg_attribute queries
             if table_name.contains("pg_attribute") || table_name.contains("pg_catalog.pg_attribute") {
-                return match PgAttributeHandler::handle_query(select, &*db).await {
+                return match PgAttributeHandler::handle_query(select, &db).await {
                     Ok(response) => Some(response),
                     Err(_) => None,
                 };
@@ -153,7 +153,7 @@ impl CatalogInterceptor {
             
             // Handle pg_enum queries
             if table_name.contains("pg_enum") || table_name.contains("pg_catalog.pg_enum") {
-                return match PgEnumHandler::handle_query(select, &*db).await {
+                return match PgEnumHandler::handle_query(select, &db).await {
                     Ok(response) => Some(response),
                     Err(_) => None,
                 };
@@ -329,7 +329,7 @@ impl CatalogInterceptor {
         // Add ENUM types from metadata only if typtype filter allows it
         if filter_typtype.is_none() || filter_typtype.as_ref() == Some(&"e".to_string()) {
             if let Ok(conn) = db.get_mut_connection() {
-                if let Ok(enum_types) = crate::metadata::EnumMetadata::get_all_enum_types(&*conn) {
+                if let Ok(enum_types) = crate::metadata::EnumMetadata::get_all_enum_types(&conn) {
                     debug!("Found {} enum types in metadata", enum_types.len());
                     for enum_type in enum_types {
                         debug!("Processing enum type: {} (OID: {})", enum_type.type_name, enum_type.type_oid);

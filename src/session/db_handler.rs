@@ -111,7 +111,7 @@ impl DbHandler {
             let query_to_execute = processor.get_unprocessed();
             
             // Try enhanced fast path first
-            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
                 return Ok(DbResponse {
                     columns: Vec::new(),
                     rows: Vec::new(),
@@ -121,7 +121,7 @@ impl DbHandler {
         }
         
         // Process the query if needed
-        let query_to_execute = processor.process(&*conn, &self.schema_cache)?;
+        let query_to_execute = processor.process(&conn, &self.schema_cache)?;
         
         // For INSERT queries, try statement pool for better performance
         if matches!(QueryTypeDetector::detect_query_type(query_to_execute), QueryType::Insert) {
@@ -129,7 +129,7 @@ impl DbHandler {
             if let Some(table_name) = extract_insert_table_name(query_to_execute) {
                 if !self.schema_cache.has_decimal_columns(&table_name) {
                     // No decimal columns, use statement pool for optimal performance
-                    match StatementPool::global().execute_cached(&*conn, query_to_execute, []) {
+                    match StatementPool::global().execute_cached(&conn, query_to_execute, []) {
                         Ok(rows_affected) => {
                             return Ok(DbResponse {
                                 columns: Vec::new(),
@@ -200,7 +200,7 @@ impl DbHandler {
             let query_to_execute = processor.get_unprocessed();
             
             // Try enhanced fast path first
-            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
                 let execution_time_us = 0; // Fast path doesn't track time
                 
                 // Cache the result
@@ -221,7 +221,7 @@ impl DbHandler {
         let start = std::time::Instant::now();
         
         // Process the query (lazy - only does work if needed)
-        let query_to_execute = processor.process(&*conn, &self.schema_cache)?;
+        let query_to_execute = processor.process(&conn, &self.schema_cache)?;
         
         // Check cache again with processed query if it changed
         let final_cache_key = if query_to_execute != query {
@@ -240,7 +240,7 @@ impl DbHandler {
         };
         
         // Try enhanced fast path with processed query
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&*conn, query_to_execute, &self.schema_cache) {
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
             let execution_time_us = start.elapsed().as_micros() as u64;
             
             // Cache the result
@@ -258,7 +258,7 @@ impl DbHandler {
         }
         
         // Fall back to normal query execution
-        let response = execute_query_optimized(&*conn, query_to_execute, &self.schema_cache)?;
+        let response = execute_query_optimized(&conn, query_to_execute, &self.schema_cache)?;
         let execution_time_us = start.elapsed().as_micros() as u64;
         
         // Cache the result
@@ -293,7 +293,7 @@ impl DbHandler {
         let conn = self.conn.lock();
         
         // Use enhanced schema cache with automatic preloading
-        self.schema_cache.get_or_load(&*conn, table_name)
+        self.schema_cache.get_or_load(&conn, table_name)
     }
     
     /// Begin transaction
@@ -331,7 +331,7 @@ impl DbHandler {
         let conn = self.conn.lock();
         
         // Try fast path for DML operations
-        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced_with_params(&*conn, query, params, &self.schema_cache) {
+        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced_with_params(&conn, query, params, &self.schema_cache) {
             return Ok(Some(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -340,7 +340,7 @@ impl DbHandler {
         }
         
         // Try fast path for SELECT operations
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced_with_params(&*conn, query, params, &self.schema_cache) {
+        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced_with_params(&conn, query, params, &self.schema_cache) {
             return Ok(Some(response));
         }
         
@@ -355,7 +355,7 @@ impl DbHandler {
         let conn = self.conn.lock();
         
         // Use statement pool for execution
-        let rows_affected = StatementPool::global().execute_cached(&*conn, query, [])?;
+        let rows_affected = StatementPool::global().execute_cached(&conn, query, [])?;
         
         Ok(DbResponse {
             columns: Vec::new(),
@@ -372,7 +372,7 @@ impl DbHandler {
         let conn = self.conn.lock();
         
         // Use statement pool for querying
-        let (columns, rows) = StatementPool::global().query_cached(&*conn, query, [])?;
+        let (columns, rows) = StatementPool::global().query_cached(&conn, query, [])?;
         let rows_affected = rows.len();
         
         Ok(DbResponse {
@@ -392,7 +392,7 @@ impl DbHandler {
         
         // Use statement pool for execution with parameters
         let rows_affected = StatementPool::global().execute_cached(
-            &*conn, 
+            &conn, 
             query, 
             rusqlite::params_from_iter(params.iter())
         )?;
@@ -414,7 +414,7 @@ impl DbHandler {
         
         // Use statement pool for querying with parameters
         let (columns, rows) = StatementPool::global().query_cached(
-            &*conn, 
+            &conn, 
             query, 
             rusqlite::params_from_iter(params.iter())
         )?;
@@ -590,7 +590,7 @@ fn execute_with_cached_metadata(
         rows.push(row?);
         
         // Process in batches for better cache performance (though we collect all here)
-        if rows.len() % BATCH_SIZE == 0 && rows.len() > 0 {
+        if rows.len() % BATCH_SIZE == 0 && !rows.is_empty() {
             // Reserve capacity for next batch
             rows.reserve(BATCH_SIZE);
         }

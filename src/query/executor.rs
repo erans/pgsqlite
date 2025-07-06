@@ -85,7 +85,7 @@ impl QueryExecutor {
             use crate::translator::CastTranslator;
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
-            let translated = CastTranslator::translate_query(query, Some(&*conn));
+            let translated = CastTranslator::translate_query(query, Some(&conn));
             drop(conn); // Release the connection
             translated
         } else {
@@ -163,7 +163,7 @@ impl QueryExecutor {
                         // Need to check if this is an ENUM type
                         // Get a connection to check ENUM metadata
                         if let Ok(conn) = db.get_mut_connection() {
-                            crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &*conn)
+                            crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &conn)
                         } else {
                             crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                         }
@@ -481,7 +481,7 @@ impl QueryExecutor {
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
             
-            let result = CreateTableTranslator::translate_with_connection_full(query, Some(&*conn))
+            let result = CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
                 .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?;
             
             // Connection guard is dropped here

@@ -445,6 +445,12 @@ impl TypeMapper {
     }
 }
 
+impl Default for TypeMapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

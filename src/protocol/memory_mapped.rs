@@ -62,6 +62,8 @@ pub enum MappedValue {
     },
     /// Direct reference to existing data (zero-copy)
     Reference(&'static [u8]),
+    /// Small values with optimized storage (no heap allocation)
+    Small(crate::protocol::SmallValue),
 }
 
 impl MappedValue {
@@ -115,6 +117,18 @@ impl MappedValue {
                 &mmap[*offset..*offset + *length]
             }
             MappedValue::Reference(data) => data,
+            MappedValue::Small(small) => {
+                // For static small values, return their static representation
+                match small {
+                    crate::protocol::SmallValue::BoolTrue => b"t",
+                    crate::protocol::SmallValue::BoolFalse => b"f",
+                    crate::protocol::SmallValue::Zero => b"0",
+                    crate::protocol::SmallValue::One => b"1",
+                    crate::protocol::SmallValue::MinusOne => b"-1",
+                    crate::protocol::SmallValue::Empty => b"",
+                    _ => panic!("Dynamic small values cannot be converted to slice"),
+                }
+            }
         }
     }
     
@@ -124,6 +138,7 @@ impl MappedValue {
             MappedValue::Memory(data) => data.len(),
             MappedValue::Mapped { length, .. } => *length,
             MappedValue::Reference(data) => data.len(),
+            MappedValue::Small(small) => small.max_text_length(),
         }
     }
     
@@ -147,6 +162,12 @@ impl MappedValue {
             MappedValue::Reference(data) => {
                 writer.write_all(data).await
             }
+            MappedValue::Small(small) => {
+                // Use a stack buffer for small values
+                let mut buffer = [0u8; 32];
+                let len = small.write_text_to_buffer(&mut buffer);
+                writer.write_all(&buffer[..len]).await
+            }
         }
     }
     
@@ -167,6 +188,10 @@ impl MappedValue {
             }
             MappedValue::Reference(data) => {
                 Some(MappedValue::Reference(&data[start..start + len]))
+            }
+            MappedValue::Small(_) => {
+                // Small values cannot be sliced
+                None
             }
         }
     }

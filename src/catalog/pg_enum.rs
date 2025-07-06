@@ -66,7 +66,7 @@ impl PgEnumHandler {
         if let Some(type_oid) = filter_type_oid {
             // Filter by enum type
             debug!("Filtering pg_enum by enumtypid = {}", type_oid);
-            if let Ok(values) = EnumMetadata::get_enum_values(&*conn, type_oid) {
+            if let Ok(values) = EnumMetadata::get_enum_values(&conn, type_oid) {
                 debug!("Found {} values for enum type {}", values.len(), type_oid);
                 for value in values {
                     let row = Self::build_row(&columns, &value);
@@ -76,16 +76,16 @@ impl PgEnumHandler {
         } else if let Some(value_oid) = filter_value_oid {
             // Filter by specific value OID
             debug!("Filtering pg_enum by oid = {}", value_oid);
-            if let Ok(Some(value)) = EnumMetadata::get_enum_value_by_oid(&*conn, value_oid) {
+            if let Ok(Some(value)) = EnumMetadata::get_enum_value_by_oid(&conn, value_oid) {
                 let row = Self::build_row(&columns, &value);
                 rows.push(row);
             }
         } else {
             // Return all enum values from all types
             debug!("Returning all pg_enum entries");
-            if let Ok(enum_types) = EnumMetadata::get_all_enum_types(&*conn) {
+            if let Ok(enum_types) = EnumMetadata::get_all_enum_types(&conn) {
                 for enum_type in enum_types {
-                    if let Ok(values) = EnumMetadata::get_enum_values(&*conn, enum_type.type_oid) {
+                    if let Ok(values) = EnumMetadata::get_enum_values(&conn, enum_type.type_oid) {
                         for value in values {
                             let row = Self::build_row(&columns, &value);
                             rows.push(row);
