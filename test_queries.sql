@@ -6,7 +6,9 @@
 -- 1. SCHEMA OPERATIONS
 -- ============================================
 
--- Drop tables if they exist
+-- Drop tables if they exist (including ENUM test tables)
+DROP TABLE IF EXISTS test_enum_complex;
+DROP TABLE IF EXISTS test_enums;
 DROP TABLE IF EXISTS test_arrays;
 DROP TABLE IF EXISTS test_special_types;
 DROP TABLE IF EXISTS test_numeric_types;
@@ -14,6 +16,11 @@ DROP TABLE IF EXISTS test_basic_types;
 DROP TABLE IF EXISTS orders;
 DROP TABLE IF EXISTS customers;
 DROP TABLE IF EXISTS products;
+
+-- Drop ENUM types if they exist
+DROP TYPE IF EXISTS mood;
+DROP TYPE IF EXISTS status;
+DROP TYPE IF EXISTS priority;
 
 -- Create basic types table
 CREATE TABLE test_basic_types (
@@ -102,6 +109,43 @@ CREATE INDEX idx_orders_product ON orders(product_id);
 CREATE INDEX idx_orders_date ON orders(order_date);
 
 -- ============================================
+-- ENUM TYPE TESTING
+-- ============================================
+
+-- Create ENUM types
+CREATE TYPE mood AS ENUM ('happy', 'sad', 'neutral', 'excited', 'angry');
+CREATE TYPE status AS ENUM ('pending', 'processing', 'completed', 'cancelled');
+CREATE TYPE priority AS ENUM ('low', 'medium', 'high', 'urgent');
+
+-- Create table with ENUM columns
+CREATE TABLE test_enums (
+    id SERIAL PRIMARY KEY,
+    user_mood mood,
+    task_status status DEFAULT 'pending',
+    task_priority priority NOT NULL DEFAULT 'medium',
+    description TEXT
+);
+
+-- Create complex table mixing ENUMs with other types
+CREATE TABLE test_enum_complex (
+    id SERIAL PRIMARY KEY,
+    customer_id INTEGER REFERENCES customers(customer_id),
+    order_status status NOT NULL DEFAULT 'pending',
+    priority_level priority DEFAULT 'low',
+    customer_mood mood,
+    amount NUMERIC(10,2),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_urgent BOOLEAN DEFAULT false
+);
+
+-- Add new values to existing ENUM (ALTER TYPE)
+-- NOTE: With trigger-based validation, ALTER TYPE ADD VALUE now works correctly!
+ALTER TYPE mood ADD VALUE 'confused' AFTER 'neutral';
+ALTER TYPE mood ADD VALUE 'hopeful' BEFORE 'happy';
+ALTER TYPE status ADD VALUE 'on_hold' AFTER 'processing';
+
+-- ============================================
 -- 2. INSERT OPERATIONS
 -- ============================================
 
@@ -183,6 +227,48 @@ INSERT INTO orders (customer_id, product_id, quantity, order_date, total_amount)
     (5, 3, 2, '2025-01-05', 159.98),
     (1, 4, 1, '2025-01-06', 299.99),
     (2, 5, 1, '2025-01-07', 149.99);
+
+-- ENUM insertions
+INSERT INTO test_enums (user_mood, task_status, task_priority, description) VALUES
+    ('happy', 'pending', 'low', 'First task'),
+    ('sad', 'processing', 'high', 'Urgent issue'),
+    ('neutral', 'completed', 'medium', 'Regular work'),
+    ('excited', 'cancelled', 'urgent', 'Changed plans'),
+    ('angry', 'pending', 'high', 'Complaint'),
+    ('confused', 'on_hold', 'medium', 'Needs clarification'),
+    ('hopeful', 'processing', 'low', 'Future project'),
+    (NULL, 'pending', 'medium', 'Mood not specified'),
+    ('happy', 'pending', 'medium', 'Using defaults');
+
+-- Complex ENUM table insertions with JOINs
+INSERT INTO test_enum_complex (customer_id, order_status, priority_level, customer_mood, amount, notes, is_urgent)
+SELECT 
+    c.customer_id,
+    CASE 
+        WHEN o.total_amount > 1000 THEN 'completed'::status
+        WHEN o.total_amount > 500 THEN 'processing'::status
+        ELSE 'pending'::status
+    END,
+    CASE 
+        WHEN o.total_amount > 1500 THEN 'urgent'::priority
+        WHEN o.total_amount > 800 THEN 'high'::priority
+        WHEN o.total_amount > 300 THEN 'medium'::priority
+        ELSE 'low'::priority
+    END,
+    CASE (c.customer_id % 7)
+        WHEN 0 THEN 'happy'::mood
+        WHEN 1 THEN 'sad'::mood
+        WHEN 2 THEN 'neutral'::mood
+        WHEN 3 THEN 'excited'::mood
+        WHEN 4 THEN 'angry'::mood
+        WHEN 5 THEN 'confused'::mood
+        ELSE 'hopeful'::mood
+    END,
+    o.total_amount,
+    'Order from ' || c.name,
+    o.total_amount > 1000
+FROM customers c
+JOIN orders o ON c.customer_id = o.customer_id;
 
 -- ============================================
 -- 3. SELECT QUERIES
@@ -332,6 +418,133 @@ SELECT * FROM test_special_types;
 SELECT * FROM test_arrays WHERE int_array IS NOT NULL;
 
 -- ============================================
+-- ENUM SELECT QUERIES
+-- ============================================
+
+-- Basic ENUM queries
+SELECT * FROM test_enums;
+SELECT * FROM test_enums WHERE user_mood = 'happy';
+SELECT * FROM test_enums WHERE task_status IN ('pending', 'processing');
+SELECT * FROM test_enums WHERE task_priority = 'high' OR task_priority = 'urgent';
+
+-- ENUM with NULL handling
+SELECT * FROM test_enums WHERE user_mood IS NULL;
+SELECT * FROM test_enums WHERE user_mood IS NOT NULL;
+
+-- ENUM ordering (alphabetical by default)
+SELECT DISTINCT user_mood FROM test_enums WHERE user_mood IS NOT NULL ORDER BY user_mood;
+SELECT DISTINCT task_priority FROM test_enums ORDER BY task_priority;
+
+-- Complex queries with ENUMs
+SELECT 
+    e.customer_mood,
+    COUNT(*) as mood_count,
+    AVG(e.amount) as avg_amount,
+    MIN(e.amount) as min_amount,
+    MAX(e.amount) as max_amount
+FROM test_enum_complex e
+WHERE e.customer_mood IS NOT NULL
+GROUP BY e.customer_mood
+ORDER BY mood_count DESC;
+
+-- JOIN with ENUM filtering
+SELECT 
+    c.name,
+    e.order_status,
+    e.priority_level,
+    e.customer_mood,
+    e.amount
+FROM test_enum_complex e
+JOIN customers c ON e.customer_id = c.customer_id
+WHERE e.order_status = 'completed'
+  AND e.priority_level IN ('high', 'urgent')
+ORDER BY e.amount DESC;
+
+-- ENUM in CASE expressions
+SELECT 
+    id,
+    task_status,
+    CASE task_status
+        WHEN 'pending' THEN 'Not started'
+        WHEN 'processing' THEN 'In progress'
+        WHEN 'on_hold' THEN 'Paused'
+        WHEN 'completed' THEN 'Done'
+        WHEN 'cancelled' THEN 'Stopped'
+        ELSE 'Unknown'
+    END as status_description,
+    CASE 
+        WHEN task_priority IN ('urgent', 'high') THEN 'Critical'
+        WHEN task_priority = 'medium' THEN 'Normal'
+        ELSE 'Low priority'
+    END as priority_category
+FROM test_enums;
+
+-- ENUM type casting
+SELECT 
+    'happy'::mood as casted_mood,
+    CAST('pending' AS status) as casted_status,
+    'high'::priority as casted_priority;
+
+-- Complex aggregation with ENUMs
+SELECT 
+    order_status,
+    priority_level,
+    COUNT(*) as count,
+    SUM(amount) as total_amount,
+    AVG(amount) as avg_amount,
+    COUNT(DISTINCT customer_id) as unique_customers
+FROM test_enum_complex
+GROUP BY order_status, priority_level
+HAVING COUNT(*) > 1
+ORDER BY order_status, priority_level;
+
+-- Subquery with ENUMs
+SELECT 
+    c.name,
+    (SELECT COUNT(*) 
+     FROM test_enum_complex e 
+     WHERE e.customer_id = c.customer_id 
+       AND e.order_status = 'completed') as completed_orders,
+    (SELECT COUNT(*) 
+     FROM test_enum_complex e 
+     WHERE e.customer_id = c.customer_id 
+       AND e.priority_level IN ('high', 'urgent')) as high_priority_orders
+FROM customers c
+WHERE EXISTS (
+    SELECT 1 
+    FROM test_enum_complex e 
+    WHERE e.customer_id = c.customer_id
+);
+
+-- CTE with ENUMs
+WITH status_summary AS (
+    SELECT 
+        order_status,
+        COUNT(*) as status_count,
+        SUM(amount) as total_amount
+    FROM test_enum_complex
+    GROUP BY order_status
+),
+priority_summary AS (
+    SELECT 
+        priority_level,
+        COUNT(*) as priority_count,
+        AVG(amount) as avg_amount
+    FROM test_enum_complex
+    GROUP BY priority_level
+)
+SELECT 
+    s.order_status,
+    s.status_count,
+    s.total_amount,
+    p.priority_level,
+    p.priority_count,
+    p.avg_amount
+FROM status_summary s
+CROSS JOIN priority_summary p
+WHERE s.status_count > 2 OR p.priority_count > 2;
+
+-- ============================================
 -- 4. UPDATE OPERATIONS
 -- ============================================
 
@@ -354,6 +567,55 @@ SET
     bool_col = NOT bool_col,
     timestamp_col = CURRENT_TIMESTAMP
 WHERE id = 1;
+
+-- ============================================
+-- ENUM UPDATE OPERATIONS
+-- ============================================
+
+-- Update ENUM columns
+UPDATE test_enums SET user_mood = 'excited' WHERE id = 1;
+UPDATE test_enums SET task_status = 'completed' WHERE task_status = 'processing';
+UPDATE test_enums SET task_priority = 'urgent' WHERE id IN (2, 5);
+
+-- Update ENUMs to NULL
+UPDATE test_enums SET user_mood = NULL WHERE id = 8;
+
+-- Update with CASE expression
+UPDATE test_enums 
+SET task_priority = CASE 
+    WHEN task_status = 'cancelled' THEN 'low'
+    WHEN task_status = 'completed' THEN 'medium'
+    ELSE 'high'
+END
+WHERE task_priority != 'urgent';
+
+-- Complex UPDATE with JOINs and ENUMs
+UPDATE test_enum_complex
+SET 
+    order_status = 'completed',
+    priority_level = 'low',
+    customer_mood = 'happy'
+WHERE customer_id IN (
+    SELECT customer_id 
+    FROM customers 
+    WHERE name LIKE 'John%'
+);
+
+-- Update based on ENUM values
+UPDATE test_enum_complex
+SET amount = amount * 1.1
+WHERE order_status = 'pending' 
+  AND priority_level IN ('high', 'urgent');
+
+-- Conditional ENUM updates
+UPDATE test_enum_complex
+SET customer_mood = CASE
+    WHEN amount > 1500 THEN 'excited'
+    WHEN amount > 1000 THEN 'happy'
+    WHEN amount > 500 THEN 'neutral'
+    ELSE 'sad'
+END
+WHERE customer_mood IS NOT NULL;
 
 -- ============================================
 -- 5. DELETE OPERATIONS
@@ -423,6 +685,52 @@ AND attnum > 0
 ORDER BY attnum;
 
 -- ============================================
+-- ENUM SYSTEM CATALOG QUERIES
+-- ============================================
+
+-- Query pg_type for ENUM types
+SELECT 
+    oid,
+    typname,
+    typnamespace,
+    typtype,
+    typcategory
+FROM pg_catalog.pg_type
+WHERE typtype = 'e'
+ORDER BY typname;
+
+-- Query pg_enum for ENUM values
+SELECT 
+    enumtypid,
+    enumsortorder,
+    enumlabel
+FROM pg_catalog.pg_enum
+ORDER BY enumtypid, enumsortorder;
+
+-- Join pg_type and pg_enum to see ENUM types with their values
+SELECT 
+    t.typname as enum_type,
+    e.enumlabel as enum_value,
+    e.enumsortorder as sort_order
+FROM pg_catalog.pg_type t
+JOIN pg_catalog.pg_enum e ON t.oid = e.enumtypid
+WHERE t.typtype = 'e'
+ORDER BY t.typname, e.enumsortorder;
+
+-- Find all columns using ENUM types
+SELECT 
+    c.relname as table_name,
+    a.attname as column_name,
+    t.typname as enum_type
+FROM pg_catalog.pg_class c
+JOIN pg_catalog.pg_attribute a ON c.oid = a.attrelid
+JOIN pg_catalog.pg_type t ON a.atttypid = t.oid
+WHERE t.typtype = 'e'
+  AND c.relkind = 'r'
+  AND a.attnum > 0
+ORDER BY c.relname, a.attname;
+
+-- ============================================
 -- 8. PERFORMANCE QUERIES
 -- ============================================
 
@@ -459,6 +767,28 @@ SELECT
     COUNT(*) as product_count
 FROM products
 GROUP BY price_category;
+
+-- ============================================
+-- ENUM ERROR CASES (commented out - will fail)
+-- ============================================
+
+-- Invalid ENUM value insertion (should fail with constraint violation)
+-- INSERT INTO test_enums (user_mood, task_status, task_priority) VALUES ('invalid_mood', 'pending', 'medium');
+
+-- Invalid ENUM value update (should fail)
+-- UPDATE test_enums SET task_status = 'invalid_status' WHERE id = 1;
+
+-- Invalid cast to ENUM (should fail)
+-- SELECT 'not_a_mood'::mood;
+
+-- Attempt to drop ENUM type still in use (should fail)
+-- DROP TYPE mood;
+
+-- Create duplicate ENUM type (should fail)
+-- CREATE TYPE mood AS ENUM ('happy', 'sad');
+
+-- Add duplicate ENUM value (should fail)
+-- ALTER TYPE mood ADD VALUE 'happy';
 
 -- ============================================
 -- 10. CLEANUP (Optional - comment out if needed)

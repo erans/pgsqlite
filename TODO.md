@@ -174,6 +174,12 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Better error formatting for invalid enum values (e.g., "invalid input value for enum mood: 'angry'")
   - DROP TYPE dependency checking with proper error messages
   - Automatic conversion of SQLite CHECK constraint errors to PostgreSQL format
+- [x] Phase 9: ALTER TYPE ADD VALUE Support - COMPLETED (2025-07-06)
+  - Replaced CHECK constraints with trigger-based validation
+  - Triggers dynamically validate against __pgsqlite_enum_values table
+  - ALTER TYPE ADD VALUE now works correctly with existing tables
+  - Created __pgsqlite_enum_usage table to track ENUM column usage
+  - Added EnumTriggers module for managing validation triggers
 
 #### JSON/JSONB
 - [ ] Implement JSONB type (binary JSON)

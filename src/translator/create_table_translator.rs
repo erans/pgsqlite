@@ -3,9 +3,22 @@ use std::collections::HashMap;
 use crate::metadata::{TypeMapping, EnumMetadata};
 use crate::types::TypeMapper;
 use rusqlite::Connection;
+use std::cell::RefCell;
+
+#[derive(Debug)]
+pub struct CreateTableResult {
+    pub sql: String,
+    pub type_mappings: HashMap<String, TypeMapping>,
+    pub enum_columns: Vec<(String, String)>, // (column_name, enum_type)
+}
+
+thread_local! {
+    static ENUM_COLUMNS: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+}
 
 pub struct CreateTableTranslator;
 
+#[allow(unused_variables)]
 impl CreateTableTranslator {
     /// Translate PostgreSQL CREATE TABLE statement to SQLite
     pub fn translate(pg_sql: &str) -> Result<(String, HashMap<String, TypeMapping>), String> {
@@ -17,8 +30,20 @@ impl CreateTableTranslator {
         pg_sql: &str, 
         conn: Option<&Connection>
     ) -> Result<(String, HashMap<String, TypeMapping>), String> {
+        let result = Self::translate_with_connection_full(pg_sql, conn)?;
+        Ok((result.sql, result.type_mappings))
+    }
+    
+    /// Translate PostgreSQL CREATE TABLE statement to SQLite with full result including ENUM columns
+    pub fn translate_with_connection_full(
+        pg_sql: &str, 
+        conn: Option<&Connection>
+    ) -> Result<CreateTableResult, String> {
         let mut type_mapping = HashMap::new();
         let mut check_constraints = Vec::new();
+        
+        // Clear enum columns tracker
+        ENUM_COLUMNS.with(|ec| ec.borrow_mut().clear());
         
         // Basic regex to match CREATE TABLE - use DOTALL flag to match newlines
         let create_regex = Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap();
@@ -46,10 +71,21 @@ impl CreateTableTranslator {
             // Reconstruct CREATE TABLE
             let sqlite_sql = format!("CREATE TABLE {} ({})", table_name, final_columns);
             
-            Ok((sqlite_sql, type_mapping))
+            // Collect enum columns
+            let enum_columns = ENUM_COLUMNS.with(|ec| ec.borrow().clone());
+            
+            Ok(CreateTableResult {
+                sql: sqlite_sql,
+                type_mappings: type_mapping,
+                enum_columns,
+            })
         } else {
             // Not a CREATE TABLE statement, return as-is
-            Ok((pg_sql.to_string(), type_mapping))
+            Ok(CreateTableResult {
+                sql: pg_sql.to_string(),
+                type_mappings: type_mapping,
+                enum_columns: Vec::new(),
+            })
         }
     }
     
@@ -184,23 +220,16 @@ impl CreateTableTranslator {
         let (sqlite_type, normalized_pg_type) = if let Some(conn) = conn {
             // Check if the type is an ENUM
             match EnumMetadata::get_enum_type(conn, &pg_type.to_lowercase()) {
-                Ok(Some(enum_type)) => {
-                    // It's an ENUM type - store as TEXT and add CHECK constraint
+                Ok(Some(_enum_type)) => {
+                    // It's an ENUM type - store as TEXT
+                    // Note: We don't add CHECK constraints here anymore.
+                    // Instead, we'll create triggers after the table is created.
                     let sqlite_type = "TEXT".to_string();
                     
-                    // Get ENUM values for CHECK constraint
-                    if let Ok(values) = EnumMetadata::get_enum_values(conn, enum_type.type_oid) {
-                        let value_list: Vec<String> = values.iter()
-                            .map(|v| format!("'{}'", v.label.replace("'", "''")))
-                            .collect();
-                        
-                        let check_constraint = format!(
-                            "CHECK ({} IN ({}))",
-                            column_name,
-                            value_list.join(", ")
-                        );
-                        check_constraints.push(check_constraint);
-                    }
+                    // Store enum column info for later trigger creation
+                    ENUM_COLUMNS.with(|ec| {
+                        ec.borrow_mut().push((column_name.to_string(), pg_type.to_lowercase().to_string()));
+                    });
                     
                     (sqlite_type, pg_type.to_lowercase())
                 }

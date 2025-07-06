@@ -58,11 +58,13 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - Protocol overhead remains significant (~168x) due to PostgreSQL wire protocol
 - **ENUM Type Support (2025-07-05 to 2025-07-06)**:
   - Full PostgreSQL ENUM type implementation with CREATE TYPE AS ENUM
-  - Automatic CHECK constraint generation for ENUM validation
+  - Trigger-based validation instead of CHECK constraints (allows ALTER TYPE ADD VALUE)
   - System catalog support (pg_enum, pg_type integration)
   - Type casting support (:: and CAST syntax)
   - PostgreSQL-compatible error messages
   - DROP TYPE dependency checking
+  - ALTER TYPE ADD VALUE with BEFORE/AFTER positioning
+  - Dynamic validation against current ENUM values in __pgsqlite_enum_values table
 - **Performance Optimization Phase 3 (2025-07-06)**:
   - SIMD-accelerated cast operator search using memchr crate
   - Query fingerprinting for better cache keys
