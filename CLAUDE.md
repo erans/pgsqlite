@@ -77,7 +77,7 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
     - Empty strings - static reference
     - Achieved 8% improvement in cached SELECT queries
     - 3% improvement in UPDATE/DELETE operations
-  - Current performance: ~15x overhead for cached SELECT queries (improved from ~24x)
+  - Current performance: ~17x overhead for cached SELECT queries (improved from ~24x)
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings instead of the expected bit values. This is a limitation in the current execution cache implementation.

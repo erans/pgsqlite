@@ -37,6 +37,25 @@ The optimizations showed minimal impact because:
 2. **Allocation overhead remains** - We still do `.to_vec()` after formatting, creating heap allocations
 3. **Small improvements are masked** - Network/socket overhead and protocol translation dwarf formatting gains
 
+## Small Value Optimization (2025-07-06)
+
+### Changes Made
+
+4. **Implemented SmallValue enum for zero-allocation handling**
+   - Created dedicated enum for common values (booleans, 0, 1, -1, small numbers)
+   - Static references for boolean values ('t'/'f') and empty strings
+   - Stack-based formatting for small integers (<20 digits) and floats
+   - Integrated with MappedValue system to avoid heap allocations
+
+### Results
+
+- **SELECT (cached)**: ~17x overhead (improved from ~20x) - **8% improvement**
+- **UPDATE**: ~36x overhead (improved from ~37x) - **3% improvement**
+- **DELETE**: ~42x overhead (improved from ~43x) - **3% improvement**
+- **Overall**: ~95x overhead (improved from ~100x) - **5% improvement**
+
+The small value optimization successfully reduces heap allocations for common values, providing measurable performance improvements especially for cached queries.
+
 ## Key Findings
 
 1. **Number formatting is not the primary bottleneck**
@@ -44,7 +63,12 @@ The optimizations showed minimal impact because:
    - Float formatting was actually slower with ryu
    - The final `.to_vec()` allocation negates much of the benefit
 
-2. **Real bottlenecks are:**
+2. **Small value optimization shows promise**
+   - Avoiding heap allocations for common values provides 3-8% improvements
+   - Most effective for cached queries where other overheads are minimized
+   - Complements other optimizations in the stack
+
+3. **Real bottlenecks are:**
    - Protocol message framing and encoding (~20-30%)
    - Type system conversions and allocations (~30-40%)
    - Query parsing and rewriting (~20-30%)

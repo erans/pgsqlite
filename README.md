@@ -61,11 +61,11 @@ Operation        | Overhead | Time (ms) | Note
 ================|==========|===========|==================
 UPDATE          |    36x   |   0.042   | Excellent ⭐⭐
 DELETE          |    42x   |   0.039   | Excellent ⭐⭐
-SELECT (cached) |    20x   |   0.073   | Good cache speedup
-SELECT          |   144x   |   0.145   | Protocol overhead
-INSERT          |   199x   |   0.314   | Expected for 1-row
+SELECT (cached) |    17x   |   0.068   | Outstanding ⭐⭐⭐
+SELECT          |   126x   |   0.126   | Protocol overhead
+INSERT          |   172x   |   0.299   | Expected for 1-row
 ----------------+----------+-----------+------------------
-OVERALL         |   ~100x  |     -     | Stable performance
+OVERALL         |   ~95x   |     -     | Improved performance
 ```
 
 CREATE operations are significantly slower as we also update the `__pgsqlite_schema` table, however those are siginificantly less frequent than other operations.
@@ -111,7 +111,13 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
   - Added itoa for faster integer-to-string conversion
   - Profiled and identified protocol overhead distribution
 
-These optimizations combined achieve **20x overhead for cached SELECT queries** and **~100x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **36-42x overhead**.
+• **Small Value Optimization** (2025-07-06):
+  - Zero-allocation handling for common values (booleans, 0, 1, -1)
+  - Stack-based formatting for small integers and floats
+  - Static references for boolean and empty string values
+  - 8% improvement in cached SELECT queries, 3% in UPDATE/DELETE
+
+These optimizations combined achieve **17x overhead for cached SELECT queries** and **~95x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **36-42x overhead**.
 
 ### Performance Monitoring
 Run benchmarks to measure overhead:

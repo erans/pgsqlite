@@ -1,5 +1,7 @@
 # Protocol Serialization Overhead Analysis
 
+**Note: This analysis was performed before the Small Value Optimization (2025-07-06). See PROTOCOL_OPTIMIZATION_RESULTS.md for the implemented optimizations and their impact.**
+
 ## Executive Summary
 
 After analyzing the pgsqlite codebase, I've identified several key sources of protocol serialization overhead for SELECT queries. The current overhead is ~89x for uncached SELECT and ~10x for cached SELECT queries.
