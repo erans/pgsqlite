@@ -347,15 +347,22 @@ impl ExtendedQueryHandler {
         
         // Store the prepared statement
         // Pre-translate the query for prepared statements to avoid repeated translation
-        let translated_query = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
+        let mut translated_query = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
             let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&conn));
             drop(conn);
-            Some(translated)
+            translated
         } else {
-            None
+            cleaned_query.clone()
         };
+        
+        // Translate datetime functions if needed
+        if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
+            translated_query = crate::translator::DateTimeTranslator::translate_query(&translated_query);
+        };
+        
+        let translated_query = Some(translated_query);
         
         let stmt = PreparedStatement {
             query: cleaned_query.clone(),
@@ -1248,6 +1255,36 @@ impl ExtendedQueryHandler {
                                             Err(e) => {
                                                 debug!("Invalid NUMERIC parameter: {}", e);
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid NUMERIC value: {}", e)));
+                                            }
+                                        }
+                                    }
+                                    t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                                        // TIMESTAMP types - convert to Unix timestamp
+                                        match crate::types::ValueConverter::convert_timestamp_to_unix(&s) {
+                                            Ok(unix_timestamp) => unix_timestamp,
+                                            Err(e) => {
+                                                debug!("Invalid TIMESTAMP parameter: {}", e);
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {}", e)));
+                                            }
+                                        }
+                                    }
+                                    t if t == PgType::Date.to_oid() => {
+                                        // DATE type - convert to Unix timestamp
+                                        match crate::types::ValueConverter::convert_date_to_unix(&s) {
+                                            Ok(unix_timestamp) => unix_timestamp,
+                                            Err(e) => {
+                                                debug!("Invalid DATE parameter: {}", e);
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid DATE value: {}", e)));
+                                            }
+                                        }
+                                    }
+                                    t if t == PgType::Time.to_oid() || t == PgType::Timetz.to_oid() => {
+                                        // TIME types - convert to seconds since midnight
+                                        match crate::types::ValueConverter::convert_time_to_seconds(&s) {
+                                            Ok(seconds) => seconds,
+                                            Err(e) => {
+                                                debug!("Invalid TIME parameter: {}", e);
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIME value: {}", e)));
                                             }
                                         }
                                     }

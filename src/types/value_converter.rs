@@ -203,7 +203,7 @@ impl ValueConverter {
     // DateTime conversion functions
     
     /// Convert PostgreSQL DATE to Unix timestamp (at 00:00:00 UTC)
-    fn convert_date_to_unix(value: &str) -> Result<String, String> {
+    pub fn convert_date_to_unix(value: &str) -> Result<String, String> {
         let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
             .map_err(|e| format!("Invalid date format: {} ({})", value, e))?;
         let datetime = date.and_hms_opt(0, 0, 0)
@@ -222,7 +222,7 @@ impl ValueConverter {
     }
     
     /// Convert PostgreSQL TIME to seconds since midnight
-    fn convert_time_to_seconds(value: &str) -> Result<String, String> {
+    pub fn convert_time_to_seconds(value: &str) -> Result<String, String> {
         let time = NaiveTime::parse_from_str(value.trim(), "%H:%M:%S%.f")
             .or_else(|_| NaiveTime::parse_from_str(value.trim(), "%H:%M:%S"))
             .map_err(|e| format!("Invalid time format: {} ({})", value, e))?;
@@ -301,7 +301,7 @@ impl ValueConverter {
     }
     
     /// Convert PostgreSQL TIMESTAMP to Unix timestamp
-    fn convert_timestamp_to_unix(value: &str) -> Result<String, String> {
+    pub fn convert_timestamp_to_unix(value: &str) -> Result<String, String> {
         let datetime = NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S%.f")
             .or_else(|_| NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S"))
             .map_err(|e| format!("Invalid timestamp format: {} ({})", value, e))?;

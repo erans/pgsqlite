@@ -81,7 +81,7 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Translate PostgreSQL cast syntax if present
-        let translated_query = if crate::translator::CastTranslator::needs_translation(query) {
+        let mut translated_query = if crate::translator::CastTranslator::needs_translation(query) {
             use crate::translator::CastTranslator;
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
@@ -91,6 +91,12 @@ impl QueryExecutor {
         } else {
             query.to_string()
         };
+        
+        // Translate PostgreSQL datetime functions if present
+        if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
+            use crate::translator::DateTimeTranslator;
+            translated_query = DateTimeTranslator::translate_query(&translated_query);
+        }
         
         let query_to_execute = translated_query.as_str();
         
