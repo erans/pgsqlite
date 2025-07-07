@@ -228,6 +228,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Comprehensive test coverage for all migration scenarios
   - [x] Migration history tracking in __pgsqlite_migrations table
   - [x] Idempotent migrations - can run multiple times safely
+  - [x] Explicit migration mode - requires --migrate flag, errors if schema outdated
   - [x] Current migrations:
     - v1: Initial schema (__pgsqlite_schema, metadata tables)
     - v2: ENUM support (enum types, values, usage tracking)
