@@ -1,5 +1,5 @@
 use crate::protocol::{BackendMessage, FieldDescription};
-use crate::session::DbHandler;
+use crate::session::{DbHandler, SessionState};
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::PgType;
@@ -33,6 +33,7 @@ impl QueryExecutor {
     pub async fn execute_query<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
     ) -> Result<(), PgSqliteError> 
     where
@@ -62,19 +63,20 @@ impl QueryExecutor {
                 info!("Query contains {} statements", statements.len());
                 for (i, stmt) in statements.iter().enumerate() {
                     info!("Executing statement {}: {}", i + 1, stmt);
-                    Self::execute_single_statement(framed, db, stmt).await?;
+                    Self::execute_single_statement(framed, db, session, stmt).await?;
                 }
                 return Ok(());
             }
         }
         
         // Single statement execution
-        Self::execute_single_statement(framed, db, query_to_execute).await
+        Self::execute_single_statement(framed, db, session, query_to_execute).await
     }
     
     async fn execute_single_statement<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
     ) -> Result<(), PgSqliteError> 
     where
@@ -118,8 +120,13 @@ impl QueryExecutor {
                 Self::execute_transaction(framed, db, query_to_execute).await
             }
             _ => {
-                // Try to execute as-is
-                Self::execute_generic(framed, db, query_to_execute).await
+                // Check if it's a SET command
+                if crate::query::SetHandler::is_set_command(query_to_execute) {
+                    crate::query::SetHandler::handle_set_command(framed, session, query_to_execute).await
+                } else {
+                    // Try to execute as-is
+                    Self::execute_generic(framed, db, query_to_execute).await
+                }
             }
         }
     }

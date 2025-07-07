@@ -116,8 +116,8 @@ impl DateTimeTranslator {
         // Handle INTERVAL literals (basic support)
         result = Self::translate_interval_literals(&result);
         
-        // Handle AT TIME ZONE (basic support - just remove for now)
-        result = AT_TIME_ZONE_PATTERN.replace_all(&result, "").to_string();
+        // Handle AT TIME ZONE operator
+        result = Self::translate_at_time_zone(&result);
         
         // Handle timestamp arithmetic with intervals
         result = Self::translate_interval_arithmetic(&result);
@@ -184,6 +184,64 @@ impl DateTimeTranslator {
         }).to_string();
         
         result
+    }
+    
+    /// Translate AT TIME ZONE operator
+    fn translate_at_time_zone(query: &str) -> String {
+        let mut result = query.to_string();
+        
+        // Pattern to match expressions like "timestamp AT TIME ZONE 'timezone'"
+        result = AT_TIME_ZONE_PATTERN.replace_all(&result, |caps: &regex::Captures| {
+            let timezone = &caps[1];
+            let offset_seconds = Self::tz_to_offset_seconds(timezone);
+            
+            // If timezone is UTC or offset is 0, just remove the AT TIME ZONE clause
+            if offset_seconds == 0 {
+                "".to_string()
+            } else {
+                // Apply offset to the timestamp
+                format!(" + {}", offset_seconds)
+            }
+        }).to_string();
+        
+        result
+    }
+    
+    /// Convert timezone name to offset in seconds
+    fn tz_to_offset_seconds(tz: &str) -> i32 {
+        match tz.to_uppercase().as_str() {
+            "UTC" | "GMT" => 0,
+            "EST" | "AMERICA/NEW_YORK" => -5 * 3600, // -5 hours
+            "EDT" => -4 * 3600, // -4 hours (daylight saving)
+            "PST" | "AMERICA/LOS_ANGELES" => -8 * 3600, // -8 hours
+            "PDT" => -7 * 3600, // -7 hours (daylight saving)
+            "CST" | "AMERICA/CHICAGO" => -6 * 3600, // -6 hours
+            "CDT" => -5 * 3600, // -5 hours (daylight saving)
+            "MST" | "AMERICA/DENVER" => -7 * 3600, // -7 hours
+            "MDT" => -6 * 3600, // -6 hours (daylight saving)
+            "CET" | "EUROPE/PARIS" | "EUROPE/BERLIN" => 3600, // +1 hour
+            "CEST" => 2 * 3600, // +2 hours (daylight saving)
+            "JST" | "ASIA/TOKYO" => 9 * 3600, // +9 hours
+            "IST" | "ASIA/KOLKATA" => 5 * 3600 + 1800, // +5:30 hours
+            _ => {
+                // Try to parse offset format like '+05:30' or '-08:00'
+                if let Some(offset) = Self::parse_offset_string(tz) {
+                    offset
+                } else {
+                    0 // Default to UTC if unknown
+                }
+            }
+        }
+    }
+    
+    /// Parse offset string like "+05:30" or "-08:00" to seconds
+    fn parse_offset_string(offset: &str) -> Option<i32> {
+        let re = regex::Regex::new(r"^([+-])(\d{2}):(\d{2})$").ok()?;
+        let caps = re.captures(offset)?;
+        let sign = if &caps[1] == "+" { 1 } else { -1 };
+        let hours = caps[2].parse::<i32>().ok()?;
+        let minutes = caps[3].parse::<i32>().ok()?;
+        Some(sign * (hours * 3600 + minutes * 60))
     }
 }
 

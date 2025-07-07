@@ -80,6 +80,40 @@ impl ExtendedQueryHandler {
         info!("Parsing statement '{}': {}", name, cleaned_query);
         info!("Provided param_types: {:?}", param_types);
         
+        // Check if this is a SET command - handle it specially
+        if crate::query::SetHandler::is_set_command(&cleaned_query) {
+            // For SET commands, we need to create a special prepared statement
+            // that will be handled during execution
+            let stmt = PreparedStatement {
+                query: cleaned_query.clone(),
+                translated_query: None,
+                param_types: vec![], // SET commands don't have parameters
+                param_formats: vec![],
+                field_descriptions: if cleaned_query.trim().to_uppercase().starts_with("SHOW") {
+                    // SHOW commands return one column
+                    vec![FieldDescription {
+                        name: "setting".to_string(),
+                        table_oid: 0,
+                        column_id: 1,
+                        type_oid: PgType::Text.to_oid(),
+                        type_size: -1,
+                        type_modifier: -1,
+                        format: 0,
+                    }]
+                } else {
+                    vec![]
+                },
+            };
+            
+            session.prepared_statements.write().await.insert(name.clone(), stmt);
+            
+            // Send ParseComplete
+            framed.send(BackendMessage::ParseComplete).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            
+            return Ok(());
+        }
+        
         // Check if this is a simple parameter SELECT (e.g., SELECT $1, $2)
         let is_simple_param_select = query_starts_with_ignore_case(&query, "SELECT") && 
             !query.to_uppercase().contains("FROM") && 
@@ -632,6 +666,24 @@ impl ExtendedQueryHandler {
             || query_starts_with_ignore_case(&final_query, "COMMIT") 
             || query_starts_with_ignore_case(&final_query, "ROLLBACK") {
             Self::execute_transaction(framed, db, &final_query).await?;
+        } else if crate::query::SetHandler::is_set_command(&final_query) {
+            // Check if we should skip row description
+            let skip_row_desc = {
+                let portals = session.portals.read().await;
+                if let Some(portal) = portals.get(&portal) {
+                    let statements = session.prepared_statements.read().await;
+                    if let Some(stmt) = statements.get(&portal.statement_name) {
+                        // Skip row description if statement already has field descriptions
+                        !stmt.field_descriptions.is_empty()
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            
+            crate::query::SetHandler::handle_set_command_extended(framed, session, &final_query, skip_row_desc).await?;
         } else {
             Self::execute_generic(framed, db, &final_query).await?;
         }
