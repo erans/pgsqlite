@@ -133,8 +133,11 @@ impl DbHandler {
         
         // Check if we're in test mode - tests with :memory: databases auto-migrate
         // We detect test mode by checking for CARGO env var which is set during cargo test
+        // or PGSQLITE_TEST_AUTO_MIGRATE which can be set for integration tests
         let is_memory_db = db_path == ":memory:" || db_path.contains(":memory:");
-        let is_test_mode = cfg!(test) || (is_memory_db && std::env::var("CARGO").is_ok());
+        let is_test_mode = cfg!(test) || 
+            (is_memory_db && std::env::var("CARGO").is_ok()) ||
+            (is_memory_db && std::env::var("PGSQLITE_TEST_AUTO_MIGRATE").is_ok());
         
         if is_test_mode && is_memory_db {
             // For in-memory databases in tests, run migrations automatically

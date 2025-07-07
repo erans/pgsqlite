@@ -208,6 +208,7 @@ case "$CONNECTION_MODE" in
 esac
 
 # For file-based databases, run migrations first
+# For in-memory databases, we'll use auto-migration via environment variable
 if [[ "$CONNECTION_MODE" == "file-ssl" || "$CONNECTION_MODE" == "file-no-ssl" ]]; then
     log_info "Running migrations for file database..."
     ./target/release/pgsqlite --database "$DB_NAME" --migrate
@@ -216,6 +217,10 @@ if [[ "$CONNECTION_MODE" == "file-ssl" || "$CONNECTION_MODE" == "file-no-ssl" ]]
         exit 1
     fi
     log_success "Migrations completed"
+else
+    # For in-memory databases, enable auto-migration via environment variable
+    export PGSQLITE_TEST_AUTO_MIGRATE=1
+    log_info "Auto-migration enabled for in-memory database"
 fi
 
 # Start pgsqlite server
