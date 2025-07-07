@@ -36,6 +36,15 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ### Type System Enhancements
 
+#### Type Inference for Aliased Columns - NEW ISSUE (2025-07-07)
+- [ ] Fix type inference when columns are aliased in SELECT queries
+- [ ] Track source columns through SQL transformations and aliases
+- [ ] Handle cases where translated queries (e.g., AT TIME ZONE) change column expressions
+- [ ] Improve schema lookup to resolve aliases back to source columns
+- [ ] Consider implementing proper SQL AST analysis for column tracking
+- **Current Impact**: AT TIME ZONE queries fail with type mismatch in prepared statements
+- **Workaround**: Use simple_query protocol or avoid column aliases
+
 #### Schema Validation and Drift Detection
 - [ ] Implement schema drift detection between __pgsqlite_schema and actual SQLite tables
 - [ ] Check for mismatches on connection startup/first query
@@ -132,15 +141,20 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Implement binary protocol conversion (PostgreSQL binary ↔ Unix timestamp)
   - [ ] Handle special values (infinity, -infinity)
   - [x] Support microsecond precision with fractional seconds
-- [ ] **Phase 3: Query Translation (Medium Priority)**
-  - [ ] Map PostgreSQL datetime functions to SQLite equivalents
-  - [ ] Implement EXTRACT, DATE_TRUNC, AGE functions
-  - [ ] Handle AT TIME ZONE operator
-  - [ ] Support interval arithmetic with timestamps
-- [ ] **Phase 4: Advanced Features (Medium Priority)**
-  - [ ] Session timezone management
+- [x] **Phase 3: Query Translation (Medium Priority)** - COMPLETED (2025-07-07)
+  - [x] Map PostgreSQL datetime functions to SQLite equivalents
+  - [x] Implement EXTRACT, DATE_TRUNC, AGE functions
+  - [x] Handle AT TIME ZONE operator
+  - [x] Support interval arithmetic with timestamps
+  - **Known Issue**: Type inference for aliased columns in prepared statements
+    - When queries use aliases (e.g., `SELECT ts AS ts_utc`), type information is lost
+    - Affects AT TIME ZONE queries where the result column is aliased
+    - Workaround: Use simple_query or avoid aliases in prepared statements
+- [x] **Phase 4: Advanced Features (Medium Priority)** - PARTIAL (2025-07-07)
+  - [x] Session timezone management - SET TIME ZONE and SHOW commands
+  - [x] Basic timezone support (UTC, EST, PST, CST, MST, offset formats)
   - [ ] Complex interval handling (months/years)
-  - [ ] Timezone database support for common timezones
+  - [ ] Full timezone database support (IANA timezones)
   - [ ] Performance optimization with caching
 - [ ] **Phase 5: Testing and Documentation (High Priority)**
   - [ ] Unit tests for all conversions
