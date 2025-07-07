@@ -11,6 +11,7 @@ pub mod cache;
 pub mod config;
 pub mod ssl;
 pub mod ddl;
+pub mod migration;
 
 #[cfg(test)]
 pub mod alloc_tracker;
