@@ -36,14 +36,30 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ### Type System Enhancements
 
-#### Type Inference for Aliased Columns - NEW ISSUE (2025-07-07)
-- [ ] Fix type inference when columns are aliased in SELECT queries
-- [ ] Track source columns through SQL transformations and aliases
-- [ ] Handle cases where translated queries (e.g., AT TIME ZONE) change column expressions
-- [ ] Improve schema lookup to resolve aliases back to source columns
-- [ ] Consider implementing proper SQL AST analysis for column tracking
+#### Type Inference for Aliased Columns - IN PROGRESS (2025-07-07)
+- [ ] **Phase 1: Translation Metadata System** (2-3 days)
+  - [ ] Create TranslationMetadata struct to track column mappings
+  - [ ] Add ColumnTypeHint with source column and expression type info
+  - [ ] Modify DateTimeTranslator to return (String, TranslationMetadata)
+  - [ ] Pass metadata through query execution pipeline
+- [ ] **Phase 2: Enhance Type Resolution** (3-4 days)
+  - [ ] Update extended protocol Parse handler to use translation metadata
+  - [ ] Add metadata hints during field description generation
+  - [ ] Check translation metadata for aliased columns first
+  - [ ] Implement expression type rules (ArithmeticOnFloat -> Float8)
+- [ ] **Phase 3: Arithmetic Type Propagation** (2-3 days)
+  - [ ] Create simple arithmetic type analyzer for translator patterns
+  - [ ] Handle column + number, column - number patterns
+  - [ ] Integrate with QueryExecutor and ExtendedQueryHandler
+  - [ ] Store type hints in prepared statements
+- [ ] **Phase 4: Testing and Edge Cases** (2 days)
+  - [ ] Test all datetime functions with aliases
+  - [ ] Test nested expressions and NULL values
+  - [ ] Test with prepared statements and simple queries
+  - [ ] Add regression tests for type inference
 - **Current Impact**: AT TIME ZONE queries fail with type mismatch in prepared statements
 - **Workaround**: Use simple_query protocol or avoid column aliases
+- **Approach**: Translation-aware type hints to preserve type info through query transformations
 
 #### Schema Validation and Drift Detection
 - [ ] Implement schema drift detection between __pgsqlite_schema and actual SQLite tables
@@ -133,19 +149,24 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 #### Date/Time Types - IN PROGRESS
 - [x] **Phase 1: Type Mapping and Storage (High Priority)** - COMPLETED (2025-07-07)
   - [x] Add TIMETZ (1266) and INTERVAL (1186) to PgType enum
-  - [x] Update type mappings to use REAL (Unix timestamps) for all datetime types
+  - [x] Update type mappings to use INTEGER (microseconds/days) for all datetime types
   - [x] Create migration v3 to add datetime_format and timezone_offset columns to __pgsqlite_schema
-  - [x] Implement storage format: Unix timestamps with fractional seconds for microsecond precision
+  - [x] Create migration v4 to convert all datetime types to INTEGER storage
+  - [x] Implement storage format:
+    - DATE: INTEGER days since epoch
+    - TIME/TIMETZ: INTEGER microseconds since midnight
+    - TIMESTAMP/TIMESTAMPTZ: INTEGER microseconds since epoch
+    - INTERVAL: INTEGER microseconds
 - [x] **Phase 2: Value Conversion Layer (High Priority)** - COMPLETED (2025-07-07)
-  - [x] Implement text protocol conversion (PostgreSQL format ↔ Unix timestamp)
-  - [x] Implement binary protocol conversion (PostgreSQL binary ↔ Unix timestamp)
+  - [x] Implement text protocol conversion (PostgreSQL format ↔ INTEGER microseconds)
+  - [x] Implement binary protocol conversion (PostgreSQL binary ↔ INTEGER microseconds)
   - [ ] Handle special values (infinity, -infinity)
-  - [x] Support microsecond precision with fractional seconds
+  - [x] Support microsecond precision without floating point
 - [x] **Phase 3: Query Translation (Medium Priority)** - COMPLETED (2025-07-07)
   - [x] Map PostgreSQL datetime functions to SQLite equivalents
-  - [x] Implement EXTRACT, DATE_TRUNC, AGE functions
-  - [x] Handle AT TIME ZONE operator
-  - [x] Support interval arithmetic with timestamps
+  - [x] Implement EXTRACT, DATE_TRUNC, AGE functions with microsecond precision
+  - [x] Handle AT TIME ZONE operator with microsecond offsets
+  - [x] Support interval arithmetic with timestamps using microseconds
   - **Known Issue**: Type inference for aliased columns in prepared statements
     - When queries use aliases (e.g., `SELECT ts AS ts_utc`), type information is lost
     - Affects AT TIME ZONE queries where the result column is aliased
@@ -267,6 +288,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Current migrations:
     - v1: Initial schema (__pgsqlite_schema, metadata tables)
     - v2: ENUM support (enum types, values, usage tracking)
+    - v3: DateTime support (datetime_format, timezone_offset columns)
+    - v4: DateTime INTEGER storage (convert all datetime types to microseconds)
 
 #### Indexing
 - [ ] Support for expression indexes

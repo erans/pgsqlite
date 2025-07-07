@@ -10,6 +10,7 @@ lazy_static! {
         register_v1_initial_schema(&mut registry);
         register_v2_enum_support(&mut registry);
         register_v3_datetime_support(&mut registry);
+        register_v4_datetime_integer_storage(&mut registry);
         
         registry
     };
@@ -197,5 +198,39 @@ fn register_v3_datetime_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![2],
+    });
+}
+
+/// Version 4: Convert datetime storage from REAL/TEXT to INTEGER microseconds
+fn register_v4_datetime_integer_storage(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(4, Migration {
+        version: 4,
+        name: "datetime_integer_storage",
+        description: "Convert all datetime types to INTEGER storage using microseconds",
+        up: MigrationAction::SqlBatch(&[
+            // Update type mappings in __pgsqlite_schema
+            r#"
+            UPDATE __pgsqlite_schema 
+            SET sqlite_type = 'INTEGER'
+            WHERE pg_type IN ('DATE', 'TIME', 'TIMESTAMP', 'TIMESTAMPTZ', 
+                              'date', 'time', 'timestamp', 'timestamptz',
+                              'timestamp with time zone', 'timestamp without time zone',
+                              'time with time zone', 'time without time zone',
+                              'timetz', 'interval');
+            "#,
+            
+            // Note: Data conversion would happen here in a real migration
+            // Since we're not supporting backwards compatibility, existing databases
+            // would need to be recreated or have their data converted separately
+            
+            r#"
+            -- Update schema version
+            UPDATE __pgsqlite_metadata 
+            SET value = '4', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: None, // No backwards compatibility needed
+        dependencies: vec![3],
     });
 }

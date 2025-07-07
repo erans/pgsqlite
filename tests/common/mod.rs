@@ -44,14 +44,21 @@ where
             return;
         }
         
-        // Force a cache refresh after initialization
+        // Force a comprehensive cache refresh after initialization
         // This ensures that tables created during init are visible to catalog queries
         {
             let conn = db_handler.get_mut_connection().unwrap();
-            // Execute a simple query to ensure SQLite's internal state is refreshed
-            let _ = conn.execute_batch("SELECT 1");
+            // Force a transaction commit to ensure changes are persisted
+            let _ = conn.execute_batch("BEGIN; COMMIT;");
+            // Force SQLite to refresh its schema cache by querying sqlite_master
+            let _ = conn.execute_batch("SELECT name FROM sqlite_master WHERE type='table'");
+            // Explicitly refresh SQLite's internal schema
+            let _ = conn.execute_batch("PRAGMA schema_version; PRAGMA table_list;");
             drop(conn);
         }
+        
+        // Add a small delay to ensure changes propagate
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         
         let (stream, addr) = listener.accept().await.unwrap();
         if let Err(e) = pgsqlite::handle_test_connection_with_pool(stream, addr, db_handler).await {

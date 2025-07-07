@@ -1,7 +1,8 @@
 use crate::types::type_mapper::PgType;
 use std::net::{Ipv4Addr, Ipv6Addr};
 use regex::Regex;
-use chrono::{NaiveDate, NaiveDateTime, NaiveTime, DateTime, Timelike};
+use chrono::{NaiveTime, Timelike};
+use crate::types::datetime_utils;
 
 pub struct ValueConverter;
 
@@ -202,55 +203,35 @@ impl ValueConverter {
     
     // DateTime conversion functions
     
-    /// Convert PostgreSQL DATE to Unix timestamp (at 00:00:00 UTC)
+    /// Convert PostgreSQL DATE to epoch days (stored as INTEGER)
     pub fn convert_date_to_unix(value: &str) -> Result<String, String> {
-        let date = NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
-            .map_err(|e| format!("Invalid date format: {} ({})", value, e))?;
-        let datetime = date.and_hms_opt(0, 0, 0)
-            .ok_or_else(|| "Invalid date conversion".to_string())?;
-        let timestamp = datetime.and_utc().timestamp() as f64;
-        Ok(timestamp.to_string())
+        datetime_utils::parse_date_to_days(value.trim())
+            .map(|days| days.to_string())
+            .ok_or_else(|| format!("Invalid date format: {}", value))
     }
     
-    /// Convert Unix timestamp to PostgreSQL DATE
+    /// Convert epoch days (INTEGER) to PostgreSQL DATE
     fn convert_unix_to_date(value: &str) -> Result<String, String> {
-        let timestamp = value.parse::<f64>()
-            .map_err(|e| format!("Invalid timestamp: {} ({})", value, e))?;
-        let datetime = DateTime::from_timestamp(timestamp as i64, 0)
-            .ok_or_else(|| "Invalid timestamp".to_string())?;
-        Ok(datetime.format("%Y-%m-%d").to_string())
+        let days = value.parse::<i64>()
+            .map_err(|e| format!("Invalid days value: {} ({})", value, e))?;
+        Ok(datetime_utils::format_days_to_date(days))
     }
     
-    /// Convert PostgreSQL TIME to seconds since midnight
+    /// Convert PostgreSQL TIME to microseconds since midnight (stored as INTEGER)
     pub fn convert_time_to_seconds(value: &str) -> Result<String, String> {
-        let time = NaiveTime::parse_from_str(value.trim(), "%H:%M:%S%.f")
-            .or_else(|_| NaiveTime::parse_from_str(value.trim(), "%H:%M:%S"))
-            .map_err(|e| format!("Invalid time format: {} ({})", value, e))?;
-        let seconds = time.num_seconds_from_midnight() as f64 
-            + (time.nanosecond() as f64 / 1_000_000_000.0);
-        Ok(seconds.to_string())
+        datetime_utils::parse_time_to_microseconds(value.trim())
+            .map(|micros| micros.to_string())
+            .ok_or_else(|| format!("Invalid time format: {}", value))
     }
     
-    /// Convert seconds since midnight to PostgreSQL TIME
+    /// Convert microseconds since midnight (INTEGER) to PostgreSQL TIME
     fn convert_seconds_to_time(value: &str) -> Result<String, String> {
-        let seconds = value.parse::<f64>()
-            .map_err(|e| format!("Invalid seconds value: {} ({})", value, e))?;
-        let secs = seconds.trunc() as u32;
-        let nanos = ((seconds.fract() * 1_000_000_000.0).round() as u32).min(999_999_999);
-        let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
-            .ok_or_else(|| format!("Invalid time value: {} seconds", value))?;
-        
-        // Format with microseconds if present
-        if nanos > 0 {
-            Ok(format!("{:02}:{:02}:{:02}.{:06}", 
-                time.hour(), time.minute(), time.second(), 
-                nanos / 1000))
-        } else {
-            Ok(time.format("%H:%M:%S").to_string())
-        }
+        let micros = value.parse::<i64>()
+            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+        Ok(datetime_utils::format_microseconds_to_time(micros))
     }
     
-    /// Convert PostgreSQL TIMETZ to seconds since midnight UTC
+    /// Convert PostgreSQL TIMETZ to microseconds since midnight UTC (stored as INTEGER)
     fn convert_timetz_to_seconds(value: &str) -> Result<String, String> {
         // Parse time and timezone offset
         let re = Regex::new(r"^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)([-+]\d{2}:?\d{2})$").unwrap();
@@ -258,76 +239,50 @@ impl ValueConverter {
             let time_str = &caps[1];
             let offset_str = &caps[2];
             
-            // Parse time
-            let time = NaiveTime::parse_from_str(time_str, "%H:%M:%S%.f")
-                .or_else(|_| NaiveTime::parse_from_str(time_str, "%H:%M:%S"))
-                .map_err(|e| format!("Invalid time format: {} ({})", time_str, e))?;
+            // Parse time to microseconds
+            let time_micros = datetime_utils::parse_time_to_microseconds(time_str)
+                .ok_or_else(|| format!("Invalid time format: {}", time_str))?;
             
             // Parse offset (±HH:MM or ±HHMM)
             let offset_seconds = Self::parse_timezone_offset(offset_str)?;
             
-            // Convert to seconds since midnight and adjust for timezone
-            let seconds = time.num_seconds_from_midnight() as f64 
-                + (time.nanosecond() as f64 / 1_000_000_000.0)
-                - offset_seconds as f64;
+            // Convert to microseconds since midnight UTC by adjusting for timezone
+            let utc_micros = time_micros - (offset_seconds as i64 * 1_000_000);
             
-            Ok(seconds.to_string())
+            Ok(utc_micros.to_string())
         } else {
             Err(format!("Invalid TIMETZ format: {}", value))
         }
     }
     
-    /// Convert seconds since midnight UTC to PostgreSQL TIMETZ
+    /// Convert microseconds since midnight UTC (INTEGER) to PostgreSQL TIMETZ
     fn convert_seconds_to_timetz(value: &str) -> Result<String, String> {
-        let seconds = value.parse::<f64>()
-            .map_err(|e| format!("Invalid seconds value: {} ({})", value, e))?;
+        let micros = value.parse::<i64>()
+            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
         
-        // Normalize to 0-86400 range
-        let normalized_seconds = seconds.rem_euclid(86400.0);
-        let secs = normalized_seconds.trunc() as u32;
-        let nanos = ((normalized_seconds.fract() * 1_000_000_000.0).round() as u32).min(999_999_999);
+        // Normalize to 0-86400000000 range (microseconds in a day)
+        let normalized_micros = micros.rem_euclid(86_400_000_000);
         
-        let time = NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos)
-            .ok_or_else(|| format!("Invalid time value: {} seconds", value))?;
-        
-        // Format with UTC offset
-        if nanos > 0 {
-            Ok(format!("{:02}:{:02}:{:02}.{:06}+00:00", 
-                time.hour(), time.minute(), time.second(), 
-                nanos / 1000))
-        } else {
-            Ok(format!("{}+00:00", time.format("%H:%M:%S")))
-        }
+        // Format as time with UTC offset
+        let time_str = datetime_utils::format_microseconds_to_time(normalized_micros);
+        Ok(format!("{}+00:00", time_str))
     }
     
-    /// Convert PostgreSQL TIMESTAMP to Unix timestamp
+    /// Convert PostgreSQL TIMESTAMP to microseconds since epoch (stored as INTEGER)
     pub fn convert_timestamp_to_unix(value: &str) -> Result<String, String> {
-        let datetime = NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S%.f")
-            .or_else(|_| NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%d %H:%M:%S"))
-            .map_err(|e| format!("Invalid timestamp format: {} ({})", value, e))?;
-        let timestamp = datetime.and_utc().timestamp() as f64
-            + (datetime.nanosecond() as f64 / 1_000_000_000.0);
-        Ok(timestamp.to_string())
+        datetime_utils::parse_timestamp_to_microseconds(value.trim())
+            .map(|micros| micros.to_string())
+            .ok_or_else(|| format!("Invalid timestamp format: {}", value))
     }
     
-    /// Convert Unix timestamp to PostgreSQL TIMESTAMP
+    /// Convert microseconds since epoch (INTEGER) to PostgreSQL TIMESTAMP
     fn convert_unix_to_timestamp(value: &str) -> Result<String, String> {
-        let timestamp = value.parse::<f64>()
-            .map_err(|e| format!("Invalid timestamp: {} ({})", value, e))?;
-        let secs = timestamp.trunc() as i64;
-        let nanos = ((timestamp.fract() * 1_000_000_000.0).round() as u32).min(999_999_999);
-        let datetime = DateTime::from_timestamp(secs, nanos)
-            .ok_or_else(|| "Invalid timestamp".to_string())?;
-        
-        // Format with microseconds if present
-        if nanos > 0 {
-            Ok(datetime.format("%Y-%m-%d %H:%M:%S.%6f").to_string())
-        } else {
-            Ok(datetime.format("%Y-%m-%d %H:%M:%S").to_string())
-        }
+        let micros = value.parse::<i64>()
+            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+        Ok(datetime_utils::format_microseconds_to_timestamp(micros))
     }
     
-    /// Convert PostgreSQL TIMESTAMPTZ to Unix timestamp in UTC
+    /// Convert PostgreSQL TIMESTAMPTZ to microseconds since epoch in UTC (stored as INTEGER)
     fn convert_timestamptz_to_unix(value: &str) -> Result<String, String> {
         // Try parsing with timezone offset
         let re = Regex::new(r"^(.+?)([-+]\d{2}:?\d{2})$").unwrap();
@@ -342,53 +297,46 @@ impl ValueConverter {
             (value.trim().to_string(), 0)
         };
         
-        let datetime = NaiveDateTime::parse_from_str(&datetime_str, "%Y-%m-%d %H:%M:%S%.f")
-            .or_else(|_| NaiveDateTime::parse_from_str(&datetime_str, "%Y-%m-%d %H:%M:%S"))
-            .map_err(|e| format!("Invalid timestamp format: {} ({})", datetime_str, e))?;
+        // Parse timestamp to microseconds
+        let micros = datetime_utils::parse_timestamp_to_microseconds(&datetime_str)
+            .ok_or_else(|| format!("Invalid timestamp format: {}", datetime_str))?;
         
-        // Convert to UTC by subtracting the offset
-        let timestamp = datetime.and_utc().timestamp() as f64
-            + (datetime.nanosecond() as f64 / 1_000_000_000.0)
-            - offset_seconds as f64;
+        // Convert to UTC by subtracting the offset (in microseconds)
+        let utc_micros = micros - (offset_seconds as i64 * 1_000_000);
         
-        Ok(timestamp.to_string())
+        Ok(utc_micros.to_string())
     }
     
-    /// Convert Unix timestamp to PostgreSQL TIMESTAMPTZ (with session timezone)
+    /// Convert microseconds since epoch (INTEGER) to PostgreSQL TIMESTAMPTZ (with session timezone)
     fn convert_unix_to_timestamptz(value: &str, _timezone: &str) -> Result<String, String> {
-        let timestamp = value.parse::<f64>()
-            .map_err(|e| format!("Invalid timestamp: {} ({})", value, e))?;
-        let secs = timestamp.trunc() as i64;
-        let nanos = ((timestamp.fract() * 1_000_000_000.0).round() as u32).min(999_999_999);
-        let datetime = DateTime::from_timestamp(secs, nanos)
-            .ok_or_else(|| "Invalid timestamp".to_string())?;
+        let micros = value.parse::<i64>()
+            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+        
+        // Format timestamp
+        let timestamp_str = datetime_utils::format_microseconds_to_timestamp(micros);
         
         // For now, always use UTC
         // TODO: Apply session timezone offset
-        if nanos > 0 {
-            Ok(datetime.format("%Y-%m-%d %H:%M:%S.%6f+00:00").to_string())
-        } else {
-            Ok(datetime.format("%Y-%m-%d %H:%M:%S+00:00").to_string())
-        }
+        Ok(format!("{}+00:00", timestamp_str))
     }
     
-    /// Convert PostgreSQL INTERVAL to seconds
+    /// Convert PostgreSQL INTERVAL to microseconds (stored as INTEGER)
     fn convert_interval_to_seconds(value: &str) -> Result<String, String> {
         // Simple interval parsing for common formats
         // Full PostgreSQL interval parsing is complex, this handles basic cases
         let trimmed = value.trim();
         
-        // Handle simple numeric intervals (e.g., "3600" seconds)
-        if let Ok(seconds) = trimmed.parse::<f64>() {
-            return Ok(seconds.to_string());
+        // Handle simple numeric intervals (e.g., "3600000000" microseconds)
+        if let Ok(micros) = trimmed.parse::<i64>() {
+            return Ok(micros.to_string());
         }
         
         // Handle HH:MM:SS format
         if let Ok(time) = NaiveTime::parse_from_str(trimmed, "%H:%M:%S%.f")
             .or_else(|_| NaiveTime::parse_from_str(trimmed, "%H:%M:%S")) {
-            let seconds = time.num_seconds_from_midnight() as f64 
-                + (time.nanosecond() as f64 / 1_000_000_000.0);
-            return Ok(seconds.to_string());
+            let micros = time.num_seconds_from_midnight() as i64 * 1_000_000 
+                + (time.nanosecond() / 1000) as i64;
+            return Ok(micros.to_string());
         }
         
         // Handle verbose format (e.g., "1 day 02:30:00")
@@ -398,35 +346,48 @@ impl ValueConverter {
             let hours = caps.get(2).map(|m| m.as_str().parse::<i64>().unwrap_or(0)).unwrap_or(0);
             let minutes = caps.get(3).map(|m| m.as_str().parse::<i64>().unwrap_or(0)).unwrap_or(0);
             let seconds = caps.get(4).map(|m| m.as_str().parse::<i64>().unwrap_or(0)).unwrap_or(0);
-            let fraction = caps.get(5).map(|m| format!("0.{}", m.as_str()).parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0);
+            let fraction = caps.get(5).map(|m| {
+                let fraction_str = m.as_str();
+                // Parse the fractional part and convert to microseconds
+                let micros_from_fraction = if fraction_str.len() <= 6 {
+                    // Pad with zeros if needed
+                    let padded = format!("{:0<6}", fraction_str);
+                    padded.parse::<i64>().unwrap_or(0)
+                } else {
+                    // Truncate to 6 digits
+                    fraction_str[..6].parse::<i64>().unwrap_or(0)
+                };
+                micros_from_fraction
+            }).unwrap_or(0);
             
-            let total_seconds = (days * 86400 + hours * 3600 + minutes * 60 + seconds) as f64 + fraction;
-            return Ok(total_seconds.to_string());
+            let total_micros = (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1_000_000 + fraction;
+            return Ok(total_micros.to_string());
         }
         
         Err(format!("Unsupported interval format: {}", value))
     }
     
-    /// Convert seconds to PostgreSQL INTERVAL
+    /// Convert microseconds to PostgreSQL INTERVAL
     fn convert_seconds_to_interval(value: &str) -> Result<String, String> {
-        let total_seconds = value.parse::<f64>()
-            .map_err(|e| format!("Invalid seconds value: {} ({})", value, e))?;
+        let total_micros = value.parse::<i64>()
+            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
         
-        let days = (total_seconds / 86400.0).trunc() as i64;
-        let remaining_seconds = total_seconds - (days as f64 * 86400.0);
-        let hours = (remaining_seconds / 3600.0).trunc() as i64;
-        let minutes = ((remaining_seconds - hours as f64 * 3600.0) / 60.0).trunc() as i64;
-        let seconds = remaining_seconds - (hours as f64 * 3600.0) - (minutes as f64 * 60.0);
+        let days = total_micros / (86400 * 1_000_000);
+        let remaining_micros = total_micros % (86400 * 1_000_000);
+        let hours = remaining_micros / (3600 * 1_000_000);
+        let minutes = (remaining_micros % (3600 * 1_000_000)) / (60 * 1_000_000);
+        let seconds = (remaining_micros % (60 * 1_000_000)) / 1_000_000;
+        let microseconds = remaining_micros % 1_000_000;
         
         let mut parts = Vec::new();
         if days > 0 {
             parts.push(format!("{} day{}", days, if days == 1 { "" } else { "s" }));
         }
         
-        if seconds.fract() > 0.0 {
-            parts.push(format!("{:02}:{:02}:{:06.3}", hours, minutes, seconds));
+        if microseconds > 0 {
+            parts.push(format!("{:02}:{:02}:{:02}.{:06}", hours, minutes, seconds, microseconds));
         } else {
-            parts.push(format!("{:02}:{:02}:{:02}", hours, minutes, seconds.trunc() as i64));
+            parts.push(format!("{:02}:{:02}:{:02}", hours, minutes, seconds));
         }
         
         Ok(parts.join(" "))
@@ -495,63 +456,63 @@ mod tests {
     
     #[test]
     fn test_date_conversion() {
-        // Test DATE to Unix timestamp
+        // Test DATE to epoch days
         let result = ValueConverter::convert_date_to_unix("2024-01-15").unwrap();
-        let timestamp = result.parse::<f64>().unwrap();
-        assert_eq!(timestamp, 1705276800.0); // 2024-01-15 00:00:00 UTC
+        let days = result.parse::<i64>().unwrap();
+        assert_eq!(days, 19737); // Days since 1970-01-01
         
-        // Test Unix timestamp to DATE
-        let result = ValueConverter::convert_unix_to_date("1705276800").unwrap();
+        // Test epoch days to DATE
+        let result = ValueConverter::convert_unix_to_date("19737").unwrap();
         assert_eq!(result, "2024-01-15");
     }
     
     #[test]
     fn test_time_conversion() {
-        // Test TIME to seconds
+        // Test TIME to microseconds
         let result = ValueConverter::convert_time_to_seconds("14:30:45.123456").unwrap();
-        let seconds = result.parse::<f64>().unwrap();
-        assert!((seconds - 52245.123456).abs() < 0.000001);
+        let micros = result.parse::<i64>().unwrap();
+        assert_eq!(micros, 52245123456); // 14:30:45.123456 as microseconds
         
-        // Test seconds to TIME
-        let result = ValueConverter::convert_seconds_to_time("52245.123456").unwrap();
+        // Test microseconds to TIME
+        let result = ValueConverter::convert_seconds_to_time("52245123456").unwrap();
         assert_eq!(result, "14:30:45.123456");
         
         // Test TIME without fractional seconds
         let result = ValueConverter::convert_time_to_seconds("14:30:45").unwrap();
-        assert_eq!(result, "52245");
+        assert_eq!(result, "52245000000");
     }
     
     #[test]
     fn test_timestamp_conversion() {
-        // Test TIMESTAMP to Unix timestamp
+        // Test TIMESTAMP to microseconds since epoch
         let result = ValueConverter::convert_timestamp_to_unix("2024-01-15 14:30:45.123456").unwrap();
-        let timestamp = result.parse::<f64>().unwrap();
-        assert!((timestamp - 1705329045.123456).abs() < 0.000001);
+        let micros = result.parse::<i64>().unwrap();
+        assert_eq!(micros, 1705329045123456); // Microseconds since epoch
         
-        // Test Unix timestamp to TIMESTAMP
-        let result = ValueConverter::convert_unix_to_timestamp("1705329045.123456").unwrap();
+        // Test microseconds to TIMESTAMP
+        let result = ValueConverter::convert_unix_to_timestamp("1705329045123456").unwrap();
         assert_eq!(result, "2024-01-15 14:30:45.123456");
         
         // Test without fractional seconds
         let result = ValueConverter::convert_timestamp_to_unix("2024-01-15 14:30:45").unwrap();
-        let timestamp = result.parse::<f64>().unwrap();
-        assert_eq!(timestamp, 1705329045.0);
+        let micros = result.parse::<i64>().unwrap();
+        assert_eq!(micros, 1705329045000000);
     }
     
     #[test]
     fn test_interval_conversion() {
-        // Test simple seconds
-        assert_eq!(ValueConverter::convert_interval_to_seconds("3600").unwrap(), "3600");
+        // Test simple microseconds
+        assert_eq!(ValueConverter::convert_interval_to_seconds("3600000000").unwrap(), "3600000000");
         
         // Test HH:MM:SS format
-        assert_eq!(ValueConverter::convert_interval_to_seconds("01:30:00").unwrap(), "5400");
+        assert_eq!(ValueConverter::convert_interval_to_seconds("01:30:00").unwrap(), "5400000000"); // 1.5 hours in microseconds
         
         // Test verbose format
         let result = ValueConverter::convert_interval_to_seconds("1 day 02:30:00").unwrap();
-        assert_eq!(result, "95400"); // 86400 + 9000
+        assert_eq!(result, "95400000000"); // (86400 + 9000) seconds * 1_000_000 microseconds
         
-        // Test seconds to interval
-        assert_eq!(ValueConverter::convert_seconds_to_interval("95400").unwrap(), "1 day 02:30:00");
-        assert_eq!(ValueConverter::convert_seconds_to_interval("5400.5").unwrap(), "01:30:00.500");
+        // Test microseconds to interval
+        assert_eq!(ValueConverter::convert_seconds_to_interval("95400000000").unwrap(), "1 day 02:30:00");
+        assert_eq!(ValueConverter::convert_seconds_to_interval("5400500000").unwrap(), "01:30:00.500000");
     }
 }

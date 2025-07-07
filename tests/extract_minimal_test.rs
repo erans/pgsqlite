@@ -18,16 +18,16 @@ async fn test_extract_minimal() {
         &[]
     ).await.unwrap();
     
-    // Test EXTRACT on the column
+    // Test EXTRACT on the column - convert seconds to microseconds first
     let result = client.query_one(
-        "SELECT EXTRACT(YEAR FROM ts) as year FROM test_dates WHERE id = 1",
+        "SELECT EXTRACT(YEAR FROM to_timestamp(ts)) as year FROM test_dates WHERE id = 1",
         &[]
     ).await;
     
     match result {
         Ok(row) => {
-            let year: f64 = row.get(0);
-            assert_eq!(year, 2023.0);
+            let year: i32 = row.get(0);  // EXTRACT now returns i32, not f64
+            assert_eq!(year, 2023);
             println!("EXTRACT from column works!");
         }
         Err(e) => {
@@ -35,16 +35,16 @@ async fn test_extract_minimal() {
         }
     }
     
-    // Test EXTRACT on a literal
+    // Test EXTRACT on a literal - convert seconds to microseconds first
     let result2 = client.query_one(
-        "SELECT EXTRACT(YEAR FROM 1686840645.0) as year",
+        "SELECT EXTRACT(YEAR FROM to_timestamp(1686840645.0)) as year",
         &[]
     ).await;
     
     match result2 {
         Ok(row) => {
-            let year: f64 = row.get(0);
-            assert_eq!(year, 2023.0);
+            let year: i32 = row.get(0);  // EXTRACT now returns i32, not f64
+            assert_eq!(year, 2023);
             println!("EXTRACT from literal works!");
         }
         Err(e) => {

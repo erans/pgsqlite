@@ -373,19 +373,37 @@ pub fn query_fast_path(
                         match row.get_ref(i)? {
                             ValueRef::Null => values.push(None),
                             ValueRef::Integer(int_val) => {
-                                // Check if this column is a boolean type
-                                let is_boolean = column_types.get(i)
+                                // Check column type for proper formatting
+                                let pg_type = column_types.get(i)
                                     .and_then(|opt| opt.as_ref())
-                                    .map(|pg_type| {
-                                        let type_lower = pg_type.to_lowercase();
-                                        type_lower == "boolean" || type_lower == "bool"
-                                    })
-                                    .unwrap_or(false);
+                                    .map(|s| s.to_lowercase())
+                                    .unwrap_or_default();
                                 
-                                if is_boolean {
+                                if pg_type == "boolean" || pg_type == "bool" {
                                     // Convert SQLite's 0/1 to PostgreSQL's f/t format
                                     let bool_str = if int_val == 0 { "f" } else { "t" };
                                     values.push(Some(bool_str.as_bytes().to_vec()));
+                                } else if pg_type == "date" {
+                                    // Convert INTEGER days to YYYY-MM-DD
+                                    use crate::types::datetime_utils::format_days_to_date_buf;
+                                    let mut buf = vec![0u8; 32];
+                                    let len = format_days_to_date_buf(int_val as i32, &mut buf);
+                                    buf.truncate(len);
+                                    values.push(Some(buf));
+                                } else if pg_type == "time" || pg_type == "timetz" || pg_type == "time without time zone" || pg_type == "time with time zone" {
+                                    // Convert INTEGER microseconds to HH:MM:SS.ffffff
+                                    use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                                    let mut buf = vec![0u8; 32];
+                                    let len = format_microseconds_to_time_buf(int_val, &mut buf);
+                                    buf.truncate(len);
+                                    values.push(Some(buf));
+                                } else if pg_type == "timestamp" || pg_type == "timestamptz" || pg_type == "timestamp without time zone" || pg_type == "timestamp with time zone" {
+                                    // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff
+                                    use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                    let mut buf = vec![0u8; 64];
+                                    let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
+                                    buf.truncate(len);
+                                    values.push(Some(buf));
                                 } else {
                                     values.push(Some(int_val.to_string().into_bytes()));
                                 }

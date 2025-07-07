@@ -13,6 +13,7 @@ impl PgAttributeHandler {
         select: &Select,
         db: &DbHandler,
     ) -> Result<DbResponse, PgSqliteError> {
+        // println!("PG_ATTRIBUTE DEBUG: Handling pg_attribute query, DbHandler id: {:p}", db);
         debug!("Handling pg_attribute query");
         debug!("SELECT clause: {:?}", select);
         if let Some(selection) = &select.selection {
@@ -109,16 +110,30 @@ impl PgAttributeHandler {
         } else {
             // Query all tables
             let tables_response = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await?;
+            debug!("Found {} user tables in sqlite_master", tables_response.rows.len());
             
             for table_row in &tables_response.rows {
                 if let Some(Some(table_name_bytes)) = table_row.get(0) {
                     let table_name = String::from_utf8_lossy(table_name_bytes);
+                    debug!("Found table in sqlite_master: {}", table_name);
                     add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices).await?;
+                }
+            }
+            
+            // Debug: Also check all tables without filters
+            let all_tables_response = db.query("SELECT name, type FROM sqlite_master").await?;
+            debug!("Total objects in sqlite_master: {}", all_tables_response.rows.len());
+            for table_row in &all_tables_response.rows {
+                if let (Some(Some(name_bytes)), Some(Some(type_bytes))) = (table_row.get(0), table_row.get(1)) {
+                    let name = String::from_utf8_lossy(name_bytes);
+                    let obj_type = String::from_utf8_lossy(type_bytes);
+                    debug!("sqlite_master object: {} (type: {})", name, obj_type);
                 }
             }
         }
         
         let rows_affected = rows.len();
+        
         
         Ok(DbResponse {
             columns: selected_columns,
@@ -275,7 +290,8 @@ async fn add_table_attributes(
             
             // Evaluate WHERE clause if present
             let include_row = if let Some(selection) = &select.selection {
-                WhereEvaluator::evaluate(selection, &row_data, column_mapping)
+                let result = WhereEvaluator::evaluate(selection, &row_data, column_mapping);
+                result
             } else {
                 true
             };

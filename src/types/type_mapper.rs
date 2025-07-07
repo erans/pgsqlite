@@ -147,10 +147,10 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("uuid".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("json".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("jsonb".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("date".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("time".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("timestamp".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("timestamptz".to_string(), "REAL".to_string());
+        mapper.pg_to_sqlite.insert("date".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("time".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timestamp".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timestamptz".to_string(), "INTEGER".to_string());
         mapper.pg_to_sqlite.insert("numeric".to_string(), "DECIMAL".to_string());
         mapper.pg_to_sqlite.insert("decimal".to_string(), "DECIMAL".to_string());
         mapper.pg_to_sqlite.insert("bytea".to_string(), "BLOB".to_string());
@@ -160,12 +160,12 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("bigserial".to_string(), "INTEGER".to_string());
         mapper.pg_to_sqlite.insert("character varying".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("character".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("timestamp with time zone".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("timestamp without time zone".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("time with time zone".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("time without time zone".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("timetz".to_string(), "REAL".to_string());
-        mapper.pg_to_sqlite.insert("interval".to_string(), "REAL".to_string());
+        mapper.pg_to_sqlite.insert("timestamp with time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timestamp without time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("time with time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("time without time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timetz".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("interval".to_string(), "INTEGER".to_string());
         
         // New type mappings
         mapper.pg_to_sqlite.insert("money".to_string(), "TEXT".to_string());
@@ -492,8 +492,8 @@ mod tests {
         
         // Test multi-word types
         assert_eq!(mapper.pg_to_sqlite_for_create_table("DOUBLE PRECISION"), "DECIMAL");
-        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIME WITH TIME ZONE"), "REAL");
-        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIMESTAMP WITHOUT TIME ZONE"), "REAL");
+        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIME WITH TIME ZONE"), "INTEGER");
+        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIMESTAMP WITHOUT TIME ZONE"), "INTEGER");
         assert_eq!(mapper.pg_to_sqlite_for_create_table("BIT VARYING"), "TEXT");
     }
     

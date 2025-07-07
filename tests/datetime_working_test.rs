@@ -6,9 +6,12 @@ async fn test_now_function() {
     let server = setup_test_server().await;
     let client = &server.client;
     
-    // Test NOW() function
+    // Test NOW() function - NOW() now returns microseconds since epoch as INT8
     let row = client.query_one("SELECT NOW() as now", &[]).await.unwrap();
-    let now_timestamp: f64 = row.get("now");
+    let now_microseconds: i64 = row.get("now");
+    
+    // Convert microseconds to seconds for validation
+    let now_timestamp = now_microseconds as f64 / 1_000_000.0;
     
     // Verify it's a reasonable Unix timestamp (after 2020-01-01)
     assert!(now_timestamp > 1577836800.0, "NOW() should return a Unix timestamp after 2020");
@@ -57,13 +60,13 @@ async fn test_datetime_functions_with_table() {
         &[&1i32, &test_timestamp]
     ).await.unwrap();
     
-    // Test EXTRACT function on the column
+    // Test EXTRACT function on the column - convert seconds to microseconds first
     let results = client.simple_query(
-        "SELECT EXTRACT(YEAR FROM ts) as year, 
-                EXTRACT(MONTH FROM ts) as month,
-                EXTRACT(DAY FROM ts) as day,
-                EXTRACT(HOUR FROM ts) as hour,
-                EXTRACT(MINUTE FROM ts) as minute
+        "SELECT EXTRACT(YEAR FROM to_timestamp(ts)) as year, 
+                EXTRACT(MONTH FROM to_timestamp(ts)) as month,
+                EXTRACT(DAY FROM to_timestamp(ts)) as day,
+                EXTRACT(HOUR FROM to_timestamp(ts)) as hour,
+                EXTRACT(MINUTE FROM to_timestamp(ts)) as minute
          FROM timestamps WHERE id = 1"
     ).await.unwrap();
     
@@ -108,25 +111,13 @@ async fn test_date_trunc_with_table() {
         }
     }
     
-    // Test DATE_TRUNC function - handle potential BLOB type issue
-    let results = match client.simple_query(
-        "SELECT DATE_TRUNC('hour', ts) as hour_trunc,
-                DATE_TRUNC('day', ts) as day_trunc,
-                DATE_TRUNC('month', ts) as month_trunc
+    // Test DATE_TRUNC function - convert seconds to microseconds first
+    let results = client.simple_query(
+        "SELECT DATE_TRUNC('hour', to_timestamp(ts)) as hour_trunc,
+                DATE_TRUNC('day', to_timestamp(ts)) as day_trunc,
+                DATE_TRUNC('month', to_timestamp(ts)) as month_trunc
          FROM timestamps WHERE id = 1"
-    ).await {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("DATE_TRUNC failed: {:?}", e);
-            // Try with CAST to REAL
-            client.simple_query(
-                "SELECT DATE_TRUNC('hour', CAST(ts AS REAL)) as hour_trunc,
-                        DATE_TRUNC('day', CAST(ts AS REAL)) as day_trunc,
-                        DATE_TRUNC('month', CAST(ts AS REAL)) as month_trunc
-                 FROM timestamps WHERE id = 1"
-            ).await.unwrap()
-        }
-    };
+    ).await.unwrap();
     
     // Verify results
     for msg in results {
@@ -136,17 +127,21 @@ async fn test_date_trunc_with_table() {
             let day_str = row.get(1).unwrap();
             let month_str = row.get(2).unwrap();
             
-            // Parse and verify
-            let hour_val: f64 = hour_str.parse().unwrap();
-            let day_val: f64 = day_str.parse().unwrap();
-            let month_val: f64 = month_str.parse().unwrap();
+            // Parse and verify - values are now in microseconds since epoch
+            let hour_val: i64 = hour_str.parse().unwrap();
+            let day_val: i64 = day_str.parse().unwrap();
+            let month_val: i64 = month_str.parse().unwrap();
             
+            // Convert expected values from seconds to microseconds
             // 2023-06-15 14:00:00
-            assert!((hour_val - 1686837600.0).abs() < 1.0, "hour_trunc: expected 1686837600, got {}", hour_val);
-            // 2023-06-15 00:00:00
-            assert!((day_val - 1686787200.0).abs() < 1.0, "day_trunc: expected 1686787200, got {}", day_val);
+            let expected_hour = 1686837600i64 * 1_000_000;
+            assert!((hour_val - expected_hour).abs() < 1_000_000, "hour_trunc: expected {}, got {}", expected_hour, hour_val);
+            // 2023-06-15 00:00:00  
+            let expected_day = 1686787200i64 * 1_000_000;
+            assert!((day_val - expected_day).abs() < 1_000_000, "day_trunc: expected {}, got {}", expected_day, day_val);
             // 2023-06-01 00:00:00
-            assert!((month_val - 1685577600.0).abs() < 1.0, "month_trunc: expected 1685577600, got {}", month_val);
+            let expected_month = 1685577600i64 * 1_000_000;
+            assert!((month_val - expected_month).abs() < 1_000_000, "month_trunc: expected {}, got {}", expected_month, month_val);
         }
     }
 }

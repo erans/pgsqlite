@@ -71,7 +71,14 @@ impl DateTimeTranslator {
     
     /// Translate PostgreSQL datetime functions to SQLite-compatible versions
     pub fn translate_query(query: &str) -> String {
+        let (translated, _) = Self::translate_with_metadata(query);
+        translated
+    }
+    
+    /// Translate query and return metadata about the translation
+    pub fn translate_with_metadata(query: &str) -> (String, super::TranslationMetadata) {
         let mut result = query.to_string();
+        let mut metadata = super::TranslationMetadata::new();
         
         // Replace NOW() and CURRENT_TIMESTAMP with our custom function
         result = NOW_PATTERN.replace_all(&result, "now()").to_string();
@@ -83,22 +90,22 @@ impl DateTimeTranslator {
         // Replace CURRENT_TIME (no parentheses in PostgreSQL)
         result = CURRENT_TIME_PATTERN.replace_all(&result, "current_time").to_string();
         
-        // Wrap SQLite date() function to convert to Unix timestamp
+        // Wrap SQLite date() function to convert to epoch days (INTEGER)
         result = DATE_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST((julianday({}) - 2440587.5) * 86400 AS REAL)", args)
+            format!("CAST(julianday({}) - 2440587.5 AS INTEGER)", args)
         }).to_string();
         
-        // Wrap SQLite time() function to convert to seconds since midnight
+        // Wrap SQLite time() function to convert to microseconds since midnight (INTEGER)
         result = TIME_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST((strftime('%s', '2000-01-01 ' || time({})) - strftime('%s', '2000-01-01')) AS REAL)", args)
+            format!("CAST((strftime('%s', '2000-01-01 ' || time({})) - strftime('%s', '2000-01-01')) * 1000000 AS INTEGER)", args)
         }).to_string();
         
-        // Wrap SQLite datetime() function to convert to Unix timestamp
+        // Wrap SQLite datetime() function to convert to microseconds since epoch (INTEGER)
         result = DATETIME_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST((julianday(datetime({})) - 2440587.5) * 86400 AS REAL)", args)
+            format!("CAST((julianday(datetime({})) - 2440587.5) * 86400 * 1000000 AS INTEGER)", args)
         }).to_string();
         
         // Handle EXTRACT(field FROM timestamp) -> extract(field, timestamp)
@@ -119,22 +126,23 @@ impl DateTimeTranslator {
         result = Self::translate_interval_literals(&result);
         
         // Handle AT TIME ZONE operator
-        result = Self::translate_at_time_zone(&result);
+        let at_time_zone_metadata = Self::translate_at_time_zone_with_metadata(&mut result);
+        metadata.merge(at_time_zone_metadata);
         
         // Handle timestamp arithmetic with intervals
         result = Self::translate_interval_arithmetic(&result);
         
-        result
+        (result, metadata)
     }
     
-    /// Translate INTERVAL literals to seconds
+    /// Translate INTERVAL literals to microseconds
     fn translate_interval_literals(query: &str) -> String {
         let interval_pattern = Regex::new(r"(?i)INTERVAL\s+'([^']+)'").unwrap();
         
         interval_pattern.replace_all(query, |caps: &regex::Captures| {
             let interval_str = &caps[1];
-            if let Some(seconds) = Self::parse_interval_to_seconds(interval_str) {
-                seconds.to_string()
+            if let Some(microseconds) = Self::parse_interval_to_seconds(interval_str) {
+                format!("{:.0}", microseconds)
             } else {
                 // If we can't parse it, leave it as is
                 caps[0].to_string()
@@ -142,20 +150,20 @@ impl DateTimeTranslator {
         }).to_string()
     }
     
-    /// Parse common interval formats to seconds
+    /// Parse common interval formats to microseconds
     fn parse_interval_to_seconds(interval: &str) -> Option<f64> {
         let parts: Vec<&str> = interval.split_whitespace().collect();
         
         if parts.len() >= 2 {
             if let Ok(value) = parts[0].parse::<f64>() {
                 match parts[1].to_lowercase().as_str() {
-                    "second" | "seconds" | "sec" | "secs" => Some(value),
-                    "minute" | "minutes" | "min" | "mins" => Some(value * 60.0),
-                    "hour" | "hours" | "hr" | "hrs" => Some(value * 3600.0),
-                    "day" | "days" => Some(value * 86400.0),
-                    "week" | "weeks" => Some(value * 604800.0),
-                    "month" | "months" | "mon" | "mons" => Some(value * 2592000.0), // 30 days
-                    "year" | "years" | "yr" | "yrs" => Some(value * 31536000.0), // 365 days
+                    "second" | "seconds" | "sec" | "secs" => Some(value * 1_000_000.0),
+                    "minute" | "minutes" | "min" | "mins" => Some(value * 60.0 * 1_000_000.0),
+                    "hour" | "hours" | "hr" | "hrs" => Some(value * 3600.0 * 1_000_000.0),
+                    "day" | "days" => Some(value * 86400.0 * 1_000_000.0),
+                    "week" | "weeks" => Some(value * 604800.0 * 1_000_000.0),
+                    "month" | "months" | "mon" | "mons" => Some(value * 2592000.0 * 1_000_000.0), // 30 days
+                    "year" | "years" | "yr" | "yrs" => Some(value * 31536000.0 * 1_000_000.0), // 365 days
                     _ => None
                 }
             } else {
@@ -178,8 +186,8 @@ impl DateTimeTranslator {
             let operator = &caps[2];
             let interval_str = &caps[3];
             
-            if let Some(seconds) = Self::parse_interval_to_seconds(interval_str) {
-                format!("({} {} {})", column, operator, seconds)
+            if let Some(microseconds) = Self::parse_interval_to_seconds(interval_str) {
+                format!("({} {} {:.0})", column, operator, microseconds)
             } else {
                 caps[0].to_string()
             }
@@ -188,27 +196,56 @@ impl DateTimeTranslator {
         result
     }
     
-    /// Translate AT TIME ZONE operator
-    fn translate_at_time_zone(query: &str) -> String {
-        let mut result = query.to_string();
+    
+    /// Translate AT TIME ZONE operator with metadata
+    fn translate_at_time_zone_with_metadata(query: &mut String) -> super::TranslationMetadata {
+        let (result, metadata) = Self::translate_at_time_zone_with_metadata_impl(query);
+        *query = result;
+        metadata
+    }
+    
+    /// Internal implementation of AT TIME ZONE translation with metadata
+    fn translate_at_time_zone_with_metadata_impl(query: &str) -> (String, super::TranslationMetadata) {
+        let mut metadata = super::TranslationMetadata::new();
         
         // Pattern to match expressions like "timestamp AT TIME ZONE 'timezone'"
-        result = AT_TIME_ZONE_PATTERN.replace_all(&result, |caps: &regex::Captures| {
+        let result = AT_TIME_ZONE_PATTERN.replace_all(query, |caps: &regex::Captures| {
             let expression = &caps[1];
             let timezone = &caps[2];
             let alias_part = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+            let alias = caps.get(4).map(|m| m.as_str());
             let offset_seconds = Self::tz_to_offset_seconds(timezone);
+            
+            // If we have an alias, track the type hint
+            if let Some(alias_name) = alias {
+                // Try to extract the source column from the expression
+                let source_column = if expression.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+                    Some(expression.to_string())
+                } else {
+                    None
+                };
+                
+                // AT TIME ZONE operations should preserve the source column type
+                // Don't force a specific type here - let the extended protocol look up the source column type
+                let hint = super::ColumnTypeHint::expression(
+                    source_column.clone(),
+                    super::super::types::PgType::Float8, // This will be overridden by source column lookup
+                    super::ExpressionType::DateTimeExpression
+                );
+                
+                metadata.add_hint(alias_name.to_string(), hint);
+            }
             
             // If timezone is UTC or offset is 0, just return the expression
             if offset_seconds == 0 {
                 format!("{}{}", expression, alias_part)
             } else {
-                // Apply offset to the timestamp
-                format!("{} + {}{}", expression, offset_seconds, alias_part)
+                // Apply offset to the timestamp (convert seconds to microseconds)
+                format!("{} + {}{}", expression, offset_seconds as i64 * 1_000_000, alias_part)
             }
         }).to_string();
         
-        result
+        (result, metadata)
     }
     
     /// Convert timezone name to offset in seconds
@@ -282,7 +319,7 @@ mod tests {
         // Test INTERVAL translation
         assert_eq!(
             DateTimeTranslator::translate_query("SELECT created_at + INTERVAL '1 day'"),
-            "SELECT created_at + 86400"
+            "SELECT created_at + 86400000000"
         );
         
         // Test AT TIME ZONE removal
@@ -294,12 +331,12 @@ mod tests {
     
     #[test]
     fn test_interval_parsing() {
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 second"), Some(1.0));
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("2 minutes"), Some(120.0));
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("3 hours"), Some(10800.0));
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 day"), Some(86400.0));
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 week"), Some(604800.0));
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 month"), Some(2592000.0));
-        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 year"), Some(31536000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 second"), Some(1_000_000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("2 minutes"), Some(120_000_000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("3 hours"), Some(10_800_000_000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 day"), Some(86_400_000_000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 week"), Some(604_800_000_000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 month"), Some(2_592_000_000_000.0));
+        assert_eq!(DateTimeTranslator::parse_interval_to_seconds("1 year"), Some(31_536_000_000_000.0));
     }
 }

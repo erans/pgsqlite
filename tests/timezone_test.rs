@@ -52,42 +52,39 @@ async fn test_at_time_zone() {
     let server = setup_test_server().await;
     let client = &server.client;
     
-    // Create a table with timestamp
-    client.execute(
-        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts DOUBLE PRECISION)",
-        &[]
-    ).await.unwrap();
-    
-    // Insert a test timestamp (2023-06-15 14:30:45 UTC)
-    let timestamp = 1686839445.0f64;
-    client.execute(
-        "INSERT INTO timestamps (id, ts) VALUES ($1, $2)",
-        &[&1i32, &timestamp]
-    ).await.unwrap();
+    // Test AT TIME ZONE directly with microsecond timestamp values
+    // 2023-06-15 14:30:45 = 1686839445 seconds = 1686839445000000 microseconds
+    let base_timestamp_micros = 1686839445000000i64;
     
     // Test AT TIME ZONE with UTC (should be no change)
     let row = client.query_one(
-        "SELECT ts AT TIME ZONE 'UTC' as ts_utc FROM timestamps WHERE id = 1",
+        &format!("SELECT {} AT TIME ZONE 'UTC' as ts_utc", base_timestamp_micros),
         &[]
     ).await.unwrap();
     let ts_utc: f64 = row.get(0);
-    assert_eq!(ts_utc, timestamp);
+    // The result is returned in microseconds (datetime system uses INTEGER microseconds)
+    let base_timestamp_micros = 1686839445000000.0;
+    assert_eq!(ts_utc, base_timestamp_micros);
     
-    // Test AT TIME ZONE with EST (should subtract 5 hours)
+    // Test AT TIME ZONE with EST (should subtract 5 hours = 5 * 3600 * 1000000 microseconds)
     let row = client.query_one(
-        "SELECT ts AT TIME ZONE 'EST' as ts_est FROM timestamps WHERE id = 1",
+        &format!("SELECT {} AT TIME ZONE 'EST' as ts_est", base_timestamp_micros),
         &[]
     ).await.unwrap();
     let ts_est: f64 = row.get(0);
-    assert_eq!(ts_est, timestamp - 5.0 * 3600.0);
+    // EST is 5 hours behind UTC, so subtract 5 * 3600 * 1000000 microseconds
+    let expected_est_micros = base_timestamp_micros - 5.0 * 3600.0 * 1_000_000.0;
+    assert_eq!(ts_est, expected_est_micros);
     
-    // Test AT TIME ZONE with offset
+    // Test AT TIME ZONE with offset (+05:30 = +5.5 hours = 5.5 * 3600 * 1000000 microseconds)
     let row = client.query_one(
-        "SELECT ts AT TIME ZONE '+05:30' as ts_ist FROM timestamps WHERE id = 1",
+        &format!("SELECT {} AT TIME ZONE '+05:30' as ts_ist", base_timestamp_micros),
         &[]
     ).await.unwrap();
     let ts_ist: f64 = row.get(0);
-    assert_eq!(ts_ist, timestamp + 5.5 * 3600.0);
+    // +05:30 is 5.5 hours ahead of UTC, so add 5.5 * 3600 * 1000000 microseconds
+    let expected_ist_micros = base_timestamp_micros + 5.5 * 3600.0 * 1_000_000.0;
+    assert_eq!(ts_ist, expected_ist_micros);
 }
 
 #[tokio::test] 

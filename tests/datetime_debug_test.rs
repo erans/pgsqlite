@@ -133,7 +133,7 @@ async fn test_extract_with_format() {
     match result {
         Ok(row) => {
             eprintln!("format! EXTRACT success!");
-            let year: f64 = row.get("year");
+            let year: i32 = row.get("year");
             eprintln!("Year: {}", year);
         }
         Err(e) => {

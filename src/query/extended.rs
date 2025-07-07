@@ -103,6 +103,7 @@ impl ExtendedQueryHandler {
                 } else {
                     vec![]
                 },
+                translation_metadata: None, // SET commands don't need translation metadata
             };
             
             session.prepared_statements.write().await.insert(name.clone(), stmt);
@@ -222,9 +223,12 @@ impl ExtendedQueryHandler {
             cleaned_query.clone()
         };
         
-        // Translate datetime functions if needed
+        // Translate datetime functions if needed and capture metadata
+        let mut translation_metadata = crate::translator::TranslationMetadata::new();
         if crate::translator::DateTimeTranslator::needs_translation(&translated_for_analysis) {
-            translated_for_analysis = crate::translator::DateTimeTranslator::translate_query(&translated_for_analysis);
+            let (translated, metadata) = crate::translator::DateTimeTranslator::translate_with_metadata(&translated_for_analysis);
+            translated_for_analysis = translated;
+            translation_metadata.merge(metadata);
         }
         
         // For now, we'll just analyze the query to get field descriptions
@@ -280,11 +284,54 @@ impl ExtendedQueryHandler {
                                 if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
                                     schema_types.insert(col_name.clone(), pg_type);
                                 } else {
-                                    // Try to find source column if this is an alias
-                                    if let Some(source_col) = Self::extract_source_column_for_alias(&cleaned_query, col_name) {
-                                        if let Ok(Some(pg_type)) = db.get_schema_type(table, &source_col).await {
-                                            info!("Found schema type for alias '{}' -> source column '{}': {}", col_name, source_col, pg_type);
-                                            schema_types.insert(col_name.clone(), pg_type);
+                                        // First check translation metadata
+                                    if let Some(hint) = translation_metadata.get_hint(col_name) {
+                                        // For datetime expressions, check if we have a source column and prefer its type
+                                        if let Some(ref source_col) = hint.source_column {
+                                            if let Ok(Some(source_type)) = db.get_schema_type(table, source_col).await {
+                                                info!("Found source column type for datetime expression '{}' -> '{}': {}", col_name, source_col, source_type);
+                                                schema_types.insert(col_name.clone(), source_type);
+                                            } else if let Some(suggested_type) = &hint.suggested_type {
+                                                info!("Using suggested type for datetime expression '{}': {:?}", col_name, suggested_type);
+                                                // Convert PgType to the string format used in schema
+                                                let type_string = match suggested_type {
+                                                    crate::types::PgType::Float8 => "DOUBLE PRECISION",
+                                                    crate::types::PgType::Float4 => "REAL",
+                                                    crate::types::PgType::Int4 => "INTEGER",
+                                                    crate::types::PgType::Int8 => "BIGINT",
+                                                    crate::types::PgType::Text => "TEXT",
+                                                    crate::types::PgType::Date => "DATE",
+                                                    crate::types::PgType::Time => "TIME",
+                                                    crate::types::PgType::Timestamp => "TIMESTAMP",
+                                                    crate::types::PgType::Timestamptz => "TIMESTAMPTZ",
+                                                    _ => "TEXT", // Default to TEXT for unknown types
+                                                };
+                                                schema_types.insert(col_name.clone(), type_string.to_string());
+                                            }
+                                        } else if let Some(suggested_type) = &hint.suggested_type {
+                                            info!("Found type hint from translation for '{}': {:?}", col_name, suggested_type);
+                                            // Convert PgType to the string format used in schema
+                                            let type_string = match suggested_type {
+                                                crate::types::PgType::Float8 => "DOUBLE PRECISION",
+                                                crate::types::PgType::Float4 => "REAL",
+                                                crate::types::PgType::Int4 => "INTEGER",
+                                                crate::types::PgType::Int8 => "BIGINT",
+                                                crate::types::PgType::Text => "TEXT",
+                                                crate::types::PgType::Date => "DATE",
+                                                crate::types::PgType::Time => "TIME",
+                                                crate::types::PgType::Timestamp => "TIMESTAMP",
+                                                crate::types::PgType::Timestamptz => "TIMESTAMPTZ",
+                                                _ => "TEXT", // Default to TEXT for unknown types
+                                            };
+                                            schema_types.insert(col_name.clone(), type_string.to_string());
+                                        }
+                                    } else {
+                                        // Try to find source column if this is an alias
+                                        if let Some(source_col) = Self::extract_source_column_for_alias(&cleaned_query, col_name) {
+                                            if let Ok(Some(pg_type)) = db.get_schema_type(table, &source_col).await {
+                                                info!("Found schema type for alias '{}' -> source column '{}': {}", col_name, source_col, pg_type);
+                                                schema_types.insert(col_name.clone(), pg_type);
+                                            }
                                         }
                                     }
                                 }
@@ -335,7 +382,15 @@ impl ExtendedQueryHandler {
                                     return PgType::Text.to_oid();
                                 }
                                 
-                                // Second priority: Check schema table for stored type mappings
+                                // Second priority: Check translation metadata for type hints
+                                if let Some(hint) = translation_metadata.get_hint(col_name) {
+                                    if let Some(suggested_type) = &hint.suggested_type {
+                                        info!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
+                                        return suggested_type.to_oid();
+                                    }
+                                }
+                                
+                                // Third priority: Check schema table for stored type mappings
                                 if let Some(pg_type) = schema_types.get(col_name) {
                                     // Need to check if this is an ENUM type
                                     if let Ok(conn) = db.get_mut_connection() {
@@ -420,6 +475,11 @@ impl ExtendedQueryHandler {
             param_types: actual_param_types.clone(),
             param_formats: vec![0; actual_param_types.len()], // Default to text format
             field_descriptions,
+            translation_metadata: if translation_metadata.column_mappings.is_empty() {
+                None
+            } else {
+                Some(translation_metadata)
+            },
         };
         
         session.prepared_statements.write().await.insert(name.clone(), stmt);

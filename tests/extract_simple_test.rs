@@ -8,12 +8,12 @@ async fn test_extract_simple_case() {
     
     // Test with uppercase EXTRACT (known to cause UnexpectedMessage)
     let test_timestamp = 1686840645.0;
-    let query_upper = format!("SELECT EXTRACT(YEAR FROM {}) as year", test_timestamp);
+    let query_upper = format!("SELECT EXTRACT(YEAR FROM to_timestamp({})) as year", test_timestamp);
     
     println!("Testing uppercase query: {}", query_upper);
     
     // Test with lowercase extract (should work)
-    let query_lower = format!("SELECT extract('year', {}) as year", test_timestamp);
+    let query_lower = format!("SELECT extract('year', to_timestamp({})) as year", test_timestamp);
     println!("Testing lowercase query: {}", query_lower);
     
     // First try uppercase EXTRACT (expect it to fail)
@@ -21,8 +21,9 @@ async fn test_extract_simple_case() {
         Ok(rows) => {
             println!("Uppercase query() unexpectedly succeeded with {} rows", rows.len());
             if rows.len() > 0 {
-                let year: f64 = rows[0].get(0);
+                let year: i32 = rows[0].get(0);  // EXTRACT now returns i32, not f64
                 println!("Year: {}", year);
+                assert_eq!(year, 2023);
             }
         }
         Err(e) => {
@@ -66,7 +67,7 @@ async fn test_extract_simple_case() {
     
     // Test the translated query directly
     println!("\nTesting translated query directly:");
-    let translated_query = "SELECT extract('year', 1686840645) as year";
+    let translated_query = "SELECT extract('year', to_timestamp(1686840645)) as year";
     match client.query(translated_query, &[]).await {
         Ok(rows) => {
             println!("Translated query succeeded with {} rows", rows.len());

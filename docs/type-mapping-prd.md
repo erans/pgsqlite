@@ -27,9 +27,11 @@ The following table maps supported PostgreSQL types to SQLite storage representa
 | NUMERIC/DECIMAL | TEXT        | DECIMAL     | Custom type using rust_decimal for precision |
 | CHAR/VARCHAR/TEXT| TEXT       | -           | Length ignored |
 | UUID            | TEXT        | -           | Format validation in code |
-| DATE            | TEXT        | -           | ISO8601 format |
-| TIMESTAMP       | TEXT        | -           | ISO8601 format |
-| TIME            | TEXT        | -           | HH:MM[:SS[.fff]] |
+| DATE            | INTEGER     | -           | Days since Unix epoch (1970-01-01) |
+| TIMESTAMP       | INTEGER     | -           | Microseconds since Unix epoch |
+| TIMESTAMPTZ     | INTEGER     | -           | Microseconds since Unix epoch |
+| TIME            | INTEGER     | -           | Microseconds since midnight |
+| TIMETZ          | INTEGER     | -           | Microseconds since midnight |
 | BYTEA           | BLOB        | -           | Binary |
 | JSON/JSONB      | TEXT        | -           | Validated/serialized in code |
 | ENUM            | TEXT        | ENUM        | Full PostgreSQL ENUM support with CHECK constraints |
@@ -81,6 +83,38 @@ PostgreSQL ENUM types are fully supported with automatic CHECK constraint genera
 - Full system catalog integration (pg_type, pg_enum)
 - Type casting support with both `::` and `CAST()` syntax
 
+#### DateTime INTEGER Storage
+All datetime types use INTEGER storage for perfect precision (no floating point errors):
+
+**Storage Formats:**
+- **DATE**: INTEGER days since Unix epoch (1970-01-01)
+- **TIME/TIMETZ**: INTEGER microseconds since midnight (0-86,399,999,999)
+- **TIMESTAMP/TIMESTAMPTZ**: INTEGER microseconds since Unix epoch
+- **INTERVAL**: INTEGER microseconds duration
+
+**Benefits:**
+- Perfect microsecond precision (PostgreSQL's maximum precision)
+- No floating-point rounding errors
+- Efficient storage and indexing
+- Fast arithmetic operations
+- Consistent behavior across platforms
+
+**Conversion Functions:**
+- `to_timestamp(seconds)` - Convert seconds to microseconds timestamp
+- `NOW()` - Returns current timestamp as microseconds
+- `CURRENT_DATE` - Returns current date as epoch days
+- `EXTRACT(field FROM timestamp)` - Returns integer values
+- `DATE_TRUNC(field, timestamp)` - Returns truncated timestamp as microseconds
+
+**Performance Optimizations:**
+- Dedicated type converters with indices 6 (date), 7 (time), 8 (timestamp)
+- Buffer-based formatting avoiding string allocations
+- Fast-path execution for all datetime columns
+- Optimized datetime formatting functions:
+  - `format_days_to_date_buf()` - Direct buffer writing for dates
+  - `format_microseconds_to_time_buf()` - Direct buffer writing for times
+  - `format_microseconds_to_timestamp_buf()` - Direct buffer writing for timestamps
+
 ### Unmapped PostgreSQL Types
 The following PostgreSQL native types are not yet mapped to SQLite equivalents:
 
@@ -104,7 +138,7 @@ The following PostgreSQL native types are not yet mapped to SQLite equivalents:
 #### Date/Time Types
 | PostgreSQL Type | Suggested SQLite Type | Notes |
 |-----------------|----------------------|-------|
-| INTERVAL        | TEXT                 | Store as ISO 8601 duration |
+| INTERVAL        | INTEGER              | Microseconds duration |
 | TSRANGE         | TEXT                 | Store as JSON with timestamps |
 | TSTZRANGE       | TEXT                 | Store as JSON with timestamps |
 | DATERANGE       | TEXT                 | Store as JSON with dates |
@@ -134,9 +168,14 @@ CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
   column_name TEXT NOT NULL,
   pg_type TEXT NOT NULL,
   sqlite_type TEXT NOT NULL,
+  pg_oid INTEGER,
+  datetime_format TEXT,
+  timezone_offset INTEGER,
   PRIMARY KEY (table_name, column_name)
 );
 ```
+
+The `datetime_format` column stores format information for datetime types (e.g., 'ISO8601', 'UNIX_TIMESTAMP'), while `timezone_offset` stores timezone information for TIMETZ and TIMESTAMPTZ types.
 
 #### ENUM Type Metadata
 ```sql
@@ -161,17 +200,23 @@ CREATE TABLE users (
   id UUID PRIMARY KEY,
   profile JSONB,
   active BOOLEAN,
-  balance NUMERIC(10,2)
+  balance NUMERIC(10,2),
+  created_at TIMESTAMP,
+  birth_date DATE,
+  work_start TIME
 );
 ```
 Would store the following in `__pgsqlite_schema`:
 
-| table_name | column_name | pg_type | sqlite_type |
-|------------|-------------|---------|-------------|
-| users      | id          | UUID    | TEXT        |
-| users      | profile     | JSONB   | TEXT        |
-| users      | active      | BOOLEAN | INTEGER     |
-| users      | balance     | NUMERIC | DECIMAL     |
+| table_name | column_name | pg_type   | sqlite_type | pg_oid | datetime_format | timezone_offset |
+|------------|-------------|-----------|-------------|--------|-----------------|-----------------|
+| users      | id          | UUID      | TEXT        | 2950   | NULL            | NULL            |
+| users      | profile     | JSONB     | TEXT        | 3802   | NULL            | NULL            |
+| users      | active      | BOOLEAN   | INTEGER     | 16     | NULL            | NULL            |
+| users      | balance     | NUMERIC   | DECIMAL     | 1700   | NULL            | NULL            |
+| users      | created_at  | TIMESTAMP | INTEGER     | 1114   | UNIX_TIMESTAMP  | NULL            |
+| users      | birth_date  | DATE      | INTEGER     | 1082   | UNIX_TIMESTAMP  | NULL            |
+| users      | work_start  | TIME      | INTEGER     | 1083   | UNIX_TIMESTAMP  | NULL            |
 
 ---
 
@@ -205,6 +250,23 @@ When handling expressions like `COUNT(*)`, `AVG(col)`, etc., infer the result ty
 | SUM      | Depends on input |
 | AVG      | DOUBLE           |
 | MAX/MIN  | Same as column   |
+
+---
+
+## Schema Migration System
+PGSQLite includes a migration system to evolve the internal schema:
+
+### Migration Behavior
+- **In-memory databases**: Migrations run automatically on startup (always start fresh)
+- **File-based databases**: Require explicit `--migrate` flag to run migrations
+- **Version tracking**: Schema version stored in `__pgsqlite_metadata` table
+- **Dependency management**: Migrations specify dependencies on previous versions
+
+### Current Migrations
+1. **v1**: Initial schema - Creates `__pgsqlite_schema` and metadata tables
+2. **v2**: ENUM support - Adds enum types, values, and usage tracking tables
+3. **v3**: DateTime timezone support - Adds `datetime_format` and `timezone_offset` columns
+4. **v4**: DateTime INTEGER storage - Converts all datetime types to INTEGER microseconds/days
 
 ---
 

@@ -40,17 +40,21 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 - Keep code concise and idiomatic
 
 ## Schema Migration System
-- **No automatic migrations**: Migrations are NOT run automatically on startup
+- **In-memory databases**: Migrations are run automatically on startup (since they always start fresh)
+- **File-based databases**: Migrations are NOT run automatically on startup
 - **Version checking**: Database schema version is checked on startup
-- **Error on outdated schema**: If the database schema is outdated, pgsqlite will exit with an error message
+- **Error on outdated schema**: If the file-based database schema is outdated, pgsqlite will exit with an error message
 - **Explicit migration**: Use `--migrate` command line flag to run pending migrations and exit
 
 ### Usage
 ```bash
-# Run migrations on a database
+# In-memory databases (auto-migrate on startup)
+pgsqlite --in-memory
+
+# Run migrations on a file-based database
 pgsqlite --database mydb.db --migrate
 
-# Normal operation (will fail if schema is outdated)
+# Normal operation with file-based database (will fail if schema is outdated)
 pgsqlite --database mydb.db
 ```
 
@@ -58,6 +62,7 @@ pgsqlite --database mydb.db
 - **v1**: Initial schema (creates __pgsqlite_schema, metadata tables)
 - **v2**: ENUM support (creates enum types, values, and usage tracking tables)
 - **v3**: DateTime support (adds datetime_format and timezone_offset columns to __pgsqlite_schema, creates datetime cache and session settings tables)
+- **v4**: DateTime INTEGER storage (converts all datetime types to INTEGER microseconds/days for perfect precision)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:
@@ -102,6 +107,17 @@ pgsqlite --database mydb.db
   - FLOAT types (REAL, DOUBLE PRECISION, FLOAT4, FLOAT8) should NOT be wrapped as they're already decimal-compatible
   - Correlated subqueries must inherit outer context to recognize outer table columns
   - Context merging is essential for proper type resolution in nested queries
+
+- **DateTime Storage (INTEGER Microseconds)**:
+  - All datetime types use INTEGER storage for perfect precision (no floating point errors)
+  - Storage formats:
+    - DATE: INTEGER days since epoch (1970-01-01)
+    - TIME/TIMETZ: INTEGER microseconds since midnight
+    - TIMESTAMP/TIMESTAMPTZ: INTEGER microseconds since epoch
+    - INTERVAL: INTEGER microseconds
+  - Microsecond precision matches PostgreSQL's maximum precision
+  - Value converter layer handles all conversions transparently
+  - Clients see proper PostgreSQL datetime formats via wire protocol
 
 ## Quality Standards
 - Write tests that actually verify functionality, not tests that are designed to pass easily

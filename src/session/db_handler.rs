@@ -131,25 +131,24 @@ impl DbHandler {
         );
         conn.execute_batch(&pragma_sql)?;
         
-        // Check if we're in test mode - tests with :memory: databases auto-migrate
-        // We detect test mode by checking for CARGO env var which is set during cargo test
-        // or PGSQLITE_TEST_AUTO_MIGRATE which can be set for integration tests
+        // Check if we're using an in-memory database
         let is_memory_db = db_path == ":memory:" || db_path.contains(":memory:");
-        let is_test_mode = cfg!(test) || 
-            (is_memory_db && std::env::var("CARGO").is_ok()) ||
-            (is_memory_db && std::env::var("PGSQLITE_TEST_AUTO_MIGRATE").is_ok());
         
-        if is_test_mode && is_memory_db {
-            // For in-memory databases in tests, run migrations automatically
+        // For in-memory databases, always run migrations automatically
+        // since they always start fresh and have no existing data
+        if is_memory_db {
+            // For in-memory databases, run migrations automatically
             let mut runner = MigrationRunner::new(conn);
             match runner.run_pending_migrations() {
-                Ok(_) => {
-                    // Migrations applied successfully for tests
+                Ok(applied) => {
+                    if !applied.is_empty() {
+                        info!("Applied {} migrations to in-memory database", applied.len());
+                    }
                 }
                 Err(e) => {
                     return Err(rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Test migration failed: {}", e))
+                        Some(format!("In-memory database migration failed: {}", e))
                     ));
                 }
             }
@@ -159,7 +158,7 @@ impl DbHandler {
             crate::functions::register_all_functions(&conn)?;
             crate::metadata::TypeMetadata::init(&conn)?;
             
-            info!("Test DbHandler initialized with migrations");
+            info!("In-memory database initialized with migrations");
             
             return Ok(Self {
                 conn: Arc::new(Mutex::new(conn)),
@@ -680,6 +679,30 @@ fn execute_with_cached_metadata(
                     (rusqlite::types::ValueRef::Text(t), 0) => t.to_vec(),
                     // Fast integer conversion
                     (rusqlite::types::ValueRef::Integer(i), 1) => i.to_string().into_bytes(),
+                    // Fast date conversion (INTEGER days -> YYYY-MM-DD)
+                    (rusqlite::types::ValueRef::Integer(days), 6) => {
+                        use crate::types::datetime_utils::format_days_to_date_buf;
+                        let mut buf = vec![0u8; 32];
+                        let len = format_days_to_date_buf(days as i32, &mut buf);
+                        buf.truncate(len);
+                        buf
+                    },
+                    // Fast time conversion (INTEGER microseconds -> HH:MM:SS.ffffff)
+                    (rusqlite::types::ValueRef::Integer(micros), 7) => {
+                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                        let mut buf = vec![0u8; 32];
+                        let len = format_microseconds_to_time_buf(micros, &mut buf);
+                        buf.truncate(len);
+                        buf
+                    },
+                    // Fast timestamp conversion (INTEGER microseconds -> YYYY-MM-DD HH:MM:SS.ffffff)
+                    (rusqlite::types::ValueRef::Integer(micros), 8) => {
+                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                        let mut buf = vec![0u8; 64];
+                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                        buf.truncate(len);
+                        buf
+                    },
                     // Fallback to generic converter for complex cases
                     _ => {
                         let owned_value: rusqlite::types::Value = match value {
@@ -757,10 +780,13 @@ fn build_execution_metadata(
         } else {
             // Try to infer type from column name and schema
             let col_type = infer_column_type(&col_name, query, schema_cache);
-            match col_type.as_str() {
+            match col_type.to_lowercase().as_str() {
                 "integer" | "int4" | "int8" | "int2" | "bigint" | "smallint" => 1, // Integer converter
                 "real" | "float4" | "float8" | "double" | "numeric" => 3, // Float converter  
                 "bytea" | "blob" => 4, // Blob converter
+                "date" => 6, // Date converter (INTEGER days -> YYYY-MM-DD)
+                "time" | "timetz" | "time without time zone" | "time with time zone" => 7, // Time converter
+                "timestamp" | "timestamptz" | "timestamp without time zone" | "timestamp with time zone" => 8, // Timestamp converter
                 _ => 0, // Text converter (default)
             }
         };
@@ -1105,12 +1131,22 @@ fn execute_cached_query(
         .map(|i| stmt.column_name(i).unwrap_or("").to_string())
         .collect();
     
-    // Use cached column types for boolean detection
+    // Use cached column types for type detection
     let mut is_boolean_col = vec![false; column_count];
+    let mut is_date_col = vec![false; column_count];
+    let mut is_time_col = vec![false; column_count];
+    let mut is_timestamp_col = vec![false; column_count];
+    
     for (i, col_name) in columns.iter().enumerate() {
         for (cached_col, pg_type) in &cached.column_types {
-            if cached_col == col_name && *pg_type == PgType::Bool {
-                is_boolean_col[i] = true;
+            if cached_col == col_name {
+                match pg_type {
+                    PgType::Bool => is_boolean_col[i] = true,
+                    PgType::Date => is_date_col[i] = true,
+                    PgType::Time | PgType::Timetz => is_time_col[i] = true,
+                    PgType::Timestamp | PgType::Timestamptz => is_timestamp_col[i] = true,
+                    _ => {}
+                }
                 break;
             }
         }
@@ -1123,12 +1159,31 @@ fn execute_cached_query(
             match value {
                 rusqlite::types::ValueRef::Null => row_data.push(None),
                 rusqlite::types::ValueRef::Integer(int_val) => {
-                    // Debug for integer values
-                    
                     if is_boolean_col[i] {
                         // Convert SQLite's 0/1 to PostgreSQL's f/t format
                         let bool_str = if int_val == 0 { "f" } else { "t" };
                         row_data.push(Some(bool_str.as_bytes().to_vec()));
+                    } else if is_date_col[i] {
+                        // Convert INTEGER days to YYYY-MM-DD
+                        use crate::types::datetime_utils::format_days_to_date_buf;
+                        let mut buf = vec![0u8; 32];
+                        let len = format_days_to_date_buf(int_val as i32, &mut buf);
+                        buf.truncate(len);
+                        row_data.push(Some(buf));
+                    } else if is_time_col[i] {
+                        // Convert INTEGER microseconds to HH:MM:SS.ffffff
+                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                        let mut buf = vec![0u8; 32];
+                        let len = format_microseconds_to_time_buf(int_val, &mut buf);
+                        buf.truncate(len);
+                        row_data.push(Some(buf));
+                    } else if is_timestamp_col[i] {
+                        // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff
+                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                        let mut buf = vec![0u8; 64];
+                        let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
+                        buf.truncate(len);
+                        row_data.push(Some(buf));
                     } else {
                         // For simple query protocol, always return text format
                         row_data.push(Some(int_val.to_string().into_bytes()));

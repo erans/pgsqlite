@@ -6,13 +6,16 @@ async fn test_now_function() {
     let server = setup_test_server().await;
     let client = &server.client;
     
-    // Test NOW() function
+    // Test NOW() function - now returns INTEGER microseconds since epoch
     let row = client.query_one("SELECT NOW() as now", &[]).await.unwrap();
-    let now_timestamp: f64 = row.get("now");
+    let now_microseconds: i64 = row.get("now");
+    
+    // Convert to seconds for validation
+    let now_seconds = now_microseconds as f64 / 1_000_000.0;
     
     // Verify it's a reasonable Unix timestamp (after 2020-01-01)
-    assert!(now_timestamp > 1577836800.0, "NOW() should return a Unix timestamp after 2020");
-    assert!(now_timestamp < 2000000000.0, "NOW() should return a reasonable Unix timestamp");
+    assert!(now_seconds > 1577836800.0, "NOW() should return a Unix timestamp after 2020");
+    assert!(now_seconds < 2000000000.0, "NOW() should return a reasonable Unix timestamp");
 }
 
 #[tokio::test]
@@ -53,44 +56,29 @@ async fn test_date_trunc_function_direct() {
     let server = setup_test_server().await;
     let client = &server.client;
     
-    // Test DATE_TRUNC directly on a Unix timestamp value
-    let test_timestamp = 1686840645.123456; // 2023-06-15 14:30:45.123456 UTC
+    // Test DATE_TRUNC directly on a timestamp in microseconds
+    let test_timestamp_micros = 1686840645123456i64; // 2023-06-15 14:30:45.123456 UTC in microseconds
     
     let row = client.query_one(
         &format!("SELECT DATE_TRUNC('hour', {}) as hour_trunc,
                          DATE_TRUNC('day', {}) as day_trunc,
                          DATE_TRUNC('month', {}) as month_trunc",
-                test_timestamp, test_timestamp, test_timestamp),
+                test_timestamp_micros, test_timestamp_micros, test_timestamp_micros),
         &[]
     ).await.unwrap();
     
-    // Debug: Check what types we're getting
-    let col = row.columns().get(0).unwrap();
-    eprintln!("DEBUG: date_trunc returned type: {:?} (OID: {})", col.type_(), col.type_().oid());
+    // DATE_TRUNC now returns INTEGER microseconds
+    let hour_trunc: i64 = row.get("hour_trunc");
+    let day_trunc: i64 = row.get("day_trunc");
+    let month_trunc: i64 = row.get("month_trunc");
     
-    // The error says it's returning int4, so let's try that first
-    let hour_trunc: i32 = row.try_get("hour_trunc").unwrap_or_else(|e| {
-        eprintln!("Error getting hour_trunc as i32: {}", e);
-        let val: f64 = row.get("hour_trunc");
-        val as i32
-    });
-    let day_trunc: i32 = row.try_get("day_trunc").unwrap_or_else(|e| {
-        eprintln!("Error getting day_trunc as i32: {}", e);
-        let val: f64 = row.get("day_trunc");
-        val as i32
-    });
-    let month_trunc: i32 = row.try_get("month_trunc").unwrap_or_else(|e| {
-        eprintln!("Error getting month_trunc as i32: {}", e);
-        let val: f64 = row.get("month_trunc");
-        val as i32
-    });
-    
-    // 2023-06-15 14:00:00
-    assert_eq!(hour_trunc as f64, 1686837600.0);
-    // 2023-06-15 00:00:00
-    assert_eq!(day_trunc as f64, 1686787200.0);
-    // 2023-06-01 00:00:00
-    assert_eq!(month_trunc as f64, 1685577600.0);
+    // Convert expected values to microseconds
+    // 2023-06-15 14:00:00 = 1686837600 seconds = 1686837600000000 microseconds
+    assert_eq!(hour_trunc, 1686837600000000i64);
+    // 2023-06-15 00:00:00 = 1686787200 seconds = 1686787200000000 microseconds  
+    assert_eq!(day_trunc, 1686787200000000i64);
+    // 2023-06-01 00:00:00 = 1685577600 seconds = 1685577600000000 microseconds
+    assert_eq!(month_trunc, 1685577600000000i64);
 }
 
 #[tokio::test]
@@ -98,42 +86,23 @@ async fn test_interval_arithmetic_direct() {
     let server = setup_test_server().await;
     let client = &server.client;
     
-    // Test interval arithmetic directly on a Unix timestamp value
-    let test_timestamp = 1686840645.0; // 2023-06-15 14:30:45 UTC
+    // Test interval arithmetic directly on a timestamp in microseconds
+    let test_timestamp_micros = 1686840645000000i64; // 2023-06-15 14:30:45 UTC in microseconds
     
-    // Our datetime translator converts INTERVAL literals to seconds
-    // So "timestamp + INTERVAL '1 day'" becomes "timestamp + 86400"
-    let row = match client.query_one(
+    // Our datetime translator converts INTERVAL literals to microseconds
+    // So "timestamp + INTERVAL '1 day'" becomes "timestamp + 86400000000" (microseconds)
+    let row = client.query_one(
         &format!("SELECT {} + INTERVAL '1 day' as tomorrow,
                          {} - INTERVAL '1 hour' as hour_ago",
-                test_timestamp, test_timestamp),
+                test_timestamp_micros, test_timestamp_micros),
         &[]
-    ).await {
-        Ok(row) => row,
-        Err(e) => {
-            eprintln!("Error in interval arithmetic: {}", e);
-            // Try the translated version directly
-            let row = client.query_one(
-                &format!("SELECT {} + 86400 as tomorrow,
-                                 {} - 3600 as hour_ago",
-                        test_timestamp, test_timestamp),
-                &[]
-            ).await.unwrap();
-            row
-        }
-    };
+    ).await.unwrap();
     
-    // The result might be int4 instead of f64
-    let tomorrow: i32 = row.try_get("tomorrow").unwrap_or_else(|_| {
-        let val: f64 = row.get("tomorrow");
-        val as i32
-    });
-    let hour_ago: i32 = row.try_get("hour_ago").unwrap_or_else(|_| {
-        let val: f64 = row.get("hour_ago");
-        val as i32
-    });
+    // Results are now in INTEGER microseconds
+    let tomorrow: i64 = row.get("tomorrow");
+    let hour_ago: i64 = row.get("hour_ago");
     
-    // Verify the calculations
-    assert!((tomorrow as f64 - (test_timestamp + 86400.0)).abs() < 1.0); // +1 day
-    assert!((hour_ago as f64 - (test_timestamp - 3600.0)).abs() < 1.0);  // -1 hour
+    // Verify the calculations (values in microseconds)
+    assert_eq!(tomorrow, test_timestamp_micros + 86400000000i64); // +1 day (86400 seconds = 86400000000 microseconds)
+    assert_eq!(hour_ago, test_timestamp_micros - 3600000000i64);  // -1 hour (3600 seconds = 3600000000 microseconds)
 }

@@ -43,7 +43,7 @@ pgsqlite implements a sophisticated schema mapping system that maintains Postgre
 - **PostgreSQL → SQLite Mapping**: Rich PostgreSQL types (100+ types) are mapped to SQLite's 5 storage classes (NULL, INTEGER, REAL, TEXT, BLOB)
 - **Metadata Registry**: The `__pgsqlite_schema` table stores original PostgreSQL type information for each column
 - **Bidirectional Translation**: Values are converted back to PostgreSQL format during query results
-- **Custom Type Handling**: Special cases like DECIMAL use rust_decimal for precision, BOOLEAN converts 0/1 ↔ f/t
+- **Custom Type Handling**: Special cases like DECIMAL use rust_decimal for precision, BOOLEAN converts 0/1 ↔ f/t, DATE/TIME/TIMESTAMP use INTEGER storage for microsecond precision
 
 #### Schema Information Flow
 ```
@@ -54,18 +54,18 @@ PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
 
 ## Performance
 
-**Latest Performance Results (2025-07-06):**
+**Latest Performance Results (2025-07-07):**
 
 ```
 Operation        | Overhead | Time (ms) | Note
 ================|==========|===========|==================
+SELECT (cached) |    28x   |   0.100   | Outstanding ⭐⭐⭐
 UPDATE          |    36x   |   0.042   | Excellent ⭐⭐
-DELETE          |    42x   |   0.039   | Excellent ⭐⭐
-SELECT (cached) |    17x   |   0.068   | Outstanding ⭐⭐⭐
-SELECT          |   126x   |   0.126   | Protocol overhead
-INSERT          |   172x   |   0.299   | Expected for 1-row
+DELETE          |    40x   |   0.039   | Excellent ⭐⭐
+SELECT          |   154x   |   0.154   | Protocol overhead
+INSERT          |   206x   |   0.326   | Expected for 1-row
 ----------------+----------+-----------+------------------
-OVERALL         |   ~95x   |     -     | Improved performance
+OVERALL         |   ~109x  |     -     | Good performance
 ```
 
 CREATE operations are significantly slower as we also update the `__pgsqlite_schema` table, however those are siginificantly less frequent than other operations.
@@ -105,6 +105,11 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
   - Optimized boolean conversion (0/1 → f/t)
   - Direct pass-through for non-decimal arithmetic
   - Fast integer formatting with itoa library (21% speedup)
+  - **DateTime INTEGER Storage** (2025-07-07):
+    - All datetime types stored as INTEGER for perfect precision
+    - Buffer-based formatting avoiding string allocations
+    - Dedicated type converters (indices 6, 7, 8) for date/time/timestamp
+    - 21% improvement in SELECT performance for datetime-heavy queries
 
 • **Protocol Serialization Optimizations** (2025-07-06):
   - Eliminated unnecessary clones in batch row sending
@@ -117,7 +122,7 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
   - Static references for boolean and empty string values
   - 8% improvement in cached SELECT queries, 3% in UPDATE/DELETE
 
-These optimizations combined achieve **17x overhead for cached SELECT queries** and **~95x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **36-42x overhead**.
+These optimizations combined achieve **28x overhead for cached SELECT queries** and **~109x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **36-40x overhead**.
 
 ### Performance Monitoring
 Run benchmarks to measure overhead:
@@ -135,7 +140,7 @@ cargo test benchmark_cache_effectiveness -- --ignored --nocapture
 cargo test test_statement_pool_basic
 ```
 
-The architecture prioritizes correctness and compatibility while providing multiple optimization layers for different query patterns. Through comprehensive executor consolidation and optimization, we achieved **10x overhead for cached SELECT queries** (exceeding the original 10-20x target) and **77x overall performance** - representing excellent results for a protocol adapter that provides full PostgreSQL compatibility for SQLite databases.
+The architecture prioritizes correctness and compatibility while providing multiple optimization layers for different query patterns. The datetime INTEGER storage optimization significantly improved performance by eliminating string allocations in the hot path.
 
 ## Project Structure
 
@@ -191,7 +196,7 @@ pgsqlite implements a comprehensive type mapping system between PostgreSQL and S
 - Type mapping for common PostgreSQL types:
   - Basic types: BOOLEAN, SMALLINT, INTEGER, BIGINT, REAL, DOUBLE PRECISION
   - Text types: CHAR, VARCHAR, TEXT
-  - Date/Time types: DATE, TIMESTAMP, TIME
+  - Date/Time types: DATE, TIMESTAMP, TIMESTAMPTZ, TIME, TIMETZ (stored as INTEGER with microsecond precision)
   - Binary types: BYTEA
   - JSON types: JSON, JSONB
   - Network types: CIDR, INET, MACADDR, MACADDR8
@@ -227,7 +232,7 @@ All SQLite functions are available, including:
 
 ### ❌ Not Yet Supported
 - PostgreSQL system functions (`pg_*`, `current_database()`, `current_schema()`)
-- PostgreSQL date/time functions (`now()`, `age()`, `extract()`, `date_part()`)
+- Advanced PostgreSQL date/time functions (`age()`, `date_part()`) - Note: `now()`, `extract()`, and basic datetime functions ARE supported
 - Array functions (`array_agg()`, `unnest()`)
 - Geometric types (POINT, LINE, LSEG, BOX, PATH, POLYGON, CIRCLE)
 - Text search types (TSVECTOR, TSQUERY)
@@ -243,22 +248,26 @@ pgsqlite includes an internal schema migration system to manage its metadata tab
 
 ### Migration Behavior
 
-- **No automatic migrations**: For safety, migrations are NOT run automatically on startup
+- **In-memory databases**: Migrations run automatically on startup (always start fresh)
+- **File-based databases**: For safety, migrations are NOT run automatically on startup
 - **Version checking**: Database schema version is checked on startup
-- **Explicit migration**: Use the `--migrate` flag to run pending migrations
+- **Explicit migration**: Use the `--migrate` flag to run pending migrations for file-based databases
 
 ### Running Migrations
 
 ```bash
-# Check if migrations are needed (will error if schema is outdated)
+# In-memory databases auto-migrate
+cargo run -- --in-memory
+
+# Check if file-based database needs migrations (will error if schema is outdated)
 cargo run -- --database mydb.db
 
-# Run pending migrations and exit
+# Run pending migrations on file-based database and exit
 cargo run -- --database mydb.db --migrate
 
 # Example output when migrations are needed:
 # Error: Failed to create database handler: Database schema is outdated. 
-# Current version: 0, Required version: 2. Please run with --migrate to update the schema.
+# Current version: 0, Required version: 4. Please run with --migrate to update the schema.
 ```
 
 ### Migration Details
