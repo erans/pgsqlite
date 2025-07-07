@@ -44,7 +44,9 @@ static AGE_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 static AT_TIME_ZONE_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\s+AT\s+TIME\s+ZONE\s+'([^']+)'").unwrap()
+    // Match: expression AT TIME ZONE 'timezone' [as alias]
+    // Captures: (1) expression, (2) timezone, (3) optional alias
+    Regex::new(r"(?i)(\S+)\s+AT\s+TIME\s+ZONE\s+'([^']+)'(\s+as\s+(\w+))?").unwrap()
 });
 
 impl DateTimeTranslator {
@@ -192,15 +194,17 @@ impl DateTimeTranslator {
         
         // Pattern to match expressions like "timestamp AT TIME ZONE 'timezone'"
         result = AT_TIME_ZONE_PATTERN.replace_all(&result, |caps: &regex::Captures| {
-            let timezone = &caps[1];
+            let expression = &caps[1];
+            let timezone = &caps[2];
+            let alias_part = caps.get(3).map(|m| m.as_str()).unwrap_or("");
             let offset_seconds = Self::tz_to_offset_seconds(timezone);
             
-            // If timezone is UTC or offset is 0, just remove the AT TIME ZONE clause
+            // If timezone is UTC or offset is 0, just return the expression
             if offset_seconds == 0 {
-                "".to_string()
+                format!("{}{}", expression, alias_part)
             } else {
                 // Apply offset to the timestamp
-                format!(" + {}", offset_seconds)
+                format!("{} + {}{}", expression, offset_seconds, alias_part)
             }
         }).to_string();
         

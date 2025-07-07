@@ -211,9 +211,26 @@ impl ExtendedQueryHandler {
             }
         }
         
+        // Pre-translate the query first so we can analyze the translated version
+        let mut translated_for_analysis = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&conn));
+            drop(conn);
+            translated
+        } else {
+            cleaned_query.clone()
+        };
+        
+        // Translate datetime functions if needed
+        if crate::translator::DateTimeTranslator::needs_translation(&translated_for_analysis) {
+            translated_for_analysis = crate::translator::DateTimeTranslator::translate_query(&translated_for_analysis);
+        }
+        
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
-        info!("Analyzing query '{}' for field descriptions", cleaned_query);
+        info!("Analyzing query '{}' for field descriptions", translated_for_analysis);
+        info!("Original query: {}", cleaned_query);
         info!("Is simple param select: {}", is_simple_param_select);
         let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
@@ -224,8 +241,9 @@ impl ExtendedQueryHandler {
             } else {
                 // Try to get field descriptions
                 // For parameterized queries, substitute dummy values
-                let mut test_query = cleaned_query.to_string();
-                let param_count = (1..=99).filter(|i| cleaned_query.contains(&format!("${}", i))).count();
+                // Use the translated query for analysis
+                let mut test_query = translated_for_analysis.to_string();
+                let param_count = (1..=99).filter(|i| translated_for_analysis.contains(&format!("${}", i))).count();
                 
                 if param_count > 0 {
                     // Replace parameters with dummy values
@@ -256,9 +274,19 @@ impl ExtendedQueryHandler {
                         // Pre-fetch schema types for all columns if we have a table name
                         let mut schema_types = std::collections::HashMap::new();
                         if let Some(ref table) = table_name {
+                            // For aliased columns, try to find the source column
                             for col_name in &response.columns {
+                                // First try direct lookup
                                 if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
                                     schema_types.insert(col_name.clone(), pg_type);
+                                } else {
+                                    // Try to find source column if this is an alias
+                                    if let Some(source_col) = Self::extract_source_column_for_alias(&cleaned_query, col_name) {
+                                        if let Ok(Some(pg_type)) = db.get_schema_type(table, &source_col).await {
+                                            info!("Found schema type for alias '{}' -> source column '{}': {}", col_name, source_col, pg_type);
+                                            schema_types.insert(col_name.clone(), pg_type);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -322,6 +350,9 @@ impl ExtendedQueryHandler {
                                     return oid;
                                 }
                                 
+                                // Fourth priority: For expressions, try to infer from SQLite's type affinity
+                                // SQLite will tell us the actual type of the expression result
+                                
                                 // Last resort: Try to infer from value if we have data
                                 if !response.rows.is_empty() {
                                     if let Some(value) = response.rows[0].get(i) {
@@ -380,23 +411,8 @@ impl ExtendedQueryHandler {
         info!("Final param_types for statement: {:?}", actual_param_types);
         
         // Store the prepared statement
-        // Pre-translate the query for prepared statements to avoid repeated translation
-        let mut translated_query = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
-            let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
-            let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&conn));
-            drop(conn);
-            translated
-        } else {
-            cleaned_query.clone()
-        };
-        
-        // Translate datetime functions if needed
-        if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
-            translated_query = crate::translator::DateTimeTranslator::translate_query(&translated_query);
-        };
-        
-        let translated_query = Some(translated_query);
+        // We already translated the query above for analysis, so just use that
+        let translated_query = Some(translated_for_analysis);
         
         let stmt = PreparedStatement {
             query: cleaned_query.clone(),
@@ -413,6 +429,34 @@ impl ExtendedQueryHandler {
             .map_err(|e| PgSqliteError::Io(e))?;
         
         Ok(())
+    }
+    
+    /// Try to extract the source column for an alias in a simple SELECT
+    /// e.g., "SELECT ts AT TIME ZONE 'UTC' as ts_utc" -> source column is "ts"
+    fn extract_source_column_for_alias(query: &str, alias: &str) -> Option<String> {
+        // This is a simple heuristic for the common case
+        // Look for "SELECT <expr> as <alias>" pattern
+        let query_upper = query.to_uppercase();
+        let alias_upper = alias.to_uppercase();
+        
+        // Find "AS <alias>" in the query
+        let as_pattern = format!(" AS {}", alias_upper);
+        if let Some(as_pos) = query_upper.find(&as_pattern) {
+            // Work backwards to find the start of the expression
+            let before_as = &query[..as_pos];
+            
+            // For simple cases like "SELECT column_name AS alias"
+            // Find the last word before AS
+            let words: Vec<&str> = before_as.split_whitespace().collect();
+            if let Some(last_word) = words.last() {
+                // Check if it's a simple identifier (no operators, functions, etc.)
+                if last_word.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return Some(last_word.to_string());
+                }
+            }
+        }
+        
+        None
     }
     
     pub async fn handle_bind<T>(
