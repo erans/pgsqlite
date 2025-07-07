@@ -127,11 +127,11 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Update type mappings to use REAL (Unix timestamps) for all datetime types
   - [x] Create migration v3 to add datetime_format and timezone_offset columns to __pgsqlite_schema
   - [x] Implement storage format: Unix timestamps with fractional seconds for microsecond precision
-- [ ] **Phase 2: Value Conversion Layer (High Priority)**
-  - [x] Implement text protocol conversion (PostgreSQL format ↔ Unix timestamp) - COMPLETED (2025-07-07)
-  - [ ] Implement binary protocol conversion (PostgreSQL binary ↔ Unix timestamp)
+- [x] **Phase 2: Value Conversion Layer (High Priority)** - COMPLETED (2025-07-07)
+  - [x] Implement text protocol conversion (PostgreSQL format ↔ Unix timestamp)
+  - [x] Implement binary protocol conversion (PostgreSQL binary ↔ Unix timestamp)
   - [ ] Handle special values (infinity, -infinity)
-  - [x] Support microsecond precision with fractional seconds - COMPLETED (2025-07-07)
+  - [x] Support microsecond precision with fractional seconds
 - [ ] **Phase 3: Query Translation (Medium Priority)**
   - [ ] Map PostgreSQL datetime functions to SQLite equivalents
   - [ ] Implement EXTRACT, DATE_TRUNC, AGE functions
