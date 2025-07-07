@@ -17,12 +17,26 @@ static CURRENT_TIME_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bCURRENT_TIME\b").unwrap()
 });
 
+// SQLite date/time functions that return text but should be DATE/TIME types
+static DATE_FUNCTION_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bdate\s*\(([^)]+)\)").unwrap()
+});
+
+static TIME_FUNCTION_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\btime\s*\(([^)]+)\)").unwrap()
+});
+
+static DATETIME_FUNCTION_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bdatetime\s*\(([^)]+)\)").unwrap()
+});
+
 static EXTRACT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bEXTRACT\s*\(\s*(\w+)\s+FROM\s+(.+?)\s*\)").unwrap()
+    // More specific pattern that won't over-capture
+    Regex::new(r"(?i)\bEXTRACT\s*\(\s*(\w+)\s+FROM\s+([^)]+)\s*\)").unwrap()
 });
 
 static DATE_TRUNC_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bDATE_TRUNC\s*\(\s*'([^']+)'\s*,\s*(.+?)\s*\)").unwrap()
+    Regex::new(r"(?i)\bDATE_TRUNC\s*\(\s*'([^']+)'\s*,\s*([^)]+)\s*\)").unwrap()
 });
 
 static AGE_PATTERN: Lazy<Regex> = Lazy::new(|| {
@@ -39,6 +53,9 @@ impl DateTimeTranslator {
         NOW_PATTERN.is_match(query) ||
         CURRENT_DATE_PATTERN.is_match(query) ||
         CURRENT_TIME_PATTERN.is_match(query) ||
+        DATE_FUNCTION_PATTERN.is_match(query) ||
+        TIME_FUNCTION_PATTERN.is_match(query) ||
+        DATETIME_FUNCTION_PATTERN.is_match(query) ||
         EXTRACT_PATTERN.is_match(query) ||
         DATE_TRUNC_PATTERN.is_match(query) ||
         AGE_PATTERN.is_match(query) ||
@@ -63,6 +80,24 @@ impl DateTimeTranslator {
         
         // Replace CURRENT_TIME (no parentheses in PostgreSQL)
         result = CURRENT_TIME_PATTERN.replace_all(&result, "current_time").to_string();
+        
+        // Wrap SQLite date() function to convert to Unix timestamp
+        result = DATE_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
+            let args = &caps[1];
+            format!("CAST((julianday({}) - 2440587.5) * 86400 AS REAL)", args)
+        }).to_string();
+        
+        // Wrap SQLite time() function to convert to seconds since midnight
+        result = TIME_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
+            let args = &caps[1];
+            format!("CAST((strftime('%s', '2000-01-01 ' || time({})) - strftime('%s', '2000-01-01')) AS REAL)", args)
+        }).to_string();
+        
+        // Wrap SQLite datetime() function to convert to Unix timestamp
+        result = DATETIME_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
+            let args = &caps[1];
+            format!("CAST((julianday(datetime({})) - 2440587.5) * 86400 AS REAL)", args)
+        }).to_string();
         
         // Handle EXTRACT(field FROM timestamp) -> extract(field, timestamp)
         result = EXTRACT_PATTERN.replace_all(&result, |caps: &regex::Captures| {

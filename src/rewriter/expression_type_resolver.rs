@@ -525,6 +525,17 @@ impl<'a> ExpressionTypeResolver<'a> {
             "DECIMAL_ADD" | "DECIMAL_SUB" | "DECIMAL_MUL" | "DECIMAL_DIV" => PgType::Numeric,
             "DECIMAL_FROM_TEXT" => PgType::Numeric,
             "DECIMAL_TO_TEXT" => PgType::Text,
+            // Date/Time functions (SQLite built-ins)
+            "DATE" => PgType::Date,
+            "TIME" => PgType::Time,
+            "DATETIME" => PgType::Timestamp,
+            "JULIANDAY" => PgType::Float8,
+            "STRFTIME" => PgType::Text,
+            // Our datetime functions
+            "NOW" | "CURRENT_TIMESTAMP" => PgType::Timestamptz,
+            "EXTRACT" => PgType::Float8,
+            "DATE_TRUNC" => PgType::Timestamp,
+            "AGE" => PgType::Interval,
             _ => PgType::Text, // Default for unknown functions
         }
     }

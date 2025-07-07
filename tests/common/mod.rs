@@ -44,6 +44,15 @@ where
             return;
         }
         
+        // Force a cache refresh after initialization
+        // This ensures that tables created during init are visible to catalog queries
+        {
+            let conn = db_handler.get_mut_connection().unwrap();
+            // Execute a simple query to ensure SQLite's internal state is refreshed
+            let _ = conn.execute_batch("SELECT 1");
+            drop(conn);
+        }
+        
         let (stream, addr) = listener.accept().await.unwrap();
         if let Err(e) = pgsqlite::handle_test_connection_with_pool(stream, addr, db_handler).await {
             eprintln!("Connection handling error: {}", e);

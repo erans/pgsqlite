@@ -95,7 +95,10 @@ impl QueryExecutor {
         // Translate PostgreSQL datetime functions if present
         if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
             use crate::translator::DateTimeTranslator;
+            debug!("Query needs datetime translation: {}", translated_query);
             translated_query = DateTimeTranslator::translate_query(&translated_query);
+            debug!("Query after datetime translation: {}", translated_query);
+            
         }
         
         let query_to_execute = translated_query.as_str();
@@ -176,6 +179,10 @@ impl QueryExecutor {
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
+                    } else if Self::is_datetime_expression(query, name) {
+                        // Third priority: Check if this is a datetime expression we translated
+                        debug!("Detected datetime expression for column '{}'", name);
+                        PgType::Date.to_oid()
                     } else {
                         // Check if this looks like a user table (not system/catalog queries)
                         if let Some(ref table) = table_name {
@@ -691,9 +698,24 @@ impl QueryExecutor {
         
         Ok(())
     }
+    
+    /// Check if this is a datetime expression that we translated
+    fn is_datetime_expression(query: &str, column_name: &str) -> bool {
+        // Check if the query contains our datetime translation patterns
+        // Looking for patterns like: CAST((julianday(...) - 2440587.5) * 86400 AS REAL)
+        // Also check if the column name matches common date function patterns
+        let has_datetime_translation = query.contains("julianday") && query.contains("2440587.5") && query.contains("86400");
+        let is_date_function = column_name.starts_with("date(") || 
+                              column_name.starts_with("DATE(") ||
+                              column_name.starts_with("time(") ||
+                              column_name.starts_with("TIME(") ||
+                              column_name.starts_with("datetime(") ||
+                              column_name.starts_with("DATETIME(");
+        
+        has_datetime_translation || is_date_function
+    }
 }
 
-/// Extract table name from SELECT statement
 fn extract_table_name_from_select(query: &str) -> Option<String> {
     // Look for FROM clause with case-insensitive search
     let from_pos = query.as_bytes().windows(6)
