@@ -20,4 +20,5 @@ sqlite.db*
 
 test_output.log
 test_db
+test_db.sqlite*
 pgsqlite_test.log

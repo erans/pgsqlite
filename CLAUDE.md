@@ -57,6 +57,7 @@ pgsqlite --database mydb.db
 ### Current Migrations
 - **v1**: Initial schema (creates __pgsqlite_schema, metadata tables)
 - **v2**: ENUM support (creates enum types, values, and usage tracking tables)
+- **v3**: DateTime support (adds datetime_format and timezone_offset columns to __pgsqlite_schema, creates datetime cache and session settings tables)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:

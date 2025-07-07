@@ -89,6 +89,9 @@ impl SchemaTypeMapper {
             "date" | "DATE" => return PgType::Date.to_oid(),
             "time" | "TIME" => return PgType::Time.to_oid(),
             "timestamp" | "TIMESTAMP" => return PgType::Timestamp.to_oid(),
+            "timestamptz" | "TIMESTAMPTZ" => return PgType::Timestamptz.to_oid(),
+            "timetz" | "TIMETZ" => return PgType::Timetz.to_oid(),
+            "interval" | "INTERVAL" => return PgType::Interval.to_oid(),
             "uuid" | "UUID" => return PgType::Uuid.to_oid(),
             "json" | "JSON" => return PgType::Json.to_oid(),
             "jsonb" | "JSONB" => return PgType::Jsonb.to_oid(),
@@ -131,9 +134,10 @@ impl SchemaTypeMapper {
             // Date/Time
             "DATE" => PgType::Date.to_oid(),
             "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time.to_oid(),
-            "TIME WITH TIME ZONE" => 1266, // TIMETZ not in PgType enum yet
+            "TIME WITH TIME ZONE" | "TIMETZ" => PgType::Timetz.to_oid(),
             "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp.to_oid(),
-            "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz.to_oid(),
+            "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => PgType::Timestamptz.to_oid(),
+            "INTERVAL" => PgType::Interval.to_oid(),
             
             // JSON
             "JSON" => PgType::Json.to_oid(),
