@@ -1387,6 +1387,7 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
+ "sha2",
  "sqlparser",
  "tempfile",
  "thiserror 2.0.12",

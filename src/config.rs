@@ -132,6 +132,10 @@ pub struct Config {
 
     #[arg(long, env = "PGSQLITE_SSL_EPHEMERAL", help = "Generate ephemeral SSL certificates on startup")]
     pub ssl_ephemeral: bool,
+
+    // Migration configuration
+    #[arg(long, help = "Run pending database migrations and exit")]
+    pub migrate: bool,
 }
 
 impl Config {

@@ -48,6 +48,7 @@ mod tests {
             pragma_synchronous: "NORMAL".to_string(),
             pragma_cache_size: -64000,
             pragma_mmap_size: 268435456,
+            migrate: false,
         };
 
         let cert_manager = CertificateManager::new(Arc::new(config.clone()));
@@ -115,6 +116,7 @@ mod tests {
             pragma_synchronous: "NORMAL".to_string(),
             pragma_cache_size: -64000,
             pragma_mmap_size: 268435456,
+            migrate: false,
         };
 
         let cert_manager = CertificateManager::new(Arc::new(config.clone()));
@@ -189,6 +191,7 @@ mod tests {
             pragma_synchronous: "NORMAL".to_string(),
             pragma_cache_size: -64000,
             pragma_mmap_size: 268435456,
+            migrate: false,
         };
 
         // This should be validated in Config::load(), but we're testing the validation

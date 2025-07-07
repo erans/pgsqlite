@@ -215,6 +215,24 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ### Storage & Optimization
 
+#### Schema Migration System - COMPLETED (2025-07-06)
+- [x] Implement internal schema migration framework
+  - [x] Create migration module with runner and registry
+  - [x] Implement Migration and MigrationAction structs with SHA256 checksums
+  - [x] Build migration registry with lazy_static for embedded migrations
+  - [x] Create MigrationRunner with transaction-based execution
+  - [x] Add migration locking to prevent concurrent migrations
+  - [x] Integrate migrations into DbHandler initialization
+  - [x] Support for SQL, SqlBatch, Function, and Combined migration types
+  - [x] Version detection for pre-migration databases (v1 recognition)
+  - [x] Comprehensive test coverage for all migration scenarios
+  - [x] Migration history tracking in __pgsqlite_migrations table
+  - [x] Idempotent migrations - can run multiple times safely
+  - [x] Explicit migration mode - requires --migrate flag, errors if schema outdated
+  - [x] Current migrations:
+    - v1: Initial schema (__pgsqlite_schema, metadata tables)
+    - v2: ENUM support (enum types, values, usage tracking)
+
 #### Indexing
 - [ ] Support for expression indexes
 - [ ] Partial index support

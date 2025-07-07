@@ -58,6 +58,9 @@ config = "0.15"
 clap = { version = "4.5", features = ["derive", "env"] }
 lazy_static = "1.5"
 
+# Cryptography for migration checksums
+sha2 = "0.10"
+
 # Metrics
 prometheus = "0.14"
 

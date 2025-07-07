@@ -39,6 +39,36 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 - Avoid adding comments unless necessary
 - Keep code concise and idiomatic
 
+## Schema Migration System (2025-07-06)
+
+pgsqlite includes an internal schema migration system to handle schema evolution:
+
+### Migration Behavior
+- **No automatic migrations**: Migrations are NOT run automatically on startup
+- **Version checking**: Database schema version is checked on startup
+- **Error on outdated schema**: If the database schema is outdated, pgsqlite will exit with an error message
+- **Explicit migration**: Use `--migrate` command line flag to run pending migrations and exit
+
+### Usage
+```bash
+# Run migrations on a database
+pgsqlite --database mydb.db --migrate
+
+# Normal operation (will fail if schema is outdated)
+pgsqlite --database mydb.db
+```
+
+### Implementation Details
+- Migrations are embedded in the binary using lazy_static
+- Each migration has a SHA256 checksum for integrity verification
+- Migrations run in transactions with automatic rollback on failure
+- Migration locking prevents concurrent migrations
+- Pre-migration databases (with __pgsqlite_schema table) are detected as version 1
+
+### Current Migrations
+- **v1**: Initial schema (creates __pgsqlite_schema, metadata tables)
+- **v2**: ENUM support (creates enum types, values, and usage tracking tables)
+
 ## Recent Work (Condensed History)
 - Implemented comprehensive PostgreSQL type support (40+ types including ranges, network types, binary types)
 - Built custom DECIMAL type system with automatic query rewriting for proper numeric handling

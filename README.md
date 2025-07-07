@@ -237,6 +237,37 @@ All SQLite functions are available, including:
 - Array operations (arrays are stored as JSON strings)
 - Advanced PostgreSQL features (stored procedures, triggers, etc.)
 
+## Schema Migration
+
+pgsqlite includes an internal schema migration system to manage its metadata tables. When pgsqlite evolves and requires changes to its internal schema, migrations ensure smooth upgrades.
+
+### Migration Behavior
+
+- **No automatic migrations**: For safety, migrations are NOT run automatically on startup
+- **Version checking**: Database schema version is checked on startup
+- **Explicit migration**: Use the `--migrate` flag to run pending migrations
+
+### Running Migrations
+
+```bash
+# Check if migrations are needed (will error if schema is outdated)
+cargo run -- --database mydb.db
+
+# Run pending migrations and exit
+cargo run -- --database mydb.db --migrate
+
+# Example output when migrations are needed:
+# Error: Failed to create database handler: Database schema is outdated. 
+# Current version: 0, Required version: 2. Please run with --migrate to update the schema.
+```
+
+### Migration Details
+
+- Migrations run in transactions with automatic rollback on failure
+- Each migration has a SHA256 checksum for integrity verification
+- Migration history is tracked in `__pgsqlite_migrations` table
+- Concurrent migrations are prevented via locking
+
 ## Building and Testing
 
 ```bash

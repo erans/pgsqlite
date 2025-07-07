@@ -22,6 +22,7 @@ use pgsqlite::protocol::{
 use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
 use pgsqlite::session::{DbHandler, SessionState};
 use pgsqlite::ssl::CertificateManager;
+use pgsqlite::migration::MigrationRunner;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -42,6 +43,31 @@ async fn main() -> Result<()> {
     } else {
         config.database.clone()
     };
+
+    // Handle migration command
+    if config.migrate {
+        info!("Running database migrations...");
+        
+        // Open connection directly for migration
+        let conn = rusqlite::Connection::open(&db_path)
+            .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
+        
+        let mut runner = MigrationRunner::new(conn);
+        match runner.run_pending_migrations() {
+            Ok(applied) => {
+                if applied.is_empty() {
+                    info!("No pending migrations. Database is up to date.");
+                } else {
+                    info!("Successfully applied {} migrations: {:?}", applied.len(), applied);
+                }
+                std::process::exit(0);
+            }
+            Err(e) => {
+                error!("Migration failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     // Initialize database handler with direct executor
     let db_handler = Arc::new(

@@ -11,6 +11,7 @@ use crate::rewriter::DecimalQueryRewriter;
 use crate::types::PgType;
 use crate::query::{QueryTypeDetector, QueryType};
 use crate::config::Config;
+use crate::migration::MigrationRunner;
 use tracing::{info, debug};
 
 /// Database response structure
@@ -36,6 +37,66 @@ pub struct DbHandler {
 impl DbHandler {
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
         Self::new_with_config(db_path, &Config::load())
+    }
+    
+    #[doc(hidden)]
+    pub fn new_for_test(db_path: &str) -> Result<Self, rusqlite::Error> {
+        // For tests, create an in-memory database and run migrations automatically
+        let config = Config::load();
+        
+        // Use FULLMUTEX for SQLite's internal thread safety
+        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE 
+            | OpenFlags::SQLITE_OPEN_CREATE 
+            | OpenFlags::SQLITE_OPEN_FULL_MUTEX
+            | OpenFlags::SQLITE_OPEN_URI;
+        
+        let conn = if db_path == ":memory:" {
+            Connection::open_with_flags("file::memory:?cache=private", flags)?
+        } else {
+            Connection::open_with_flags(db_path, flags)?
+        };
+        
+        // Set pragmas for performance
+        let pragma_sql = format!(
+            "PRAGMA journal_mode = {};
+             PRAGMA synchronous = {};
+             PRAGMA cache_size = {};
+             PRAGMA temp_store = MEMORY;
+             PRAGMA mmap_size = {};",
+            config.pragma_journal_mode,
+            config.pragma_synchronous,
+            config.pragma_cache_size,
+            config.pragma_mmap_size
+        );
+        conn.execute_batch(&pragma_sql)?;
+        
+        // For tests, run migrations automatically
+        let mut runner = MigrationRunner::new(conn);
+        match runner.run_pending_migrations() {
+            Ok(_) => {
+                // Migrations applied successfully
+            }
+            Err(e) => {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                    Some(format!("Test migration failed: {}", e))
+                ));
+            }
+        }
+        
+        // Get connection back from runner
+        let conn = runner.into_connection();
+        
+        // Initialize functions and metadata
+        crate::functions::register_all_functions(&conn)?;
+        crate::metadata::TypeMetadata::init(&conn)?;
+        
+        info!("Test DbHandler initialized with mutex-based implementation");
+        
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
+        })
     }
     
     pub fn new_with_config(db_path: &str, config: &Config) -> Result<Self, rusqlite::Error> {
@@ -69,6 +130,61 @@ impl DbHandler {
             config.pragma_mmap_size
         );
         conn.execute_batch(&pragma_sql)?;
+        
+        // Check if we're in test mode - tests with :memory: databases auto-migrate
+        // We detect test mode by checking for CARGO env var which is set during cargo test
+        // or PGSQLITE_TEST_AUTO_MIGRATE which can be set for integration tests
+        let is_memory_db = db_path == ":memory:" || db_path.contains(":memory:");
+        let is_test_mode = cfg!(test) || 
+            (is_memory_db && std::env::var("CARGO").is_ok()) ||
+            (is_memory_db && std::env::var("PGSQLITE_TEST_AUTO_MIGRATE").is_ok());
+        
+        if is_test_mode && is_memory_db {
+            // For in-memory databases in tests, run migrations automatically
+            let mut runner = MigrationRunner::new(conn);
+            match runner.run_pending_migrations() {
+                Ok(_) => {
+                    // Migrations applied successfully for tests
+                }
+                Err(e) => {
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Test migration failed: {}", e))
+                    ));
+                }
+            }
+            let conn = runner.into_connection();
+            
+            // Initialize functions and metadata
+            crate::functions::register_all_functions(&conn)?;
+            crate::metadata::TypeMetadata::init(&conn)?;
+            
+            info!("Test DbHandler initialized with migrations");
+            
+            return Ok(Self {
+                conn: Arc::new(Mutex::new(conn)),
+                schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
+            });
+        }
+        
+        // IMPORTANT: Check schema version on database load
+        // This ensures the database schema is up-to-date before any operations
+        let runner = MigrationRunner::new(conn);
+        match runner.check_schema_version() {
+            Ok(()) => {
+                // Schema is up to date
+            }
+            Err(e) => {
+                // Convert anyhow::Error to rusqlite::Error
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                    Some(e.to_string())
+                ));
+            }
+        }
+        
+        // Get connection back from runner
+        let conn = runner.into_connection();
         
         // Initialize functions and metadata
         crate::functions::register_all_functions(&conn)?;
