@@ -67,6 +67,11 @@ cleanup() {
         rm -f "$DB_NAME"
     fi
     
+    # Also remove any file-based test databases
+    if [ -f "test_db.sqlite" ]; then
+        rm -f "test_db.sqlite"
+    fi
+    
     # Remove SSL certificates if ephemeral
     if [ "$EPHEMERAL_SSL" = "1" ]; then
         rm -f "${DB_NAME%.db}.crt" "${DB_NAME%.db}.key"
@@ -201,6 +206,17 @@ case "$CONNECTION_MODE" in
         exit 1
         ;;
 esac
+
+# For file-based databases, run migrations first
+if [[ "$CONNECTION_MODE" == "file-ssl" || "$CONNECTION_MODE" == "file-no-ssl" ]]; then
+    log_info "Running migrations for file database..."
+    ./target/release/pgsqlite --database "$DB_NAME" --migrate
+    if [ $? -ne 0 ]; then
+        log_error "Migration failed"
+        exit 1
+    fi
+    log_success "Migrations completed"
+fi
 
 # Start pgsqlite server
 log_info "Starting pgsqlite server..."
