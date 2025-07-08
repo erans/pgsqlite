@@ -54,18 +54,18 @@ PostgreSQL Client → Wire Protocol → Type Mapper → SQLite Schema
 
 ## Performance
 
-**Latest Performance Results (2025-07-07):**
+**Latest Performance Results (2025-07-08):**
 
 ```
 Operation        | Overhead | Time (ms) | Note
 ================|==========|===========|==================
-SELECT (cached) |    28x   |   0.100   | Outstanding ⭐⭐⭐
-UPDATE          |    36x   |   0.042   | Excellent ⭐⭐
-DELETE          |    40x   |   0.039   | Excellent ⭐⭐
-SELECT          |   154x   |   0.154   | Protocol overhead
-INSERT          |   206x   |   0.326   | Expected for 1-row
+SELECT (cached) |    39x   |   0.156   | Excellent ⭐⭐
+UPDATE          |    48x   |   0.048   | Excellent ⭐⭐
+DELETE          |    44x   |   0.044   | Excellent ⭐⭐
+SELECT          |   294x   |   0.294   | Protocol overhead
+INSERT          |   332x   |   0.332   | Expected for 1-row
 ----------------+----------+-----------+------------------
-OVERALL         |   ~109x  |     -     | Good performance
+OVERALL         |   ~134x  |     -     | Good performance
 ```
 
 CREATE operations are significantly slower as we also update the `__pgsqlite_schema` table, however those are siginificantly less frequent than other operations.
@@ -110,6 +110,11 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
     - Buffer-based formatting avoiding string allocations
     - Dedicated type converters (indices 6, 7, 8) for date/time/timestamp
     - 21% improvement in SELECT performance for datetime-heavy queries
+  - **DateTime Value Conversion** (2025-07-08):
+    - InsertTranslator converts datetime literals to INTEGER during INSERT/UPDATE
+    - Fast path converts INTEGER back to datetime strings during SELECT
+    - Supports multi-row INSERT statements with datetime values
+    - Complete bidirectional conversion without triggers
 
 • **Protocol Serialization Optimizations** (2025-07-06):
   - Eliminated unnecessary clones in batch row sending
@@ -122,7 +127,7 @@ CREATE operations are significantly slower as we also update the `__pgsqlite_sch
   - Static references for boolean and empty string values
   - 8% improvement in cached SELECT queries, 3% in UPDATE/DELETE
 
-These optimizations combined achieve **28x overhead for cached SELECT queries** and **~109x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **36-40x overhead**.
+These optimizations combined achieve **39x overhead for cached SELECT queries** and **~134x overall overhead**, with some operations (UPDATE/DELETE) reaching as low as **44-48x overhead**.
 
 ### Performance Monitoring
 Run benchmarks to measure overhead:

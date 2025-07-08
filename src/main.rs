@@ -237,19 +237,15 @@ async fn handle_tcp_connection(
     // Disable Nagle's algorithm for lower latency
     stream.set_nodelay(true)?;
     
-    // Handle SSL negotiation if SSL is enabled
-    if tls_acceptor.is_some() {
-        handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor.unwrap()).await
-    } else {
-        handle_connection_generic(stream, &addr.to_string(), db_handler).await
-    }
+    // Always handle potential SSL requests, even if SSL is disabled
+    handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor).await
 }
 
 async fn handle_ssl_negotiation(
     mut stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
     db_handler: Arc<DbHandler>,
-    tls_acceptor: TlsAcceptor,
+    tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     
@@ -262,16 +258,27 @@ async fn handle_ssl_negotiation(
     let code = i32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
     
     if len == 8 && code == 80877103 {
-        // This is an SSL request, send 'S' to indicate SSL is available
-        stream.write_all(b"S").await?;
-        stream.flush().await?;
-        
-        // Perform TLS handshake
-        let tls_stream = tls_acceptor.accept(stream).await?;
-        info!("SSL connection established with {}", addr);
-        
-        // Handle the connection with TLS
-        handle_connection_generic(tls_stream, &addr.to_string(), db_handler).await
+        // This is an SSL request
+        if let Some(tls_acceptor) = tls_acceptor {
+            // SSL is enabled, send 'S' to indicate SSL is available
+            stream.write_all(b"S").await?;
+            stream.flush().await?;
+            
+            // Perform TLS handshake
+            let tls_stream = tls_acceptor.accept(stream).await?;
+            info!("SSL connection established with {}", addr);
+            
+            // Handle the connection with TLS
+            handle_connection_generic(tls_stream, &addr.to_string(), db_handler).await
+        } else {
+            // SSL is disabled, send 'N' to indicate SSL is not available
+            stream.write_all(b"N").await?;
+            stream.flush().await?;
+            info!("Rejected SSL request from {} (SSL disabled)", addr);
+            
+            // Continue with non-SSL connection
+            handle_connection_generic(stream, &addr.to_string(), db_handler).await
+        }
     } else {
         // Not an SSL request, we need to handle this as a regular startup message
         // Create a new buffer with the data we already read

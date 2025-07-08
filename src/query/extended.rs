@@ -1242,6 +1242,27 @@ impl ExtendedQueryHandler {
                 t if t == PgType::Int2.to_oid() => Ok(rusqlite::types::Value::Integer(text.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid int2".to_string()))?)), // INT2
                 t if t == PgType::Float4.to_oid() => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float4".to_string()))?)), // FLOAT4
                 t if t == PgType::Float8.to_oid() => Ok(rusqlite::types::Value::Real(text.parse::<f64>().map_err(|_| PgSqliteError::Protocol("Invalid float8".to_string()))?)), // FLOAT8
+                t if t == PgType::Date.to_oid() => {
+                    // DATE - convert to days since epoch
+                    match crate::types::ValueConverter::convert_date_to_unix(text) {
+                        Ok(days_str) => Ok(rusqlite::types::Value::Integer(days_str.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid date days".to_string()))?)),
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid date: {}", e)))
+                    }
+                }
+                t if t == PgType::Time.to_oid() => {
+                    // TIME - convert to microseconds since midnight
+                    match crate::types::ValueConverter::convert_time_to_seconds(text) {
+                        Ok(micros_str) => Ok(rusqlite::types::Value::Integer(micros_str.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid time microseconds".to_string()))?)),
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid time: {}", e)))
+                    }
+                }
+                t if t == PgType::Timestamp.to_oid() => {
+                    // TIMESTAMP - convert to microseconds since epoch
+                    match crate::types::ValueConverter::convert_timestamp_to_unix(text) {
+                        Ok(micros_str) => Ok(rusqlite::types::Value::Integer(micros_str.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid timestamp microseconds".to_string()))?)),
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid timestamp: {}", e)))
+                    }
+                }
                 _ => Ok(rusqlite::types::Value::Text(text.to_string())), // Default to TEXT
             }
         } else {

@@ -9,6 +9,7 @@ mod simd_search;
 mod datetime_translator;
 mod metadata;
 mod arithmetic_analyzer;
+mod insert_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -19,3 +20,4 @@ pub use simd_search::SimdCastSearch;
 pub use datetime_translator::DateTimeTranslator;
 pub use arithmetic_analyzer::ArithmeticAnalyzer;
 pub use metadata::{TranslationMetadata, ColumnTypeHint, ExpressionType, DateTimeSubtype};
+pub use insert_translator::InsertTranslator;

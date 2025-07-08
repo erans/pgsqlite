@@ -182,6 +182,11 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Implement binary protocol conversion (PostgreSQL binary ↔ INTEGER microseconds)
   - [x] Support microsecond precision without floating point
 - [x] **Phase 3: Query Translation** - COMPLETED
+
+#### Bug Fix: DATETIME Type Mapping - COMPLETED (2025-07-08)
+- [x] Fix DATETIME type mapping to INTEGER instead of TEXT in CREATE TABLE statements
+  - [x] Add "datetime" mapping to TypeMapper::pg_to_sqlite HashMap
+  - [x] Ensure DATETIME columns are stored as INTEGER microseconds like other datetime types
   - [x] Map PostgreSQL datetime functions to SQLite equivalents
   - [x] Implement EXTRACT, DATE_TRUNC, AGE functions with microsecond precision
   - [x] Handle AT TIME ZONE operator with microsecond offsets
@@ -206,6 +211,49 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Business logic examples including day-of-week calculations and date filtering
   - [x] Edge cases: epoch time, microsecond precision, timezone offsets, boundary values
   - [x] All 800+ queries execute successfully in ~90ms validating INTEGER microsecond storage
+
+#### Bug Fix: NOW() and CURRENT_TIMESTAMP Returning Raw INTEGER - COMPLETED (2025-07-08)
+- [x] Fixed NOW() and CURRENT_TIMESTAMP returning raw INTEGER microseconds instead of formatted timestamps
+  - [x] Updated SchemaTypeMapper::get_aggregate_return_type() to return PgType::Timestamp for NOW()/CURRENT_TIMESTAMP
+  - [x] Changed return type from Float8 (which was incorrect) to proper Timestamp type (OID 1114)
+
+#### Bug Fix: DateTime Values Not Stored as INTEGER - COMPLETED (2025-07-08)
+- [x] **Issue**: Datetime values inserted as text strings are now properly converted to INTEGER storage
+  - [x] Simple INSERT queries now use InsertTranslator for datetime value conversion
+  - [x] Extended protocol parameterized queries convert correctly
+  - [x] SQLite stores datetime values as INTEGER with proper conversions
+- [x] **Root Cause**: Multiple execution paths didn't apply value conversion
+  - [x] Ultra-fast path bypassed all translation for simple queries
+  - [x] execute_dml() directly passed queries to SQLite without value conversion
+  - [x] INSERT translator created but wasn't integrated into all paths
+- [x] **Solution Implemented**: Hybrid approach combining InsertTranslator and value converters
+  - [x] InsertTranslator converts datetime literals to INTEGER during INSERT/UPDATE
+  - [x] Value converter layer converts INTEGER back to datetime strings during SELECT
+  - [x] Fast path enhanced to support datetime type conversions
+  - [x] Schema cache integration ensures proper type information is available
+  - [x] Removed trigger-based approach in favor of translator solution
+- [x] **Implementation Completed**:
+  - [x] Created and integrated InsertTranslator module for query-time conversion
+  - [x] Enhanced fast_path.rs with datetime value converters for all types
+  - [x] Fixed schema cache population to ensure type info is available
+  - [x] Fixed execution paths to properly apply InsertTranslator
+  - [x] Updated CURRENT_TIME and MAKE_TIME() to return Time type (OID 1083) instead of Float8
+  - [x] Value converter layer now properly formats INTEGER microseconds to PostgreSQL timestamp format
+  - [x] psql client now correctly displays timestamps instead of raw integers
+  - [x] All datetime roundtrip tests passing with proper conversions
+
+#### Automatic Migration for New Database Files - COMPLETED (2025-07-08)
+- [x] Detect when a database file is newly created (no tables exist)
+  - [x] Check table count in sqlite_master on database initialization
+  - [x] Differentiate between new and existing database files
+- [x] Run migrations automatically for new database files
+  - [x] Apply all pending migrations without requiring --migrate flag
+  - [x] Log migration progress for visibility
+- [x] Maintain existing behavior for existing databases
+  - [x] Check schema version and error if outdated
+  - [x] Require explicit --migrate flag for existing databases
+- [x] Updated CLAUDE.md documentation to reflect new behavior
+- [x] Tested with both new and existing database files
 
 #### Date/Time Types - Future Work
 - [ ] Handle special values (infinity, -infinity) for all datetime types
@@ -361,6 +409,11 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Certificate generation and management
   - [x] Configure SSL cert/key paths via command line or config
   - [x] Support PostgreSQL SSL protocol flow
+  - [x] **Bug Fix: SSL negotiation when SSL disabled** - COMPLETED (2025-07-08)
+    - [x] Fixed psql connection failures when SSL is disabled
+    - [x] Now properly responds with 'N' to SSL requests when SSL is disabled
+    - [x] Handles SSL negotiation for all TCP connections, not just when SSL is enabled
+    - [x] Allows psql and other clients to fall back to non-SSL connections
   - [ ] Full sslmode options support (allow, prefer, require, verify-ca, verify-full)
   - [ ] Client certificate authentication
   - [ ] Certificate rotation without restart

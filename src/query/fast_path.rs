@@ -597,21 +597,45 @@ fn execute_fast_select_with_params(
             match row.get_ref(i)? {
                 ValueRef::Null => values.push(None),
                 ValueRef::Integer(int_val) => {
-                    // Check if this column is a boolean type
-                    let is_boolean = column_types.get(i)
+                    // Get the column type
+                    let pg_type = column_types.get(i)
                         .and_then(|opt| opt.as_ref())
-                        .map(|pg_type| {
-                            let type_lower = pg_type.to_lowercase();
-                            type_lower == "boolean" || type_lower == "bool"
-                        })
-                        .unwrap_or(false);
+                        .map(|t| t.to_lowercase());
                     
-                    if is_boolean {
-                        // Convert SQLite's 0/1 to PostgreSQL's f/t format
-                        let bool_str = if int_val == 0 { "f" } else { "t" };
-                        values.push(Some(bool_str.as_bytes().to_vec()));
-                    } else {
-                        values.push(Some(int_val.to_string().into_bytes()));
+                    match pg_type.as_deref() {
+                        Some("boolean") | Some("bool") => {
+                            // Convert SQLite's 0/1 to PostgreSQL's f/t format
+                            let bool_str = if int_val == 0 { "f" } else { "t" };
+                            values.push(Some(bool_str.as_bytes().to_vec()));
+                        },
+                        Some("date") => {
+                            // Convert INTEGER days to YYYY-MM-DD
+                            use crate::types::datetime_utils::format_days_to_date_buf;
+                            let mut buf = vec![0u8; 32];
+                            let len = format_days_to_date_buf(int_val as i32, &mut buf);
+                            buf.truncate(len);
+                            values.push(Some(buf));
+                        },
+                        Some("time") | Some("timetz") => {
+                            // Convert INTEGER microseconds to HH:MM:SS.ffffff
+                            use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                            let mut buf = vec![0u8; 32];
+                            let len = format_microseconds_to_time_buf(int_val, &mut buf);
+                            buf.truncate(len);
+                            values.push(Some(buf));
+                        },
+                        Some("timestamp") | Some("timestamptz") => {
+                            // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff
+                            use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                            let mut buf = vec![0u8; 64];
+                            let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
+                            buf.truncate(len);
+                            values.push(Some(buf));
+                        },
+                        _ => {
+                            // Default integer to string conversion
+                            values.push(Some(int_val.to_string().into_bytes()));
+                        }
                     }
                 },
                 ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
@@ -673,21 +697,45 @@ fn execute_fast_select(
             match row.get_ref(i)? {
                 ValueRef::Null => values.push(None),
                 ValueRef::Integer(int_val) => {
-                    // Check if this column is a boolean type
-                    let is_boolean = column_types.get(i)
+                    // Get the column type
+                    let pg_type = column_types.get(i)
                         .and_then(|opt| opt.as_ref())
-                        .map(|pg_type| {
-                            let type_lower = pg_type.to_lowercase();
-                            type_lower == "boolean" || type_lower == "bool"
-                        })
-                        .unwrap_or(false);
+                        .map(|t| t.to_lowercase());
                     
-                    if is_boolean {
-                        // Convert SQLite's 0/1 to PostgreSQL's f/t format
-                        let bool_str = if int_val == 0 { "f" } else { "t" };
-                        values.push(Some(bool_str.as_bytes().to_vec()));
-                    } else {
-                        values.push(Some(int_val.to_string().into_bytes()));
+                    match pg_type.as_deref() {
+                        Some("boolean") | Some("bool") => {
+                            // Convert SQLite's 0/1 to PostgreSQL's f/t format
+                            let bool_str = if int_val == 0 { "f" } else { "t" };
+                            values.push(Some(bool_str.as_bytes().to_vec()));
+                        },
+                        Some("date") => {
+                            // Convert INTEGER days to YYYY-MM-DD
+                            use crate::types::datetime_utils::format_days_to_date_buf;
+                            let mut buf = vec![0u8; 32];
+                            let len = format_days_to_date_buf(int_val as i32, &mut buf);
+                            buf.truncate(len);
+                            values.push(Some(buf));
+                        },
+                        Some("time") | Some("timetz") => {
+                            // Convert INTEGER microseconds to HH:MM:SS.ffffff
+                            use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                            let mut buf = vec![0u8; 32];
+                            let len = format_microseconds_to_time_buf(int_val, &mut buf);
+                            buf.truncate(len);
+                            values.push(Some(buf));
+                        },
+                        Some("timestamp") | Some("timestamptz") => {
+                            // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff
+                            use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                            let mut buf = vec![0u8; 64];
+                            let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
+                            buf.truncate(len);
+                            values.push(Some(buf));
+                        },
+                        _ => {
+                            // Default integer to string conversion
+                            values.push(Some(int_val.to_string().into_bytes()));
+                        }
                     }
                 },
                 ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),

@@ -166,24 +166,55 @@ impl DbHandler {
             });
         }
         
-        // IMPORTANT: Check schema version on database load
-        // This ensures the database schema is up-to-date before any operations
-        let runner = MigrationRunner::new(conn);
-        match runner.check_schema_version() {
-            Ok(()) => {
-                // Schema is up to date
-            }
-            Err(e) => {
-                // Convert anyhow::Error to rusqlite::Error
-                return Err(rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                    Some(e.to_string())
-                ));
-            }
-        }
+        // Check if this is a new database file by looking for any tables
+        let table_count: i32 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+            [],
+            |row| row.get(0)
+        )?;
         
-        // Get connection back from runner
-        let conn = runner.into_connection();
+        let is_new_database = table_count == 0;
+        
+        let conn = if is_new_database {
+            // New database file - run migrations automatically
+            info!("New database file detected, running initial migrations...");
+            let mut runner = MigrationRunner::new(conn);
+            match runner.run_pending_migrations() {
+                Ok(applied) => {
+                    if !applied.is_empty() {
+                        info!("Applied {} migrations to new database", applied.len());
+                    }
+                }
+                Err(e) => {
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Initial migration failed for new database: {}", e))
+                    ));
+                }
+            }
+            // Get connection back from runner
+            runner.into_connection()
+        } else {
+            // Existing database - check schema version
+            // IMPORTANT: Check schema version on database load
+            // This ensures the database schema is up-to-date before any operations
+            let runner = MigrationRunner::new(conn);
+            match runner.check_schema_version() {
+                Ok(()) => {
+                    // Schema is up to date
+                }
+                Err(e) => {
+                    // Convert anyhow::Error to rusqlite::Error
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(e.to_string())
+                    ));
+                }
+            }
+            
+            // Get connection back from runner
+            runner.into_connection()
+        };
         
         // Initialize functions and metadata
         crate::functions::register_all_functions(&conn)?;
@@ -315,6 +346,9 @@ impl DbHandler {
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Ensure schema cache is populated (especially after CREATE TABLE)
+        self.schema_cache.ensure_schema_loaded(&self.conn.lock(), query);
+        
         // Ultra-fast path for truly simple queries
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
             let conn = self.conn.lock();
@@ -966,6 +1000,7 @@ fn infer_column_type(col_name: &str, query: &str, schema_cache: &SchemaCache) ->
                 if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
                     return col_info.pg_type.clone();
                 }
+            } else {
             }
         }
     }
