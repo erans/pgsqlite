@@ -41,9 +41,9 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 
 ## Schema Migration System
 - **In-memory databases**: Migrations are run automatically on startup (since they always start fresh)
-- **File-based databases**: Migrations are NOT run automatically on startup
-- **Version checking**: Database schema version is checked on startup
-- **Error on outdated schema**: If the file-based database schema is outdated, pgsqlite will exit with an error message
+- **New file-based databases**: Migrations are run automatically when creating a new database file
+- **Existing file-based databases**: Schema version is checked on startup
+- **Error on outdated schema**: If an existing database schema is outdated, pgsqlite will exit with an error message
 - **Explicit migration**: Use `--migrate` command line flag to run pending migrations and exit
 
 ### Usage
@@ -51,11 +51,14 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
 # In-memory databases (auto-migrate on startup)
 pgsqlite --in-memory
 
-# Run migrations on a file-based database
-pgsqlite --database mydb.db --migrate
+# New database file (auto-migrate on first run)
+pgsqlite --database newdb.db
 
-# Normal operation with file-based database (will fail if schema is outdated)
-pgsqlite --database mydb.db
+# Run migrations on an existing file-based database
+pgsqlite --database existingdb.db --migrate
+
+# Normal operation with existing database (will fail if schema is outdated)
+pgsqlite --database existingdb.db
 ```
 
 ### Current Migrations

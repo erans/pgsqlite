@@ -221,6 +221,19 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] psql client now correctly displays timestamps instead of raw integers
   - [x] All existing datetime tests continue to pass
 
+#### Automatic Migration for New Database Files - COMPLETED (2025-07-08)
+- [x] Detect when a database file is newly created (no tables exist)
+  - [x] Check table count in sqlite_master on database initialization
+  - [x] Differentiate between new and existing database files
+- [x] Run migrations automatically for new database files
+  - [x] Apply all pending migrations without requiring --migrate flag
+  - [x] Log migration progress for visibility
+- [x] Maintain existing behavior for existing databases
+  - [x] Check schema version and error if outdated
+  - [x] Require explicit --migrate flag for existing databases
+- [x] Updated CLAUDE.md documentation to reflect new behavior
+- [x] Tested with both new and existing database files
+
 #### Date/Time Types - Future Work
 - [ ] Handle special values (infinity, -infinity) for all datetime types
 - [ ] Complex interval handling (months/years in addition to microseconds)
