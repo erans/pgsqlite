@@ -212,6 +212,15 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Edge cases: epoch time, microsecond precision, timezone offsets, boundary values
   - [x] All 800+ queries execute successfully in ~90ms validating INTEGER microsecond storage
 
+#### Bug Fix: NOW() and CURRENT_TIMESTAMP Returning Raw INTEGER - COMPLETED (2025-07-08)
+- [x] Fixed NOW() and CURRENT_TIMESTAMP returning raw INTEGER microseconds instead of formatted timestamps
+  - [x] Updated SchemaTypeMapper::get_aggregate_return_type() to return PgType::Timestamp for NOW()/CURRENT_TIMESTAMP
+  - [x] Changed return type from Float8 (which was incorrect) to proper Timestamp type (OID 1114)
+  - [x] Updated CURRENT_TIME and MAKE_TIME() to return Time type (OID 1083) instead of Float8
+  - [x] Value converter layer now properly formats INTEGER microseconds to PostgreSQL timestamp format
+  - [x] psql client now correctly displays timestamps instead of raw integers
+  - [x] All existing datetime tests continue to pass
+
 #### Date/Time Types - Future Work
 - [ ] Handle special values (infinity, -infinity) for all datetime types
 - [ ] Complex interval handling (months/years in addition to microseconds)

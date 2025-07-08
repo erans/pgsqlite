@@ -201,6 +201,7 @@ pub static METRICS: Lazy<QueryMetrics> = Lazy::new(|| QueryMetrics::default());
 pub struct Timer {
     start: Instant,
     metric_ns: &'static AtomicU64,
+    #[allow(dead_code)]
     metric_count: &'static AtomicUsize,
 }
 

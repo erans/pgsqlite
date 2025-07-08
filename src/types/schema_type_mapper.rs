@@ -309,16 +309,31 @@ impl SchemaTypeMapper {
             return Some(PgType::Text.to_oid()); // text
         }
         
-        // DateTime functions that return float8 (Unix timestamps)
-        if upper == "NOW()" || upper == "CURRENT_TIMESTAMP" || upper == "CURRENT_TIMESTAMP()" ||
-           upper.starts_with("DATE_TRUNC(") || upper.starts_with("TO_TIMESTAMP(") ||
-           upper.starts_with("MAKE_DATE(") || upper == "EPOCH()" || upper.starts_with("AGE(") {
-            return Some(PgType::Float8.to_oid()); // float8 for Unix timestamps
+        // Timestamp functions that return INTEGER microseconds (stored as timestamp type)
+        if upper == "NOW()" || upper == "CURRENT_TIMESTAMP" || upper == "CURRENT_TIMESTAMP()" {
+            return Some(PgType::Timestamp.to_oid()); // timestamp (INTEGER microseconds since epoch)
         }
         
-        // DateTime functions that return float8 (time values)
+        // Other datetime functions
+        if upper.starts_with("DATE_TRUNC(") || upper.starts_with("TO_TIMESTAMP(") {
+            return Some(PgType::Timestamp.to_oid()); // timestamp
+        }
+        
+        if upper.starts_with("MAKE_DATE(") {
+            return Some(PgType::Date.to_oid()); // date (INTEGER days since epoch)
+        }
+        
+        if upper == "EPOCH()" {
+            return Some(PgType::Timestamp.to_oid()); // epoch as timestamp
+        }
+        
+        if upper.starts_with("AGE(") {
+            return Some(PgType::Interval.to_oid()); // interval (INTEGER microseconds)
+        }
+        
+        // Time functions that return INTEGER microseconds (stored as time type)
         if upper == "CURRENT_TIME" || upper == "CURRENT_TIME()" || upper.starts_with("MAKE_TIME(") {
-            return Some(PgType::Float8.to_oid()); // float8 for time in seconds
+            return Some(PgType::Time.to_oid()); // time (INTEGER microseconds since midnight)
         }
         
         // EXTRACT returns float8
