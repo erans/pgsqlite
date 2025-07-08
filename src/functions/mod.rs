@@ -4,6 +4,8 @@ pub mod json_functions;
 pub mod decimal_functions;
 pub mod datetime_functions;
 pub mod regex_functions;
+pub mod catalog_functions;
+pub mod hash_functions;
 
 use rusqlite::{Connection, Result};
 
@@ -14,5 +16,7 @@ pub fn register_all_functions(conn: &Connection) -> Result<()> {
     decimal_functions::register_decimal_functions(conn)?;
     datetime_functions::register_datetime_functions(conn)?;
     regex_functions::register_regex_functions(conn)?;
+    catalog_functions::register_catalog_functions(conn)?;
+    hash_functions::register_hash_functions(conn)?;
     Ok(())
 }

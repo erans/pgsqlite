@@ -1,6 +1,6 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
 use crate::PgSqliteError;
-use crate::translator::RegexTranslator;
+use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -46,8 +46,11 @@ impl CatalogInterceptor {
             return None;
         }
         
-        // First, try to translate regex operators if present
-        let query_to_parse = match RegexTranslator::translate_query(query) {
+        // First, remove schema prefixes from catalog tables
+        let schema_translated = SchemaPrefixTranslator::translate_query(query);
+        
+        // Then, try to translate regex operators if present
+        let query_to_parse = match RegexTranslator::translate_query(&schema_translated) {
             Ok(translated) => {
                 if translated != query {
                     debug!("Translated regex operators in catalog query: {}", translated);
@@ -106,7 +109,7 @@ impl CatalogInterceptor {
                     }
                 }
                 
-                // If we translated regex operators but the query isn't a special catalog query,
+                // If we translated the query but it's not a special catalog query,
                 // execute the translated query directly
                 if query_to_parse != query {
                     match db.query(&query_to_parse).await {

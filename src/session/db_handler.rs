@@ -137,6 +137,9 @@ impl DbHandler {
         // For in-memory databases, always run migrations automatically
         // since they always start fresh and have no existing data
         if is_memory_db {
+            // Register functions before running migrations
+            crate::functions::register_all_functions(&conn)?;
+            
             // For in-memory databases, run migrations automatically
             let mut runner = MigrationRunner::new(conn);
             match runner.run_pending_migrations() {
@@ -178,6 +181,10 @@ impl DbHandler {
         let conn = if is_new_database {
             // New database file - run migrations automatically
             info!("New database file detected, running initial migrations...");
+            
+            // Register functions before running migrations
+            crate::functions::register_all_functions(&conn)?;
+            
             let mut runner = MigrationRunner::new(conn);
             match runner.run_pending_migrations() {
                 Ok(applied) => {

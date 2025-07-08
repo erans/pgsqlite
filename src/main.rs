@@ -52,6 +52,10 @@ async fn main() -> Result<()> {
         let conn = rusqlite::Connection::open(&db_path)
             .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
         
+        // Register functions needed for migrations
+        pgsqlite::functions::register_all_functions(&conn)
+            .map_err(|e| anyhow::anyhow!("Failed to register functions: {}", e))?;
+        
         let mut runner = MigrationRunner::new(conn);
         match runner.run_pending_migrations() {
             Ok(applied) => {
