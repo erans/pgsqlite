@@ -182,6 +182,11 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Implement binary protocol conversion (PostgreSQL binary ↔ INTEGER microseconds)
   - [x] Support microsecond precision without floating point
 - [x] **Phase 3: Query Translation** - COMPLETED
+
+#### Bug Fix: DATETIME Type Mapping - COMPLETED (2025-07-08)
+- [x] Fix DATETIME type mapping to INTEGER instead of TEXT in CREATE TABLE statements
+  - [x] Add "datetime" mapping to TypeMapper::pg_to_sqlite HashMap
+  - [x] Ensure DATETIME columns are stored as INTEGER microseconds like other datetime types
   - [x] Map PostgreSQL datetime functions to SQLite equivalents
   - [x] Implement EXTRACT, DATE_TRUNC, AGE functions with microsecond precision
   - [x] Handle AT TIME ZONE operator with microsecond offsets

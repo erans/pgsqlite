@@ -166,6 +166,7 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("time without time zone".to_string(), "INTEGER".to_string());
         mapper.pg_to_sqlite.insert("timetz".to_string(), "INTEGER".to_string());
         mapper.pg_to_sqlite.insert("interval".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("datetime".to_string(), "INTEGER".to_string());
         
         // New type mappings
         mapper.pg_to_sqlite.insert("money".to_string(), "TEXT".to_string());
