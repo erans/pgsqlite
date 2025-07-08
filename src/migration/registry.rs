@@ -11,6 +11,7 @@ lazy_static! {
         register_v2_enum_support(&mut registry);
         register_v3_datetime_support(&mut registry);
         register_v4_datetime_integer_storage(&mut registry);
+        register_v5_pg_catalog_tables(&mut registry);
         
         registry
     };
@@ -233,4 +234,388 @@ fn register_v4_datetime_integer_storage(registry: &mut BTreeMap<u32, Migration>)
         down: None, // No backwards compatibility needed
         dependencies: vec![3],
     });
+}
+
+/// Version 5: PostgreSQL Catalog Tables
+fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(5, Migration {
+        version: 5,
+        name: "pg_catalog_tables",
+        description: "Create PostgreSQL-compatible catalog tables and views for psql compatibility",
+        up: MigrationAction::Combined {
+            pre_sql: Some(r#"
+                -- pg_namespace view (schemas)
+                CREATE VIEW IF NOT EXISTS pg_namespace AS
+                SELECT 
+                    11 as oid,
+                    'pg_catalog' as nspname,
+                    10 as nspowner,
+                    NULL as nspacl
+                UNION ALL
+                SELECT 
+                    2200 as oid,
+                    'public' as nspname,
+                    10 as nspowner,
+                    NULL as nspacl;
+                
+                -- pg_am view (access methods)
+                CREATE VIEW IF NOT EXISTS pg_am AS
+                SELECT 
+                    403 as oid,
+                    'btree' as amname,
+                    'i' as amtype;
+                
+                -- pg_type view (data types)
+                CREATE VIEW IF NOT EXISTS pg_type AS
+                SELECT 
+                    oid,
+                    typname,
+                    typtype,
+                    typelem,
+                    typbasetype,
+                    typnamespace
+                FROM (
+                    -- Basic types
+                    SELECT 16 as oid, 'bool' as typname, 'b' as typtype, 0 as typelem, 0 as typbasetype, 11 as typnamespace
+                    UNION ALL SELECT 17, 'bytea', 'b', 0, 0, 11
+                    UNION ALL SELECT 20, 'int8', 'b', 0, 0, 11
+                    UNION ALL SELECT 21, 'int2', 'b', 0, 0, 11
+                    UNION ALL SELECT 23, 'int4', 'b', 0, 0, 11
+                    UNION ALL SELECT 25, 'text', 'b', 0, 0, 11
+                    UNION ALL SELECT 114, 'json', 'b', 0, 0, 11
+                    UNION ALL SELECT 700, 'float4', 'b', 0, 0, 11
+                    UNION ALL SELECT 701, 'float8', 'b', 0, 0, 11
+                    UNION ALL SELECT 1042, 'char', 'b', 0, 0, 11
+                    UNION ALL SELECT 1043, 'varchar', 'b', 0, 0, 11
+                    UNION ALL SELECT 1082, 'date', 'b', 0, 0, 11
+                    UNION ALL SELECT 1083, 'time', 'b', 0, 0, 11
+                    UNION ALL SELECT 1114, 'timestamp', 'b', 0, 0, 11
+                    UNION ALL SELECT 1184, 'timestamptz', 'b', 0, 0, 11
+                    UNION ALL SELECT 1700, 'numeric', 'b', 0, 0, 11
+                    UNION ALL SELECT 2950, 'uuid', 'b', 0, 0, 11
+                    UNION ALL SELECT 3802, 'jsonb', 'b', 0, 0, 11
+                );
+                
+                -- pg_attribute view (column information)
+                CREATE VIEW IF NOT EXISTS pg_attribute AS
+                SELECT 
+                    oid_hash(m.name) as attrelid,                   -- table OID
+                    p.cid + 1 as attnum,                             -- column number (1-based)
+                    p.name as attname,                               -- column name
+                    CASE 
+                        WHEN p.type LIKE '%INT%' THEN 23            -- int4
+                        WHEN p.type LIKE '%CHAR%' THEN 1043         -- varchar
+                        WHEN p.type LIKE '%TEXT%' THEN 25           -- text
+                        WHEN p.type LIKE '%REAL%' OR p.type LIKE '%FLOA%' OR p.type LIKE '%DOUB%' THEN 701  -- float8
+                        WHEN p.type LIKE '%NUMERIC%' OR p.type LIKE '%DECIMAL%' THEN 1700  -- numeric
+                        WHEN p.type LIKE '%DATE%' THEN 1082         -- date
+                        WHEN p.type LIKE '%TIME%' THEN 1083         -- time
+                        ELSE 25                                      -- default to text
+                    END as atttypid,                                -- type OID
+                    -1 as attstattarget,
+                    -1 as attlen,
+                    p.cid + 1 as attnum,
+                    0 as attndims,
+                    -1 as attcacheoff,
+                    -1 as atttypmod,
+                    'f' as attbyval,
+                    's' as attstorage,
+                    'p' as attalign,
+                    CASE WHEN p."notnull" = 1 THEN 't' ELSE 'f' END as attnotnull,
+                    'f' as atthasdef,
+                    'f' as atthasmissing,
+                    '' as attidentity,
+                    '' as attgenerated,
+                    'f' as attisdropped,
+                    't' as attislocal,
+                    0 as attinhcount,
+                    0 as attcollation,
+                    NULL as attacl,
+                    NULL as attoptions,
+                    NULL as attfdwoptions,
+                    NULL as attmissingval
+                FROM sqlite_master m
+                JOIN pragma_table_info(m.name) p
+                WHERE m.type = 'table'
+                  AND m.name NOT LIKE 'sqlite_%'
+                  AND m.name NOT LIKE '__pgsqlite_%';
+                
+                -- Enhanced pg_class view that works with JOINs
+                CREATE VIEW IF NOT EXISTS pg_class AS
+                SELECT 
+                    -- Generate stable OID from table name using hash function
+                    oid_hash(name) as oid,
+                    name as relname,
+                    2200 as relnamespace,  -- public schema
+                    CASE 
+                        WHEN type = 'table' THEN 'r'
+                        WHEN type = 'view' THEN 'v'
+                        WHEN type = 'index' THEN 'i'
+                    END as relkind,
+                    10 as relowner,
+                    CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                    0 as relfilenode,
+                    0 as reltablespace,
+                    0 as relpages,
+                    -1 as reltuples,
+                    0 as relallvisible,
+                    0 as reltoastrelid,
+                    CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                    'f' as relisshared,
+                    'p' as relpersistence,
+                    oid_hash(name || '_type') as reltype,
+                    0 as reloftype,
+                    0 as relnatts,
+                    0 as relchecks,
+                    'f' as relhasrules,
+                    'f' as relhastriggers,
+                    'f' as relhassubclass,
+                    'f' as relrowsecurity,
+                    'f' as relforcerowsecurity,
+                    't' as relispopulated,
+                    'd' as relreplident,
+                    'f' as relispartition,
+                    0 as relrewrite,
+                    0 as relfrozenxid,
+                    0 as relminmxid,
+                    NULL as relacl,
+                    NULL as reloptions,
+                    NULL as relpartbound
+                FROM sqlite_master
+                WHERE type IN ('table', 'view', 'index')
+                  AND name NOT LIKE 'sqlite_%'
+                  AND name NOT LIKE '__pgsqlite_%';
+                
+                -- pg_constraint table for constraints
+                CREATE TABLE IF NOT EXISTS pg_constraint (
+                    oid INTEGER PRIMARY KEY,
+                    conname TEXT NOT NULL,
+                    connamespace INTEGER DEFAULT 2200,
+                    contype CHAR(1) NOT NULL,  -- 'p' primary, 'u' unique, 'c' check, 'f' foreign
+                    condeferrable BOOLEAN DEFAULT 0,
+                    condeferred BOOLEAN DEFAULT 0,
+                    convalidated BOOLEAN DEFAULT 1,
+                    conrelid INTEGER NOT NULL,  -- table OID
+                    contypid INTEGER DEFAULT 0,
+                    conindid INTEGER DEFAULT 0,  -- index OID for unique/primary
+                    conparentid INTEGER DEFAULT 0,
+                    confrelid INTEGER DEFAULT 0, -- referenced table for foreign keys
+                    confupdtype CHAR(1) DEFAULT ' ',
+                    confdeltype CHAR(1) DEFAULT ' ',
+                    confmatchtype CHAR(1) DEFAULT ' ',
+                    conislocal BOOLEAN DEFAULT 1,
+                    coninhcount INTEGER DEFAULT 0,
+                    connoinherit BOOLEAN DEFAULT 0,
+                    conkey TEXT,    -- column numbers as comma-separated list
+                    confkey TEXT,   -- referenced columns
+                    conpfeqop TEXT,
+                    conppeqop TEXT,
+                    conffeqop TEXT,
+                    conexclop TEXT,
+                    conbin TEXT,    -- expression tree
+                    consrc TEXT     -- human-readable
+                );
+                
+                -- pg_attrdef table for column defaults
+                CREATE TABLE IF NOT EXISTS pg_attrdef (
+                    oid INTEGER PRIMARY KEY,
+                    adrelid INTEGER NOT NULL,    -- table OID
+                    adnum SMALLINT NOT NULL,     -- column number
+                    adbin TEXT,                  -- expression tree
+                    adsrc TEXT                   -- human-readable default
+                );
+                
+                -- pg_index table for indexes
+                CREATE TABLE IF NOT EXISTS pg_index (
+                    indexrelid INTEGER PRIMARY KEY,  -- index OID
+                    indrelid INTEGER NOT NULL,       -- table OID
+                    indnatts SMALLINT NOT NULL,
+                    indnkeyatts SMALLINT NOT NULL,
+                    indisunique BOOLEAN DEFAULT 0,
+                    indisprimary BOOLEAN DEFAULT 0,
+                    indisexclusion BOOLEAN DEFAULT 0,
+                    indimmediate BOOLEAN DEFAULT 1,
+                    indisclustered BOOLEAN DEFAULT 0,
+                    indisvalid BOOLEAN DEFAULT 1,
+                    indcheckxmin BOOLEAN DEFAULT 0,
+                    indisready BOOLEAN DEFAULT 1,
+                    indislive BOOLEAN DEFAULT 1,
+                    indisreplident BOOLEAN DEFAULT 0,
+                    indkey TEXT,                     -- column numbers
+                    indcollation TEXT,
+                    indclass TEXT,
+                    indoption TEXT,
+                    indexprs TEXT,                   -- expression trees
+                    indpred TEXT                     -- partial index predicate
+                );
+                
+                -- Update schema version
+                UPDATE __pgsqlite_metadata 
+                SET value = '5', updated_at = strftime('%s', 'now')
+                WHERE key = 'schema_version';
+            "#),
+            function: populate_catalog_tables,
+            post_sql: None,
+        },
+        down: Some(MigrationAction::Sql(r#"
+            DROP VIEW IF EXISTS pg_type;
+            DROP VIEW IF EXISTS pg_attribute;
+            DROP VIEW IF EXISTS pg_class;
+            DROP VIEW IF EXISTS pg_am;
+            DROP VIEW IF EXISTS pg_namespace;
+            DROP TABLE IF EXISTS pg_index;
+            DROP TABLE IF EXISTS pg_attrdef;
+            DROP TABLE IF EXISTS pg_constraint;
+            UPDATE __pgsqlite_metadata 
+            SET value = '4', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![4],
+    });
+}
+
+/// Populate catalog tables with metadata from sqlite_master
+fn populate_catalog_tables(conn: &rusqlite::Connection) -> anyhow::Result<()> {
+    use rusqlite::params;
+    
+    // Get all tables
+    let mut stmt = conn.prepare("
+        SELECT name, sql FROM sqlite_master 
+        WHERE type = 'table' 
+        AND name NOT LIKE 'sqlite_%'
+        AND name NOT LIKE '__pgsqlite_%'
+    ")?;
+    
+    let tables = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?.collect::<Result<Vec<_>, rusqlite::Error>>()?;
+    
+    for (table_name, create_sql) in tables {
+        // Generate table OID (same as in pg_class view)
+        let table_oid = generate_table_oid(&table_name);
+        
+        // Parse CREATE TABLE statement to extract constraints
+        if let Some(constraints) = parse_table_constraints(&table_name, &create_sql) {
+            for constraint in constraints {
+                // Insert into pg_constraint
+                conn.execute("
+                    INSERT OR IGNORE INTO pg_constraint (
+                        oid, conname, contype, conrelid, conkey, consrc
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                ", params![
+                    constraint.oid,
+                    constraint.name,
+                    constraint.contype,
+                    table_oid,
+                    constraint.columns.join(","),
+                    constraint.definition
+                ])?;
+            }
+        }
+        
+        // Parse column defaults
+        if let Some(defaults) = parse_column_defaults(&table_name, &create_sql) {
+            for default in defaults {
+                conn.execute("
+                    INSERT OR IGNORE INTO pg_attrdef (
+                        oid, adrelid, adnum, adsrc
+                    ) VALUES (?1, ?2, ?3, ?4)
+                ", params![
+                    default.oid,
+                    table_oid,
+                    default.column_num,
+                    default.default_expr
+                ])?;
+            }
+        }
+    }
+    
+    // Populate pg_index from sqlite_master indexes
+    let mut stmt = conn.prepare("
+        SELECT name, tbl_name, sql FROM sqlite_master 
+        WHERE type = 'index' 
+        AND sql IS NOT NULL
+    ")?;
+    
+    let indexes = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?
+        ))
+    })?.collect::<Result<Vec<_>, _>>()?;
+    
+    for (index_name, table_name, create_sql) in indexes {
+        let index_oid = generate_table_oid(&index_name);
+        let table_oid = generate_table_oid(&table_name);
+        
+        // Parse index info
+        let is_unique = create_sql.to_uppercase().contains("UNIQUE");
+        
+        conn.execute("
+            INSERT OR IGNORE INTO pg_index (
+                indexrelid, indrelid, indnatts, indnkeyatts, 
+                indisunique, indisprimary
+            ) VALUES (?1, ?2, 1, 1, ?3, 0)
+        ", params![
+            index_oid,
+            table_oid,
+            is_unique as i32
+        ])?;
+    }
+    
+    Ok(())
+}
+
+// Helper functions for parsing and OID generation
+fn generate_table_oid(name: &str) -> i32 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    name.hash(&mut hasher);
+    ((hasher.finish() & 0x7FFFFFFF) % 1000000 + 16384) as i32
+}
+
+struct ConstraintInfo {
+    oid: i32,
+    name: String,
+    contype: String,
+    columns: Vec<String>,
+    definition: String,
+}
+
+fn parse_table_constraints(table_name: &str, create_sql: &str) -> Option<Vec<ConstraintInfo>> {
+    // Simple parsing - a full implementation would use a proper SQL parser
+    let mut constraints = Vec::new();
+    let sql_upper = create_sql.to_uppercase();
+    
+    // Look for PRIMARY KEY
+    if sql_upper.contains("PRIMARY KEY") {
+        constraints.push(ConstraintInfo {
+            oid: generate_table_oid(&format!("{}_pkey", table_name)),
+            name: format!("{}_pkey", table_name),
+            contype: "p".to_string(),
+            columns: vec![], // Would need to parse column names
+            definition: "PRIMARY KEY".to_string(),
+        });
+    }
+    
+    if constraints.is_empty() {
+        None
+    } else {
+        Some(constraints)
+    }
+}
+
+struct DefaultInfo {
+    oid: i32,
+    column_num: i16,
+    default_expr: String,
+}
+
+fn parse_column_defaults(_table_name: &str, _create_sql: &str) -> Option<Vec<DefaultInfo>> {
+    // Simple parsing - would need to extract DEFAULT clauses
+    // For now, return None
+    None
 }

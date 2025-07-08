@@ -3,13 +3,15 @@ use crate::cache::SchemaCache;
 use crate::query::{QueryTypeDetector, QueryType};
 use std::borrow::Cow;
 
-/// Lazy query processor that combines cast translation and decimal rewriting
-/// to minimize unnecessary processing
+/// Lazy query processor that combines cast translation, decimal rewriting, regex translation,
+/// and schema prefix removal to minimize unnecessary processing
 pub struct LazyQueryProcessor<'a> {
     original_query: &'a str,
     translated_query: Option<Cow<'a, str>>,
     needs_cast_translation: bool,
     needs_decimal_rewrite: Option<bool>,
+    needs_regex_translation: bool,
+    needs_schema_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -20,6 +22,9 @@ impl<'a> LazyQueryProcessor<'a> {
             translated_query: None,
             needs_cast_translation: crate::translator::CastTranslator::needs_translation(query),
             needs_decimal_rewrite: None,
+            needs_regex_translation: query.contains(" ~ ") || query.contains(" !~ ") || 
+                                     query.contains(" ~* ") || query.contains(" !~* "),
+            needs_schema_translation: query.contains("pg_catalog.") || query.contains("PG_CATALOG."),
         }
     }
     
@@ -31,6 +36,14 @@ impl<'a> LazyQueryProcessor<'a> {
     /// Check if the query needs any processing
     pub fn needs_processing(&self, schema_cache: &SchemaCache) -> bool {
         if self.needs_cast_translation {
+            return true;
+        }
+        
+        if self.needs_regex_translation {
+            return true;
+        }
+        
+        if self.needs_schema_translation {
             return true;
         }
         
@@ -63,7 +76,15 @@ impl<'a> LazyQueryProcessor<'a> {
         
         let mut current_query = Cow::Borrowed(self.original_query);
         
-        // Step 1: Cast translation if needed
+        // Step 1: Schema prefix removal if needed
+        if self.needs_schema_translation {
+            tracing::debug!("Before schema translation: {}", current_query);
+            let translated = crate::translator::SchemaPrefixTranslator::translate_query(&current_query);
+            tracing::debug!("After schema translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+        
+        // Step 2: Cast translation if needed
         if self.needs_cast_translation {
             // Check translation cache first
             if let Some(cached) = crate::cache::global_translation_cache().get(self.original_query) {
@@ -84,7 +105,22 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 2: Decimal rewriting if needed
+        // Step 3: Regex translation if needed
+        if self.needs_regex_translation {
+            tracing::debug!("Before regex translation: {}", current_query);
+            match crate::translator::RegexTranslator::translate_query(&current_query) {
+                Ok(translated) => {
+                    tracing::debug!("After regex translation: {}", translated);
+                    current_query = Cow::Owned(translated);
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to translate regex operators: {}", e);
+                    // Continue with original query
+                }
+            }
+        }
+        
+        // Step 4: Decimal rewriting if needed
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
         
         // Check if we need decimal rewriting

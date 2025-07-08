@@ -81,6 +81,9 @@ cleanup() {
     if [ -f "$SOCKET_DIR/.s.PGSQL.$PORT" ]; then
         rm -f "$SOCKET_DIR/.s.PGSQL.$PORT"
     fi
+    
+    # Remove test output files
+    rm -f test_output.log meta_command_output.log
 }
 
 # Set up signal handlers
@@ -109,6 +112,10 @@ while [[ $# -gt 0 ]]; do
             CONNECTION_MODE="$2"
             shift 2
             ;;
+        --meta-commands)
+            META_COMMAND_FILE="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
@@ -116,6 +123,7 @@ while [[ $# -gt 0 ]]; do
             echo "  -d, --database DB      Database file to use (default: :memory:)"
             echo "  -s, --sql-file FILE    SQL file to execute (default: test_queries.sql)"
             echo "  -m, --mode MODE        Connection mode: tcp-ssl, tcp-no-ssl, unix-socket, file-ssl, file-no-ssl"
+            echo "  --meta-commands FILE   Meta-command test file (default: test_meta_commands_minimal.sql)"
             echo "  -v, --verbose          Enable verbose output"
             echo "  -h, --help             Show this help message"
             exit 0
@@ -297,8 +305,81 @@ EXECUTION_TIME=$(echo "$END_TIME - $START_TIME" | bc)
 
 echo ""
 if [ $PSQL_EXIT_CODE -eq 0 ]; then
-    log_success "All tests completed successfully!"
+    log_success "All SQL queries completed successfully!"
     log_info "Execution time: ${EXECUTION_TIME}s"
+else
+    log_error "SQL queries failed with exit code: $PSQL_EXIT_CODE"
+    echo ""
+    log_error "Last 20 lines of server log:"
+    tail -n 20 "$LOG_FILE"
+    exit 1
+fi
+
+# Run meta-command tests if the file exists
+# Use working version by default to avoid testing unimplemented features
+META_COMMAND_FILE="${META_COMMAND_FILE:-test_meta_commands_working.sql}"
+# To use full test suite, set META_COMMAND_FILE=test_meta_commands.sql
+# Available test files:
+# - test_meta_commands_supported.sql: All fully supported meta commands with examples
+# - test_meta_commands_working.sql: Commands that work with current implementation
+# - test_meta_commands_basic.sql: Very basic commands only
+# - test_meta_commands_minimal.sql: Minimal set including \d (NOW WORKS!)
+# - test_meta_commands.sql: Full test suite (many unimplemented features)
+if [ -f "$META_COMMAND_FILE" ]; then
+    echo ""
+    log_info "Executing meta-command tests from $META_COMMAND_FILE..."
+    echo ""
+    
+    # Measure execution time for meta commands
+    META_START_TIME=$(date +%s.%N)
+    
+    # Execute meta commands
+    if [ "$VERBOSE" = "1" ]; then
+        PGOPTIONS='--client-min-messages=debug' psql \
+            "$CONNECTION_STRING" \
+            -f "$META_COMMAND_FILE" \
+            -e \
+            --echo-queries \
+            -x \
+            --set ON_ERROR_STOP=1 \
+            2>&1 | tee meta_command_output.log
+    else
+        psql \
+            "$CONNECTION_STRING" \
+            -f "$META_COMMAND_FILE" \
+            --set ON_ERROR_STOP=1 \
+            -q \
+            2>&1 | tee meta_command_output.log
+    fi
+    
+    META_EXIT_CODE=$?
+    META_END_TIME=$(date +%s.%N)
+    
+    # Calculate execution time
+    META_EXECUTION_TIME=$(echo "$META_END_TIME - $META_START_TIME" | bc)
+    
+    echo ""
+    if [ $META_EXIT_CODE -eq 0 ]; then
+        log_success "All meta-command tests completed successfully!"
+        log_info "Meta-command execution time: ${META_EXECUTION_TIME}s"
+    else
+        log_error "Meta-command tests failed with exit code: $META_EXIT_CODE"
+        echo ""
+        log_error "Failed meta-command output:"
+        tail -n 50 meta_command_output.log
+        echo ""
+        log_error "Last 20 lines of server log:"
+        tail -n 20 "$LOG_FILE"
+        exit 1
+    fi
+else
+    log_warning "Meta-command test file $META_COMMAND_FILE not found, skipping meta-command tests"
+fi
+
+echo ""
+if [ $PSQL_EXIT_CODE -eq 0 ] && ([ ! -f "$META_COMMAND_FILE" ] || [ $META_EXIT_CODE -eq 0 ]); then
+    log_success "All tests completed successfully!"
+    log_info "Total execution time: $(echo "$EXECUTION_TIME + ${META_EXECUTION_TIME:-0}" | bc)s"
     
     # Show some statistics
     if [ "$VERBOSE" = "1" ]; then
