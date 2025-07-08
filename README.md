@@ -155,6 +155,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
 - **JSON Support**: `JSON` and `JSONB` types with PostgreSQL operators
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
+- **psql Compatibility**: Use psql's `\d` and `\dt` commands to explore your database
 
 ### Limitations
 

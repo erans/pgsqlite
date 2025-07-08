@@ -17,9 +17,12 @@ impl RegexTranslator {
 
         debug!("Translating regex operators in query: {}", query);
         
+        // First, handle OPERATOR(pg_catalog.op) syntax with string replacement
+        let query = Self::translate_operator_syntax(query);
+        
         // Parse the SQL query
         let dialect = PostgreSqlDialect {};
-        let mut statements = Parser::parse_sql(&dialect, query)?;
+        let mut statements = Parser::parse_sql(&dialect, &query)?;
         
         // Translate each statement
         for statement in &mut statements {
@@ -34,6 +37,35 @@ impl RegexTranslator {
             
         debug!("Translated query: {}", result);
         Ok(result)
+    }
+    
+    /// Translate OPERATOR(pg_catalog.op) syntax to regular operator syntax
+    fn translate_operator_syntax(query: &str) -> String {
+        let mut result = query.to_string();
+        
+        // Replace OPERATOR(pg_catalog.~) with ~
+        result = result.replace("OPERATOR(pg_catalog.~)", " ~ ");
+        result = result.replace("OPERATOR(PG_CATALOG.~)", " ~ ");
+        
+        // Replace OPERATOR(pg_catalog.!~) with !~
+        result = result.replace("OPERATOR(pg_catalog.!~)", " !~ ");
+        result = result.replace("OPERATOR(PG_CATALOG.!~)", " !~ ");
+        
+        // Replace OPERATOR(pg_catalog.~*) with ~*
+        result = result.replace("OPERATOR(pg_catalog.~*)", " ~* ");
+        result = result.replace("OPERATOR(PG_CATALOG.~*)", " ~* ");
+        
+        // Replace OPERATOR(pg_catalog.!~*) with !~*
+        result = result.replace("OPERATOR(pg_catalog.!~*)", " !~* ");
+        result = result.replace("OPERATOR(PG_CATALOG.!~*)", " !~* ");
+        
+        // Also handle without schema prefix
+        result = result.replace("OPERATOR(~)", " ~ ");
+        result = result.replace("OPERATOR(!~)", " !~ ");
+        result = result.replace("OPERATOR(~*)", " ~* ");
+        result = result.replace("OPERATOR(!~*)", " !~* ");
+        
+        result
     }
     
     /// Quick check if query contains regex operators
@@ -182,6 +214,9 @@ impl RegexTranslator {
     
     /// Create a REGEXP function call
     fn create_regexp_function(text: Expr, pattern: Expr, negate: bool) -> Expr {
+        // Strip COLLATE from pattern if present
+        let pattern = Self::strip_collate(pattern);
+        
         let regexp_call = Expr::Function(Function {
             name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new("regexp"))]),
             args: sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
@@ -212,6 +247,9 @@ impl RegexTranslator {
     
     /// Create a case-insensitive REGEXP function call
     fn create_regexpi_function(text: Expr, pattern: Expr, negate: bool) -> Expr {
+        // Strip COLLATE from pattern if present
+        let pattern = Self::strip_collate(pattern);
+        
         let regexpi_call = Expr::Function(Function {
             name: ObjectName(vec![ObjectNamePart::Identifier(Ident::new("regexpi"))]),
             args: sqlparser::ast::FunctionArguments::List(sqlparser::ast::FunctionArgumentList {
@@ -237,6 +275,14 @@ impl RegexTranslator {
             }
         } else {
             regexpi_call
+        }
+    }
+    
+    /// Strip COLLATE clause from an expression
+    fn strip_collate(expr: Expr) -> Expr {
+        match expr {
+            Expr::Collate { expr, .. } => *expr,
+            _ => expr,
         }
     }
 }
@@ -285,5 +331,28 @@ mod tests {
         let query = "SELECT * FROM users WHERE id = 1";
         let result = RegexTranslator::translate_query(query).unwrap();
         assert_eq!(result, query);
+    }
+    
+    #[test]
+    fn test_operator_syntax_translation() {
+        let query = "SELECT * FROM test WHERE name OPERATOR(pg_catalog.~) '^test'";
+        let result = RegexTranslator::translate_query(query).unwrap();
+        assert!(result.contains("regexp('^test', name)"));
+        assert!(!result.contains("OPERATOR"));
+    }
+    
+    #[test]
+    fn test_operator_syntax_not_match() {
+        let query = "SELECT * FROM test WHERE name OPERATOR(pg_catalog.!~) '^test'";
+        let result = RegexTranslator::translate_query(query).unwrap();
+        assert!(result.contains("NOT regexp('^test', name)"));
+    }
+    
+    #[test]
+    fn test_collate_stripping() {
+        let query = "SELECT * FROM test WHERE name ~ '^test' COLLATE pg_catalog.default";
+        let result = RegexTranslator::translate_query(query).unwrap();
+        assert!(result.contains("regexp('^test', name)"));
+        assert!(!result.contains("COLLATE"));
     }
 }

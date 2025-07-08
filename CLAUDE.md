@@ -66,6 +66,7 @@ pgsqlite --database existingdb.db
 - **v2**: ENUM support (creates enum types, values, and usage tracking tables)
 - **v3**: DateTime support (adds datetime_format and timezone_offset columns to __pgsqlite_schema, creates datetime cache and session settings tables)
 - **v4**: DateTime INTEGER storage (converts all datetime types to INTEGER microseconds/days for perfect precision)
+- **v5**: PostgreSQL catalog tables (creates pg_class, pg_namespace, pg_am views; pg_constraint, pg_attrdef, pg_index tables)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:
@@ -167,7 +168,7 @@ INSERT INTO table (col1, col2) VALUES
 - **PostgreSQL Type Support**: 40+ types including ranges, network types, binary types
 - **ENUM Types**: Full PostgreSQL ENUM implementation with CREATE/ALTER/DROP TYPE
 - **Zero-Copy Architecture**: Achieved 67% improvement in cached SELECT queries
-- **System Catalog Support**: Basic pg_class and pg_attribute for psql compatibility
+- **System Catalog Support**: Full pg_class, pg_namespace, pg_am views and catalog tables for psql compatibility
 - **SSL/TLS Support**: Available for TCP connections with automatic certificate management
 - **Ultra-Fast Path Optimization (2025-07-08)**: 19% SELECT performance improvement via translation bypass
 - **DateTime/Timezone Support (2025-07-07)**: INTEGER microsecond storage with full PostgreSQL compatibility
@@ -175,11 +176,12 @@ INSERT INTO table (col1, col2) VALUES
 - **Multi-row INSERT Support (2025-07-08)**: Enhanced InsertTranslator to handle multi-row VALUES with datetime conversion
 - **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
 - **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
+- **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
 - **Array types**: Not yet implemented
-- **System catalogs**: Limited to pg_class and pg_attribute, no JOIN support
+- **System catalogs**: \d tablename not yet supported (requires enhanced pg_attribute implementation)
 
 ## Database Handler Architecture
 Uses a Mutex-based implementation for thread safety:

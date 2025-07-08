@@ -44,6 +44,17 @@ impl WhereEvaluator {
                     _ => false,
                 }
             }
+            Expr::Function(func) => {
+                // Handle function calls in WHERE clause
+                let func_name = func.name.to_string().to_lowercase();
+                if func_name == "pg_table_is_visible" || func_name == "pg_catalog.pg_table_is_visible" {
+                    // pg_table_is_visible always returns true for all tables in SQLite
+                    true
+                } else {
+                    debug!("Unsupported function in WHERE clause: {}", func_name);
+                    true
+                }
+            }
             _ => {
                 debug!("Unsupported WHERE expression type: {:?}", expr);
                 true // Default to including the row if we can't evaluate

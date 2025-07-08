@@ -108,9 +108,9 @@ impl SystemFunctions {
     ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
         // In SQLite, all tables are visible, so always return true
         if !args.is_empty() {
-            Ok(Some("t".to_string()))
+            Ok(Some("1".to_string()))  // Return "1" for true (SQLite boolean)
         } else {
-            Ok(Some("f".to_string()))
+            Ok(Some("0".to_string()))  // Return "0" for false
         }
     }
 

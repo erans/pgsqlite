@@ -309,8 +309,7 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 FROM sqlite_master
                 WHERE type IN ('table', 'view', 'index')
                   AND name NOT LIKE 'sqlite_%'
-                  AND name NOT LIKE '__pgsqlite_%'
-                  AND name NOT LIKE 'pg_%';
+                  AND name NOT LIKE '__pgsqlite_%';
                 
                 -- pg_constraint table for constraints
                 CREATE TABLE IF NOT EXISTS pg_constraint (
@@ -408,7 +407,6 @@ fn populate_catalog_tables(conn: &rusqlite::Connection) -> anyhow::Result<()> {
         WHERE type = 'table' 
         AND name NOT LIKE 'sqlite_%'
         AND name NOT LIKE '__pgsqlite_%'
-        AND name NOT LIKE 'pg_%'
     ")?;
     
     let tables = stmt.query_map([], |row| {

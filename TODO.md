@@ -34,6 +34,22 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
 
+### Catalog Query Handling - COMPLETED (2025-07-08)
+- [x] **Fix pg_class view to include pg_* tables** - Removed pg_% filter from view definition
+- [x] **JOIN Support for Catalog Queries** - Modified catalog interceptor to pass JOIN queries to SQLite views
+  - [x] Catalog interceptor now detects JOINs and returns None to let SQLite handle them
+  - [x] pg_class and pg_namespace JOINs work correctly
+  - [x] All columns from SELECT clause are returned properly
+  - [x] Tested with psql \d, \dt commands - both working perfectly
+- [x] **pg_table_is_visible() Function** - Fixed boolean return values
+  - [x] Changed return values from "t"/"f" to "1"/"0" for SQLite boolean compatibility
+  - [x] Added function support in WHERE clause evaluator
+  - [x] Both catalog_functions.rs and system_functions.rs implementations fixed
+- [x] **psql Meta-Commands Support**
+  - [x] \d - Lists all relations (tables, views, indexes) - WORKING
+  - [x] \dt - Lists only tables - WORKING
+  - [ ] \d tablename - Describe specific table (needs pg_attribute support)
+
 ### Type System Enhancements
 
 #### Type Inference for Aliased Columns - COMPLETED (2025-07-08)
@@ -440,7 +456,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Full MERGE statement support
 
 #### PostgreSQL Compatibility - System Catalogs (Partial - 2025-07-03)
-- [ ] System catalogs (pg_class, pg_attribute, etc.)
+- [x] System catalogs (pg_class, pg_namespace, pg_am) - COMPLETED (2025-07-08)
+  - [ ] Enhanced pg_attribute for \d tablename support
   - [x] Basic CatalogInterceptor framework - COMPLETED (2025-07-03)
   - [x] Implement pg_class queries for table/relation listing - COMPLETED (2025-07-03)
     - Returns all tables and indexes from SQLite
@@ -517,7 +534,10 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - [ ] \l - List databases (needs pg_database)
     - [ ] \dn - List schemas (needs pg_namespace)
     - [ ] \du - List users/roles (needs pg_roles)
-  - [ ] Add comprehensive tests for catalog query compatibility
+  - [x] Add comprehensive tests for catalog query compatibility - COMPLETED (2025-07-08)
+    - [x] \d command tests
+    - [x] \dt command tests
+    - [x] JOIN query tests between catalog tables
     - Test all common psql queries
     - Test edge cases (empty tables, special characters, etc.)
     - Performance tests for catalog queries

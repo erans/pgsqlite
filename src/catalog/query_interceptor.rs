@@ -127,11 +127,19 @@ impl CatalogInterceptor {
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>) -> Option<DbResponse> {
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
-            // Check if this is a JOIN query involving pg_type
+            // Check if this is a JOIN query involving catalog tables
             if select.from.len() > 0 && !select.from[0].joins.is_empty() {
-                // Check if main table is pg_type
+                // For JOIN queries on catalog tables, return None to let SQLite handle it
+                // This allows the views to work properly with JOINs
                 if let TableFactor::Table { name, .. } = &select.from[0].relation {
                     let table_name = name.to_string().to_lowercase();
+                    if table_name.contains("pg_") && (table_name.contains("pg_class") || 
+                        table_name.contains("pg_namespace") || table_name.contains("pg_attribute") ||
+                        table_name.contains("pg_constraint") || table_name.contains("pg_index")) {
+                        debug!("Passing JOIN query on catalog tables to SQLite views");
+                        return None;
+                    }
+                    // Keep special handling for pg_type JOINs since they need custom logic
                     if table_name.contains("pg_type") || table_name.contains("pg_catalog.pg_type") {
                         // This is a pg_type JOIN query - handle it specially
                         return Some(Self::handle_pg_type_join_query(select));

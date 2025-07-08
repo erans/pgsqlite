@@ -14,7 +14,8 @@ pub fn register_catalog_functions(conn: &Connection) -> Result<()> {
         |ctx| {
             let _oid: i64 = ctx.get(0)?;
             // In SQLite, all tables are visible
-            Ok(true)
+            // Return 1 for true (SQLite boolean convention)
+            Ok(1i32)
         },
     )?;
     
