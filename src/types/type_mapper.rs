@@ -19,6 +19,8 @@ pub enum PgType {
     Time = 1083,
     Timestamp = 1114,
     Timestamptz = 1184,
+    Timetz = 1266,
+    Interval = 1186,
     Numeric = 1700,
     Bytea = 17,
     Money = 790,
@@ -53,6 +55,8 @@ impl PgType {
             1083 => Some(PgType::Time),
             1114 => Some(PgType::Timestamp),
             1184 => Some(PgType::Timestamptz),
+            1266 => Some(PgType::Timetz),
+            1186 => Some(PgType::Interval),
             1700 => Some(PgType::Numeric),
             17 => Some(PgType::Bytea),
             790 => Some(PgType::Money),
@@ -92,6 +96,8 @@ impl PgType {
             PgType::Time => "time",
             PgType::Timestamp => "timestamp",
             PgType::Timestamptz => "timestamptz",
+            PgType::Timetz => "timetz",
+            PgType::Interval => "interval",
             PgType::Numeric => "numeric",
             PgType::Bytea => "bytea",
             PgType::Money => "money",
@@ -141,10 +147,10 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("uuid".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("json".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("jsonb".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("date".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("time".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("timestamp".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("timestamptz".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("date".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("time".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timestamp".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timestamptz".to_string(), "INTEGER".to_string());
         mapper.pg_to_sqlite.insert("numeric".to_string(), "DECIMAL".to_string());
         mapper.pg_to_sqlite.insert("decimal".to_string(), "DECIMAL".to_string());
         mapper.pg_to_sqlite.insert("bytea".to_string(), "BLOB".to_string());
@@ -154,10 +160,12 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("bigserial".to_string(), "INTEGER".to_string());
         mapper.pg_to_sqlite.insert("character varying".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("character".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("timestamp with time zone".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("timestamp without time zone".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("time with time zone".to_string(), "TEXT".to_string());
-        mapper.pg_to_sqlite.insert("time without time zone".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("timestamp with time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timestamp without time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("time with time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("time without time zone".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("timetz".to_string(), "INTEGER".to_string());
+        mapper.pg_to_sqlite.insert("interval".to_string(), "INTEGER".to_string());
         
         // New type mappings
         mapper.pg_to_sqlite.insert("money".to_string(), "TEXT".to_string());
@@ -484,8 +492,8 @@ mod tests {
         
         // Test multi-word types
         assert_eq!(mapper.pg_to_sqlite_for_create_table("DOUBLE PRECISION"), "DECIMAL");
-        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIME WITH TIME ZONE"), "TEXT");
-        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIMESTAMP WITHOUT TIME ZONE"), "TEXT");
+        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIME WITH TIME ZONE"), "INTEGER");
+        assert_eq!(mapper.pg_to_sqlite_for_create_table("TIMESTAMP WITHOUT TIME ZONE"), "INTEGER");
         assert_eq!(mapper.pg_to_sqlite_for_create_table("BIT VARYING"), "TEXT");
     }
     

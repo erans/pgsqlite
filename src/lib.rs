@@ -12,6 +12,8 @@ pub mod config;
 pub mod ssl;
 pub mod ddl;
 pub mod migration;
+#[macro_use]
+pub mod profiling;
 
 #[cfg(test)]
 pub mod alloc_tracker;
@@ -140,7 +142,7 @@ pub async fn handle_test_connection_with_pool(
         match message {
             FrontendMessage::Query(sql) => {
                 // Execute the query
-                match QueryExecutor::execute_query(&mut framed, &db_handler, &sql).await {
+                match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql).await {
                     Ok(()) => {
                         // Query executed successfully
                     }

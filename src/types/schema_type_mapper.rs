@@ -89,6 +89,9 @@ impl SchemaTypeMapper {
             "date" | "DATE" => return PgType::Date.to_oid(),
             "time" | "TIME" => return PgType::Time.to_oid(),
             "timestamp" | "TIMESTAMP" => return PgType::Timestamp.to_oid(),
+            "timestamptz" | "TIMESTAMPTZ" => return PgType::Timestamptz.to_oid(),
+            "timetz" | "TIMETZ" => return PgType::Timetz.to_oid(),
+            "interval" | "INTERVAL" => return PgType::Interval.to_oid(),
             "uuid" | "UUID" => return PgType::Uuid.to_oid(),
             "json" | "JSON" => return PgType::Json.to_oid(),
             "jsonb" | "JSONB" => return PgType::Jsonb.to_oid(),
@@ -131,9 +134,10 @@ impl SchemaTypeMapper {
             // Date/Time
             "DATE" => PgType::Date.to_oid(),
             "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time.to_oid(),
-            "TIME WITH TIME ZONE" => 1266, // TIMETZ not in PgType enum yet
+            "TIME WITH TIME ZONE" | "TIMETZ" => PgType::Timetz.to_oid(),
             "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp.to_oid(),
-            "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz.to_oid(),
+            "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => PgType::Timestamptz.to_oid(),
+            "INTERVAL" => PgType::Interval.to_oid(),
             
             // JSON
             "JSON" => PgType::Json.to_oid(),
@@ -251,10 +255,11 @@ impl SchemaTypeMapper {
             return PgType::Float8.to_oid(); // float8
         }
         
-        // Check for date/time formats
-        if s.len() == 10 && s.chars().filter(|&c| c == '-').count() == 2 {
-            return PgType::Date.to_oid(); // Possibly a date
-        }
+        // Don't infer date type from string values - SQLite's CURRENT_DATE returns text
+        // and inferring DATE type causes deserialization errors in tokio-postgres
+        // if s.len() == 10 && s.chars().filter(|&c| c == '-').count() == 2 {
+        //     return PgType::Date.to_oid(); // Possibly a date
+        // }
         
         // Check for UUID format
         if s.len() == 36 && s.chars().filter(|&c| c == '-').count() == 4 {
@@ -277,6 +282,12 @@ impl SchemaTypeMapper {
     ) -> Option<i32> {
         let upper = function_name.to_uppercase();
         
+        // Handle aliased columns - if it's just a simple name, skip function detection
+        // This prevents false positives for columns named "year_col", "hour_trunc", etc.
+        if !function_name.contains('(') && !function_name.contains(' ') {
+            return None;
+        }
+        
         // COUNT always returns bigint
         if upper == "COUNT(*)" || upper.starts_with("COUNT(") {
             return Some(PgType::Int8.to_oid()); // bigint
@@ -291,6 +302,28 @@ impl SchemaTypeMapper {
         if upper.starts_with("JSON_GROUP_ARRAY(") || upper.starts_with("JSON_ARRAY(") || 
            upper.starts_with("JSON_OBJECT(") || upper.starts_with("JSON_EXTRACT(") {
             return Some(PgType::Text.to_oid()); // text
+        }
+        
+        // CURRENT_DATE returns text in YYYY-MM-DD format (SQLite built-in)
+        if upper == "CURRENT_DATE" {
+            return Some(PgType::Text.to_oid()); // text
+        }
+        
+        // DateTime functions that return float8 (Unix timestamps)
+        if upper == "NOW()" || upper == "CURRENT_TIMESTAMP" || upper == "CURRENT_TIMESTAMP()" ||
+           upper.starts_with("DATE_TRUNC(") || upper.starts_with("TO_TIMESTAMP(") ||
+           upper.starts_with("MAKE_DATE(") || upper == "EPOCH()" || upper.starts_with("AGE(") {
+            return Some(PgType::Float8.to_oid()); // float8 for Unix timestamps
+        }
+        
+        // DateTime functions that return float8 (time values)
+        if upper == "CURRENT_TIME" || upper == "CURRENT_TIME()" || upper.starts_with("MAKE_TIME(") {
+            return Some(PgType::Float8.to_oid()); // float8 for time in seconds
+        }
+        
+        // EXTRACT returns float8
+        if upper.starts_with("EXTRACT(") {
+            return Some(PgType::Float8.to_oid()); // float8
         }
         
         // For other aggregates, we need to know the column type

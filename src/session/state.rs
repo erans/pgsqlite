@@ -27,6 +27,7 @@ pub struct PreparedStatement {
     pub param_types: Vec<i32>,
     pub param_formats: Vec<i16>,
     pub field_descriptions: Vec<crate::protocol::FieldDescription>,
+    pub translation_metadata: Option<crate::translator::TranslationMetadata>, // Type hints from query translation
 }
 
 pub struct Portal {

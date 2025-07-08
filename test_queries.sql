@@ -149,7 +149,7 @@ ALTER TYPE status ADD VALUE 'on_hold' AFTER 'processing';
 -- 2. INSERT OPERATIONS
 -- ============================================
 
--- Basic types insertion
+-- Basic types insertion with comprehensive datetime examples
 INSERT INTO test_basic_types (
     text_col, varchar_col, char_col, bool_col,
     int2_col, int4_col, int8_col,
@@ -167,7 +167,25 @@ INSERT INTO test_basic_types (
      -32768, -2147483648, -9223372036854775808,
      -3.14159, -2.718281828,
      '1900-01-01', '00:00:00', '1900-01-01 00:00:00', '1900-01-01 00:00:00+00',
-     '-1 year', NULL, NULL, NULL, NULL);
+     '-1 year', NULL, NULL, NULL, NULL),
+    ('Test DateTime', 'DateTime tests', 'DT_TEST', true,
+     100, 1000, 10000,
+     1.23, 4.56,
+     '2024-12-25', '23:59:59', '2024-12-25 23:59:59', '2024-12-25 23:59:59+05',
+     '6 months 15 days 8 hours', 'b1ffbc99-8c1b-4ef8-bb6d-6bb9bd380a22',
+     '{"date": "2024-12-25"}', '{"timestamp": "2024-12-25T23:59:59Z"}', '\\x44617465'),
+    ('Timezone Test', 'TZ examples', 'TZ_DATA', false,
+     2025, 20250108, 20250108000000,
+     -123.45, 678.90,
+     CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, NOW(),
+     '2 hours 30 minutes', 'c2ddbc99-7c2b-4ef8-bb6d-6bb9bd380a33',
+     '{"current": true}', '{"now": true}', '\\x54696D65'),
+    ('Edge Cases', 'Boundary values', 'EDGE_TEST', NULL,
+     0, 0, 0,
+     0.0, 0.0,
+     '1970-01-01', '00:00:00.000001', '1970-01-01 00:00:00.000001', '1970-01-01 00:00:00.000001+00',
+     '0 seconds', 'd3eebc99-6c3b-4ef8-bb6d-6bb9bd380a44',
+     '{}', '{}', '\\x00');
 
 -- Numeric types insertion
 INSERT INTO test_numeric_types (numeric_col, numeric_precision, decimal_col, money_col) VALUES
@@ -392,6 +410,138 @@ SELECT
     DATE(date_col, '+1 month') as next_month
 FROM test_basic_types
 WHERE date_col IS NOT NULL;
+
+-- ============================================
+-- DATETIME AND TIMEZONE COMPREHENSIVE TESTS
+-- ============================================
+
+-- PostgreSQL datetime functions and operations
+SELECT 
+    NOW() as current_timestamp,
+    CURRENT_DATE as current_date,
+    CURRENT_TIME as current_time,
+    CURRENT_TIMESTAMP as current_timestamp_alt;
+
+-- Date arithmetic and intervals
+SELECT 
+    CURRENT_DATE + INTERVAL '1 day' as tomorrow,
+    CURRENT_DATE - INTERVAL '1 week' as last_week,
+    CURRENT_TIMESTAMP + INTERVAL '2 hours 30 minutes' as later_today,
+    CURRENT_TIMESTAMP - INTERVAL '1 year 3 months' as past_date;
+
+-- Date extraction functions (basic examples)
+SELECT 
+    id,
+    date_col,
+    timestamp_col
+FROM test_basic_types 
+WHERE id = 1;
+
+-- Timezone operations
+SELECT 
+    CURRENT_TIMESTAMP as utc_now,
+    CURRENT_TIMESTAMP AT TIME ZONE 'UTC' as utc_explicit,
+    CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York' as new_york_time,
+    CURRENT_TIMESTAMP AT TIME ZONE 'Europe/London' as london_time,
+    CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo' as tokyo_time;
+
+-- Date formatting and parsing (basic support)
+SELECT 
+    CAST(CURRENT_DATE AS TEXT) as date_as_text,
+    CAST(CURRENT_TIMESTAMP AS TEXT) as timestamp_as_text,
+    DATE('2025-12-25') as christmas_2025,
+    '2025-01-01 12:00:00'::TIMESTAMP as new_year_noon;
+
+-- Date differences and arithmetic
+SELECT 
+    CURRENT_DATE - '2000-01-01'::DATE as days_since_y2k,
+    '2025-12-31'::DATE - CURRENT_DATE as days_until_end_of_year,
+    CURRENT_DATE - '2024-01-01'::DATE as days_since_start_of_2024;
+
+-- Complex datetime queries with table data
+SELECT 
+    id,
+    date_col,
+    timestamp_col,
+    timestamptz_col,
+    timestamp_col + INTERVAL '1 hour' as one_hour_later,
+    timestamp_col - INTERVAL '30 minutes' as thirty_min_earlier
+FROM test_basic_types 
+WHERE timestamp_col IS NOT NULL;
+
+-- Interval arithmetic and operations
+SELECT 
+    INTERVAL '1 year 2 months 3 days' as complex_interval,
+    INTERVAL '1 year' + INTERVAL '6 months' as interval_addition,
+    INTERVAL '2 hours' * 3 as interval_multiplication,
+    INTERVAL '1 week' / 7 as one_day_interval;
+
+-- Date range queries using datetime functions
+SELECT 
+    c.name,
+    c.created_at,
+    CURRENT_TIMESTAMP - c.created_at as time_since_created,
+    CASE 
+        WHEN c.created_at > CURRENT_TIMESTAMP - INTERVAL '1 week' THEN 'Recent'
+        WHEN c.created_at > CURRENT_TIMESTAMP - INTERVAL '1 month' THEN 'This month'
+        ELSE 'Older'
+    END as recency_category
+FROM customers c
+WHERE c.created_at IS NOT NULL;
+
+-- Time-based aggregations
+SELECT 
+    o.order_date,
+    COUNT(*) as orders_count,
+    SUM(o.total_amount) as daily_revenue,
+    AVG(o.total_amount) as avg_order_value
+FROM orders o
+GROUP BY o.order_date
+ORDER BY o.order_date;
+
+-- Timezone conversion examples
+SELECT 
+    '2025-01-15 12:00:00'::TIMESTAMP as local_time,
+    '2025-01-15 12:00:00'::TIMESTAMP AT TIME ZONE 'UTC' as utc_time,
+    '2025-01-15 12:00:00+00'::TIMESTAMPTZ as timestamptz_input,
+    '2025-01-15 12:00:00+00'::TIMESTAMPTZ AT TIME ZONE 'America/New_York' as ny_time,
+    '2025-01-15 12:00:00+00'::TIMESTAMPTZ AT TIME ZONE 'Europe/Paris' as paris_time;
+
+-- Complex datetime calculations with business logic
+SELECT 
+    o.order_id,
+    o.order_date,
+    CASE CAST(STRFTIME('%w', o.order_date) AS INTEGER)
+        WHEN 0 THEN 'Sunday'
+        WHEN 1 THEN 'Monday'
+        WHEN 2 THEN 'Tuesday'
+        WHEN 3 THEN 'Wednesday'
+        WHEN 4 THEN 'Thursday'
+        WHEN 5 THEN 'Friday'
+        WHEN 6 THEN 'Saturday'
+    END as day_of_week,
+    CASE 
+        WHEN CAST(STRFTIME('%w', o.order_date) AS INTEGER) IN (0, 6) THEN 'Weekend'
+        ELSE 'Weekday'
+    END as day_type,
+    o.order_date + INTERVAL '30 days' as estimated_delivery
+FROM orders o;
+
+-- Date validation and edge cases
+SELECT 
+    '2025-02-28'::DATE as feb_28,
+    '2025-02-28'::DATE + INTERVAL '1 day' as march_1,
+    '2024-02-29'::DATE as leap_day_2024,
+    '2025-12-31'::DATE + INTERVAL '1 day' as new_year_2026;
+
+-- Working with different date formats
+SELECT 
+    CAST('2025-01-15' AS DATE) as iso_date_cast,
+    CAST('2025-01-15 14:30:00' AS TIMESTAMP) as iso_timestamp_cast,
+    CAST('2025-01-15 14:30:00+00' AS TIMESTAMPTZ) as iso_timestamptz_cast,
+    '2025-01-15'::DATE as pg_date_cast,
+    '2025-01-15 14:30:00'::TIMESTAMP as pg_timestamp_cast,
+    '2025-01-15 14:30:00+00'::TIMESTAMPTZ as pg_timestamptz_cast;
 
 -- Type casting (explicit)
 SELECT 
@@ -743,6 +893,60 @@ SELECT * FROM customers WHERE customer_id = 3;
 SELECT * FROM products WHERE product_id = 1;
 SELECT * FROM products WHERE product_id = 2;
 SELECT * FROM products WHERE product_id = 3;
+
+-- ============================================
+-- DATETIME PERFORMANCE AND OPTIMIZATION TESTS
+-- ============================================
+
+-- Test ultra-fast path with simple datetime queries (should bypass translation)
+SELECT * FROM test_basic_types WHERE id = 1;
+SELECT * FROM test_basic_types WHERE id = 2;
+SELECT * FROM test_basic_types WHERE id = 3;
+
+-- Simple datetime inserts (ultra-fast path candidates)
+INSERT INTO test_basic_types (text_col, date_col) VALUES ('Fast Path Test 1', '2025-01-01');
+INSERT INTO test_basic_types (text_col, date_col) VALUES ('Fast Path Test 2', '2025-01-02');
+INSERT INTO test_basic_types (text_col, date_col) VALUES ('Fast Path Test 3', '2025-01-03');
+
+-- Complex datetime queries (should use full translation pipeline)
+SELECT COUNT(*) FROM test_basic_types WHERE date_col > CURRENT_DATE - INTERVAL '1 year';
+SELECT id, timestamp_col::text FROM test_basic_types WHERE timestamp_col IS NOT NULL;
+SELECT * FROM test_basic_types WHERE date_col >= '2025-01-01'::DATE;
+
+-- Datetime aggregation performance test
+SELECT 
+    COUNT(*) as total_rows,
+    MIN(date_col) as earliest_date,
+    MAX(date_col) as latest_date,
+    COUNT(DISTINCT timestamp_col) as unique_timestamps
+FROM test_basic_types 
+WHERE date_col IS NOT NULL;
+
+-- Timezone conversion performance
+SELECT 
+    timestamp_col,
+    timestamp_col AT TIME ZONE 'UTC' as utc_time,
+    timestamp_col AT TIME ZONE 'America/New_York' as ny_time,
+    timestamptz_col,
+    timestamptz_col AT TIME ZONE 'Europe/London' as london_time
+FROM test_basic_types 
+WHERE timestamp_col IS NOT NULL
+LIMIT 10;
+
+-- Mixed datetime and arithmetic operations (tests type inference)
+SELECT 
+    id,
+    date_col,
+    timestamp_col,
+    CURRENT_DATE - date_col as days_old,
+    interval_col + INTERVAL '1 hour' as extended_interval,
+    date_col + INTERVAL '1 week' as one_week_later
+FROM test_basic_types 
+WHERE date_col IS NOT NULL;
+
+-- Batch datetime operations for performance testing
+SELECT NOW(), CURRENT_DATE, CURRENT_TIME;
+SELECT NOW() as base_time, NOW() + INTERVAL '10 seconds' as future_time;
 
 -- ============================================
 -- 9. EDGE CASES AND ERROR HANDLING

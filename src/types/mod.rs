@@ -6,6 +6,8 @@ pub mod schema_type_mapper;
 pub mod query_context_analyzer;
 pub mod value_converter;
 pub mod decimal_handler;
+pub mod datetime_utils;
+pub mod type_resolution;
 
 pub use type_mapper::{TypeMapper, PgType};
 pub use uuid::{UuidHandler, generate_uuid_v4};

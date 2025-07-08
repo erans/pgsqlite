@@ -232,6 +232,8 @@ impl SchemaCache {
                     crate::types::PgType::Varchar => "varchar",
                     crate::types::PgType::Char => "char",
                     crate::types::PgType::Time => "time",
+                    crate::types::PgType::Timetz => "timetz",
+                    crate::types::PgType::Interval => "interval",
                     crate::types::PgType::Unknown => "unknown",
                 };
                 (pg_type_str.to_string(), oid)

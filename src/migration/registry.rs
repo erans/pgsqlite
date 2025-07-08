@@ -9,6 +9,8 @@ lazy_static! {
         // Register all migrations
         register_v1_initial_schema(&mut registry);
         register_v2_enum_support(&mut registry);
+        register_v3_datetime_support(&mut registry);
+        register_v4_datetime_integer_storage(&mut registry);
         
         registry
     };
@@ -129,5 +131,106 @@ fn register_v2_enum_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![1],
+    });
+}
+
+/// Version 3: DateTime and Timezone support
+fn register_v3_datetime_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(3, Migration {
+        version: 3,
+        name: "datetime_timezone_support",
+        description: "Add datetime format and timezone metadata for PostgreSQL datetime types",
+        up: MigrationAction::SqlBatch(&[
+            r#"
+            -- Add datetime format column to track which PostgreSQL datetime type is used
+            ALTER TABLE __pgsqlite_schema ADD COLUMN datetime_format TEXT;
+            "#,
+            r#"
+            -- Add timezone offset column for TIMETZ type (stores offset in seconds from UTC)
+            ALTER TABLE __pgsqlite_schema ADD COLUMN timezone_offset INTEGER;
+            "#,
+            r#"
+            -- Create datetime conversion cache table for performance
+            CREATE TABLE IF NOT EXISTS __pgsqlite_datetime_cache (
+                query_hash TEXT NOT NULL,
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                has_datetime BOOLEAN NOT NULL,
+                datetime_columns TEXT,  -- JSON array of datetime column info
+                PRIMARY KEY (query_hash, table_name, column_name)
+            );
+            "#,
+            r#"
+            -- Index for efficient cache lookups
+            CREATE INDEX IF NOT EXISTS idx_datetime_cache_table 
+            ON __pgsqlite_datetime_cache(table_name);
+            "#,
+            r#"
+            -- Track session timezone settings
+            CREATE TABLE IF NOT EXISTS __pgsqlite_session_settings (
+                session_id TEXT PRIMARY KEY,
+                timezone TEXT DEFAULT 'UTC',
+                timezone_offset_seconds INTEGER DEFAULT 0,
+                datestyle TEXT DEFAULT 'ISO, MDY',
+                created_at REAL DEFAULT (strftime('%s', 'now')),
+                updated_at REAL DEFAULT (strftime('%s', 'now'))
+            );
+            "#,
+            r#"
+            -- Update schema version
+            UPDATE __pgsqlite_metadata 
+            SET value = '3', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Note: SQLite doesn't support DROP COLUMN in older versions
+            -- We would need to recreate the table without the columns
+            DROP TABLE IF EXISTS __pgsqlite_session_settings;
+            DROP INDEX IF EXISTS idx_datetime_cache_table;
+            DROP TABLE IF EXISTS __pgsqlite_datetime_cache;
+            
+            -- For __pgsqlite_schema, we'd need to recreate it without the new columns
+            -- This is left as an exercise since downgrade is rarely needed
+            
+            UPDATE __pgsqlite_metadata 
+            SET value = '2', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![2],
+    });
+}
+
+/// Version 4: Convert datetime storage from REAL/TEXT to INTEGER microseconds
+fn register_v4_datetime_integer_storage(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(4, Migration {
+        version: 4,
+        name: "datetime_integer_storage",
+        description: "Convert all datetime types to INTEGER storage using microseconds",
+        up: MigrationAction::SqlBatch(&[
+            // Update type mappings in __pgsqlite_schema
+            r#"
+            UPDATE __pgsqlite_schema 
+            SET sqlite_type = 'INTEGER'
+            WHERE pg_type IN ('DATE', 'TIME', 'TIMESTAMP', 'TIMESTAMPTZ', 
+                              'date', 'time', 'timestamp', 'timestamptz',
+                              'timestamp with time zone', 'timestamp without time zone',
+                              'time with time zone', 'time without time zone',
+                              'timetz', 'interval');
+            "#,
+            
+            // Note: Data conversion would happen here in a real migration
+            // Since we're not supporting backwards compatibility, existing databases
+            // would need to be recreated or have their data converted separately
+            
+            r#"
+            -- Update schema version
+            UPDATE __pgsqlite_metadata 
+            SET value = '4', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: None, // No backwards compatibility needed
+        dependencies: vec![3],
     });
 }

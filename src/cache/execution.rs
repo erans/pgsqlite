@@ -220,6 +220,42 @@ impl TypeConverterTable {
                 },
                 // 5: Null converter
                 |_value| Ok(Vec::new()),
+                // 6: Date converter (INTEGER days -> YYYY-MM-DD)
+                |value| match value {
+                    rusqlite::types::Value::Integer(days) => {
+                        use crate::types::datetime_utils::format_days_to_date_buf;
+                        let mut buf = vec![0u8; 32]; // Pre-allocate enough for date
+                        let len = format_days_to_date_buf(*days as i32, &mut buf);
+                        buf.truncate(len);
+                        Ok(buf)
+                    },
+                    rusqlite::types::Value::Null => Ok(Vec::new()),
+                    _ => Ok(b"1970-01-01".to_vec()),
+                },
+                // 7: Time converter (INTEGER microseconds -> HH:MM:SS.ffffff)
+                |value| match value {
+                    rusqlite::types::Value::Integer(micros) => {
+                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                        let mut buf = vec![0u8; 32]; // Pre-allocate enough for time with microseconds
+                        let len = format_microseconds_to_time_buf(*micros, &mut buf);
+                        buf.truncate(len);
+                        Ok(buf)
+                    },
+                    rusqlite::types::Value::Null => Ok(Vec::new()),
+                    _ => Ok(b"00:00:00".to_vec()),
+                },
+                // 8: Timestamp converter (INTEGER microseconds -> YYYY-MM-DD HH:MM:SS.ffffff)
+                |value| match value {
+                    rusqlite::types::Value::Integer(micros) => {
+                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                        let mut buf = vec![0u8; 64]; // Pre-allocate enough for timestamp
+                        let len = format_microseconds_to_timestamp_buf(*micros, &mut buf);
+                        buf.truncate(len);
+                        Ok(buf)
+                    },
+                    rusqlite::types::Value::Null => Ok(Vec::new()),
+                    _ => Ok(b"1970-01-01 00:00:00".to_vec()),
+                },
             ],
         }
     }

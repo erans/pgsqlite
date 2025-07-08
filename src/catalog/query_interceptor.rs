@@ -145,9 +145,16 @@ impl CatalogInterceptor {
             
             // Handle pg_attribute queries
             if table_name.contains("pg_attribute") || table_name.contains("pg_catalog.pg_attribute") {
+                info!("Routing to PgAttributeHandler for table: {}", table_name);
                 return match PgAttributeHandler::handle_query(select, &db).await {
-                    Ok(response) => Some(response),
-                    Err(_) => None,
+                    Ok(response) => {
+                        debug!("PgAttributeHandler returned {} rows", response.rows.len());
+                        Some(response)
+                    },
+                    Err(e) => {
+                        debug!("PgAttributeHandler error: {}", e);
+                        None
+                    },
                 };
             }
             

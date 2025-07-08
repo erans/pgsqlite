@@ -1,5 +1,5 @@
 use crate::protocol::{BackendMessage, FieldDescription};
-use crate::session::DbHandler;
+use crate::session::{DbHandler, SessionState};
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::PgType;
@@ -33,6 +33,7 @@ impl QueryExecutor {
     pub async fn execute_query<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
     ) -> Result<(), PgSqliteError> 
     where
@@ -62,35 +63,119 @@ impl QueryExecutor {
                 info!("Query contains {} statements", statements.len());
                 for (i, stmt) in statements.iter().enumerate() {
                     info!("Executing statement {}: {}", i + 1, stmt);
-                    Self::execute_single_statement(framed, db, stmt).await?;
+                    Self::execute_single_statement(framed, db, session, stmt).await?;
                 }
                 return Ok(());
             }
         }
         
         // Single statement execution
-        Self::execute_single_statement(framed, db, query_to_execute).await
+        Self::execute_single_statement(framed, db, session, query_to_execute).await
     }
     
     async fn execute_single_statement<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
     ) -> Result<(), PgSqliteError> 
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // Ultra-fast path: Skip all translation if query is simple enough
+        if crate::query::simple_query_detector::is_ultra_simple_query(query) {
+            // Simple query routing without any processing
+            match QueryTypeDetector::detect_query_type(query) {
+                QueryType::Select => {
+                    let response = db.query(query).await?;
+                    
+                    // Send minimal row description with all TEXT types
+                    let fields: Vec<FieldDescription> = response.columns.iter()
+                        .enumerate()
+                        .map(|(i, name)| FieldDescription {
+                            name: name.clone(),
+                            table_oid: 0,
+                            column_id: (i + 1) as i16,
+                            type_oid: PgType::Text.to_oid(), // Default to text for ultra-fast path
+                            type_size: -1,
+                            type_modifier: -1,
+                            format: 0,
+                        })
+                        .collect();
+                    
+                    framed.send(BackendMessage::RowDescription(fields)).await
+                        .map_err(|e| PgSqliteError::Io(e))?;
+                    
+                    // Send data rows
+                    for row in response.rows {
+                        framed.send(BackendMessage::DataRow(row)).await
+                            .map_err(|e| PgSqliteError::Io(e))?;
+                    }
+                    
+                    // Send command complete
+                    let tag = create_command_tag("SELECT", response.rows_affected);
+                    framed.send(BackendMessage::CommandComplete { tag }).await
+                        .map_err(|e| PgSqliteError::Io(e))?;
+                    
+                    return Ok(());
+                }
+                QueryType::Insert | QueryType::Update | QueryType::Delete => {
+                    return Self::execute_dml(framed, db, query).await;
+                }
+                _ => {} // Fall through to normal processing
+            }
+        }
         // Translate PostgreSQL cast syntax if present
-        let translated_query = if crate::translator::CastTranslator::needs_translation(query) {
-            use crate::translator::CastTranslator;
-            let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
-            let translated = CastTranslator::translate_query(query, Some(&conn));
-            drop(conn); // Release the connection
-            translated
+        let mut translated_query = if crate::translator::CastTranslator::needs_translation(query) {
+            if crate::profiling::is_profiling_enabled() {
+                crate::time_cast_translation!({
+                    use crate::translator::CastTranslator;
+                    let conn = db.get_mut_connection()
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    let translated = CastTranslator::translate_query(query, Some(&conn));
+                    drop(conn); // Release the connection
+                    translated
+                })
+            } else {
+                use crate::translator::CastTranslator;
+                let conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                let translated = CastTranslator::translate_query(query, Some(&conn));
+                drop(conn); // Release the connection
+                translated
+            }
         } else {
             query.to_string()
         };
+        
+        // Translate PostgreSQL datetime functions if present and capture metadata
+        let mut translation_metadata = crate::translator::TranslationMetadata::new();
+        if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
+            if crate::profiling::is_profiling_enabled() {
+                crate::time_datetime_translation!({
+                    use crate::translator::DateTimeTranslator;
+                    debug!("Query needs datetime translation: {}", translated_query);
+                    let (translated, metadata) = DateTimeTranslator::translate_with_metadata(&translated_query);
+                    translated_query = translated;
+                    translation_metadata.merge(metadata);
+                    debug!("Query after datetime translation: {}", translated_query);
+                });
+            } else {
+                use crate::translator::DateTimeTranslator;
+                debug!("Query needs datetime translation: {}", translated_query);
+                let (translated, metadata) = DateTimeTranslator::translate_with_metadata(&translated_query);
+                translated_query = translated;
+                translation_metadata.merge(metadata);
+                debug!("Query after datetime translation: {}", translated_query);
+            }
+        }
+        
+        // Analyze arithmetic expressions for type metadata
+        if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
+            let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
+            translation_metadata.merge(arithmetic_metadata);
+            info!("Found {} type hints from translation", translation_metadata.column_mappings.len());
+        }
         
         let query_to_execute = translated_query.as_str();
         
@@ -98,7 +183,7 @@ impl QueryExecutor {
         use crate::query::{QueryTypeDetector, QueryType};
         
         match QueryTypeDetector::detect_query_type(query_to_execute) {
-            QueryType::Select => Self::execute_select(framed, db, query_to_execute).await,
+            QueryType::Select => Self::execute_select(framed, db, query_to_execute, &translation_metadata).await,
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
                 Self::execute_dml(framed, db, query_to_execute).await
             }
@@ -109,8 +194,13 @@ impl QueryExecutor {
                 Self::execute_transaction(framed, db, query_to_execute).await
             }
             _ => {
-                // Try to execute as-is
-                Self::execute_generic(framed, db, query_to_execute).await
+                // Check if it's a SET command
+                if crate::query::SetHandler::is_set_command(query_to_execute) {
+                    crate::query::SetHandler::handle_set_command(framed, session, query_to_execute).await
+                } else {
+                    // Try to execute as-is
+                    Self::execute_generic(framed, db, query_to_execute).await
+                }
             }
         }
     }
@@ -119,6 +209,7 @@ impl QueryExecutor {
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
         query: &str,
+        translation_metadata: &crate::translator::TranslationMetadata,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -146,10 +237,24 @@ impl QueryExecutor {
         } else {
             // Pre-fetch schema types for all columns if we have a table name
             let mut schema_types = std::collections::HashMap::new();
+            let mut hint_source_types = std::collections::HashMap::new();
+            
             if let Some(ref table) = table_name {
+                // Fetch types for actual columns
                 for col_name in &response.columns {
                     if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
                         schema_types.insert(col_name.clone(), pg_type);
+                    }
+                }
+                
+                // Fetch types for source columns referenced in translation hints
+                for col_name in &response.columns {
+                    if let Some(hint) = translation_metadata.get_hint(col_name) {
+                        if let Some(ref source_col) = hint.source_column {
+                            if let Ok(Some(source_type)) = db.get_schema_type(table, source_col).await {
+                                hint_source_types.insert(col_name.clone(), source_type);
+                            }
+                        }
                     }
                 }
             }
@@ -170,6 +275,35 @@ impl QueryExecutor {
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
+                    } else if let Some(hint) = translation_metadata.get_hint(name) {
+                        // Third priority: Check translation metadata (datetime or arithmetic)
+                        debug!("Found translation hint for column '{}'", name);
+                        
+                        // Check if we pre-fetched the source type
+                        if let Some(source_type) = hint_source_types.get(name) {
+                            debug!("Found source column type for '{}' -> '{}': {}", name, hint.source_column.as_ref().unwrap_or(&"<none>".to_string()), source_type);
+                            // For arithmetic on float columns, the result is float
+                            if hint.expression_type == Some(crate::translator::ExpressionType::ArithmeticOnFloat) {
+                                if source_type.contains("REAL") || source_type.contains("FLOAT") || source_type.contains("DOUBLE") {
+                                    PgType::Float8.to_oid()
+                                } else {
+                                    // For other numeric types in arithmetic, still return float
+                                    PgType::Float8.to_oid()
+                                }
+                            } else {
+                                // For other expression types, use the source column type
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid(source_type)
+                            }
+                        } else if let Some(suggested_type) = &hint.suggested_type {
+                            // Fall back to suggested type if source lookup fails
+                            suggested_type.to_oid()
+                        } else {
+                            PgType::Float8.to_oid() // Default for arithmetic
+                        }
+                    } else if Self::is_datetime_expression(query, name) {
+                        // Fourth priority: Legacy datetime expression detection
+                        debug!("Detected datetime expression for column '{}'", name);
+                        PgType::Date.to_oid()
                     } else {
                         // Check if this looks like a user table (not system/catalog queries)
                         if let Some(ref table) = table_name {
@@ -685,9 +819,24 @@ impl QueryExecutor {
         
         Ok(())
     }
+    
+    /// Check if this is a datetime expression that we translated
+    fn is_datetime_expression(query: &str, column_name: &str) -> bool {
+        // Check if the query contains our datetime translation patterns
+        // Looking for patterns like: CAST((julianday(...) - 2440587.5) * 86400 AS REAL)
+        // Also check if the column name matches common date function patterns
+        let has_datetime_translation = query.contains("julianday") && query.contains("2440587.5") && query.contains("86400");
+        let is_date_function = column_name.starts_with("date(") || 
+                              column_name.starts_with("DATE(") ||
+                              column_name.starts_with("time(") ||
+                              column_name.starts_with("TIME(") ||
+                              column_name.starts_with("datetime(") ||
+                              column_name.starts_with("DATETIME(");
+        
+        has_datetime_translation || is_date_function
+    }
 }
 
-/// Extract table name from SELECT statement
 fn extract_table_name_from_select(query: &str) -> Option<String> {
     // Look for FROM clause with case-insensitive search
     let from_pos = query.as_bytes().windows(6)
