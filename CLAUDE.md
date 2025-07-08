@@ -127,13 +127,21 @@ pgsqlite --database mydb.db
 - Don't claim something works without actually testing it
 
 ## Performance Characteristics
-### Current Performance (as of 2025-07-06)
-- **Overall System**: ~77x overhead vs raw SQLite
-- **SELECT**: ~89x overhead
-- **SELECT (cached)**: ~10x overhead (exceeds 10-20x target)
+### Current Performance (as of 2025-07-08)
+- **Overall System**: ~70x overhead vs raw SQLite (improved from ~77x)
+- **SELECT**: ~70x overhead (improved from ~89x via ultra-fast path optimization)
+- **SELECT (cached)**: ~8.7x overhead (improved from ~10x, nearly meeting 10x target)
 - **INSERT (single-row)**: ~165x overhead (use batch INSERTs for better performance)
 - **UPDATE**: ~33x overhead (excellent)
 - **DELETE**: ~37x overhead (excellent)
+
+### Ultra-Fast Path Optimization (2025-07-08)
+- **Simple queries** that need no PostgreSQL-specific processing bypass all translation layers
+- **19% improvement** in SELECT performance (0.345ms → 0.280ms)
+- **13% improvement** in cached SELECT queries (0.187ms → 0.162ms)
+- **Baseline protocol overhead**: ~280µs considered reasonable for PostgreSQL compatibility
+- **Detection**: Regex-based patterns identify simple SELECT/INSERT/UPDATE/DELETE queries
+- **Coverage**: Queries without PostgreSQL casts (::), datetime functions, JOINs, or complex expressions
 
 ### Batch INSERT Performance
 Multi-row INSERT syntax provides dramatic improvements:
@@ -153,6 +161,10 @@ INSERT INTO table (col1, col2) VALUES
 - **Zero-Copy Architecture**: Achieved 67% improvement in cached SELECT queries
 - **System Catalog Support**: Basic pg_class and pg_attribute for psql compatibility
 - **SSL/TLS Support**: Available for TCP connections with automatic certificate management
+- **Ultra-Fast Path Optimization (2025-07-08)**: 19% SELECT performance improvement via translation bypass
+- **DateTime/Timezone Support (2025-07-07)**: INTEGER microsecond storage with full PostgreSQL compatibility
+- **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
+- **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
