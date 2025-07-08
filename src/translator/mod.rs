@@ -10,6 +10,7 @@ mod datetime_translator;
 mod metadata;
 mod arithmetic_analyzer;
 mod insert_translator;
+mod regex_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -21,3 +22,4 @@ pub use datetime_translator::DateTimeTranslator;
 pub use arithmetic_analyzer::ArithmeticAnalyzer;
 pub use metadata::{TranslationMetadata, ColumnTypeHint, ExpressionType, DateTimeSubtype};
 pub use insert_translator::InsertTranslator;
+pub use regex_translator::RegexTranslator;

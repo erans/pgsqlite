@@ -1,5 +1,6 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
 use crate::PgSqliteError;
+use crate::translator::RegexTranslator;
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -44,10 +45,24 @@ impl CatalogInterceptor {
             debug!("Skipping LIMIT 0 catalog query");
             return None;
         }
+        
+        // First, try to translate regex operators if present
+        let query_to_parse = match RegexTranslator::translate_query(query) {
+            Ok(translated) => {
+                if translated != query {
+                    debug!("Translated regex operators in catalog query: {}", translated);
+                }
+                translated
+            }
+            Err(e) => {
+                debug!("Failed to translate regex operators: {}", e);
+                query.to_string()
+            }
+        };
 
         // Parse the query
         let dialect = PostgreSqlDialect {};
-        match Parser::parse_sql(&dialect, query) {
+        match Parser::parse_sql(&dialect, &query_to_parse) {
             Ok(mut statements) => {
                 if statements.len() == 1 {
                     if let Statement::Query(query_stmt) = &mut statements[0] {
@@ -57,10 +72,25 @@ impl CatalogInterceptor {
                             match Self::process_system_functions_in_query(query_stmt.clone(), db.clone()).await {
                                 Ok(processed_query) => {
                                     // Convert the processed query back to SQL and execute
-                                    let processed_sql = processed_query.to_string();
+                                    let mut processed_sql = processed_query.to_string();
                                     debug!("Processed query with system functions: {}", processed_sql);
-                                    // Let the normal SQLite handler process the rewritten query
-                                    return None;
+                                    
+                                    // Also translate regex operators
+                                    match RegexTranslator::translate_query(&processed_sql) {
+                                        Ok(translated) => {
+                                            processed_sql = translated;
+                                            debug!("Translated regex operators: {}", processed_sql);
+                                        }
+                                        Err(e) => {
+                                            debug!("Failed to translate regex operators: {}", e);
+                                        }
+                                    }
+                                    
+                                    // Execute the rewritten query directly
+                                    match db.query(&processed_sql).await {
+                                        Ok(response) => return Some(Ok(response)),
+                                        Err(e) => return Some(Err(PgSqliteError::Sqlite(e))),
+                                    }
                                 }
                                 Err(e) => {
                                     debug!("Error processing system functions: {}", e);
@@ -73,6 +103,15 @@ impl CatalogInterceptor {
                         if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone()).await {
                             return Some(Ok(response));
                         }
+                    }
+                }
+                
+                // If we translated regex operators but the query isn't a special catalog query,
+                // execute the translated query directly
+                if query_to_parse != query {
+                    match db.query(&query_to_parse).await {
+                        Ok(response) => return Some(Ok(response)),
+                        Err(e) => return Some(Err(PgSqliteError::Sqlite(e))),
                     }
                 }
             }
@@ -757,7 +796,7 @@ impl CatalogInterceptor {
                 if let Some(op) = operand {
                     Self::process_expression(op, db.clone()).await?;
                 }
-                for when in conditions {
+                for when in conditions.iter_mut() {
                     Self::process_expression(&mut when.condition, db.clone()).await?;
                     Self::process_expression(&mut when.result, db.clone()).await?;
                 }

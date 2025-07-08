@@ -501,16 +501,19 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - Implement specialized handlers for common patterns
     - Cache catalog data for repeated access
   - [ ] **psql Slash Command Support**
-    - [ ] \d - List all relations (partially works, formatting issues)
-    - [ ] \dt - List tables only (partially works)
-    - [ ] \di - List indexes
-    - [ ] \dv - List views
-    - [ ] \ds - List sequences
+    - [ ] \d - List all relations (FAILS - needs JOIN support and regex operator handling)
+      - Error: `unrecognized token: "!" in ... n.nspname !~ '^pg_toast'`
+      - Requires: pg_namespace, pg_am tables and JOIN query support
+      - Workaround: Use \dt, \dv, \di, \ds separately
+    - [x] \dt - List tables only (works)
+    - [x] \di - List indexes (works)
+    - [x] \dv - List views (works)
+    - [x] \ds - List sequences (works)
     - [ ] \df - List functions
-    - [ ] \d tablename - Describe specific table (needs multiple queries)
-    - [ ] \l - List databases
-    - [ ] \dn - List schemas
-    - [ ] \du - List users/roles
+    - [x] \d tablename - Describe specific table (works after pg_get_userbyid fix)
+    - [ ] \l - List databases (needs pg_database)
+    - [ ] \dn - List schemas (needs pg_namespace)
+    - [ ] \du - List users/roles (needs pg_roles)
   - [ ] Add comprehensive tests for catalog query compatibility
     - Test all common psql queries
     - Test edge cases (empty tables, special characters, etc.)

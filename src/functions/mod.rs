@@ -3,6 +3,7 @@ pub mod uuid_functions;
 pub mod json_functions;
 pub mod decimal_functions;
 pub mod datetime_functions;
+pub mod regex_functions;
 
 use rusqlite::{Connection, Result};
 
@@ -12,5 +13,6 @@ pub fn register_all_functions(conn: &Connection) -> Result<()> {
     json_functions::register_json_functions(conn)?;
     decimal_functions::register_decimal_functions(conn)?;
     datetime_functions::register_datetime_functions(conn)?;
+    regex_functions::register_regex_functions(conn)?;
     Ok(())
 }
