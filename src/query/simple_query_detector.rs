@@ -3,7 +3,7 @@ use regex::Regex;
 
 /// Regular expressions for detecting truly simple queries that need no processing
 static SIMPLE_SELECT_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*SELECT\s+\*?\s*FROM\s+\w+\s*(WHERE\s+\w+\s*=\s*['\d]+)?\s*(LIMIT\s+\d+)?\s*;?\s*$").unwrap()
+    Regex::new(r"(?i)^\s*SELECT\s+\*?\s*FROM\s+\w+\s*(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*(LIMIT\s+\d+)?\s*;?\s*$").unwrap()
 });
 
 static SIMPLE_INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -11,11 +11,11 @@ static SIMPLE_INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static SIMPLE_UPDATE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*UPDATE\s+\w+\s+SET\s+\w+\s*=\s*['\d]+\s*(WHERE\s+\w+\s*=\s*['\d]+)?\s*;?\s*$").unwrap()
+    Regex::new(r"(?i)^\s*UPDATE\s+\w+\s+SET\s+\w+\s*=\s*('[^']*'|\d+)\s*(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*;?\s*$").unwrap()
 });
 
 static SIMPLE_DELETE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*DELETE\s+FROM\s+\w+\s+(WHERE\s+\w+\s*=\s*['\d]+)?\s*;?\s*$").unwrap()
+    Regex::new(r"(?i)^\s*DELETE\s+FROM\s+\w+\s+(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*;?\s*$").unwrap()
 });
 
 /// Detects if a query is simple enough to bypass all translation and processing
