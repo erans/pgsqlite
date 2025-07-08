@@ -12,6 +12,8 @@ pub mod config;
 pub mod ssl;
 pub mod ddl;
 pub mod migration;
+#[macro_use]
+pub mod profiling;
 
 #[cfg(test)]
 pub mod alloc_tracker;

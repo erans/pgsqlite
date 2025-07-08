@@ -231,6 +231,13 @@ impl ExtendedQueryHandler {
             translation_metadata.merge(metadata);
         }
         
+        // Analyze arithmetic expressions for type metadata
+        if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
+            let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);
+            translation_metadata.merge(arithmetic_metadata);
+            info!("Found {} arithmetic type hints", translation_metadata.column_mappings.len());
+        }
+        
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
         info!("Analyzing query '{}' for field descriptions", translated_for_analysis);

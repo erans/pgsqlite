@@ -8,6 +8,7 @@ pub mod query_type_detection;
 pub mod comment_stripper;
 pub mod lazy_processor;
 pub mod set_handler;
+pub mod simple_query_detector;
 
 pub use executor::QueryExecutor;
 pub use extended::ExtendedQueryHandler;

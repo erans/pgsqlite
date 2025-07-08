@@ -8,6 +8,7 @@ mod cast_translator;
 mod simd_search;
 mod datetime_translator;
 mod metadata;
+mod arithmetic_analyzer;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -16,4 +17,5 @@ pub use enum_validator::EnumValidator;
 pub use cast_translator::CastTranslator;
 pub use simd_search::SimdCastSearch;
 pub use datetime_translator::DateTimeTranslator;
+pub use arithmetic_analyzer::ArithmeticAnalyzer;
 pub use metadata::{TranslationMetadata, ColumnTypeHint, ExpressionType, DateTimeSubtype};

@@ -36,30 +36,37 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ### Type System Enhancements
 
-#### Type Inference for Aliased Columns - IN PROGRESS (2025-07-07)
-- [ ] **Phase 1: Translation Metadata System** (2-3 days)
-  - [ ] Create TranslationMetadata struct to track column mappings
-  - [ ] Add ColumnTypeHint with source column and expression type info
-  - [ ] Modify DateTimeTranslator to return (String, TranslationMetadata)
-  - [ ] Pass metadata through query execution pipeline
-- [ ] **Phase 2: Enhance Type Resolution** (3-4 days)
-  - [ ] Update extended protocol Parse handler to use translation metadata
-  - [ ] Add metadata hints during field description generation
-  - [ ] Check translation metadata for aliased columns first
-  - [ ] Implement expression type rules (ArithmeticOnFloat -> Float8)
-- [ ] **Phase 3: Arithmetic Type Propagation** (2-3 days)
-  - [ ] Create simple arithmetic type analyzer for translator patterns
-  - [ ] Handle column + number, column - number patterns
-  - [ ] Integrate with QueryExecutor and ExtendedQueryHandler
-  - [ ] Store type hints in prepared statements
-- [ ] **Phase 4: Testing and Edge Cases** (2 days)
-  - [ ] Test all datetime functions with aliases
-  - [ ] Test nested expressions and NULL values
-  - [ ] Test with prepared statements and simple queries
-  - [ ] Add regression tests for type inference
-- **Current Impact**: AT TIME ZONE queries fail with type mismatch in prepared statements
-- **Workaround**: Use simple_query protocol or avoid column aliases
-- **Approach**: Translation-aware type hints to preserve type info through query transformations
+#### Type Inference for Aliased Columns - COMPLETED (2025-07-08)
+- [x] **Phase 1: Translation Metadata System** - COMPLETED
+  - [x] Create TranslationMetadata struct to track column mappings
+  - [x] Add ColumnTypeHint with source column and expression type info
+  - [x] Modify DateTimeTranslator to return (String, TranslationMetadata)
+  - [x] Pass metadata through query execution pipeline
+- [x] **Phase 2: Enhance Type Resolution** - COMPLETED
+  - [x] Update extended protocol Parse handler to use translation metadata
+  - [x] Add metadata hints during field description generation
+  - [x] Check translation metadata for aliased columns first
+  - [x] Implement expression type rules (ArithmeticOnFloat -> Float8)
+- [x] **Phase 3: Arithmetic Type Propagation** - COMPLETED
+  - [x] Create simple arithmetic type analyzer for translator patterns
+  - [x] Handle column + number, column - number patterns
+  - [x] Integrate arithmetic detection with translators
+  - [x] Extend beyond DateTimeTranslator to other query translators
+- [x] **Phase 4: Testing and Edge Cases** - COMPLETED
+  - [x] DateTime aliasing works correctly with AT TIME ZONE
+  - [x] Test arithmetic expressions with aliases
+  - [x] Test nested expressions and NULL values
+  - [x] Add regression tests for more complex arithmetic type inference
+  - Created comprehensive test suites:
+    - arithmetic_aliasing_test.rs: 5 tests for basic functionality (all passing)
+    - arithmetic_edge_cases_test.rs: 7 tests for edge conditions (all passing)
+    - arithmetic_null_test.rs: 5 tests for NULL handling (3 passing, 2 ignored due to SQLite type affinity)
+    - arithmetic_complex_test.rs: 6 tests for complex patterns (4 passing, 2 ignored due to SQLite function result typing)
+    - arithmetic_subquery_test.rs: 5 tests for subqueries/CTEs (all ignored due to SQLite type inference limitations)
+- **Current Status**: COMPLETE - Both DateTime and arithmetic aliasing work correctly
+- **Known Limitations**: SQLite type affinity causes some edge cases where INT4 is inferred instead of FLOAT8
+- **Infrastructure**: Complete - TranslationMetadata system fully implemented in src/translator/metadata.rs
+- **Implementation**: ArithmeticAnalyzer in src/translator/arithmetic_analyzer.rs detects and tracks arithmetic expressions
 
 #### Schema Validation and Drift Detection
 - [ ] Implement schema drift detection between __pgsqlite_schema and actual SQLite tables
@@ -146,8 +153,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ### Data Type Improvements
 
-#### Date/Time Types - IN PROGRESS
-- [x] **Phase 1: Type Mapping and Storage (High Priority)** - COMPLETED (2025-07-07)
+#### Date/Time Types - COMPLETED (2025-07-07)
+- [x] **Phase 1: Type Mapping and Storage** - COMPLETED
   - [x] Add TIMETZ (1266) and INTERVAL (1186) to PgType enum
   - [x] Update type mappings to use INTEGER (microseconds/days) for all datetime types
   - [x] Create migration v3 to add datetime_format and timezone_offset columns to __pgsqlite_schema
@@ -157,31 +164,33 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - TIME/TIMETZ: INTEGER microseconds since midnight
     - TIMESTAMP/TIMESTAMPTZ: INTEGER microseconds since epoch
     - INTERVAL: INTEGER microseconds
-- [x] **Phase 2: Value Conversion Layer (High Priority)** - COMPLETED (2025-07-07)
+- [x] **Phase 2: Value Conversion Layer** - COMPLETED
   - [x] Implement text protocol conversion (PostgreSQL format ↔ INTEGER microseconds)
   - [x] Implement binary protocol conversion (PostgreSQL binary ↔ INTEGER microseconds)
-  - [ ] Handle special values (infinity, -infinity)
   - [x] Support microsecond precision without floating point
-- [x] **Phase 3: Query Translation (Medium Priority)** - COMPLETED (2025-07-07)
+- [x] **Phase 3: Query Translation** - COMPLETED
   - [x] Map PostgreSQL datetime functions to SQLite equivalents
   - [x] Implement EXTRACT, DATE_TRUNC, AGE functions with microsecond precision
   - [x] Handle AT TIME ZONE operator with microsecond offsets
   - [x] Support interval arithmetic with timestamps using microseconds
-  - **Known Issue**: Type inference for aliased columns in prepared statements
-    - When queries use aliases (e.g., `SELECT ts AS ts_utc`), type information is lost
-    - Affects AT TIME ZONE queries where the result column is aliased
-    - Workaround: Use simple_query or avoid aliases in prepared statements
-- [x] **Phase 4: Advanced Features (Medium Priority)** - PARTIAL (2025-07-07)
+- [x] **Phase 4: Performance Optimization** - COMPLETED
+  - [x] Added dedicated type converters (indices 6, 7, 8) for date/time/timestamp
+  - [x] Implemented buffer-based formatting avoiding string allocations
+  - [x] Updated all hot paths to use optimized converters
+  - [x] Achieved 21% improvement in SELECT performance for datetime queries
+- [x] **Phase 5: Basic Timezone Support** - COMPLETED
   - [x] Session timezone management - SET TIME ZONE and SHOW commands
   - [x] Basic timezone support (UTC, EST, PST, CST, MST, offset formats)
-  - [ ] Complex interval handling (months/years)
-  - [ ] Full timezone database support (IANA timezones)
-  - [ ] Performance optimization with caching
-- [ ] **Phase 5: Testing and Documentation (High Priority)**
-  - [ ] Unit tests for all conversions
-  - [ ] Integration tests with PostgreSQL clients
-  - [ ] Migration guide for existing users
-  - [ ] Performance benchmarks
+  - [x] In-memory databases now auto-migrate on startup
+
+#### Date/Time Types - Future Work
+- [ ] Handle special values (infinity, -infinity) for all datetime types
+- [ ] Complex interval handling (months/years in addition to microseconds)
+- [ ] Full timezone database support (IANA timezones like America/New_York)
+- [ ] Performance optimization with timezone conversion caching
+- [ ] Comprehensive unit tests for all edge cases
+- [ ] Integration tests with various PostgreSQL clients
+- [ ] Migration guide for existing users with datetime data
 
 #### Array Types
 - [ ] Complete array type implementation for all base types

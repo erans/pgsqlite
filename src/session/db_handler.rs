@@ -198,6 +198,28 @@ impl DbHandler {
     }
     
     pub async fn execute(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Ultra-fast path for truly simple queries
+        if crate::query::simple_query_detector::is_ultra_simple_query(query) {
+            let conn = self.conn.lock();
+            
+            // Try direct fast path execution
+            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&conn, query, &self.schema_cache) {
+                return Ok(DbResponse {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    rows_affected,
+                });
+            }
+            
+            // Fall back to direct execution
+            let rows_affected = conn.execute(query, [])?;
+            return Ok(DbResponse {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                rows_affected,
+            });
+        }
+        
         // Check if DDL to clear cache
         if is_ddl_statement(query) {
             self.schema_cache.clear();
@@ -293,12 +315,37 @@ impl DbHandler {
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Ultra-fast path for truly simple queries
+        if crate::query::simple_query_detector::is_ultra_simple_query(query) {
+            let conn = self.conn.lock();
+            
+            // Try direct fast path execution
+            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query, &self.schema_cache) {
+                return Ok(response);
+            }
+            
+            // Fall back to regular execution without any processing
+            return execute_query_optimized(&conn, query, &self.schema_cache);
+        }
+        
         // Create lazy processor for the query
         let mut processor = crate::query::LazyQueryProcessor::new(query);
         
         // Check result cache first with original query
         let cache_key = ResultCacheKey::new(processor.cache_key(), &[]);
-        if let Some(cached_result) = global_result_cache().get(&cache_key) {
+        let cached_result = if crate::profiling::is_profiling_enabled() {
+            crate::time_cache_lookup!({
+                let result = global_result_cache().get(&cache_key);
+                if result.is_some() {
+                    crate::profiling::METRICS.cache_hit_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                result
+            })
+        } else {
+            global_result_cache().get(&cache_key)
+        };
+        
+        if let Some(cached_result) = cached_result {
             debug!("Result cache hit for query: {}", query);
             return Ok(DbResponse {
                 columns: cached_result.columns,
@@ -314,8 +361,15 @@ impl DbHandler {
             // Fast path - no processing needed, use original query
             let query_to_execute = processor.get_unprocessed();
             
+            if crate::profiling::is_profiling_enabled() {
+                crate::profiling::METRICS.fast_path_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            
             // Try enhanced fast path first
             if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
+                if crate::profiling::is_profiling_enabled() {
+                    crate::profiling::METRICS.fast_path_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 let execution_time_us = 0; // Fast path doesn't track time
                 
                 // Cache the result
@@ -625,7 +679,13 @@ fn execute_with_cached_metadata(
     metadata: &ExecutionMetadata,
 ) -> Result<DbResponse, rusqlite::Error> {
     // Use prepared statement for execution
-    let mut stmt = conn.prepare(&metadata.prepared_sql)?;
+    let mut stmt = if crate::profiling::is_profiling_enabled() {
+        crate::time_sqlite_prepare!({
+            conn.prepare(&metadata.prepared_sql)?
+        })
+    } else {
+        conn.prepare(&metadata.prepared_sql)?
+    };
     
     // Batch processing optimization: Process rows in chunks for better cache locality
     const BATCH_SIZE: usize = 100;
@@ -725,13 +785,27 @@ fn execute_with_cached_metadata(
     })?;
 
     // Collect rows with batch processing for better memory efficiency
-    for row in query_result {
-        rows.push(row?);
-        
-        // Process in batches for better cache performance (though we collect all here)
-        if rows.len() % BATCH_SIZE == 0 && !rows.is_empty() {
-            // Reserve capacity for next batch
-            rows.reserve(BATCH_SIZE);
+    if crate::profiling::is_profiling_enabled() {
+        crate::time_result_format!({
+            for row in query_result {
+                rows.push(row?);
+                
+                // Process in batches for better cache performance (though we collect all here)
+                if rows.len() % BATCH_SIZE == 0 && !rows.is_empty() {
+                    // Reserve capacity for next batch
+                    rows.reserve(BATCH_SIZE);
+                }
+            }
+        });
+    } else {
+        for row in query_result {
+            rows.push(row?);
+            
+            // Process in batches for better cache performance (though we collect all here)
+            if rows.len() % BATCH_SIZE == 0 && !rows.is_empty() {
+                // Reserve capacity for next batch
+                rows.reserve(BATCH_SIZE);
+            }
         }
     }
 
