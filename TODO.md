@@ -375,6 +375,11 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Certificate generation and management
   - [x] Configure SSL cert/key paths via command line or config
   - [x] Support PostgreSQL SSL protocol flow
+  - [x] **Bug Fix: SSL negotiation when SSL disabled** - COMPLETED (2025-07-08)
+    - [x] Fixed psql connection failures when SSL is disabled
+    - [x] Now properly responds with 'N' to SSL requests when SSL is disabled
+    - [x] Handles SSL negotiation for all TCP connections, not just when SSL is enabled
+    - [x] Allows psql and other clients to fall back to non-SSL connections
   - [ ] Full sslmode options support (allow, prefer, require, verify-ca, verify-full)
   - [ ] Client certificate authentication
   - [ ] Certificate rotation without restart
