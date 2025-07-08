@@ -265,6 +265,81 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                     'btree' as amname,
                     'i' as amtype;
                 
+                -- pg_type view (data types)
+                CREATE VIEW IF NOT EXISTS pg_type AS
+                SELECT 
+                    oid,
+                    typname,
+                    typtype,
+                    typelem,
+                    typbasetype,
+                    typnamespace
+                FROM (
+                    -- Basic types
+                    SELECT 16 as oid, 'bool' as typname, 'b' as typtype, 0 as typelem, 0 as typbasetype, 11 as typnamespace
+                    UNION ALL SELECT 17, 'bytea', 'b', 0, 0, 11
+                    UNION ALL SELECT 20, 'int8', 'b', 0, 0, 11
+                    UNION ALL SELECT 21, 'int2', 'b', 0, 0, 11
+                    UNION ALL SELECT 23, 'int4', 'b', 0, 0, 11
+                    UNION ALL SELECT 25, 'text', 'b', 0, 0, 11
+                    UNION ALL SELECT 114, 'json', 'b', 0, 0, 11
+                    UNION ALL SELECT 700, 'float4', 'b', 0, 0, 11
+                    UNION ALL SELECT 701, 'float8', 'b', 0, 0, 11
+                    UNION ALL SELECT 1042, 'char', 'b', 0, 0, 11
+                    UNION ALL SELECT 1043, 'varchar', 'b', 0, 0, 11
+                    UNION ALL SELECT 1082, 'date', 'b', 0, 0, 11
+                    UNION ALL SELECT 1083, 'time', 'b', 0, 0, 11
+                    UNION ALL SELECT 1114, 'timestamp', 'b', 0, 0, 11
+                    UNION ALL SELECT 1184, 'timestamptz', 'b', 0, 0, 11
+                    UNION ALL SELECT 1700, 'numeric', 'b', 0, 0, 11
+                    UNION ALL SELECT 2950, 'uuid', 'b', 0, 0, 11
+                    UNION ALL SELECT 3802, 'jsonb', 'b', 0, 0, 11
+                );
+                
+                -- pg_attribute view (column information)
+                CREATE VIEW IF NOT EXISTS pg_attribute AS
+                SELECT 
+                    oid_hash(m.name) as attrelid,                   -- table OID
+                    p.cid + 1 as attnum,                             -- column number (1-based)
+                    p.name as attname,                               -- column name
+                    CASE 
+                        WHEN p.type LIKE '%INT%' THEN 23            -- int4
+                        WHEN p.type LIKE '%CHAR%' THEN 1043         -- varchar
+                        WHEN p.type LIKE '%TEXT%' THEN 25           -- text
+                        WHEN p.type LIKE '%REAL%' OR p.type LIKE '%FLOA%' OR p.type LIKE '%DOUB%' THEN 701  -- float8
+                        WHEN p.type LIKE '%NUMERIC%' OR p.type LIKE '%DECIMAL%' THEN 1700  -- numeric
+                        WHEN p.type LIKE '%DATE%' THEN 1082         -- date
+                        WHEN p.type LIKE '%TIME%' THEN 1083         -- time
+                        ELSE 25                                      -- default to text
+                    END as atttypid,                                -- type OID
+                    -1 as attstattarget,
+                    -1 as attlen,
+                    p.cid + 1 as attnum,
+                    0 as attndims,
+                    -1 as attcacheoff,
+                    -1 as atttypmod,
+                    'f' as attbyval,
+                    's' as attstorage,
+                    'p' as attalign,
+                    CASE WHEN p."notnull" = 1 THEN 't' ELSE 'f' END as attnotnull,
+                    'f' as atthasdef,
+                    'f' as atthasmissing,
+                    '' as attidentity,
+                    '' as attgenerated,
+                    'f' as attisdropped,
+                    't' as attislocal,
+                    0 as attinhcount,
+                    0 as attcollation,
+                    NULL as attacl,
+                    NULL as attoptions,
+                    NULL as attfdwoptions,
+                    NULL as attmissingval
+                FROM sqlite_master m
+                JOIN pragma_table_info(m.name) p
+                WHERE m.type = 'table'
+                  AND m.name NOT LIKE 'sqlite_%'
+                  AND m.name NOT LIKE '__pgsqlite_%';
+                
                 -- Enhanced pg_class view that works with JOINs
                 CREATE VIEW IF NOT EXISTS pg_class AS
                 SELECT 
@@ -383,6 +458,8 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
             post_sql: None,
         },
         down: Some(MigrationAction::Sql(r#"
+            DROP VIEW IF EXISTS pg_type;
+            DROP VIEW IF EXISTS pg_attribute;
             DROP VIEW IF EXISTS pg_class;
             DROP VIEW IF EXISTS pg_am;
             DROP VIEW IF EXISTS pg_namespace;

@@ -320,9 +320,10 @@ fi
 META_COMMAND_FILE="${META_COMMAND_FILE:-test_meta_commands_working.sql}"
 # To use full test suite, set META_COMMAND_FILE=test_meta_commands.sql
 # Available test files:
+# - test_meta_commands_supported.sql: All fully supported meta commands with examples
 # - test_meta_commands_working.sql: Commands that work with current implementation
 # - test_meta_commands_basic.sql: Very basic commands only
-# - test_meta_commands_minimal.sql: Minimal set including \d (currently fails)
+# - test_meta_commands_minimal.sql: Minimal set including \d (NOW WORKS!)
 # - test_meta_commands.sql: Full test suite (many unimplemented features)
 if [ -f "$META_COMMAND_FILE" ]; then
     echo ""

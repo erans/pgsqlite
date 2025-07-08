@@ -170,7 +170,7 @@ For detailed compatibility information, see [Type Mapping Documentation](docs/ty
 
 pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite, which does add overhead:
 
-- **Best for**: Development, testing, prototyping, and single-user applications
+- **Best for**: Development, testing, prototyping, and single-user applications or low write throughput applications
 - **Typical overhead**: 40-300x vs raw SQLite depending on operation
 - **Optimizations**: Built-in query caching, connection pooling, and prepared statements
 

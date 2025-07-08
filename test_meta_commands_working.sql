@@ -1,6 +1,9 @@
 -- Working psql meta-command tests
 -- Only commands that work with current pgsqlite implementation
 
+-- List all relations (tables, views, indexes) - NOW WORKS!
+\d
+
 -- Create test tables first
 CREATE TABLE IF NOT EXISTS meta_test_users (
     id INTEGER PRIMARY KEY,
