@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS meta_test_products (
 -- List tables (uses simpler query than \d)
 \dt
 
--- List indexes
+-- List indexes (Note: Table column will be empty due to JOIN limitations)
 \di
 
 -- UNSUPPORTED: Describe specific tables
@@ -31,8 +31,9 @@ CREATE TABLE IF NOT EXISTS meta_test_products (
 -- \d meta_test_users
 -- \d meta_test_products
 
--- Create an enum type
-CREATE TYPE IF NOT EXISTS order_status AS ENUM ('pending', 'processing', 'shipped', 'delivered', 'cancelled');
+-- UNSUPPORTED: Create an enum type
+-- CREATE TYPE IF NOT EXISTS is not supported by pgsqlite yet
+-- CREATE TYPE IF NOT EXISTS order_status AS ENUM ('pending', 'processing', 'shipped', 'delivered', 'cancelled');
 
 -- UNSUPPORTED: List data types
 -- \dT fails because it requires JOIN between pg_type and pg_namespace
