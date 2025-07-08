@@ -42,6 +42,15 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
         return false;
     }
     
+    // Additional check for INSERT statements with datetime patterns
+    if query.to_uppercase().starts_with("INSERT") {
+        // Exclude if it contains date/time patterns that need conversion
+        if (query.contains("'") && query.contains('-')) || // Date patterns like '2024-01-01'
+           (query.contains("'") && query.contains(':')) {   // Time patterns like '14:30:00'
+            return false;
+        }
+    }
+    
     // Check if it matches one of our simple patterns
     SIMPLE_SELECT_REGEX.is_match(query) ||
     SIMPLE_INSERT_REGEX.is_match(query) ||

@@ -142,6 +142,45 @@ impl ExtendedFastPath {
                         Err(e) => Err(PgSqliteError::Protocol(format!("Invalid NUMERIC: {}", e))),
                     }
                 }
+                t if t == PgType::Date.to_oid() => {
+                    // DATE - convert to days since epoch (INTEGER)
+                    match crate::types::ValueConverter::convert_date_to_unix(text) {
+                        Ok(days_str) => {
+                            let days = days_str.parse::<i64>()
+                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid date days: {}", days_str)))?;
+                            Ok(rusqlite::types::Value::Integer(days))
+                        }
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid date: {}", e)))
+                    }
+                }
+                t if t == PgType::Time.to_oid() => {
+                    // TIME - convert to microseconds since midnight (INTEGER)
+                    match crate::types::ValueConverter::convert_time_to_seconds(text) {
+                        Ok(micros_str) => {
+                            let micros = micros_str.parse::<i64>()
+                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid time microseconds: {}", micros_str)))?;
+                            Ok(rusqlite::types::Value::Integer(micros))
+                        }
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid time: {}", e)))
+                    }
+                }
+                t if t == PgType::Timestamp.to_oid() => {
+                    // TIMESTAMP - convert to microseconds since epoch (INTEGER)
+                    match crate::types::ValueConverter::convert_timestamp_to_unix(text) {
+                        Ok(micros_str) => {
+                            let micros = micros_str.parse::<i64>()
+                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid timestamp microseconds: {}", micros_str)))?;
+                            Ok(rusqlite::types::Value::Integer(micros))
+                        }
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid timestamp: {}", e)))
+                    }
+                }
+                t if t == PgType::Timestamptz.to_oid() || t == PgType::Timetz.to_oid() || t == PgType::Interval.to_oid() => {
+                    // Other datetime types - convert to INTEGER (microseconds)
+                    // For now, store as text until we implement proper conversion
+                    // TODO: Implement proper conversion for TIMESTAMPTZ, TIMETZ, INTERVAL
+                    Ok(rusqlite::types::Value::Text(text.to_string()))
+                }
                 t if t == PgType::Money.to_oid() || t == PgType::Macaddr.to_oid() || t == PgType::Macaddr8.to_oid() ||
                      t == PgType::Inet.to_oid() || t == PgType::Cidr.to_oid() || t == PgType::Int4range.to_oid() ||
                      t == PgType::Int8range.to_oid() || t == PgType::Numrange.to_oid() || t == PgType::Bit.to_oid() ||

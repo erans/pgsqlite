@@ -148,6 +148,22 @@ impl QueryExecutor {
             query.to_string()
         };
         
+        // Translate INSERT statements with datetime values if needed
+        if crate::translator::InsertTranslator::needs_translation(&translated_query) {
+            use crate::translator::InsertTranslator;
+            debug!("Query needs INSERT datetime translation: {}", translated_query);
+            match InsertTranslator::translate_query(&translated_query, db).await {
+                Ok(translated) => {
+                    translated_query = translated;
+                    debug!("Query after INSERT translation: {}", translated_query);
+                }
+                Err(e) => {
+                    debug!("INSERT translation failed: {}", e);
+                    // Continue with original query
+                }
+            }
+        }
+        
         // Translate PostgreSQL datetime functions if present and capture metadata
         let mut translation_metadata = crate::translator::TranslationMetadata::new();
         if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
