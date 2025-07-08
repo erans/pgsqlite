@@ -346,6 +346,9 @@ impl DbHandler {
     }
     
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Ensure schema cache is populated (especially after CREATE TABLE)
+        self.schema_cache.ensure_schema_loaded(&self.conn.lock(), query);
+        
         // Ultra-fast path for truly simple queries
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
             let conn = self.conn.lock();
@@ -997,6 +1000,7 @@ fn infer_column_type(col_name: &str, query: &str, schema_cache: &SchemaCache) ->
                 if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
                     return col_info.pg_type.clone();
                 }
+            } else {
             }
         }
     }

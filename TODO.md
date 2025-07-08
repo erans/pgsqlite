@@ -217,37 +217,30 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Updated SchemaTypeMapper::get_aggregate_return_type() to return PgType::Timestamp for NOW()/CURRENT_TIMESTAMP
   - [x] Changed return type from Float8 (which was incorrect) to proper Timestamp type (OID 1114)
 
-#### Bug Fix: DateTime Values Not Stored as INTEGER - IN PROGRESS (2025-07-08)
-- [ ] **Issue**: Datetime values inserted as text strings are not converted to INTEGER storage
-  - [ ] Simple INSERT queries bypass datetime value conversion
-  - [ ] Extended protocol parameterized queries convert correctly, but simple queries do not
-  - [ ] SQLite stores text values in INTEGER columns without conversion
-- [ ] **Root Cause**: Multiple execution paths don't apply value conversion
-  - [ ] Ultra-fast path bypasses all translation for simple queries
-  - [ ] execute_dml() directly passes queries to SQLite without value conversion
-  - [ ] INSERT translator created but not effective for all paths
-- [ ] **Proposed Solutions**:
-  - [ ] **Option 1**: Add value conversion layer in DbHandler execute()
-    - Intercept INSERT/UPDATE queries before SQLite execution
-    - Parse and convert datetime literals to INTEGER values
-    - Complex but comprehensive solution
-  - [ ] **Option 2**: Use SQLite triggers for automatic conversion
-    - Create BEFORE INSERT/UPDATE triggers on datetime columns
-    - Convert text values to INTEGER in triggers
-    - More elegant but requires schema changes
-  - [ ] **Option 3**: Enforce parameterized queries for datetime values
-    - Document that datetime values must use parameterized queries
-    - Simple queries with datetime literals won't work correctly
-    - Easiest but limits functionality
-- [ ] **Implementation Notes**:
-  - [x] Created InsertTranslator module but integration incomplete
-  - [x] Added datetime conversion to extended_fast_path parameter handling
-  - [ ] Need to handle all query execution paths consistently
-  - [ ] Consider performance impact of value conversion
+#### Bug Fix: DateTime Values Not Stored as INTEGER - COMPLETED (2025-07-08)
+- [x] **Issue**: Datetime values inserted as text strings are now properly converted to INTEGER storage
+  - [x] Simple INSERT queries now use InsertTranslator for datetime value conversion
+  - [x] Extended protocol parameterized queries convert correctly
+  - [x] SQLite stores datetime values as INTEGER with proper conversions
+- [x] **Root Cause**: Multiple execution paths didn't apply value conversion
+  - [x] Ultra-fast path bypassed all translation for simple queries
+  - [x] execute_dml() directly passed queries to SQLite without value conversion
+  - [x] INSERT translator created but wasn't integrated into all paths
+- [x] **Solution Implemented**: Hybrid approach combining InsertTranslator and value converters
+  - [x] InsertTranslator converts datetime literals to INTEGER during INSERT/UPDATE
+  - [x] Value converter layer converts INTEGER back to datetime strings during SELECT
+  - [x] Fast path enhanced to support datetime type conversions
+  - [x] Schema cache integration ensures proper type information is available
+  - [x] Removed trigger-based approach in favor of translator solution
+- [x] **Implementation Completed**:
+  - [x] Created and integrated InsertTranslator module for query-time conversion
+  - [x] Enhanced fast_path.rs with datetime value converters for all types
+  - [x] Fixed schema cache population to ensure type info is available
+  - [x] Fixed execution paths to properly apply InsertTranslator
   - [x] Updated CURRENT_TIME and MAKE_TIME() to return Time type (OID 1083) instead of Float8
   - [x] Value converter layer now properly formats INTEGER microseconds to PostgreSQL timestamp format
   - [x] psql client now correctly displays timestamps instead of raw integers
-  - [x] All existing datetime tests continue to pass
+  - [x] All datetime roundtrip tests passing with proper conversions
 
 #### Automatic Migration for New Database Files - COMPLETED (2025-07-08)
 - [x] Detect when a database file is newly created (no tables exist)

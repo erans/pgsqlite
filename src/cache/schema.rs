@@ -276,4 +276,39 @@ impl SchemaCache {
         
         Ok(schema)
     }
+    
+    /// Ensure schema is loaded for tables referenced in a query
+    pub fn ensure_schema_loaded(&self, conn: &Connection, query: &str) {
+        // Try to extract table names from the query
+        if let Ok(table_names) = extract_table_names_simple(query) {
+            for table_name in table_names {
+                // Try to load if not already in cache
+                if self.get(&table_name).is_none() {
+                    if let Ok(schema) = self.load_table_schema_direct(conn, &table_name) {
+                        self.insert(table_name.clone(), schema);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Simple table name extraction from queries
+fn extract_table_names_simple(query: &str) -> Result<Vec<String>, String> {
+    let query_upper = query.to_uppercase();
+    let mut tables = Vec::new();
+    
+    // Look for FROM clause
+    if let Some(from_pos) = query_upper.find(" FROM ") {
+        let after_from = &query[from_pos + 6..];
+        if let Some(end_pos) = after_from.find(|c: char| c == ' ' || c == ';' || c == ')') {
+            let table_name = after_from[..end_pos].trim().to_string();
+            tables.push(table_name);
+        } else {
+            let table_name = after_from.trim().to_string();
+            tables.push(table_name);
+        }
+    }
+    
+    Ok(tables)
 }

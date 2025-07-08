@@ -84,6 +84,7 @@ impl QueryExecutor {
     {
         // Ultra-fast path: Skip all translation if query is simple enough
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
+            debug!("Using ultra-fast path for query: {}", query);
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
@@ -120,11 +121,13 @@ impl QueryExecutor {
                     return Ok(());
                 }
                 QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                    return Self::execute_dml(framed, db, query).await;
+                    // Don't use execute_dml directly - fall through to apply translations
+                    // return Self::execute_dml(framed, db, query).await;
                 }
                 _ => {} // Fall through to normal processing
             }
         }
+        
         // Translate PostgreSQL cast syntax if present
         let mut translated_query = if crate::translator::CastTranslator::needs_translation(query) {
             if crate::profiling::is_profiling_enabled() {
@@ -154,8 +157,8 @@ impl QueryExecutor {
             debug!("Query needs INSERT datetime translation: {}", translated_query);
             match InsertTranslator::translate_query(&translated_query, db).await {
                 Ok(translated) => {
+                    debug!("Query after INSERT translation: {}", translated);
                     translated_query = translated;
-                    debug!("Query after INSERT translation: {}", translated_query);
                 }
                 Err(e) => {
                     debug!("INSERT translation failed: {}", e);
@@ -704,6 +707,9 @@ impl QueryExecutor {
                         info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
                     }
                 }
+                
+                // Datetime conversion is now handled by InsertTranslator and value converters
+                // No need for triggers anymore
             }
         }
         

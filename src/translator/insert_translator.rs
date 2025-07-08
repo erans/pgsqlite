@@ -8,21 +8,22 @@ pub struct InsertTranslator;
 
 // Pattern to match INSERT INTO table (...) VALUES (...)
 static INSERT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+)$").unwrap()
 });
 
 // Pattern to match INSERT INTO table VALUES (...) without column list
 static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+)$").unwrap()
 });
 
 impl InsertTranslator {
     /// Check if the query is an INSERT that might need datetime translation
     pub fn needs_translation(query: &str) -> bool {
-        (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
+        let result = (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
             query.contains('-') ||  // Date patterns like '2024-01-01'
             query.contains(':')     // Time patterns like '14:30:00'
-        )
+        );
+        result
     }
     
     /// Translate INSERT statement to convert datetime values to INTEGER format
@@ -70,12 +71,13 @@ impl InsertTranslator {
             )?;
             
             // Reconstruct the INSERT query
-            Ok(format!(
+            let result = format!(
                 "INSERT INTO {} ({}) VALUES {}",
                 table_name,
                 columns_str,
                 converted_values
-            ))
+            );
+            Ok(result)
         } else if let Some(caps) = INSERT_NO_COLUMNS_PATTERN.captures(query) {
             // INSERT without explicit columns - need to get all columns from schema
             let table_name = &caps[1];
@@ -183,37 +185,109 @@ impl InsertTranslator {
         columns: &[&str],
         column_types: &std::collections::HashMap<String, String>
     ) -> Result<String, String> {
-        // For now, handle simple single-row VALUES clause
-        // TODO: Handle multi-row INSERT
+        let values_str = values_str.trim();
         
-        // Remove outer parentheses if present
-        let values_content = values_str.trim();
-        let values_content = if values_content.starts_with('(') && values_content.ends_with(')') {
-            &values_content[1..values_content.len()-1]
+        // Check if this is a multi-row INSERT
+        if values_str.contains("),(") || values_str.matches('(').count() > 1 {
+            // Handle multi-row INSERT
+            let mut result_rows = Vec::new();
+            let mut current_row = String::new();
+            let mut paren_depth = 0;
+            let mut in_quotes = false;
+            let mut chars = values_str.chars().peekable();
+            
+            while let Some(ch) = chars.next() {
+                match ch {
+                    '\'' => {
+                        current_row.push(ch);
+                        if in_quotes && chars.peek() == Some(&'\'') {
+                            current_row.push('\'');
+                            chars.next();
+                        } else {
+                            in_quotes = !in_quotes;
+                        }
+                    }
+                    '(' if !in_quotes => {
+                        if paren_depth == 0 && !current_row.trim().is_empty() {
+                            // Start of a new row
+                            current_row.clear();
+                        }
+                        paren_depth += 1;
+                        current_row.push(ch);
+                    }
+                    ')' if !in_quotes => {
+                        paren_depth -= 1;
+                        current_row.push(ch);
+                        
+                        if paren_depth == 0 {
+                            // End of a row
+                            let row_content = current_row.trim();
+                            if row_content.starts_with('(') && row_content.ends_with(')') {
+                                let inner = &row_content[1..row_content.len()-1];
+                                let values = Self::parse_values(inner)?;
+                                
+                                if values.len() != columns.len() {
+                                    return Err(format!("Column count mismatch: {} columns but {} values in row", columns.len(), values.len()));
+                                }
+                                
+                                // Convert each value based on column type
+                                let mut converted_values = Vec::new();
+                                for (i, value) in values.iter().enumerate() {
+                                    let column_name = columns[i];
+                                    let converted = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
+                                        Self::convert_value(value, pg_type)?
+                                    } else {
+                                        value.to_string()
+                                    };
+                                    converted_values.push(converted);
+                                }
+                                
+                                result_rows.push(format!("({})", converted_values.join(", ")));
+                                current_row.clear();
+                            }
+                        }
+                    }
+                    _ => {
+                        current_row.push(ch);
+                    }
+                }
+            }
+            
+            if result_rows.is_empty() {
+                return Err("No valid rows found in multi-row INSERT".to_string());
+            }
+            
+            let result = result_rows.join(", ");
+            Ok(result)
         } else {
-            values_content
-        };
-        
-        // Parse individual values
-        let values = Self::parse_values(values_content)?;
-        
-        if values.len() != columns.len() {
-            return Err(format!("Column count mismatch: {} columns but {} values", columns.len(), values.len()));
-        }
-        
-        // Convert each value based on column type
-        let mut converted_values = Vec::new();
-        for (i, value) in values.iter().enumerate() {
-            let column_name = columns[i];
-            let converted = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
-                Self::convert_value(value, pg_type)?
+            // Handle single-row INSERT
+            let values_content = if values_str.starts_with('(') && values_str.ends_with(')') {
+                &values_str[1..values_str.len()-1]
             } else {
-                value.to_string()
+                values_str
             };
-            converted_values.push(converted);
+            
+            // Parse individual values
+            let values = Self::parse_values(values_content)?;
+            
+            if values.len() != columns.len() {
+                return Err(format!("Column count mismatch: {} columns but {} values", columns.len(), values.len()));
+            }
+            
+            // Convert each value based on column type
+            let mut converted_values = Vec::new();
+            for (i, value) in values.iter().enumerate() {
+                let column_name = columns[i];
+                let converted = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
+                    Self::convert_value(value, pg_type)?
+                } else {
+                    value.to_string()
+                };
+                converted_values.push(converted);
+            }
+            
+            Ok(format!("({})", converted_values.join(", ")))
         }
-        
-        Ok(format!("({})", converted_values.join(", ")))
     }
     
     /// Parse comma-separated values, handling quoted strings
