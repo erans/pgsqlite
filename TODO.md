@@ -500,11 +500,14 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - Catalog queries should bypass normal query processing
     - Implement specialized handlers for common patterns
     - Cache catalog data for repeated access
-  - [ ] **psql Slash Command Support**
-    - [ ] \d - List all relations (FAILS - needs JOIN support and regex operator handling)
-      - Error: `unrecognized token: "!" in ... n.nspname !~ '^pg_toast'`
-      - Requires: pg_namespace, pg_am tables and JOIN query support
-      - Workaround: Use \dt, \dv, \di, \ds separately
+  - [ ] **psql Slash Command Support** - PARTIAL (2025-07-08)
+    - [x] \d - List all relations - INFRASTRUCTURE COMPLETE
+      - [x] PostgreSQL regex operators (~, !~, ~*, !~*) fully supported
+      - [x] Schema prefix translator (pg_catalog.table -> table)
+      - [x] Migration v5 with catalog tables: pg_namespace, pg_am, pg_class
+      - [x] Hash functions for stable OID generation
+      - [x] Query interceptor handles JOIN queries
+      - [ ] Still shows no results due to filter criteria in psql's query
     - [x] \dt - List tables only (works)
     - [x] \di - List indexes (works)
     - [x] \dv - List views (works)
@@ -854,6 +857,68 @@ Started implementation of PostgreSQL system catalogs to support psql \d commands
 - Basic pg_attribute queries work (returns column information)
 - psql can connect and query catalogs but \d commands show raw data
 - Need proper query processing for full psql compatibility
+
+### 🎯 PostgreSQL Regex Operators Support - COMPLETED (2025-07-08)
+
+#### Background
+psql \d command failed with "unrecognized token: !" error due to PostgreSQL's regex operators (~ and !~) not being supported in SQLite.
+
+#### Implementation
+- [x] Created RegexTranslator to convert PostgreSQL regex operators to SQLite REGEXP
+  - Supports all four operators: ~ (match), !~ (not match), ~* (case-insensitive match), !~* (case-insensitive not match)
+  - Handles OPERATOR syntax: a OPERATOR(pg_catalog.~) 'pattern'
+  - Preserves query structure while translating operators
+- [x] Registered REGEXP and REGEXPI functions in SQLite
+  - Uses Rust's regex crate for pattern matching
+  - REGEXP for case-sensitive matching
+  - REGEXPI for case-insensitive matching
+- [x] Integrated into query processing pipeline
+  - CatalogInterceptor applies regex translation before parsing
+  - LazyQueryProcessor includes regex translation in processing steps
+  - Works with both simple and extended protocols
+
+#### Testing
+- All four regex operators tested and working
+- Handles complex queries with multiple regex operations
+- Properly escapes special regex characters
+- Performance impact minimal due to lazy processing
+
+### 🗂️ PostgreSQL Catalog Tables Implementation - COMPLETED (2025-07-08)
+
+#### Background
+psql \d command requires proper PostgreSQL catalog tables with JOIN support to function correctly.
+
+#### Implementation
+- [x] Created migration v5 with catalog tables and views
+  - pg_namespace view: schema information
+  - pg_am view: access methods  
+  - pg_class view: tables, views, indexes with stable OID generation
+  - pg_constraint table: constraint definitions
+  - pg_attrdef table: column defaults
+  - pg_index table: index information
+- [x] Implemented hash functions for OID generation
+  - hash(text): general purpose hash function
+  - oid_hash(text): generates PostgreSQL-compatible OIDs
+  - Deterministic OIDs ensure consistency across queries
+- [x] Created SchemaPrefixTranslator
+  - Removes pg_catalog. prefix from table/function names
+  - Allows PostgreSQL queries to work with SQLite
+  - Integrated into query processing pipeline
+- [x] Enhanced catalog functions
+  - pg_table_is_visible: checks if table is in search path
+  - regclass type casting: converts table names to OIDs
+  - pg_get_userbyid: returns user name (always 'sqlite')
+- [x] Fixed migration system
+  - Functions registered before running migrations
+  - Handles both new and existing databases correctly
+  - In-memory databases auto-migrate on startup
+
+#### Current Status
+- Infrastructure complete for psql \d command
+- Catalog tables properly created and populated
+- JOIN queries execute successfully
+- Regex operators work correctly
+- Schema prefixes handled transparently
 
 ### ✅ System Catalog Extended Protocol Support - COMPLETED (2025-07-05)
 
