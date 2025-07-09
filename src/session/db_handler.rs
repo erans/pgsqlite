@@ -12,6 +12,7 @@ use crate::types::PgType;
 use crate::query::{QueryTypeDetector, QueryType};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
+use crate::validator::StringConstraintValidator;
 use tracing::{info, debug};
 
 /// Database response structure
@@ -32,6 +33,7 @@ pub struct DbResponse {
 pub struct DbHandler {
     conn: Arc<Mutex<Connection>>,
     schema_cache: Arc<SchemaCache>,
+    string_validator: Arc<StringConstraintValidator>,
 }
 
 impl DbHandler {
@@ -96,6 +98,7 @@ impl DbHandler {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
+            string_validator: Arc::new(StringConstraintValidator::new()),
         })
     }
     
@@ -166,6 +169,7 @@ impl DbHandler {
             return Ok(Self {
                 conn: Arc::new(Mutex::new(conn)),
                 schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
+                string_validator: Arc::new(StringConstraintValidator::new()),
             });
         }
         
@@ -248,9 +252,14 @@ impl DbHandler {
         
         info!("DbHandler initialized with mutex-based implementation");
         
+        // Populate string constraints from schema if migration v6 has been applied
+        let string_validator = Arc::new(StringConstraintValidator::new());
+        let _ = StringConstraintValidator::populate_constraints_from_schema(&conn);
+        
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
+            string_validator,
         })
     }
     
@@ -656,6 +665,11 @@ impl DbHandler {
         })
     }
     
+    /// Get reference to the string validator
+    pub fn string_validator(&self) -> &StringConstraintValidator {
+        &self.string_validator
+    }
+    
     /// Shutdown (no-op for mutex handler)
     pub async fn shutdown(&self) {
         // Nothing to do
@@ -667,6 +681,7 @@ impl Clone for DbHandler {
         Self {
             conn: self.conn.clone(),
             schema_cache: self.schema_cache.clone(),
+            string_validator: self.string_validator.clone(),
         }
     }
 }

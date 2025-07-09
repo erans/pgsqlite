@@ -11,6 +11,7 @@ pub use enum_triggers::EnumTriggers;
 pub struct TypeMapping {
     pub pg_type: String,
     pub sqlite_type: String,
+    pub type_modifier: Option<i32>,  // For VARCHAR(n), CHAR(n), etc.
 }
 
 pub struct TypeMetadata;
@@ -50,11 +51,26 @@ impl TypeMetadata {
             // Split table.column format
             let parts: Vec<&str> = full_column.split('.').collect();
             if parts.len() == 2 && parts[0] == table_name {
-                tx.execute(
-                    "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) 
-                     VALUES (?1, ?2, ?3, ?4)",
-                    [table_name, parts[1], &type_mapping.pg_type, &type_mapping.sqlite_type],
-                )?;
+                // Check if type_modifier column exists (for backwards compatibility)
+                let has_type_modifier = tx.query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('__pgsqlite_schema') WHERE name = 'type_modifier'",
+                    [],
+                    |row| row.get::<_, i32>(0)
+                ).unwrap_or(0) > 0;
+                
+                if has_type_modifier {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type, type_modifier) 
+                         VALUES (?1, ?2, ?3, ?4, ?5)",
+                        rusqlite::params![table_name, parts[1], &type_mapping.pg_type, &type_mapping.sqlite_type, type_mapping.type_modifier],
+                    )?;
+                } else {
+                    tx.execute(
+                        "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) 
+                         VALUES (?1, ?2, ?3, ?4)",
+                        [table_name, parts[1], &type_mapping.pg_type, &type_mapping.sqlite_type],
+                    )?;
+                }
             }
         }
         

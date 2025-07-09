@@ -249,11 +249,15 @@ impl CreateTableTranslator {
             (sqlite_type, normalized_pg_type)
         };
         
-        // Store both PostgreSQL and SQLite types
+        // Extract type modifier (length constraint) if present
+        let type_modifier = Self::extract_type_modifier(&pg_type);
+        
+        // Store both PostgreSQL and SQLite types with modifier
         let mapping_key = format!("{}.{}", table_name, column_name);
         type_mapping.insert(mapping_key, TypeMapping {
             pg_type: normalized_pg_type,
             sqlite_type: sqlite_type.clone(),
+            type_modifier,
         });
         
         // Reconstruct the column definition with SQLite type
@@ -318,5 +322,109 @@ impl CreateTableTranslator {
             "BLOB" => "BYTEA".to_string(),
             _ => type_name.to_string(),
         }
+    }
+    
+    /// Extract type modifier from type definition (e.g., VARCHAR(255) -> Some(255))
+    fn extract_type_modifier(type_name: &str) -> Option<i32> {
+        // Look for pattern like TYPE(n) or TYPE(n,m)
+        if let Some(start) = type_name.find('(') {
+            if let Some(end) = type_name.find(')') {
+                let params = &type_name[start + 1..end];
+                // For now, we only care about the first parameter (length)
+                if let Some(first_param) = params.split(',').next() {
+                    if let Ok(length) = first_param.trim().parse::<i32>() {
+                        return Some(length);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_extract_type_modifier() {
+        // Basic cases
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR(255)"), Some(255));
+        assert_eq!(CreateTableTranslator::extract_type_modifier("CHAR(10)"), Some(10));
+        assert_eq!(CreateTableTranslator::extract_type_modifier("CHARACTER VARYING(100)"), Some(100));
+        
+        // With spaces
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR ( 50 )"), Some(50));
+        
+        // Without modifier
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR"), None);
+        assert_eq!(CreateTableTranslator::extract_type_modifier("TEXT"), None);
+        
+        // Edge cases
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR(0)"), Some(0));
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR(1000000)"), Some(1000000));
+        
+        // Invalid cases
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR()"), None);
+        assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR(abc)"), None);
+        
+        // NUMERIC with precision and scale - only first param
+        assert_eq!(CreateTableTranslator::extract_type_modifier("NUMERIC(10,2)"), Some(10));
+    }
+    
+    #[test]
+    fn test_translate_varchar_constraints() {
+        let sql = "CREATE TABLE users (
+            id INTEGER PRIMARY KEY,
+            name VARCHAR(50),
+            email VARCHAR(255),
+            code CHAR(10)
+        )";
+        
+        let (_translated, mappings) = CreateTableTranslator::translate(sql).unwrap();
+        
+        // Check that types were mapped correctly
+        assert!(mappings.contains_key("users.name"));
+        assert!(mappings.contains_key("users.email"));
+        assert!(mappings.contains_key("users.code"));
+        
+        // Check type modifiers
+        assert_eq!(mappings["users.name"].type_modifier, Some(50));
+        assert_eq!(mappings["users.email"].type_modifier, Some(255));
+        assert_eq!(mappings["users.code"].type_modifier, Some(10));
+        
+        // Check pg_type is preserved
+        assert_eq!(mappings["users.name"].pg_type, "VARCHAR(50)");
+        assert_eq!(mappings["users.code"].pg_type, "CHAR(10)");
+    }
+    
+    #[test]
+    fn test_translate_without_constraints() {
+        let sql = "CREATE TABLE test (
+            id INTEGER PRIMARY KEY,
+            description TEXT,
+            data VARCHAR
+        )";
+        
+        let (_, mappings) = CreateTableTranslator::translate(sql).unwrap();
+        
+        // VARCHAR without length should have no modifier
+        assert_eq!(mappings["test.data"].type_modifier, None);
+        assert_eq!(mappings["test.data"].pg_type, "VARCHAR");
+    }
+    
+    #[test]
+    fn test_mixed_case_types() {
+        let sql = "CREATE TABLE test (
+            col1 VarChar(10),
+            col2 CHARACTER varying(20),
+            col3 Character(5)
+        )";
+        
+        let (_, mappings) = CreateTableTranslator::translate(sql).unwrap();
+        
+        assert_eq!(mappings["test.col1"].type_modifier, Some(10));
+        assert_eq!(mappings["test.col2"].type_modifier, Some(20));
+        assert_eq!(mappings["test.col3"].type_modifier, Some(5));
     }
 }

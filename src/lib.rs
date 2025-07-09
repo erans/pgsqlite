@@ -13,6 +13,8 @@ pub mod ssl;
 pub mod ddl;
 pub mod migration;
 pub mod schema_drift;
+pub mod error;
+pub mod validator;
 #[macro_use]
 pub mod profiling;
 

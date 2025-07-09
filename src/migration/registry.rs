@@ -12,6 +12,7 @@ lazy_static! {
         register_v3_datetime_support(&mut registry);
         register_v4_datetime_integer_storage(&mut registry);
         register_v5_pg_catalog_tables(&mut registry);
+        register_v6_varchar_constraints(&mut registry);
         
         registry
     };
@@ -618,4 +619,54 @@ fn parse_column_defaults(_table_name: &str, _create_sql: &str) -> Option<Vec<Def
     // Simple parsing - would need to extract DEFAULT clauses
     // For now, return None
     None
+}
+
+/// Version 6: VARCHAR/CHAR length constraints
+fn register_v6_varchar_constraints(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(6, Migration {
+        version: 6,
+        name: "varchar_constraints",
+        description: "Add support for VARCHAR/CHAR length constraints",
+        up: MigrationAction::SqlBatch(&[
+            r#"
+            -- Add type_modifier column to store length constraints
+            ALTER TABLE __pgsqlite_schema ADD COLUMN type_modifier INTEGER;
+            "#,
+            r#"
+            -- Create table to cache string constraints for performance
+            CREATE TABLE IF NOT EXISTS __pgsqlite_string_constraints (
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                max_length INTEGER NOT NULL,
+                is_char_type BOOLEAN NOT NULL DEFAULT 0,  -- 1 for CHAR (needs padding), 0 for VARCHAR
+                PRIMARY KEY (table_name, column_name)
+            );
+            "#,
+            r#"
+            -- Create index for fast constraint lookups
+            CREATE INDEX IF NOT EXISTS idx_string_constraints_table 
+            ON __pgsqlite_string_constraints(table_name);
+            "#,
+            r#"
+            -- Update schema version
+            UPDATE __pgsqlite_metadata 
+            SET value = '6', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Note: SQLite doesn't support DROP COLUMN in older versions
+            -- We would need to recreate the table without the column
+            DROP INDEX IF EXISTS idx_string_constraints_table;
+            DROP TABLE IF EXISTS __pgsqlite_string_constraints;
+            
+            -- For __pgsqlite_schema, we'd need to recreate it without type_modifier
+            -- This is left as an exercise since downgrade is rarely needed
+            
+            UPDATE __pgsqlite_metadata 
+            SET value = '5', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![5],
+    });
 }
