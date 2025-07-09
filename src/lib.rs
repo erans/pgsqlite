@@ -12,6 +12,7 @@ pub mod config;
 pub mod ssl;
 pub mod ddl;
 pub mod migration;
+pub mod schema_drift;
 #[macro_use]
 pub mod profiling;
 

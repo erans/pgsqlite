@@ -220,7 +220,26 @@ impl DbHandler {
             }
             
             // Get connection back from runner
-            runner.into_connection()
+            let conn = runner.into_connection();
+            
+            // Check for schema drift
+            match crate::schema_drift::SchemaDriftDetector::detect_drift(&conn) {
+                Ok(drift) => {
+                    if !drift.is_empty() {
+                        let report = drift.format_report();
+                        return Err(rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Schema drift detected:\n{}\n\nTo fix this, ensure your SQLite schema matches the pgsqlite metadata.", report))
+                        ));
+                    }
+                }
+                Err(e) => {
+                    // Log warning but don't fail - drift detection is not critical
+                    debug!("Schema drift detection failed: {}", e);
+                }
+            }
+            
+            conn
         };
         
         // Initialize functions and metadata
