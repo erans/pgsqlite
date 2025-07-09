@@ -6,16 +6,15 @@ async fn test_now_function() {
     let server = setup_test_server().await;
     let client = &server.client;
     
-    // Test NOW() function - NOW() now returns microseconds since epoch as INT8
+    // Test NOW() function - NOW() now returns formatted timestamp string
     let row = client.query_one("SELECT NOW() as now", &[]).await.unwrap();
-    let now_microseconds: i64 = row.get("now");
+    let now_str: String = row.get("now");
     
-    // Convert microseconds to seconds for validation
-    let now_timestamp = now_microseconds as f64 / 1_000_000.0;
-    
-    // Verify it's a reasonable Unix timestamp (after 2020-01-01)
-    assert!(now_timestamp > 1577836800.0, "NOW() should return a Unix timestamp after 2020");
-    assert!(now_timestamp < 2000000000.0, "NOW() should return a reasonable Unix timestamp");
+    // Verify it's a properly formatted timestamp (YYYY-MM-DD HH:MM:SS.ffffff)
+    assert!(now_str.contains('-'), "NOW() should return formatted timestamp with dashes");
+    assert!(now_str.contains(':'), "NOW() should return formatted timestamp with colons");
+    assert!(now_str.contains('.'), "NOW() should return formatted timestamp with microseconds");
+    assert!(now_str.len() > 20, "NOW() should return full timestamp string");
 }
 
 #[tokio::test]
