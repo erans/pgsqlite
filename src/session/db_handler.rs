@@ -1000,6 +1000,47 @@ fn is_boolean_column(col_name: &str, query: &str, schema_cache: &SchemaCache) ->
 
 /// Infer the column type for optimized conversion
 fn infer_column_type(col_name: &str, query: &str, schema_cache: &SchemaCache) -> String {
+    // Check if this is a datetime function expression
+    let lower_col_name = col_name.to_lowercase();
+    
+    // Check for NOW() and CURRENT_TIMESTAMP variations
+    if lower_col_name == "now()" || lower_col_name == "now" ||
+       lower_col_name == "current_timestamp()" || lower_col_name == "current_timestamp" {
+        return "timestamptz".to_string();
+    }
+    
+    // Also check if the query contains these functions and the column might be aliased
+    let lower_query = query.to_lowercase();
+    if lower_query.contains("now()") || lower_query.contains("current_timestamp") {
+        // If the query contains these functions, and this looks like it could be the result column
+        // (not a table column), assume it's a timestamp
+        if !lower_col_name.contains('.') {
+            // Check if this column exists in any known table
+            let mut is_table_column = false;
+            if let Ok(table_names) = extract_table_names_simple(query) {
+                for table_name in table_names {
+                    if let Some(schema) = schema_cache.get(&table_name) {
+                        if schema.column_map.contains_key(&lower_col_name) {
+                            is_table_column = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !is_table_column {
+                return "timestamptz".to_string();
+            }
+        }
+    }
+    
+    // Also check for current_time() and current_date()
+    if lower_col_name == "current_time()" || lower_col_name == "current_time" {
+        return "timetz".to_string();
+    }
+    if lower_col_name == "current_date()" || lower_col_name == "current_date" {
+        return "date".to_string();
+    }
+    
     // Try to extract table name from query and get column type
     if let Ok(table_names) = extract_table_names_simple(query) {
         for table_name in table_names {
