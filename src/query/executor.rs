@@ -685,6 +685,26 @@ impl QueryExecutor {
                             Ok(_) => info!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
                             Err(e) => debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e),
                         }
+                        
+                        // Store string constraints if present
+                        if let Some(modifier) = type_mapping.type_modifier {
+                            let pg_type_lower = type_mapping.pg_type.to_lowercase();
+                            if pg_type_lower == "varchar" || pg_type_lower == "char" || 
+                               pg_type_lower == "character varying" || pg_type_lower == "character" ||
+                               pg_type_lower == "nvarchar" {
+                                let is_char = pg_type_lower == "char" || pg_type_lower == "character";
+                                let constraint_query = format!(
+                                    "INSERT OR REPLACE INTO __pgsqlite_string_constraints (table_name, column_name, max_length, is_char_type) 
+                                     VALUES ('{}', '{}', {}, {})",
+                                    table_name, parts[1], modifier, if is_char { 1 } else { 0 }
+                                );
+                                
+                                match db.execute(&constraint_query).await {
+                                    Ok(_) => info!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
+                                    Err(e) => debug!("Failed to store string constraint for {}.{}: {}", table_name, parts[1], e),
+                                }
+                            }
+                        }
                     }
                 }
                 

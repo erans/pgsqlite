@@ -92,11 +92,25 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] Handle cases where __pgsqlite_schema has columns missing from SQLite table
 - [x] Validate column types match between schema metadata and SQLite PRAGMA table_info
 
-#### VARCHAR/NVARCHAR Length Constraints
-- [ ] Store VARCHAR(n) and NVARCHAR(n) length constraints in __pgsqlite_schema
-- [ ] Validate string lengths on INSERT/UPDATE operations
-- [ ] Return proper PostgreSQL error when length constraints are violated
-- [ ] Handle character vs byte length for multi-byte encodings
+#### VARCHAR/NVARCHAR Length Constraints - COMPLETED (2025-07-09)
+- [x] Store VARCHAR(n) and NVARCHAR(n) length constraints in __pgsqlite_schema
+  - [x] Created migration v6 to add type_modifier column
+  - [x] Enhanced CreateTableTranslator to parse length constraints from type definitions
+  - [x] Store modifiers in both __pgsqlite_schema and __pgsqlite_string_constraints tables
+- [x] Validate string lengths on INSERT/UPDATE operations
+  - [x] Created StringConstraintValidator module with caching support
+  - [x] Character-based counting (not byte-based) for PostgreSQL compatibility
+  - [x] Support for NULL values (bypass constraints)
+- [x] Return proper PostgreSQL error when length constraints are violated
+  - [x] Error code 22001 (string_data_right_truncation)
+  - [x] Detailed error messages with column name and actual/max lengths
+- [x] Handle character vs byte length for multi-byte encodings
+  - [x] Use Rust's chars().count() for proper UTF-8 character counting
+  - [x] Tested with multi-byte characters (Chinese, emoji, etc.)
+- [x] CHAR(n) type support with blank-padding behavior
+  - [x] Implemented CHAR padding in StringConstraintValidator::pad_char_value()
+  - [x] Pads values to specified length on retrieval
+  - [x] Stores fixed length in __pgsqlite_string_constraints with is_char_type flag
 
 #### NUMERIC/DECIMAL Precision and Scale
 - [ ] Store NUMERIC(p,s) precision and scale in __pgsqlite_schema
@@ -104,11 +118,6 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Format decimal values according to specified scale before returning results
 - [ ] Handle rounding/truncation according to PostgreSQL behavior
 
-#### CHAR Type Support
-- [ ] Implement CHAR(n) with proper blank-padding behavior
-- [ ] Store fixed length in __pgsqlite_schema
-- [ ] Pad values to specified length on storage
-- [ ] Handle comparison semantics (trailing space handling)
 
 ### Query Optimization
 
@@ -385,6 +394,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - v2: ENUM support (enum types, values, usage tracking)
     - v3: DateTime support (datetime_format, timezone_offset columns)
     - v4: DateTime INTEGER storage (convert all datetime types to microseconds)
+    - v5: PostgreSQL catalog tables (pg_class, pg_namespace, pg_am, pg_type, pg_attribute views)
+    - v6: VARCHAR/CHAR constraints (type_modifier column, __pgsqlite_string_constraints table)
 
 #### Indexing
 - [ ] Support for expression indexes

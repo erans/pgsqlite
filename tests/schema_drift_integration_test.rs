@@ -50,7 +50,7 @@ fn test_db_handler_fails_on_drift() {
         
         // Add version to bypass migration check
         conn.execute(
-            "INSERT INTO __pgsqlite_metadata (key, value) VALUES ('schema_version', '5')",
+            "INSERT INTO __pgsqlite_metadata (key, value) VALUES ('schema_version', '6')",
             []
         ).unwrap();
     }
@@ -119,7 +119,7 @@ fn test_db_handler_succeeds_without_drift() {
         
         // Add version to bypass migration check
         conn.execute(
-            "INSERT INTO __pgsqlite_metadata (key, value) VALUES ('schema_version', '5')",
+            "INSERT INTO __pgsqlite_metadata (key, value) VALUES ('schema_version', '6')",
             []
         ).unwrap();
     }
@@ -173,7 +173,7 @@ fn test_drift_detection_with_type_mismatch() {
         
         // Add version to bypass migration check
         conn.execute(
-            "INSERT INTO __pgsqlite_metadata (key, value) VALUES ('schema_version', '5')",
+            "INSERT INTO __pgsqlite_metadata (key, value) VALUES ('schema_version', '6')",
             []
         ).unwrap();
     }

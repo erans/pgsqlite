@@ -23,7 +23,7 @@ fn test_fresh_database_migration() {
     
     // Should apply all migrations
     assert_eq!(applied.len(), MIGRATIONS.len());
-    assert_eq!(applied, vec![1, 2, 3, 4, 5]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6]);
     
     // Verify schema version
     let conn = runner.into_connection();
@@ -32,7 +32,7 @@ fn test_fresh_database_migration() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "5");
+    assert_eq!(version, "6");
     
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -64,7 +64,7 @@ fn test_idempotent_migrations() {
     let conn = Connection::open(&db_path).unwrap();
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
-    assert_eq!(applied.len(), 5);
+    assert_eq!(applied.len(), 6);
     drop(runner);
     
     // Second run - should apply nothing
@@ -105,12 +105,13 @@ fn test_existing_schema_detection() {
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
     
-    // Should recognize existing schema as version 1 and only apply version 2, 3, 4, and 5
-    assert_eq!(applied.len(), 4);
+    // Should recognize existing schema as version 1 and only apply version 2, 3, 4, 5, and 6
+    assert_eq!(applied.len(), 5);
     assert_eq!(applied[0], 2);
     assert_eq!(applied[1], 3);
     assert_eq!(applied[2], 4);
     assert_eq!(applied[3], 5);
+    assert_eq!(applied[4], 6);
     
     // Verify final version
     let conn = runner.into_connection();
@@ -119,7 +120,7 @@ fn test_existing_schema_detection() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "5");
+    assert_eq!(version, "6");
     
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -144,12 +145,13 @@ fn test_migration_history() {
     .unwrap()
     .collect::<Result<Vec<_>, _>>().unwrap();
     
-    assert_eq!(migrations.len(), 5);
+    assert_eq!(migrations.len(), 6);
     assert_eq!(migrations[0], (1, "initial_schema".to_string(), "completed".to_string()));
     assert_eq!(migrations[1], (2, "enum_type_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[2], (3, "datetime_timezone_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[3], (4, "datetime_integer_storage".to_string(), "completed".to_string()));
     assert_eq!(migrations[4], (5, "pg_catalog_tables".to_string(), "completed".to_string()));
+    assert_eq!(migrations[5], (6, "varchar_constraints".to_string(), "completed".to_string()));
 }
 
 #[test] 

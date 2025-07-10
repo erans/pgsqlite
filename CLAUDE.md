@@ -67,6 +67,7 @@ pgsqlite --database existingdb.db
 - **v3**: DateTime support (adds datetime_format and timezone_offset columns to __pgsqlite_schema, creates datetime cache and session settings tables)
 - **v4**: DateTime INTEGER storage (converts all datetime types to INTEGER microseconds/days for perfect precision)
 - **v5**: PostgreSQL catalog tables (creates pg_class, pg_namespace, pg_am, pg_type, pg_attribute views; pg_constraint, pg_attrdef, pg_index tables)
+- **v6**: VARCHAR/CHAR constraints (adds type_modifier to __pgsqlite_schema, creates __pgsqlite_string_constraints table)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:

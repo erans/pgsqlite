@@ -37,6 +37,8 @@ pgsqlite --database mydb.db
 | v2 | ENUM support | Adds ENUM type tracking tables |
 | v3 | DateTime support | Adds datetime format and timezone columns |
 | v4 | DateTime INTEGER storage | Converts datetime storage to INTEGER microseconds |
+| v5 | PostgreSQL catalog tables | Creates pg_class, pg_namespace, pg_am views for psql compatibility |
+| v6 | VARCHAR/CHAR constraints | Adds type_modifier column and string constraint validation |
 
 ## Migration Safety
 
