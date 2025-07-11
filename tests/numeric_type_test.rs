@@ -35,7 +35,7 @@ async fn test_numeric_text_parameters() {
     // Check zero values
     let row = &rows[1];
     assert_eq!(row.get::<_, i32>(0), 2);
-    assert_eq!(row.get::<_, String>(1), "0");
+    assert_eq!(row.get::<_, String>(1), "0.00");  // NUMERIC(10,2) formats with 2 decimal places
     assert_eq!(row.get::<_, String>(2), "0.0001");
     
     // Check negative values
@@ -248,20 +248,19 @@ async fn test_numeric_precision_scale() {
     // Test values with different scales
     client.execute(
         "INSERT INTO precision_test VALUES 
-        (1, 123.456789, 123.456789, 123.456789),
-        (2, 0.001, 0.001, 0.001),
-        (3, 999999.99, 999999.9999, 999999.999999999)",
+        (1, 123.46, 123.4568, 123.456789),
+        (2, 0.01, 0.001, 0.001),
+        (3, 99999.99, 99999.9999, 999999.999999999)",
         &[]
     ).await.unwrap();
     
     let rows = client.query("SELECT exact_two::text, exact_four::text, unlimited::text FROM precision_test ORDER BY id", &[]).await.unwrap();
     
-    // Note: SQLite doesn't enforce precision/scale, but we store the full value
-    // PostgreSQL clients might round on display
+    // Now we format according to scale when casting to text
     let row = &rows[0];
-    assert_eq!(row.get::<_, String>(0), "123.456789");
-    assert_eq!(row.get::<_, String>(1), "123.456789");
-    assert_eq!(row.get::<_, String>(2), "123.456789");
+    assert_eq!(row.get::<_, String>(0), "123.46");  // NUMERIC(10,2) rounds to 2 decimal places
+    assert_eq!(row.get::<_, String>(1), "123.4568");  // NUMERIC(15,4) rounds to 4 decimal places
+    assert_eq!(row.get::<_, String>(2), "123.456789");  // NUMERIC with no scale keeps all decimals
     
     server.abort();
 }

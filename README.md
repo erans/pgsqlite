@@ -156,6 +156,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **JSON Support**: `JSON` and `JSONB` types with PostgreSQL operators
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
+- **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`
 - **psql Compatibility**: Use psql's `\d` and `\dt` commands to explore your database
 
 ### Limitations

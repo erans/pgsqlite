@@ -12,6 +12,8 @@ mod arithmetic_analyzer;
 mod insert_translator;
 mod regex_translator;
 mod schema_prefix_translator;
+mod numeric_format_translator;
+mod numeric_cast_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -25,3 +27,5 @@ pub use metadata::{TranslationMetadata, ColumnTypeHint, ExpressionType, DateTime
 pub use insert_translator::InsertTranslator;
 pub use regex_translator::RegexTranslator;
 pub use schema_prefix_translator::SchemaPrefixTranslator;
+pub use numeric_format_translator::NumericFormatTranslator;
+pub use numeric_cast_translator::NumericCastTranslator;

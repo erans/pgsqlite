@@ -24,8 +24,8 @@ The following table maps supported PostgreSQL types to SQLite storage representa
 | BIGINT          | INTEGER     | -           | 64-bit signed |
 | REAL            | TEXT        | DECIMAL     | 32-bit float stored as decimal for precision |
 | DOUBLE PRECISION| TEXT        | DECIMAL     | 64-bit float stored as decimal for precision |
-| NUMERIC/DECIMAL | TEXT        | DECIMAL     | Custom type using rust_decimal for precision |
-| CHAR/VARCHAR/TEXT| TEXT       | -           | Length ignored |
+| NUMERIC/DECIMAL | TEXT        | DECIMAL     | Custom type with precision/scale constraints |
+| CHAR/VARCHAR/TEXT| TEXT       | -           | Length constraints enforced for (n) variants |
 | UUID            | TEXT        | -           | Format validation in code |
 | DATE            | INTEGER     | -           | Days since Unix epoch (1970-01-01) |
 | TIMESTAMP       | INTEGER     | -           | Microseconds since Unix epoch |
@@ -208,15 +208,15 @@ CREATE TABLE users (
 ```
 Would store the following in `__pgsqlite_schema`:
 
-| table_name | column_name | pg_type   | sqlite_type | pg_oid | datetime_format | timezone_offset |
-|------------|-------------|-----------|-------------|--------|-----------------|-----------------|
-| users      | id          | UUID      | TEXT        | 2950   | NULL            | NULL            |
-| users      | profile     | JSONB     | TEXT        | 3802   | NULL            | NULL            |
-| users      | active      | BOOLEAN   | INTEGER     | 16     | NULL            | NULL            |
-| users      | balance     | NUMERIC   | DECIMAL     | 1700   | NULL            | NULL            |
-| users      | created_at  | TIMESTAMP | INTEGER     | 1114   | UNIX_TIMESTAMP  | NULL            |
-| users      | birth_date  | DATE      | INTEGER     | 1082   | UNIX_TIMESTAMP  | NULL            |
-| users      | work_start  | TIME      | INTEGER     | 1083   | UNIX_TIMESTAMP  | NULL            |
+| table_name | column_name | pg_type   | sqlite_type | pg_oid | type_modifier | datetime_format | timezone_offset |
+|------------|-------------|-----------|-------------|--------|---------------|-----------------|-----------------|
+| users      | id          | UUID      | TEXT        | 2950   | -1            | NULL            | NULL            |
+| users      | profile     | JSONB     | TEXT        | 3802   | -1            | NULL            | NULL            |
+| users      | active      | BOOLEAN   | INTEGER     | 16     | -1            | NULL            | NULL            |
+| users      | balance     | NUMERIC   | DECIMAL     | 1700   | 655366        | NULL            | NULL            |
+| users      | created_at  | TIMESTAMP | INTEGER     | 1114   | -1            | UNIX_TIMESTAMP  | NULL            |
+| users      | birth_date  | DATE      | INTEGER     | 1082   | -1            | UNIX_TIMESTAMP  | NULL            |
+| users      | work_start  | TIME      | INTEGER     | 1083   | -1            | UNIX_TIMESTAMP  | NULL            |
 
 ---
 
@@ -267,6 +267,9 @@ PGSQLite includes a migration system to evolve the internal schema:
 2. **v2**: ENUM support - Adds enum types, values, and usage tracking tables
 3. **v3**: DateTime timezone support - Adds `datetime_format` and `timezone_offset` columns
 4. **v4**: DateTime INTEGER storage - Converts all datetime types to INTEGER microseconds/days
+5. **v5**: PostgreSQL catalog tables - Creates pg_class, pg_namespace, pg_am, pg_type, pg_attribute views
+6. **v6**: VARCHAR/CHAR constraints - Adds type_modifier to __pgsqlite_schema, creates __pgsqlite_string_constraints table
+7. **v7**: NUMERIC/DECIMAL constraints - Creates __pgsqlite_numeric_constraints table for precision/scale validation
 
 ---
 
@@ -282,3 +285,27 @@ let value: serde_json::Value = serde_json::from_str(&text_column)?;
 ```rust
 let uuid: Uuid = Uuid::parse_str(&text_column)?;
 ```
+
+---
+
+## Type Constraints
+
+PGSQLite enforces PostgreSQL-compatible constraints on certain types:
+
+### VARCHAR/CHAR Length Constraints
+- `VARCHAR(n)` enforces maximum character length (not byte length)
+- `CHAR(n)` enforces exact length with blank padding
+- Stored in `__pgsqlite_string_constraints` table
+- Returns error code 22001 (string_data_right_truncation) on violation
+
+### NUMERIC/DECIMAL Precision and Scale
+- `NUMERIC(p,s)` enforces precision (total digits) and scale (decimal places)
+- Stored in `__pgsqlite_numeric_constraints` table  
+- Application-layer validation intercepts INSERT/UPDATE statements
+- Returns error code 22003 (numeric_value_out_of_range) on violation
+- Values are formatted to specified scale on retrieval (e.g., 123.4 → 123.40 for NUMERIC(10,2))
+
+### Type Modifier Encoding
+Constraints are encoded in the `type_modifier` column using PostgreSQL's format:
+- VARCHAR(n): `n + 4` (where 4 is VARHDRSZ)
+- NUMERIC(p,s): `((p << 16) | s) + 4`

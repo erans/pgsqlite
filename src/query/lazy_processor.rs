@@ -12,6 +12,7 @@ pub struct LazyQueryProcessor<'a> {
     needs_decimal_rewrite: Option<bool>,
     needs_regex_translation: bool,
     needs_schema_translation: bool,
+    needs_numeric_cast_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -25,6 +26,7 @@ impl<'a> LazyQueryProcessor<'a> {
             needs_regex_translation: query.contains(" ~ ") || query.contains(" !~ ") || 
                                      query.contains(" ~* ") || query.contains(" !~* "),
             needs_schema_translation: query.contains("pg_catalog.") || query.contains("PG_CATALOG."),
+            needs_numeric_cast_translation: crate::translator::NumericCastTranslator::needs_translation(query),
         }
     }
     
@@ -44,6 +46,10 @@ impl<'a> LazyQueryProcessor<'a> {
         }
         
         if self.needs_schema_translation {
+            return true;
+        }
+        
+        if self.needs_numeric_cast_translation {
             return true;
         }
         
@@ -84,28 +90,39 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 2: Cast translation if needed
+        // Step 2: Numeric cast translation MUST come before general cast translation
+        // to ensure CAST(x AS NUMERIC(p,s)) is handled properly
+        if self.needs_numeric_cast_translation {
+            tracing::debug!("Before numeric cast translation: {}", current_query);
+            let translated = crate::translator::NumericCastTranslator::translate_query(&current_query, conn);
+            tracing::debug!("After numeric cast translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+        
+        // Step 3: Cast translation if needed (after numeric cast translation)
         if self.needs_cast_translation {
             // Check translation cache first
             if let Some(cached) = crate::cache::global_translation_cache().get(self.original_query) {
                 current_query = Cow::Owned(cached);
             } else {
-                tracing::debug!("Before cast translation: {}", self.original_query);
+                tracing::debug!("Before cast translation: {}", current_query);
                 let translated = crate::translator::CastTranslator::translate_query(
-                    self.original_query,
+                    &current_query,
                     Some(conn)
                 );
                 tracing::debug!("After cast translation: {}", translated);
-                // Cache the translation
-                crate::cache::global_translation_cache().insert(
-                    self.original_query.to_string(),
-                    translated.clone()
-                );
+                // Cache the translation if it's the original query
+                if current_query.as_ref() == self.original_query {
+                    crate::cache::global_translation_cache().insert(
+                        self.original_query.to_string(),
+                        translated.clone()
+                    );
+                }
                 current_query = Cow::Owned(translated);
             }
         }
         
-        // Step 3: Regex translation if needed
+        // Step 4: Regex translation if needed
         if self.needs_regex_translation {
             tracing::debug!("Before regex translation: {}", current_query);
             match crate::translator::RegexTranslator::translate_query(&current_query) {
@@ -120,7 +137,7 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 4: Decimal rewriting if needed
+        // Step 5: Decimal rewriting if needed
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
         
         // Check if we need decimal rewriting
@@ -133,6 +150,7 @@ impl<'a> LazyQueryProcessor<'a> {
                 }
             }
             QueryType::Select => true, // Always check for SELECT
+            QueryType::Update => true, // UPDATE queries also need decimal rewriting for NUMERIC columns
             _ => false, // Other query types don't need decimal rewriting
         };
         

@@ -1,4 +1,5 @@
 use crate::protocol::messages::ErrorResponse;
+use std::fmt;
 
 /// PostgreSQL error types
 #[derive(Debug)]
@@ -9,6 +10,12 @@ pub enum PgError {
         column_name: String,
         actual_length: i32,
         max_length: i32,
+    },
+    /// 22003: Numeric value out of range
+    NumericValueOutOfRange {
+        type_name: String,
+        column_name: String,
+        value: String,
     },
     /// 23505: Unique constraint violation
     UniqueViolation {
@@ -45,6 +52,38 @@ impl PgError {
                         "Failing row contains ({}) with {} characters, maximum is {}.",
                         column_name, actual_length, max_length
                     )),
+                    hint: None,
+                    position: None,
+                    internal_position: None,
+                    internal_query: None,
+                    where_: None,
+                    schema: None,
+                    table: None,
+                    column: Some(column_name.clone()),
+                    datatype: Some(type_name.clone()),
+                    constraint: None,
+                    file: None,
+                    line: None,
+                    routine: None,
+                }
+            }
+            PgError::NumericValueOutOfRange { type_name, column_name, value: _ } => {
+                ErrorResponse {
+                    severity: "ERROR".to_string(),
+                    code: "22003".to_string(),
+                    message: format!("numeric field overflow"),
+                    detail: Some({
+                        // Parse numeric(p,s) to extract precision and scale
+                        let params = type_name.split('(').nth(1).unwrap_or("").trim_end_matches(')');
+                        let parts: Vec<&str> = params.split(',').collect();
+                        let precision = parts.get(0).unwrap_or(&"").trim();
+                        let scale = parts.get(1).unwrap_or(&"0").trim();
+                        format!(
+                            "A field with precision {}, scale {} must round to an absolute value less than 10^({}-{}) = 10^{}.",
+                            precision, scale, precision, scale,
+                            precision.parse::<i32>().unwrap_or(0) - scale.parse::<i32>().unwrap_or(0)
+                        )
+                    }),
                     hint: None,
                     position: None,
                     internal_position: None,
@@ -148,6 +187,41 @@ impl PgError {
     }
 }
 
+impl fmt::Display for PgError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PgError::StringDataRightTruncation { type_name, column_name, actual_length, max_length } => {
+                write!(f, "value too long for type {} in column {} ({} characters, maximum is {})", 
+                       type_name, column_name, actual_length, max_length)
+            }
+            PgError::NumericValueOutOfRange { type_name, column_name, value } => {
+                write!(f, "numeric field overflow for column {} (type: {}, value: {})", 
+                       column_name, type_name, value)
+            }
+            PgError::UniqueViolation { constraint_name, detail } => {
+                write!(f, "duplicate key value violates unique constraint \"{}\": {}", 
+                       constraint_name, detail)
+            }
+            PgError::ForeignKeyViolation { constraint_name, detail } => {
+                write!(f, "foreign key constraint \"{}\" violation: {}", 
+                       constraint_name, detail)
+            }
+            PgError::SyntaxError { message, position } => {
+                if let Some(pos) = position {
+                    write!(f, "syntax error at position {}: {}", pos, message)
+                } else {
+                    write!(f, "syntax error: {}", message)
+                }
+            }
+            PgError::Generic { code, message } => {
+                write!(f, "error {}: {}", code, message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for PgError {}
+
 /// Convert SQLite errors to PostgreSQL errors
 pub fn sqlite_error_to_pg(err: &rusqlite::Error, _query: &str) -> ErrorResponse {
     match err {
@@ -183,6 +257,26 @@ pub fn sqlite_error_to_pg(err: &rusqlite::Error, _query: &str) -> ErrorResponse 
                                 code: "23503".to_string(),
                                 message: "foreign key constraint violation".to_string(),
                                 detail: Some(msg.clone()),
+                                hint: None,
+                                position: None,
+                                internal_position: None,
+                                internal_query: None,
+                                where_: None,
+                                schema: None,
+                                table: None,
+                                column: None,
+                                datatype: None,
+                                constraint: None,
+                                file: None,
+                                line: None,
+                                routine: None,
+                            };
+                        } else if msg.contains("numeric field overflow") {
+                            return ErrorResponse {
+                                severity: "ERROR".to_string(),
+                                code: "22003".to_string(),
+                                message: "numeric field overflow".to_string(),
+                                detail: Some("A field with precision and scale constraints must round to an absolute value less than 10^p - 1.".to_string()),
                                 hint: None,
                                 position: None,
                                 internal_position: None,

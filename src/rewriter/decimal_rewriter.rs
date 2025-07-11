@@ -142,8 +142,10 @@ impl<'a> DecimalQueryRewriter<'a> {
                     }
                     
                     // Rewrite assignment expressions
+                    // For UPDATE assignments, we don't want to wrap simple numeric literals
+                    // because rust_decimal can't handle very large numbers (>28 digits)
                     for assignment in assignments {
-                        self.rewrite_expression(&mut assignment.value, &context)?;
+                        self.rewrite_update_assignment(&mut assignment.value, &context)?;
                     }
                 }
                 Ok(())
@@ -512,6 +514,20 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let subquery_context = self.resolver.build_context(&temp_query);
                 self.rewrite_set_expr(subquery, &subquery_context)?;
             }
+            Expr::Cast { expr, data_type, .. } => {
+                // Don't rewrite the inner expression if we're casting to TEXT
+                // This prevents decimal values from being wrapped when casting to text
+                match data_type {
+                    DataType::Text | DataType::Varchar(_) | DataType::Char(_) => {
+                        // For text casts, we don't want decimal wrapping
+                        // The value should be passed as-is to allow proper formatting
+                    }
+                    _ => {
+                        // For other casts, recursively rewrite the inner expression
+                        self.rewrite_expression(expr, context)?;
+                    }
+                }
+            }
             // Skip Case for now due to API changes
             _ => {}
         }
@@ -645,6 +661,27 @@ impl<'a> DecimalQueryRewriter<'a> {
             }
         }
         Ok(())
+    }
+    
+    /// Rewrite UPDATE assignment expression
+    /// This is special because we don't want to wrap simple numeric literals
+    /// to avoid rust_decimal panics on very large numbers
+    fn rewrite_update_assignment(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
+        match expr {
+            // For simple numeric values, don't wrap them
+            Expr::Value(val) => {
+                match &val.value {
+                    sqlparser::ast::Value::Number(_, _) => {
+                        // Don't wrap simple numeric literals in UPDATE assignments
+                        // This allows storing very large NUMERIC values that exceed rust_decimal's capacity
+                        Ok(())
+                    }
+                    _ => Ok(())
+                }
+            }
+            // For other expressions, use the normal rewriting logic
+            _ => self.rewrite_expression(expr, context)
+        }
     }
     
     /// Rewrite ORDER BY clause
