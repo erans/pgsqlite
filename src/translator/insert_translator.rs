@@ -346,6 +346,22 @@ impl InsertTranslator {
             return Ok(value.to_string());
         }
         
+        // Check for date/time function calls (not quoted)
+        let value_upper = value.to_uppercase();
+        if !value.starts_with('\'') {
+            // Handle NOW() -> CURRENT_TIMESTAMP conversion for SQLite
+            if value_upper == "NOW()" {
+                return Ok("CURRENT_TIMESTAMP".to_string());
+            }
+            // Other date/time functions that SQLite handles natively
+            if value_upper == "CURRENT_DATE" ||
+               value_upper == "CURRENT_TIME" ||
+               value_upper == "CURRENT_TIMESTAMP" ||
+               value_upper.starts_with("CURRENT_") {
+                return Ok(value.to_string());
+            }
+        }
+        
         // Remove quotes if present
         let unquoted = if value.starts_with('\'') && value.ends_with('\'') && value.len() > 1 {
             &value[1..value.len()-1]
