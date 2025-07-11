@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed unused variable warnings in batch INSERT fingerprinting
 - Fixed batch INSERT handling of datetime functions (CURRENT_DATE, CURRENT_TIME, NOW(), etc.)
 - Fixed NOW() function translation to CURRENT_TIMESTAMP for SQLite compatibility
+- Fixed INSERT statement parsing to properly handle trailing semicolons
 
 ## [0.0.5] - Previous Release
 
