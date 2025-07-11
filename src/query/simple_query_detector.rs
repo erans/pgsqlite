@@ -11,7 +11,7 @@ static SIMPLE_INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static SIMPLE_UPDATE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*UPDATE\s+\w+\s+SET\s+\w+\s*=\s*('[^']*'|\d+)\s*(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*;?\s*$").unwrap()
+    Regex::new(r"(?i)^\s*UPDATE\s+\w+\s+SET\s+(?:\w+\s*=\s*(?:'[^']*'|\d+(?:\.\d+)?|NULL)\s*,?\s*)+\s*(WHERE\s+\w+\s*=\s*(?:'[^']*'|\d+(?:\.\d+)?|NULL))?\s*;?\s*$").unwrap()
 });
 
 static SIMPLE_DELETE_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -88,6 +88,8 @@ mod tests {
         assert!(is_ultra_simple_query("SELECT * FROM users LIMIT 10"));
         assert!(is_ultra_simple_query("INSERT INTO users (name) VALUES ('test')"));
         assert!(is_ultra_simple_query("UPDATE users SET name = 'test' WHERE id = 1"));
+        assert!(is_ultra_simple_query("UPDATE users SET name = 'test', age = 25"));
+        assert!(is_ultra_simple_query("UPDATE users SET price = 99.99, quantity = 5 WHERE id = 1"));
         assert!(is_ultra_simple_query("DELETE FROM users WHERE id = 1"));
         
         // Complex queries that should fail

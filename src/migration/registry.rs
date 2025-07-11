@@ -13,6 +13,7 @@ lazy_static! {
         register_v4_datetime_integer_storage(&mut registry);
         register_v5_pg_catalog_tables(&mut registry);
         register_v6_varchar_constraints(&mut registry);
+        register_v7_numeric_constraints(&mut registry);
         
         registry
     };
@@ -668,5 +669,48 @@ fn register_v6_varchar_constraints(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![5],
+    });
+}
+
+/// Version 7: NUMERIC/DECIMAL precision and scale constraints
+fn register_v7_numeric_constraints(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(7, Migration {
+        version: 7,
+        name: "numeric_constraints",
+        description: "Add support for NUMERIC/DECIMAL precision and scale constraints",
+        up: MigrationAction::SqlBatch(&[
+            // Create table for numeric constraints
+            r#"
+            CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                precision INTEGER NOT NULL,
+                scale INTEGER NOT NULL,
+                PRIMARY KEY (table_name, column_name)
+            );
+            "#,
+            
+            // Create index for efficient lookups
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_numeric_constraints_table 
+            ON __pgsqlite_numeric_constraints(table_name);
+            "#,
+            
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata 
+            SET value = '7', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            DROP INDEX IF EXISTS idx_numeric_constraints_table;
+            DROP TABLE IF EXISTS __pgsqlite_numeric_constraints;
+            
+            UPDATE __pgsqlite_metadata 
+            SET value = '6', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![6],
     });
 }

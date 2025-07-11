@@ -61,6 +61,9 @@ impl QueryContextAnalyzer {
             } else if query_lower.contains(&format!("{}::float8", param)) ||
                       query_lower.contains(&format!("{}::double precision", param)) {
                 types.push(PgType::Float8.to_oid()); // Explicit cast to float8
+            } else if query_lower.contains(&format!("{}::numeric", param)) ||
+                      query_lower.contains(&format!("{}::decimal", param)) {
+                types.push(PgType::Numeric.to_oid()); // Explicit cast to numeric
             } else {
                 types.push(0); // Unknown - will need to be determined from schema
             }

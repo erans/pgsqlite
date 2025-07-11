@@ -121,8 +121,9 @@ impl QueryExecutor {
                     return Ok(());
                 }
                 QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                    // Don't use execute_dml directly - fall through to apply translations
-                    // return Self::execute_dml(framed, db, query).await;
+                    // For ultra-simple queries, bypass all validation and translation
+                    debug!("Using ultra-fast path for DML query: {}", query);
+                    return Self::execute_dml(framed, db, query).await;
                 }
                 _ => {} // Fall through to normal processing
             }
@@ -150,6 +151,15 @@ impl QueryExecutor {
         } else {
             query.to_string()
         };
+        
+        // Translate NUMERIC to TEXT casts with proper formatting
+        if crate::translator::NumericFormatTranslator::needs_translation(&translated_query) {
+            use crate::translator::NumericFormatTranslator;
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            translated_query = NumericFormatTranslator::translate_query(&translated_query, &conn);
+            drop(conn); // Release the connection
+        }
         
         // Translate INSERT statements with datetime values if needed
         if crate::translator::InsertTranslator::needs_translation(&translated_query) {
@@ -397,10 +407,56 @@ impl QueryExecutor {
             return Self::execute_dml_with_returning(framed, db, query).await;
         }
         
+        // Validate numeric constraints for INSERT/UPDATE before execution
+        use crate::query::{QueryTypeDetector, QueryType};
+        use crate::validator::NumericValidator;
+        
+        // Validate before executing - do all database work before any await
+        let validation_error = match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Insert => {
+                if let Some(table_name) = extract_table_name_from_insert(query) {
+                    // Get a connection to check constraints
+                    let conn = db.get_mut_connection()
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    
+                    // Validate numeric constraints
+                    let validation_result = NumericValidator::validate_insert(&conn, query, &table_name);
+                    drop(conn); // Release connection before any await
+                    
+                    validation_result.err()
+                } else {
+                    None
+                }
+            }
+            QueryType::Update => {
+                if let Some(table_name) = extract_table_name_from_update(query) {
+                    // Get a connection to check constraints
+                    let conn = db.get_mut_connection()
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    
+                    // Validate numeric constraints
+                    let validation_result = NumericValidator::validate_update(&conn, query, &table_name);
+                    drop(conn); // Release connection before any await
+                    
+                    validation_result.err()
+                } else {
+                    None
+                }
+            }
+            _ => None, // No validation needed for DELETE or other DML
+        };
+        
+        // If there was a validation error, send it and return
+        if let Some(e) = validation_error {
+            let error_response = e.to_error_response();
+            framed.send(BackendMessage::ErrorResponse(error_response)).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            return Ok(());
+        }
+        
         let response = db.execute(query).await?;
         
         // Optimized tag creation with static strings for common cases and buffer pooling for larger counts
-        use crate::query::{QueryTypeDetector, QueryType};
         let tag = match QueryTypeDetector::detect_query_type(query) {
             QueryType::Insert => create_command_tag("INSERT", response.rows_affected),
             QueryType::Update => create_command_tag("UPDATE", response.rows_affected),
@@ -672,7 +728,7 @@ impl QueryExecutor {
                 }
                 
                 // Store each type mapping
-                for (full_column, type_mapping) in type_mappings {
+                for (full_column, type_mapping) in &type_mappings {
                     // Split table.column format
                     let parts: Vec<&str> = full_column.split('.').collect();
                     if parts.len() == 2 && parts[0] == table_name {
@@ -688,7 +744,14 @@ impl QueryExecutor {
                         
                         // Store string constraints if present
                         if let Some(modifier) = type_mapping.type_modifier {
-                            let pg_type_lower = type_mapping.pg_type.to_lowercase();
+                            // Extract base type without parameters
+                            let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                type_mapping.pg_type[..paren_pos].trim()
+                            } else {
+                                &type_mapping.pg_type
+                            };
+                            let pg_type_lower = base_type.to_lowercase();
+                            
                             if pg_type_lower == "varchar" || pg_type_lower == "char" || 
                                pg_type_lower == "character varying" || pg_type_lower == "character" ||
                                pg_type_lower == "nvarchar" {
@@ -702,6 +765,27 @@ impl QueryExecutor {
                                 match db.execute(&constraint_query).await {
                                     Ok(_) => info!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
                                     Err(e) => debug!("Failed to store string constraint for {}.{}: {}", table_name, parts[1], e),
+                                }
+                            } else if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                                // Decode precision and scale from modifier
+                                let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                                let precision = (tmp_typmod >> 16) & 0xFFFF;
+                                let scale = tmp_typmod & 0xFFFF;
+                                
+                                
+                                let constraint_query = format!(
+                                    "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) 
+                                     VALUES ('{}', '{}', {}, {})",
+                                    table_name, parts[1], precision, scale
+                                );
+                                
+                                match db.execute(&constraint_query).await {
+                                    Ok(_) => {
+                                        info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                    }
+                                    Err(e) => {
+                                        debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                    }
                                 }
                             }
                         }
@@ -727,6 +811,9 @@ impl QueryExecutor {
                         info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
                     }
                 }
+                
+                // Numeric validation is now handled at the application layer in execute_dml
+                // No need for triggers anymore
                 
                 // Datetime conversion is now handled by InsertTranslator and value converters
                 // No need for triggers anymore
@@ -924,6 +1011,56 @@ fn extract_table_name_from_create(query: &str) -> Option<String> {
     }).unwrap_or(after_create.len());
     
     let table_name = after_create[..table_end].trim();
+    
+    // Remove quotes if present
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract table name from INSERT statement
+fn extract_table_name_from_insert(query: &str) -> Option<String> {
+    // Look for INSERT INTO pattern with case-insensitive search
+    let insert_pos = query.as_bytes().windows(11)
+        .position(|window| window.eq_ignore_ascii_case(b"INSERT INTO"))?;
+    
+    let after_insert = &query[insert_pos + 11..].trim();
+    
+    // Find the end of table name
+    let table_end = after_insert.find(|c: char| {
+        c.is_whitespace() || c == '(' || c == ';'
+    }).unwrap_or(after_insert.len());
+    
+    let table_name = after_insert[..table_end].trim();
+    
+    // Remove quotes if present
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract table name from UPDATE statement
+fn extract_table_name_from_update(query: &str) -> Option<String> {
+    // Look for UPDATE pattern with case-insensitive search
+    let update_pos = query.as_bytes().windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b"UPDATE"))?;
+    
+    let after_update = &query[update_pos + 6..].trim();
+    
+    // Find the end of table name (SET keyword)
+    let table_end = after_update.find(|c: char| {
+        c.is_whitespace() || c == ';'
+    }).unwrap_or(after_update.len());
+    
+    let table_name = after_update[..table_end].trim();
     
     // Remove quotes if present
     let table_name = table_name.trim_matches('"').trim_matches('\'');

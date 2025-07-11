@@ -324,16 +324,35 @@ impl CreateTableTranslator {
         }
     }
     
-    /// Extract type modifier from type definition (e.g., VARCHAR(255) -> Some(255))
+    /// Extract type modifier from type definition
+    /// For VARCHAR/CHAR: extracts length as modifier (e.g., VARCHAR(255) -> Some(255))
+    /// For NUMERIC/DECIMAL: encodes precision and scale (e.g., NUMERIC(10,2) -> Some(655366))
     fn extract_type_modifier(type_name: &str) -> Option<i32> {
         // Look for pattern like TYPE(n) or TYPE(n,m)
         if let Some(start) = type_name.find('(') {
             if let Some(end) = type_name.find(')') {
                 let params = &type_name[start + 1..end];
-                // For now, we only care about the first parameter (length)
-                if let Some(first_param) = params.split(',').next() {
-                    if let Ok(length) = first_param.trim().parse::<i32>() {
-                        return Some(length);
+                let type_base = type_name[..start].trim().to_uppercase();
+                
+                // Handle NUMERIC/DECIMAL with precision and scale
+                if type_base == "NUMERIC" || type_base == "DECIMAL" {
+                    let parts: Vec<&str> = params.split(',').collect();
+                    if let Ok(precision) = parts[0].trim().parse::<i32>() {
+                        let scale = if parts.len() > 1 {
+                            parts[1].trim().parse::<i32>().unwrap_or(0)
+                        } else {
+                            0
+                        };
+                        // Encode as PostgreSQL does: ((precision << 16) | scale) + VARHDRSZ
+                        // VARHDRSZ = 4
+                        return Some(((precision << 16) | (scale & 0xFFFF)) + 4);
+                    }
+                } else {
+                    // For other types (VARCHAR, CHAR), just return the first parameter
+                    if let Some(first_param) = params.split(',').next() {
+                        if let Ok(length) = first_param.trim().parse::<i32>() {
+                            return Some(length);
+                        }
                     }
                 }
             }
@@ -368,8 +387,9 @@ mod tests {
         assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR()"), None);
         assert_eq!(CreateTableTranslator::extract_type_modifier("VARCHAR(abc)"), None);
         
-        // NUMERIC with precision and scale - only first param
-        assert_eq!(CreateTableTranslator::extract_type_modifier("NUMERIC(10,2)"), Some(10));
+        // NUMERIC with precision and scale - encoded as PostgreSQL format
+        // ((10 << 16) | 2) + 4 = 655366
+        assert_eq!(CreateTableTranslator::extract_type_modifier("NUMERIC(10,2)"), Some(655366));
     }
     
     #[test]

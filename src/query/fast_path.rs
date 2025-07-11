@@ -408,7 +408,25 @@ pub fn query_fast_path(
                                     values.push(Some(int_val.to_string().into_bytes()));
                                 }
                             },
-                            ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
+                            ValueRef::Real(f) => {
+                                // Check if this is a numeric/decimal column that needs formatting
+                                let pg_type = column_types.get(i)
+                                    .and_then(|opt| opt.as_ref())
+                                    .map(|s| s.to_lowercase())
+                                    .unwrap_or_default();
+                                
+                                if pg_type == "numeric" || pg_type == "decimal" {
+                                    let formatted = crate::types::numeric_utils::format_numeric_with_scale(
+                                        f, 
+                                        &table_name, 
+                                        &columns[i], 
+                                        conn
+                                    );
+                                    values.push(Some(formatted.into_bytes()));
+                                } else {
+                                    values.push(Some(f.to_string().into_bytes()));
+                                }
+                            },
                             ValueRef::Text(s) => values.push(Some(s.to_vec())),
                             ValueRef::Blob(b) => values.push(Some(b.to_vec())),
                         }
@@ -638,7 +656,25 @@ fn execute_fast_select_with_params(
                         }
                     }
                 },
-                ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
+                ValueRef::Real(f) => {
+                    // Check if this is a numeric/decimal column that needs formatting
+                    let pg_type = column_types.get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|s| s.to_lowercase())
+                        .unwrap_or_default();
+                    
+                    if pg_type == "numeric" || pg_type == "decimal" {
+                        let formatted = crate::types::numeric_utils::format_numeric_with_scale(
+                            f, 
+                            &table_name, 
+                            &columns[i], 
+                            conn
+                        );
+                        values.push(Some(formatted.into_bytes()));
+                    } else {
+                        values.push(Some(f.to_string().into_bytes()));
+                    }
+                },
                 ValueRef::Text(s) => values.push(Some(s.to_vec())),
                 ValueRef::Blob(b) => values.push(Some(b.to_vec())),
             }
@@ -738,7 +774,25 @@ fn execute_fast_select(
                         }
                     }
                 },
-                ValueRef::Real(f) => values.push(Some(f.to_string().into_bytes())),
+                ValueRef::Real(f) => {
+                    // Check if this is a numeric/decimal column that needs formatting
+                    let pg_type = column_types.get(i)
+                        .and_then(|opt| opt.as_ref())
+                        .map(|s| s.to_lowercase())
+                        .unwrap_or_default();
+                    
+                    if pg_type == "numeric" || pg_type == "decimal" {
+                        let formatted = crate::types::numeric_utils::format_numeric_with_scale(
+                            f, 
+                            &table_name, 
+                            &columns[i], 
+                            conn
+                        );
+                        values.push(Some(formatted.into_bytes()));
+                    } else {
+                        values.push(Some(f.to_string().into_bytes()));
+                    }
+                },
                 ValueRef::Text(s) => values.push(Some(s.to_vec())),
                 ValueRef::Blob(b) => values.push(Some(b.to_vec())),
             }

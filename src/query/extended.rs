@@ -4,6 +4,7 @@ use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::{DecimalHandler, PgType};
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
+use crate::validator::NumericValidator;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
@@ -222,6 +223,14 @@ impl ExtendedQueryHandler {
         } else {
             cleaned_query.clone()
         };
+        
+        // Translate NUMERIC to TEXT casts with proper formatting
+        if crate::translator::NumericFormatTranslator::needs_translation(&translated_for_analysis) {
+            let conn = db.get_mut_connection()
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+            translated_for_analysis = crate::translator::NumericFormatTranslator::translate_query(&translated_for_analysis, &conn);
+            drop(conn);
+        }
         
         // Translate datetime functions if needed and capture metadata
         let mut translation_metadata = crate::translator::TranslationMetadata::new();
@@ -747,6 +756,51 @@ impl ExtendedQueryHandler {
 
         // Use translated query if available, otherwise use original
         let query_to_use = translated_query.as_ref().unwrap_or(&query);
+        
+        // Validate numeric constraints before parameter substitution
+        let validation_error = if query_starts_with_ignore_case(query_to_use, "INSERT") {
+            if let Some(table_name) = Self::extract_table_name_from_insert(query_to_use) {
+                // For parameterized queries, we need to check constraints with actual values
+                // Build a substituted query just for validation
+                let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+                
+                let conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                let validation_result = NumericValidator::validate_insert(&conn, &validation_query, &table_name);
+                drop(conn); // Release connection before any await
+                
+                validation_result.err()
+            } else {
+                None
+            }
+        } else if query_starts_with_ignore_case(query_to_use, "UPDATE") {
+            if let Some(table_name) = Self::extract_table_name_from_update(query_to_use) {
+                // For parameterized queries, we need to check constraints with actual values
+                // Build a substituted query just for validation
+                let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+                
+                let conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                
+                let validation_result = NumericValidator::validate_update(&conn, &validation_query, &table_name);
+                drop(conn); // Release connection before any await
+                
+                validation_result.err()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
+        // If there was a validation error, send it and return
+        if let Some(e) = validation_error {
+            let error_response = e.to_error_response();
+            framed.send(BackendMessage::ErrorResponse(error_response)).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            return Ok(());
+        }
         
         // Convert bound values and substitute parameters
         let final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
@@ -2603,6 +2657,8 @@ impl ExtendedQueryHandler {
             return Self::execute_dml_with_returning(framed, db, query, &result_formats).await;
         }
         
+        // Validation is now done in handle_execute before parameter substitution
+        
         let response = db.execute(query).await?;
         
         let tag = if query_starts_with_ignore_case(query, "INSERT") {
@@ -2881,7 +2937,7 @@ impl ExtendedQueryHandler {
                     )";
                     let _ = db.execute(init_query).await;
                     
-                    // Store each type mapping
+                    // Store each type mapping and numeric constraints
                     for (full_column, type_mapping) in type_mappings {
                         // Split table.column format
                         let parts: Vec<&str> = full_column.split('.').collect();
@@ -2891,6 +2947,39 @@ impl ExtendedQueryHandler {
                                 table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
                             );
                             let _ = db.execute(&insert_query).await;
+                            
+                            // Store numeric constraints if applicable
+                            if let Some(modifier) = type_mapping.type_modifier {
+                                // Extract base type without parameters
+                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                    type_mapping.pg_type[..paren_pos].trim()
+                                } else {
+                                    &type_mapping.pg_type
+                                };
+                                let pg_type_lower = base_type.to_lowercase();
+                                
+                                if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                                    // Decode precision and scale from modifier
+                                    let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                                    let precision = (tmp_typmod >> 16) & 0xFFFF;
+                                    let scale = tmp_typmod & 0xFFFF;
+                                    
+                                    let constraint_query = format!(
+                                        "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) 
+                                         VALUES ('{}', '{}', {}, {})",
+                                        table_name, parts[1], precision, scale
+                                    );
+                                    
+                                    match db.execute(&constraint_query).await {
+                                        Ok(_) => {
+                                            info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                        }
+                                        Err(e) => {
+                                            debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     
@@ -3411,6 +3500,56 @@ impl ExtendedQueryHandler {
         }
         
         tables
+    }
+    
+    /// Extract table name from INSERT statement
+    fn extract_table_name_from_insert(query: &str) -> Option<String> {
+        // Look for INSERT INTO pattern with case-insensitive search
+        let insert_pos = query.as_bytes().windows(11)
+            .position(|window| window.eq_ignore_ascii_case(b"INSERT INTO"))?;
+        
+        let after_insert = &query[insert_pos + 11..].trim();
+        
+        // Find the end of table name
+        let table_end = after_insert.find(|c: char| {
+            c.is_whitespace() || c == '(' || c == ';'
+        }).unwrap_or(after_insert.len());
+        
+        let table_name = after_insert[..table_end].trim();
+        
+        // Remove quotes if present
+        let table_name = table_name.trim_matches('"').trim_matches('\'');
+        
+        if !table_name.is_empty() {
+            Some(table_name.to_string())
+        } else {
+            None
+        }
+    }
+    
+    /// Extract table name from UPDATE statement
+    fn extract_table_name_from_update(query: &str) -> Option<String> {
+        // Look for UPDATE pattern with case-insensitive search
+        let update_pos = query.as_bytes().windows(6)
+            .position(|window| window.eq_ignore_ascii_case(b"UPDATE"))?;
+        
+        let after_update = &query[update_pos + 6..].trim();
+        
+        // Find the end of table name (SET keyword)
+        let table_end = after_update.find(|c: char| {
+            c.is_whitespace() || c == ';'
+        }).unwrap_or(after_update.len());
+        
+        let table_name = after_update[..table_end].trim();
+        
+        // Remove quotes if present
+        let table_name = table_name.trim_matches('"').trim_matches('\'');
+        
+        if !table_name.is_empty() {
+            Some(table_name.to_string())
+        } else {
+            None
+        }
     }
 }
 
