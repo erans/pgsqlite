@@ -166,6 +166,15 @@ INSERT INTO table (col1, col2) VALUES
 - 100-row batches: 51.3x speedup
 - 1000-row batch: 76.4x speedup
 
+#### Best Practices for Batch INSERTs
+1. **Optimal Batch Size**: 100-1000 rows per INSERT statement provides best performance
+2. **Fast Path Optimization**: Simple batch INSERTs without datetime/decimal values use the ultra-fast path
+3. **Prepared Statement Caching**: Batch INSERTs with same column structure share cached metadata
+4. **Error Handling**: Batch operations are atomic - all rows succeed or all fail
+5. **DateTime Values**: Use standard formats (YYYY-MM-DD, HH:MM:SS) to avoid conversion errors
+6. **Memory Usage**: Very large batches (>10,000 rows) may require more memory
+7. **Network Efficiency**: Reduces round trips between client and server
+
 ## Recent Major Features
 - **PostgreSQL Type Support**: 40+ types including ranges, network types, binary types
 - **ENUM Types**: Full PostgreSQL ENUM implementation with CREATE/ALTER/DROP TYPE

@@ -227,7 +227,9 @@ impl InsertTranslator {
                                 let values = Self::parse_values(inner)?;
                                 
                                 if values.len() != columns.len() {
-                                    return Err(format!("Column count mismatch: {} columns but {} values in row", columns.len(), values.len()));
+                                    // For batch INSERTs, indicate which row has the problem
+                                    let row_num = result_rows.len() + 1;
+                                    return Err(format!("Column count mismatch in row {}: {} columns but {} values", row_num, columns.len(), values.len()));
                                 }
                                 
                                 // Convert each value based on column type
@@ -355,19 +357,19 @@ impl InsertTranslator {
             "date" => {
                 match ValueConverter::convert_date_to_unix(unquoted) {
                     Ok(days) => Ok(days),
-                    Err(e) => Err(format!("Failed to convert date '{}': {}", unquoted, e))
+                    Err(e) => Err(format!("Invalid date value '{}': {}. Expected format: YYYY-MM-DD", unquoted, e))
                 }
             }
             "time" => {
                 match ValueConverter::convert_time_to_seconds(unquoted) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Failed to convert time '{}': {}", unquoted, e))
+                    Err(e) => Err(format!("Invalid time value '{}': {}. Expected format: HH:MM:SS[.ffffff]", unquoted, e))
                 }
             }
             "timestamp" => {
                 match ValueConverter::convert_timestamp_to_unix(unquoted) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Failed to convert timestamp '{}': {}", unquoted, e))
+                    Err(e) => Err(format!("Invalid timestamp value '{}': {}. Expected format: YYYY-MM-DD HH:MM:SS[.ffffff]", unquoted, e))
                 }
             }
             "timestamptz" | "timetz" | "interval" => {

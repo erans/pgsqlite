@@ -11,6 +11,11 @@ static INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^\s*INSERT\s+INTO\s+(\w+)\s*\(").unwrap()
 });
 
+static BATCH_INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
+    // Matches multi-row INSERT: INSERT INTO table (cols) VALUES (row1), (row2), ...
+    Regex::new(r"(?i)^\s*INSERT\s+INTO\s+(\w+)\s*\([^)]+\)\s*VALUES\s*\([^)]+\)(?:\s*,\s*\([^)]+\))+\s*;?\s*$").unwrap()
+});
+
 static SELECT_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^\s*SELECT\s+.+\s+FROM\s+(\w+)").unwrap()
 });
@@ -232,8 +237,31 @@ pub fn can_use_fast_path_enhanced(query: &str) -> Option<FastPathQuery> {
     None
 }
 
+/// Check if a batch INSERT can use fast path (no datetime/decimal types)
+pub fn can_batch_insert_use_fast_path(query: &str) -> Option<String> {
+    // First check if it matches batch INSERT pattern
+    if let Some(caps) = BATCH_INSERT_REGEX.captures(query) {
+        // Check for patterns that would require translation
+        if query.contains("::") || // PostgreSQL casts
+           query.contains("CURRENT_") || // DateTime functions
+           query.contains("NOW()") ||
+           (query.contains("'") && query.contains('-')) || // Date patterns
+           (query.contains("'") && query.contains(':')) {  // Time patterns
+            return None;
+        }
+        
+        return caps.get(1).map(|m| m.as_str().to_string());
+    }
+    None
+}
+
 /// Check if a query is simple enough for fast path execution (legacy function)
 pub fn can_use_fast_path(query: &str) -> Option<String> {
+    // Check for batch INSERT first
+    if let Some(table) = can_batch_insert_use_fast_path(query) {
+        return Some(table);
+    }
+    
     // Check for simple patterns and extract table name
     if let Some(caps) = INSERT_REGEX.captures(query) {
         return caps.get(1).map(|m| m.as_str().to_string());
@@ -828,6 +856,26 @@ mod tests {
         assert!(can_use_fast_path("SELECT * FROM users JOIN posts").is_none());
         assert!(can_use_fast_path("SELECT * FROM (SELECT * FROM users)").is_none());
         assert!(can_use_fast_path("UPDATE users SET name = (SELECT name FROM other)").is_none());
+    }
+    
+    #[test]
+    fn test_batch_insert_fast_path() {
+        // Simple batch INSERTs that should use fast path
+        assert_eq!(
+            can_batch_insert_use_fast_path("INSERT INTO users (id, name) VALUES (1, 'test'), (2, 'test2')"),
+            Some("users".to_string())
+        );
+        assert_eq!(
+            can_batch_insert_use_fast_path("INSERT INTO products (id, price) VALUES (1, 99.99), (2, 149.99), (3, 199.99)"),
+            Some("products".to_string())
+        );
+        
+        // Batch INSERTs with datetime that should NOT use fast path
+        assert!(can_batch_insert_use_fast_path("INSERT INTO orders (id, date) VALUES (1, '2024-01-01'), (2, '2024-01-02')").is_none());
+        assert!(can_batch_insert_use_fast_path("INSERT INTO logs (id, time) VALUES (1, '14:30:00'), (2, '15:45:00')").is_none());
+        
+        // Non-batch INSERT should not match
+        assert!(can_batch_insert_use_fast_path("INSERT INTO users (id, name) VALUES (1, 'test')").is_none());
     }
     
     #[test]

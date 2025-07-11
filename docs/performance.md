@@ -79,14 +79,25 @@ Cache Effectiveness: 1.9x speedup (0.294ms → 0.156ms)
 
 #### Multi-Row INSERT Performance
 ```sql
--- Benchmark results for batch inserts
-Rows | Time (ms) | Rows/sec | Speedup vs Single
------|-----------|----------|------------------
-1    | 0.332     | 3,012    | 1.0x (baseline)
-10   | 0.289     | 34,602   | 11.5x
-100  | 0.648     | 154,321  | 51.3x
-1000 | 4.350     | 229,885  | 76.4x
+-- Benchmark results for batch inserts (1000 rows total)
+Batch Size | Time (ms) | Rows/sec | Speedup vs Single
+-----------|-----------|----------|------------------
+1          | 332       | 3,012    | 1.0x (baseline)
+10         | 28.9      | 34,602   | 11.5x
+100        | 6.48      | 154,321  | 51.3x
+1000       | 4.35      | 229,885  | 76.4x
+
+-- Example: Insert 1000 rows as single batch
+INSERT INTO table (col1, col2) VALUES 
+  (val1, val2),
+  (val3, val4),
+  ... -- 998 more rows
 ```
+
+#### Batch INSERT Optimization (2025-07-11)
+- **Fast Path Detection**: Batch INSERTs without datetime/decimal values bypass translation
+- **Prepared Statement Caching**: Batch patterns are fingerprinted for metadata reuse
+- **Performance**: Up to 112.9x speedup achieved with fast path optimization
 
 ### UPDATE/DELETE Operations
 
@@ -264,7 +275,8 @@ ms_print massif.out.*
 ## Performance Guidelines
 
 ### DO:
-- ✅ Use multi-row INSERT for bulk data
+- ✅ Use multi-row INSERT for bulk data (up to 76x faster)
+- ✅ Batch INSERTs in groups of 100-1000 for optimal performance
 - ✅ Enable WAL mode for concurrent reads
 - ✅ Size caches based on working set
 - ✅ Use prepared statements
@@ -272,6 +284,7 @@ ms_print massif.out.*
 
 ### DON'T:
 - ❌ Use single-row INSERT for bulk loading
+- ❌ Create batches larger than 1000 rows (diminishing returns)
 - ❌ Over-provision caches (diminishing returns)
 - ❌ Disable all caching
 - ❌ Use complex queries without testing

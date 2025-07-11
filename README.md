@@ -175,6 +175,10 @@ pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite, whi
 - **Best for**: Development, testing, prototyping, and single-user applications or low write throughput applications
 - **Typical overhead**: 40-300x vs raw SQLite depending on operation
 - **Optimizations**: Built-in query caching, connection pooling, and prepared statements
+- **Batch Operations**: Multi-row INSERT syntax provides dramatic performance improvements:
+  - 10-row batches: ~11x faster than single-row INSERTs
+  - 100-row batches: ~51x faster
+  - 1000-row batches: ~76x faster
 
 For production use cases with high performance requirements, consider using native PostgreSQL.
 
