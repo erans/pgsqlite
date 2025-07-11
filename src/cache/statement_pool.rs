@@ -45,6 +45,28 @@ impl StatementPool {
     pub fn global() -> &'static StatementPool {
         &GLOBAL_STATEMENT_POOL
     }
+    
+    /// Generate a normalized fingerprint for batch INSERT queries
+    /// This allows caching the same prepared statement for different batch sizes
+    pub fn batch_insert_fingerprint(query: &str) -> Option<String> {
+        let upper_query = query.to_uppercase();
+        
+        // Check if it's a batch INSERT (with or without spaces)
+        if !upper_query.contains("INSERT") || (!query.contains("),(") && !query.contains("), (")) {
+            return None;
+        }
+        
+        // Extract the pattern: INSERT INTO table (cols) VALUES
+        if let Some(_values_pos) = upper_query.find("VALUES") {
+            // Find the position in the original query (case-sensitive)
+            let original_values_pos = query.to_uppercase().find("VALUES").unwrap();
+            let prefix = &query[..original_values_pos + 6].trim(); // Include "VALUES"
+            // Replace the actual values with a placeholder
+            Some(format!("{} (?)", prefix))
+        } else {
+            None
+        }
+    }
 
     /// Prepare a statement and cache its metadata for future use
     pub fn prepare_and_cache<'conn>(
@@ -52,8 +74,15 @@ impl StatementPool {
         conn: &'conn Connection,
         query: &str,
     ) -> Result<(Statement<'conn>, StatementMetadata), rusqlite::Error> {
+        // For batch INSERTs, use a normalized fingerprint for caching
+        let cache_key = if let Some(fingerprint) = Self::batch_insert_fingerprint(query) {
+            fingerprint
+        } else {
+            query.to_string()
+        };
+        
         // Check if we have cached metadata for this query
-        if let Some(metadata) = self.get_metadata(query) {
+        if let Some(metadata) = self.get_metadata(&cache_key) {
             // We have metadata, prepare the statement with that info
             let stmt = conn.prepare(query)?;
             return Ok((stmt, metadata));
@@ -64,7 +93,7 @@ impl StatementPool {
         let metadata = self.extract_metadata(&stmt, query)?;
 
         // Cache the metadata
-        self.cache_metadata(query.to_string(), metadata.clone());
+        self.cache_metadata(cache_key, metadata.clone());
 
         Ok((stmt, metadata))
     }
@@ -279,5 +308,26 @@ mod tests {
             [&1i32 as &dyn rusqlite::ToSql]).unwrap();
         assert_eq!(columns, vec!["id", "name"]);
         assert_eq!(rows.len(), 1);
+    }
+    
+    #[test]
+    fn test_batch_insert_fingerprint() {
+        // Simple batch INSERT
+        let query = "INSERT INTO users (id, name) VALUES (1, 'test'), (2, 'test2')";
+        let fingerprint = StatementPool::batch_insert_fingerprint(query);
+        assert_eq!(fingerprint, Some("INSERT INTO users (id, name) VALUES (?)".to_string()));
+        
+        // Larger batch should have same fingerprint
+        let query2 = "INSERT INTO users (id, name) VALUES (1, 'test'), (2, 'test2'), (3, 'test3')";
+        let fingerprint2 = StatementPool::batch_insert_fingerprint(query2);
+        assert_eq!(fingerprint, fingerprint2);
+        
+        // Single row INSERT should not be fingerprinted
+        let single = "INSERT INTO users (id, name) VALUES (1, 'test')";
+        assert!(StatementPool::batch_insert_fingerprint(single).is_none());
+        
+        // Non-INSERT should not be fingerprinted
+        let select = "SELECT * FROM users WHERE id IN (1, 2, 3)";
+        assert!(StatementPool::batch_insert_fingerprint(select).is_none());
     }
 }

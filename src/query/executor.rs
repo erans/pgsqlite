@@ -172,7 +172,8 @@ impl QueryExecutor {
                 }
                 Err(e) => {
                     debug!("INSERT translation failed: {}", e);
-                    // Continue with original query
+                    // Return the error to the user
+                    return Err(PgSqliteError::Protocol(e));
                 }
             }
         }

@@ -8,12 +8,12 @@ pub struct InsertTranslator;
 
 // Pattern to match INSERT INTO table (...) VALUES (...)
 static INSERT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+)$").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:;?\s*$)").unwrap()
 });
 
 // Pattern to match INSERT INTO table VALUES (...) without column list
 static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+)$").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:;?\s*$)").unwrap()
 });
 
 impl InsertTranslator {
@@ -227,7 +227,9 @@ impl InsertTranslator {
                                 let values = Self::parse_values(inner)?;
                                 
                                 if values.len() != columns.len() {
-                                    return Err(format!("Column count mismatch: {} columns but {} values in row", columns.len(), values.len()));
+                                    // For batch INSERTs, indicate which row has the problem
+                                    let row_num = result_rows.len() + 1;
+                                    return Err(format!("Column count mismatch in row {}: {} columns but {} values", row_num, columns.len(), values.len()));
                                 }
                                 
                                 // Convert each value based on column type
@@ -344,6 +346,22 @@ impl InsertTranslator {
             return Ok(value.to_string());
         }
         
+        // Check for date/time function calls (not quoted)
+        let value_upper = value.to_uppercase();
+        if !value.starts_with('\'') {
+            // Handle NOW() -> CURRENT_TIMESTAMP conversion for SQLite
+            if value_upper == "NOW()" {
+                return Ok("CURRENT_TIMESTAMP".to_string());
+            }
+            // Other date/time functions that SQLite handles natively
+            if value_upper == "CURRENT_DATE" ||
+               value_upper == "CURRENT_TIME" ||
+               value_upper == "CURRENT_TIMESTAMP" ||
+               value_upper.starts_with("CURRENT_") {
+                return Ok(value.to_string());
+            }
+        }
+        
         // Remove quotes if present
         let unquoted = if value.starts_with('\'') && value.ends_with('\'') && value.len() > 1 {
             &value[1..value.len()-1]
@@ -355,19 +373,19 @@ impl InsertTranslator {
             "date" => {
                 match ValueConverter::convert_date_to_unix(unquoted) {
                     Ok(days) => Ok(days),
-                    Err(e) => Err(format!("Failed to convert date '{}': {}", unquoted, e))
+                    Err(e) => Err(format!("Invalid date value '{}': {}. Expected format: YYYY-MM-DD", unquoted, e))
                 }
             }
             "time" => {
                 match ValueConverter::convert_time_to_seconds(unquoted) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Failed to convert time '{}': {}", unquoted, e))
+                    Err(e) => Err(format!("Invalid time value '{}': {}. Expected format: HH:MM:SS[.ffffff]", unquoted, e))
                 }
             }
             "timestamp" => {
                 match ValueConverter::convert_timestamp_to_unix(unquoted) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Failed to convert timestamp '{}': {}", unquoted, e))
+                    Err(e) => Err(format!("Invalid timestamp value '{}': {}. Expected format: YYYY-MM-DD HH:MM:SS[.ffffff]", unquoted, e))
                 }
             }
             "timestamptz" | "timetz" | "interval" => {

@@ -28,24 +28,26 @@ async fn benchmark_batch_insert_performance() {
         [],
     ).unwrap();
     
-    // Create pgsqlite schema table
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
-            table_name TEXT NOT NULL,
-            column_name TEXT NOT NULL,
-            column_type TEXT NOT NULL,
-            PRIMARY KEY (table_name, column_name)
-        )",
-        [],
-    ).unwrap();
-    
-    // Insert schema info
-    conn.execute("INSERT INTO __pgsqlite_schema VALUES ('batch_test', 'id', 'int4')", []).unwrap();
-    conn.execute("INSERT INTO __pgsqlite_schema VALUES ('batch_test', 'name', 'text')", []).unwrap();
-    conn.execute("INSERT INTO __pgsqlite_schema VALUES ('batch_test', 'value', 'int4')", []).unwrap();
-    conn.execute("INSERT INTO __pgsqlite_schema VALUES ('batch_test', 'description', 'text')", []).unwrap();
-    
     drop(conn); // Close connection before starting server
+    
+    // First run migration
+    let output = tokio::process::Command::new("cargo")
+        .args(&["run", "--release", "--", "-d", db_path, "--migrate"])
+        .output()
+        .await
+        .expect("Failed to run migration");
+    
+    if !output.status.success() {
+        panic!("Migration failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    
+    // Now insert schema info for our test table
+    let conn = Connection::open(db_path).unwrap();
+    conn.execute("INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type) VALUES ('batch_test', 'id', 'int4')", []).unwrap();
+    conn.execute("INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type) VALUES ('batch_test', 'name', 'text')", []).unwrap();
+    conn.execute("INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type) VALUES ('batch_test', 'value', 'int4')", []).unwrap();
+    conn.execute("INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type) VALUES ('batch_test', 'description', 'text')", []).unwrap();
+    drop(conn);
     
     // Start pgsqlite server
     let port = 25437;
