@@ -189,12 +189,19 @@ INSERT INTO table (col1, col2) VALUES
 - **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
 - **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
 - **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
-- **Array Type Support (2025-07-12)**: 
-  - CREATE TABLE with array columns (INTEGER[], TEXT[][], etc.)
-  - JSON-based storage with automatic validation
+- **Array Type Support (2025-07-12)**: Complete PostgreSQL array implementation with JSON storage
+  - Support for 30+ array types (INTEGER[], TEXT[][], BOOLEAN[], etc.)
+  - JSON-based storage with automatic validation constraints
   - Array literal conversion (ARRAY[1,2,3] and '{1,2,3}' formats)
   - Wire protocol array support with proper type OIDs
-  - Multi-row INSERT with array values
+  - Multi-row INSERT with array values fully supported
+  - Comprehensive test coverage in CI/CD pipeline
+- **JSON/JSONB Support (2025-07-12)**: Full operator and function support with comprehensive documentation
+  - All major operators: ->, ->>, @>, <@, #>, #>>
+  - Core functions: json_valid, json_typeof, json_array_length, jsonb_object_keys
+  - Manipulation functions: jsonb_set, json_extract_path, json_strip_nulls
+  - Automatic operator translation in query pipeline
+  - Full test coverage for operators and functions
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings

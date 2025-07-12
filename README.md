@@ -191,6 +191,7 @@ For production use cases with high performance requirements, consider using nati
 - **[Unix Sockets](docs/unix-sockets.md)**: Lower latency local connections
 - **[Performance Tuning](docs/performance-tuning.md)**: Cache configuration and optimization
 - **[Architecture Overview](docs/architecture.md)**: How pgsqlite works internally
+- **[Array Support](docs/array-support.md)**: Comprehensive guide to PostgreSQL arrays
 - **[JSON/JSONB Support](docs/json-support.md)**: Comprehensive guide to JSON functionality
 - **[Future Features](docs/future-features.md)**: Roadmap for enhanced SQLite capabilities
 

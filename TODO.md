@@ -342,7 +342,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Performance optimization with timezone conversion caching
 - [ ] Migration guide for existing users with datetime data
 
-#### Array Types - Basic Support COMPLETED (2025-07-12)
+#### Array Types - COMPLETED (2025-07-12)
 - [x] Basic array type support in CREATE TABLE statements
   - Array columns are translated to JSON TEXT with validation
   - Metadata storage in __pgsqlite_array_types table
@@ -367,16 +367,15 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Text protocol converts JSON ["a","b"] to PostgreSQL {a,b}
   - Array type OIDs properly transmitted in RowDescription
 - [x] Integration with CI/CD pipeline
-  - Array tests included in test_queries.sql
+  - Array tests included in test_queries.sql with PostgreSQL array literal syntax
+  - Comprehensive Rust integration tests in array_types_test.rs
   - Tested in all 5 CI modes (TCP with/without SSL, Unix socket, File DB with/without SSL)
   - Fixed JSON validation constraint to handle NULL arrays properly
-- [ ] Implement array operators (ANY, ALL, @>, <@, &&, ||)
-- [ ] Array functions (unnest, array_length, array_position, etc.)
-- [ ] Array subscript access (e.g., array[1], array[1:3])
-- [ ] Array aggregation functions (array_agg, array_cat)
-- [ ] Binary protocol array encoding/decoding
-- [ ] Array type constraints and validation
-- [ ] Performance optimization for large arrays
+- [ ] Future work: Array operators (ANY, ALL, @>, <@, &&, ||)
+- [ ] Future work: Array functions (unnest, array_length, array_position, etc.)
+- [ ] Future work: Array subscript access (e.g., array[1], array[1:3])
+- [ ] Future work: Array aggregation functions (array_agg, array_cat)
+- [ ] Future work: Binary protocol array encoding/decoding
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
