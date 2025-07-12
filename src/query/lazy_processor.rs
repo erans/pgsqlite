@@ -29,8 +29,7 @@ impl<'a> LazyQueryProcessor<'a> {
             needs_schema_translation: query.contains("pg_catalog.") || query.contains("PG_CATALOG."),
             needs_numeric_cast_translation: crate::translator::NumericCastTranslator::needs_translation(query),
             needs_array_translation: query.contains("[") || query.contains("ANY(") || query.contains("ALL(") ||
-                                    query.contains("@>") || query.contains("<@") || query.contains("&&") ||
-                                    query.contains("||"),
+                                    query.contains("@>") || query.contains("<@") || query.contains("&&"),
         }
     }
     

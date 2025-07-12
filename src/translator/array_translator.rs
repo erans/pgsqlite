@@ -55,7 +55,9 @@ impl ArrayTranslator {
         result = Self::translate_contains_operator(&result)?;
         result = Self::translate_contained_operator(&result)?;
         result = Self::translate_overlap_operator(&result)?;
-        result = Self::translate_concat_operator(&result)?;
+        // TODO: || operator conflicts with string concatenation
+        // Need smarter detection to differentiate array concat from string concat
+        // result = Self::translate_concat_operator(&result)?;
         
         Ok(result)
     }
