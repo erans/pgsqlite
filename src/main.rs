@@ -392,7 +392,7 @@ where
                             "42000".to_string(),
                             format!("Query execution failed: {}", e),
                         );
-                        framed.send(BackendMessage::ErrorResponse(err)).await?;
+                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
                 }
 
@@ -428,7 +428,7 @@ where
                             "42000".to_string(),
                             format!("Parse failed: {}", e),
                         );
-                        framed.send(BackendMessage::ErrorResponse(err)).await?;
+                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
                             .send(BackendMessage::ReadyForQuery {
                                 status: *session.transaction_status.read().await,
@@ -463,7 +463,7 @@ where
                             "42000".to_string(),
                             format!("Bind failed: {}", e),
                         );
-                        framed.send(BackendMessage::ErrorResponse(err)).await?;
+                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
                             .send(BackendMessage::ReadyForQuery {
                                 status: *session.transaction_status.read().await,
@@ -490,7 +490,7 @@ where
                             "42000".to_string(),
                             format!("Execute failed: {}", e),
                         );
-                        framed.send(BackendMessage::ErrorResponse(err)).await?;
+                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
                             .send(BackendMessage::ReadyForQuery {
                                 status: *session.transaction_status.read().await,
@@ -510,7 +510,7 @@ where
                             "42000".to_string(),
                             format!("Describe failed: {}", e),
                         );
-                        framed.send(BackendMessage::ErrorResponse(err)).await?;
+                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
                             .send(BackendMessage::ReadyForQuery {
                                 status: *session.transaction_status.read().await,
@@ -529,7 +529,7 @@ where
                             "42000".to_string(),
                             format!("Close failed: {}", e),
                         );
-                        framed.send(BackendMessage::ErrorResponse(err)).await?;
+                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
                             .send(BackendMessage::ReadyForQuery {
                                 status: *session.transaction_status.read().await,

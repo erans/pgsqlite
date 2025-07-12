@@ -536,6 +536,19 @@ impl<'a> ExpressionTypeResolver<'a> {
             "EXTRACT" => PgType::Float8,
             "DATE_TRUNC" => PgType::Timestamp,
             "AGE" => PgType::Interval,
+            // Array functions
+            "ARRAY_AGG" => PgType::TextArray, // Generic array aggregate
+            "ARRAY_LENGTH" | "ARRAY_UPPER" | "ARRAY_LOWER" | "ARRAY_NDIMS" => PgType::Int4,
+            "ARRAY_APPEND" | "ARRAY_PREPEND" | "ARRAY_CAT" => PgType::TextArray,
+            "ARRAY_REMOVE" | "ARRAY_REPLACE" => PgType::TextArray,
+            "ARRAY_SLICE" => PgType::TextArray,
+            "ARRAY_POSITION" => PgType::Int4,
+            "ARRAY_POSITIONS" => PgType::Int4Array,
+            "ARRAY_TO_STRING" => PgType::Text,
+            "STRING_TO_ARRAY" => PgType::TextArray,
+            "UNNEST" => PgType::Text, // Simplified scalar version
+            // Array operators (these are handled differently but included for completeness)
+            "ARRAY_CONTAINS" | "ARRAY_CONTAINED" | "ARRAY_OVERLAP" => PgType::Bool,
             _ => PgType::Text, // Default for unknown functions
         }
     }

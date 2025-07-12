@@ -209,9 +209,8 @@ impl ArrayTranslator {
     
     /// Translate || operator: array1 || array2 -> array_cat(array1, array2)
     fn translate_concat_operator(sql: &str) -> Result<String, PgSqliteError> {
-        // Simple regex for array concatenation - this will have false positives with string concat
-        // but it's needed for array tests
-        let array_concat_regex = regex::Regex::new(r#"(\b\w+(?:\.\w+)*)\s*\|\|\s*('\[[^\]]+\]'|"[^"]+"|'[^']+')"#).unwrap();
+        // More specific regex for array concatenation - only match if the second operand looks like a JSON array
+        let array_concat_regex = regex::Regex::new(r#"(\b\w+(?:\.\w+)*)\s*\|\|\s*('\[[^\]]+\]')"#).unwrap();
         
         let mut result = sql.to_string();
         

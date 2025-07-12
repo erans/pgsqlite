@@ -131,7 +131,7 @@ impl ValueHandler {
         }
         
         // Check if this is an array type and needs JSON to array conversion
-        let pg_data = if PgType::from_oid(pg_type_oid).map_or(false, |t| t.is_array()) {
+        let pg_data = if PgType::from_oid(pg_type_oid).is_some_and(|t| t.is_array()) {
             // Convert JSON array to PostgreSQL array format for text protocol
             if !binary_format {
                 self.convert_json_to_pg_array(text_data)?
@@ -281,7 +281,7 @@ impl ValueHandler {
                 serde_json::Value::String(s) => {
                     // Escape quotes and backslashes
                     let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-                    format!("\"{}\"", escaped)
+                    format!("\"{escaped}\"")
                 }
                 serde_json::Value::Array(_) => {
                     // Nested arrays - convert recursively

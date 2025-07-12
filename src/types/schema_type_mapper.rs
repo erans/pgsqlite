@@ -266,9 +266,14 @@ impl SchemaTypeMapper {
             return PgType::Uuid.to_oid(); // Possibly a UUID
         }
         
-        // Check for JSON
-        if (s.starts_with('{') && s.ends_with('}')) || (s.starts_with('[') && s.ends_with(']')) {
-            return PgType::Json.to_oid(); // json
+        // Check for JSON objects vs arrays
+        if s.starts_with('{') && s.ends_with('}') {
+            return PgType::Json.to_oid(); // json object
+        }
+        
+        // Check for JSON arrays - treat as PostgreSQL arrays
+        if s.starts_with('[') && s.ends_with(']') {
+            return PgType::TextArray.to_oid(); // text[] array
         }
         
         PgType::Text.to_oid() // Default to text
@@ -362,6 +367,40 @@ impl SchemaTypeMapper {
                     }
                 }
             }
+        }
+        
+        // Array functions
+        if upper.starts_with("ARRAY_AGG(") {
+            return Some(PgType::TextArray.to_oid()); // text[]
+        }
+        
+        if upper.starts_with("ARRAY_LENGTH(") || upper.starts_with("ARRAY_UPPER(") || 
+           upper.starts_with("ARRAY_LOWER(") || upper.starts_with("ARRAY_NDIMS(") {
+            return Some(PgType::Int4.to_oid()); // int4
+        }
+        
+        if upper.starts_with("ARRAY_APPEND(") || upper.starts_with("ARRAY_PREPEND(") || 
+           upper.starts_with("ARRAY_CAT(") || upper.starts_with("ARRAY_REMOVE(") || 
+           upper.starts_with("ARRAY_REPLACE(") || upper.starts_with("ARRAY_SLICE(") ||
+           upper.starts_with("STRING_TO_ARRAY(") {
+            return Some(PgType::TextArray.to_oid()); // text[]
+        }
+        
+        if upper.starts_with("ARRAY_POSITION(") {
+            return Some(PgType::Int4.to_oid()); // int4
+        }
+        
+        if upper.starts_with("ARRAY_POSITIONS(") {
+            return Some(PgType::Int4Array.to_oid()); // int4[]
+        }
+        
+        if upper.starts_with("ARRAY_TO_STRING(") || upper.starts_with("UNNEST(") {
+            return Some(PgType::Text.to_oid()); // text
+        }
+        
+        if upper.starts_with("ARRAY_CONTAINS(") || upper.starts_with("ARRAY_CONTAINED(") || 
+           upper.starts_with("ARRAY_OVERLAP(") {
+            return Some(PgType::Bool.to_oid()); // bool
         }
         
         // Default return types when we can't determine from schema

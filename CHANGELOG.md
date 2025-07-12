@@ -47,6 +47,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improved error handling to provide more helpful messages for batch operations
 - Updated simple query detector to recognize and optimize batch INSERT patterns
 - Modified statement pool to support batch INSERT fingerprinting for better caching
+- **Code Quality Improvements**: Fixed major clippy warnings for better performance and maintainability
+  - Boxed large ErrorResponse enum variant to reduce memory usage
+  - Fixed inconsistent digit grouping in datetime constants
+  - Simplified complex type definitions with type aliases
+  - Updated format strings to use inline syntax
 
 ### Fixed
 - Fixed JSON validation constraint to handle NULL arrays properly (NULL check before json_valid())
@@ -55,6 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed batch INSERT handling of datetime functions (CURRENT_DATE, CURRENT_TIME, NOW(), etc.)
 - Fixed NOW() function translation to CURRENT_TIMESTAMP for SQLite compatibility
 - Fixed INSERT statement parsing to properly handle trailing semicolons
+- **Array Type Wire Protocol**: Fixed \"cannot convert between Rust type String and Postgres type _text\" error
+  - Array functions now properly convert JSON storage format to PostgreSQL array format
+  - Added array data conversion in query executor for proper client deserialization
+  - Text protocol correctly converts JSON arrays to PostgreSQL format (e.g., [\"a\",\"b\"] → {a,b})
 
 ## [0.0.5] - Previous Release
 

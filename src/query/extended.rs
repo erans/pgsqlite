@@ -798,7 +798,7 @@ impl ExtendedQueryHandler {
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
             let error_response = e.to_error_response();
-            framed.send(BackendMessage::ErrorResponse(error_response)).await
+            framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(|e| PgSqliteError::Io(e))?;
             return Ok(());
         }

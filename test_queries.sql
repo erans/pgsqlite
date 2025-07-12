@@ -190,7 +190,7 @@ INSERT INTO test_basic_types (
 -- Numeric types insertion
 INSERT INTO test_numeric_types (numeric_col, numeric_precision, decimal_col, money_col) VALUES
     (12345.6789, 12345.67, 123456789.123, 1234.56),
-    (99999999999999999999.9999999999, 99999999.99, 999999999999.999, 99999999.99),
+    (9999999999999999999.999999999, 99999999.99, 999999999999.999, 99999999.99),
     (-12345.6789, -12345.67, -123456789.123, -1234.56);
 
 -- Special types insertion

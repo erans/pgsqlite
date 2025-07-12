@@ -196,6 +196,7 @@ INSERT INTO table (col1, col2) VALUES
   - Wire protocol array support with proper type OIDs
   - Multi-row INSERT with array values fully supported
   - Comprehensive test coverage in CI/CD pipeline
+  - Fixed wire protocol conversion: JSON arrays now properly convert to PostgreSQL format
 - **JSON/JSONB Support (2025-07-12)**: Complete operator and function support with robust error handling
   - All major operators: ->, ->>, @>, <@, #>, #>>
   - Core functions: json_valid, json_typeof, json_array_length, jsonb_object_keys

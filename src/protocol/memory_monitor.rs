@@ -4,6 +4,10 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use tracing::{debug, warn, info};
 
+/// Type alias for cleanup callback functions
+type CleanupCallback = Box<dyn Fn() + Send + Sync>;
+type CleanupCallbacks = Arc<Mutex<Vec<CleanupCallback>>>;
+
 /// Configuration for memory pressure monitoring
 #[derive(Debug, Clone)]
 pub struct MemoryMonitorConfig {
@@ -134,7 +138,7 @@ pub struct MemoryMonitor {
     last_check: Arc<Mutex<Instant>>,
     
     // Cleanup callbacks
-    cleanup_callbacks: Arc<Mutex<Vec<Box<dyn Fn() + Send + Sync>>>>,
+    cleanup_callbacks: CleanupCallbacks,
 }
 
 impl MemoryMonitor {

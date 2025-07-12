@@ -11,6 +11,7 @@ use futures::SinkExt;
 use tracing::{info, debug};
 use std::sync::Arc;
 use rusqlite::params;
+use serde_json;
 
 /// Create a command complete tag with optimized static strings for common cases
 fn create_command_tag(operation: &str, rows_affected: usize) -> String {
@@ -388,6 +389,7 @@ impl QueryExecutor {
                         PgType::Text.to_oid()
                     };
                     
+                    
                     FieldDescription {
                         name: name.clone(),
                         table_oid: 0,
@@ -407,16 +409,20 @@ impl QueryExecutor {
         };
         
         // Send RowDescription
-        framed.send(BackendMessage::RowDescription(fields)).await
+        framed.send(BackendMessage::RowDescription(fields.clone())).await
             .map_err(|e| PgSqliteError::Io(e))?;
         
+        
+        // Convert array data before sending rows
+        let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
+        
         // Optimized data row sending for better SELECT performance
-        if response.rows.len() > 5 {
+        if converted_rows.len() > 5 {
             // Use batch sending for larger result sets
-            Self::send_data_rows_batched(framed, response.rows).await?;
+            Self::send_data_rows_batched(framed, converted_rows).await?;
         } else {
             // Use individual sending for small result sets
-            for row in response.rows {
+            for row in converted_rows {
                 framed.send(BackendMessage::DataRow(row)).await
                     .map_err(|e| PgSqliteError::Io(e))?;
             }
@@ -485,7 +491,7 @@ impl QueryExecutor {
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
             let error_response = e.to_error_response();
-            framed.send(BackendMessage::ErrorResponse(error_response)).await
+            framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(|e| PgSqliteError::Io(e))?;
             return Ok(());
         }
@@ -1029,6 +1035,160 @@ impl QueryExecutor {
                               column_name.starts_with("DATETIME(");
         
         has_datetime_translation || is_date_function
+    }
+    
+    /// Convert array data in rows using type OIDs from field descriptions
+    fn convert_array_data_in_rows(
+        rows: Vec<Vec<Option<Vec<u8>>>>,
+        fields: &[FieldDescription],
+    ) -> Result<Vec<Vec<Option<Vec<u8>>>>, PgSqliteError> {
+        // Extract type OIDs from field descriptions
+        let type_oids: Vec<i32> = fields.iter().map(|f| f.type_oid).collect();
+        
+        // Convert each row
+        let mut converted_rows = Vec::with_capacity(rows.len());
+        
+        for row in rows {
+            let mut converted_row = Vec::with_capacity(row.len());
+            
+            for (col_idx, cell) in row.into_iter().enumerate() {
+                let converted_cell = if let Some(data) = cell {
+                    let type_oid = type_oids.get(col_idx).copied().unwrap_or(25); // Default to TEXT
+                    
+                    // Check if this is an array type that needs conversion
+                    if PgType::from_oid(type_oid).map_or(false, |t| t.is_array()) {
+                        // Try to convert JSON array to PostgreSQL array format
+                        match Self::convert_json_to_pg_array(&data) {
+                            Ok(converted_data) => Some(converted_data),
+                            Err(_) => Some(data), // Keep original data if conversion fails
+                        }
+                    } else {
+                        Some(data)
+                    }
+                } else {
+                    None
+                };
+                
+                converted_row.push(converted_cell);
+            }
+            
+            converted_rows.push(converted_row);
+        }
+        
+        Ok(converted_rows)
+    }
+    
+    /// Convert JSON array string to PostgreSQL array format
+    fn convert_json_to_pg_array(json_data: &[u8]) -> Result<Vec<u8>, String> {
+        // Convert bytes to string
+        let s = std::str::from_utf8(json_data).map_err(|_| "Invalid UTF-8")?;
+        
+        // Try to parse as JSON array
+        match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(json_val) => {
+                if let serde_json::Value::Array(arr) = json_val {
+                    // Convert to PostgreSQL array literal format
+                    let pg_array = Self::json_array_to_pg_text(&arr);
+                    Ok(pg_array.into_bytes())
+                } else {
+                    // Not an array, return as-is
+                    Ok(json_data.to_vec())
+                }
+            }
+            Err(_) => {
+                // Not valid JSON, return as-is
+                Ok(json_data.to_vec())
+            }
+        }
+    }
+    
+    /// Convert JSON array elements to PostgreSQL text array format
+    fn json_array_to_pg_text(arr: &[serde_json::Value]) -> String {
+        let elements: Vec<String> = arr.iter().map(|elem| {
+            match elem {
+                serde_json::Value::Null => "NULL".to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => {
+                    // Escape quotes and backslashes
+                    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{}\"", escaped)
+                }
+                serde_json::Value::Array(_) => {
+                    // Nested arrays - convert recursively
+                    // For now, just stringify
+                    elem.to_string()
+                }
+                serde_json::Value::Object(_) => {
+                    // Objects - stringify
+                    elem.to_string()
+                }
+            }
+        }).collect();
+        
+        format!("{{{}}}", elements.join(","))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_json_to_pg_array_conversion() {
+        let json_data = b"[\"a\", \"b\", \"c\"]";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        let pg_array = String::from_utf8(result).unwrap();
+        assert_eq!(pg_array, r#"{"a","b","c"}"#);
+    }
+    
+    #[test]
+    fn test_json_to_pg_array_numbers() {
+        let json_data = b"[1, 2, 3]";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        let pg_array = String::from_utf8(result).unwrap();
+        assert_eq!(pg_array, "{1,2,3}");
+    }
+    
+    #[test]
+    fn test_non_array_json() {
+        let json_data = b"\"not an array\"";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        assert_eq!(result, json_data);
+    }
+    
+    #[test]
+    fn test_array_type_detection() {
+        use crate::protocol::FieldDescription;
+        
+        // Test that TextArray type OID 1009 is correctly detected as an array
+        let text_array_type = PgType::TextArray.to_oid();
+        assert_eq!(text_array_type, 1009);
+        assert!(PgType::from_oid(text_array_type).map_or(false, |t| t.is_array()));
+        
+        // Test that regular text is not detected as an array
+        let text_type = PgType::Text.to_oid();
+        assert_eq!(text_type, 25);
+        assert!(!PgType::from_oid(text_type).map_or(false, |t| t.is_array()));
+        
+        // Test conversion with array type
+        let fields = vec![
+            FieldDescription {
+                name: "test_col".to_string(),
+                table_oid: 0,
+                column_id: 1,
+                type_oid: 1009, // TextArray
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            }
+        ];
+        
+        let rows = vec![vec![Some(b"[\"a\", \"b\", \"c\"]".to_vec())]];
+        let converted = QueryExecutor::convert_array_data_in_rows(rows, &fields).unwrap();
+        let result_data = &converted[0][0].as_ref().unwrap();
+        let result_str = String::from_utf8_lossy(result_data);
+        assert_eq!(result_str, r#"{"a","b","c"}"#);
     }
 }
 
