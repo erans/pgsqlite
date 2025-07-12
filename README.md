@@ -154,7 +154,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
-- **JSON Support**: `JSON` and `JSONB` types with PostgreSQL operators
+- **JSON Support**: `JSON` and `JSONB` types with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`) and functions
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
 - **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`
@@ -191,6 +191,7 @@ For production use cases with high performance requirements, consider using nati
 - **[Unix Sockets](docs/unix-sockets.md)**: Lower latency local connections
 - **[Performance Tuning](docs/performance-tuning.md)**: Cache configuration and optimization
 - **[Architecture Overview](docs/architecture.md)**: How pgsqlite works internally
+- **[JSON/JSONB Support](docs/json-support.md)**: Comprehensive guide to JSON functionality
 - **[Future Features](docs/future-features.md)**: Roadmap for enhanced SQLite capabilities
 
 ## Development

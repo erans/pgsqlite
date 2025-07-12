@@ -213,7 +213,232 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // json_array_elements(json) - Extract array elements as rows (returns as comma-separated for now)
+    conn.create_scalar_function(
+        "json_array_elements",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Array(arr)) => {
+                    let elements: Vec<String> = arr.iter()
+                        .map(|v| serde_json::to_string(v).unwrap_or_default())
+                        .collect();
+                    Ok(Some(elements.join(",")))
+                }
+                Ok(_) => Ok(None),
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // jsonb_array_elements(jsonb) - Alias for json_array_elements
+    conn.create_scalar_function(
+        "jsonb_array_elements",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Array(arr)) => {
+                    let elements: Vec<String> = arr.iter()
+                        .map(|v| serde_json::to_string(v).unwrap_or_default())
+                        .collect();
+                    Ok(Some(elements.join(",")))
+                }
+                Ok(_) => Ok(None),
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // json_array_elements_text(json) - Extract array elements as text
+    conn.create_scalar_function(
+        "json_array_elements_text",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Array(arr)) => {
+                    let elements: Vec<String> = arr.iter()
+                        .map(|v| match v {
+                            JsonValue::String(s) => s.clone(),
+                            _ => v.to_string().trim_matches('"').to_string(),
+                        })
+                        .collect();
+                    Ok(Some(elements.join(",")))
+                }
+                Ok(_) => Ok(None),
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // json_strip_nulls(json) - Remove all null values from JSON
+    conn.create_scalar_function(
+        "json_strip_nulls",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    let stripped = strip_nulls(&json);
+                    Ok(serde_json::to_string(&stripped).ok())
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // jsonb_strip_nulls(jsonb) - Alias for json_strip_nulls
+    conn.create_scalar_function(
+        "jsonb_strip_nulls",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    let stripped = strip_nulls(&json);
+                    Ok(serde_json::to_string(&stripped).ok())
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // jsonb_set(jsonb, text[], jsonb, boolean) - Set value at path
+    // For simplicity, implement a 3-arg version without create_missing flag
+    conn.create_scalar_function(
+        "jsonb_set",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path_str: String = ctx.get(1)?;
+            let new_value_str: String = ctx.get(2)?;
+            
+            match (serde_json::from_str::<JsonValue>(&json_str), 
+                   serde_json::from_str::<JsonValue>(&new_value_str)) {
+                (Ok(mut json), Ok(new_value)) => {
+                    // Parse path - expecting format like '{key1,key2}'
+                    let path = parse_json_path(&path_str);
+                    set_json_value(&mut json, &path, new_value);
+                    Ok(serde_json::to_string(&json).ok())
+                }
+                _ => Ok(Some(json_str)),
+            }
+        },
+    )?;
+    
+    // json_extract_path(json, variadic text) - Extract value at path
+    // For simplicity, implement a 2-arg version
+    conn.create_scalar_function(
+        "json_extract_path",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    let result = extract_json_path(&json, &path);
+                    Ok(result.map(|v| serde_json::to_string(&v).unwrap_or_default()))
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // json_extract_path_text(json, variadic text) - Extract value at path as text
+    conn.create_scalar_function(
+        "json_extract_path_text",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    let result = extract_json_path(&json, &path);
+                    Ok(result.map(|v| match v {
+                        JsonValue::String(s) => s,
+                        JsonValue::Null => "null".to_string(),
+                        JsonValue::Bool(b) => b.to_string(),
+                        JsonValue::Number(n) => n.to_string(),
+                        _ => serde_json::to_string(&v).unwrap_or_default(),
+                    }))
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
     Ok(())
+}
+
+/// Parse PostgreSQL array path format '{key1,key2}' into Vec<String>
+fn parse_json_path(path_str: &str) -> Vec<String> {
+    let trimmed = path_str.trim();
+    if trimmed.starts_with('{') && trimmed.ends_with('}') {
+        let inner = &trimmed[1..trimmed.len()-1];
+        inner.split(',').map(|s| s.trim().to_string()).collect()
+    } else {
+        vec![trimmed.to_string()]
+    }
+}
+
+/// Set value at path in JSON
+fn set_json_value(json: &mut JsonValue, path: &[String], new_value: JsonValue) {
+    if path.is_empty() {
+        *json = new_value;
+        return;
+    }
+    
+    // Navigate to the parent of the target
+    let (parent_path, last_key) = path.split_at(path.len() - 1);
+    let last_key = &last_key[0];
+    
+    let mut current = json;
+    for key in parent_path {
+        match current {
+            JsonValue::Object(map) => {
+                current = map.entry(key.clone()).or_insert(JsonValue::Object(serde_json::Map::new()));
+            }
+            JsonValue::Array(arr) => {
+                if let Ok(index) = key.parse::<usize>() {
+                    if index < arr.len() {
+                        current = &mut arr[index];
+                    } else {
+                        return;
+                    }
+                } else {
+                    return;
+                }
+            }
+            _ => return,
+        }
+    }
+    
+    // Set the value at the last key
+    match current {
+        JsonValue::Object(map) => {
+            map.insert(last_key.clone(), new_value);
+        }
+        JsonValue::Array(arr) => {
+            if let Ok(index) = last_key.parse::<usize>() {
+                if index < arr.len() {
+                    arr[index] = new_value;
+                }
+            }
+        }
+        _ => {},
+    }
 }
 
 /// Get the type of a JSON value
@@ -288,6 +513,25 @@ fn extract_json_path(json: &JsonValue, path: &str) -> Option<JsonValue> {
     }
     
     Some(current.clone())
+}
+
+/// Remove null values from JSON
+fn strip_nulls(json: &JsonValue) -> JsonValue {
+    match json {
+        JsonValue::Object(map) => {
+            let mut new_map = serde_json::Map::new();
+            for (key, value) in map {
+                if !value.is_null() {
+                    new_map.insert(key.clone(), strip_nulls(value));
+                }
+            }
+            JsonValue::Object(new_map)
+        }
+        JsonValue::Array(arr) => {
+            JsonValue::Array(arr.iter().map(strip_nulls).collect())
+        }
+        _ => json.clone(),
+    }
 }
 
 /// Check if container JSON contains the contained JSON

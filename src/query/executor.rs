@@ -201,6 +201,22 @@ impl QueryExecutor {
             }
         }
         
+        // Translate JSON operators if present
+        if crate::translator::JsonTranslator::contains_json_operations(&translated_query) {
+            use crate::translator::JsonTranslator;
+            debug!("Query needs JSON operator translation: {}", translated_query);
+            match JsonTranslator::translate_json_operators(&translated_query) {
+                Ok(translated) => {
+                    debug!("Query after JSON operator translation: {}", translated);
+                    translated_query = translated;
+                }
+                Err(e) => {
+                    debug!("JSON operator translation failed: {}", e);
+                    // Continue with original query - some operators might not be supported yet
+                }
+            }
+        }
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);

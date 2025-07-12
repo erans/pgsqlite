@@ -26,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 10-row batches: 11.5x speedup over single-row INSERTs
   - 100-row batches: 51.3x speedup
   - 1000-row batches: 76.4x speedup
+- **JSON Operator Support**: PostgreSQL JSON/JSONB operator translation
+  - Implemented -> and ->> operators for JSON field extraction
+  - Added #> and #>> operators for JSON path extraction
+  - Implemented @> and <@ operators for containment checks
+  - Automatic operator translation in query executor pipeline
+  - Full test coverage for all JSON operators
+- **JSON Functions**: Core PostgreSQL JSON functions implementation
+  - json_valid(), json_typeof(), json_array_length() functions
+  - jsonb_object_keys(), to_json(), to_jsonb() conversions
+  - json_extract_scalar(), jsonb_contains(), jsonb_contained() operations
+  - json_array_elements(), json_strip_nulls() utility functions
+  - jsonb_set(), json_extract_path(), json_extract_path_text() path operations
 
 ### Changed
 - Enhanced InsertTranslator to handle array value conversion from PostgreSQL to JSON format

@@ -429,11 +429,54 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Created __pgsqlite_enum_usage table to track ENUM column usage
   - Added EnumTriggers module for managing validation triggers
 
-#### JSON/JSONB
-- [ ] Implement JSONB type (binary JSON)
-- [ ] Add JSON operators (->, ->>, @>, etc.)
-- [ ] Support JSON path expressions
-- [ ] Implement JSON aggregation functions
+#### JSON/JSONB - MOSTLY COMPLETED (2025-07-12)
+- [x] Implement JSON/JSONB types - COMPLETED (2025-07-06)
+  - Both types stored as TEXT in SQLite
+  - JsonTranslator handles type conversion in CREATE TABLE/ALTER TABLE
+  - JSON validation constraints automatically added to columns
+- [x] Add JSON operators (->, ->>, @>, etc.) - COMPLETED (2025-07-12)
+  - [x] Implemented -> operator (extract JSON field as JSON)
+  - [x] Implemented ->> operator (extract JSON field as text)
+  - [x] Implemented #> operator (extract path as JSON)
+  - [x] Implemented #>> operator (extract path as text)
+  - [x] Implemented @> operator (contains)
+  - [x] Implemented <@ operator (is contained by)
+  - [x] Added JsonTranslator::translate_json_operators for query translation
+  - [x] Integrated into query executor pipeline
+  - [x] Full test coverage for all operators
+  - [x] Comprehensive documentation in docs/json-support.md
+  - [ ] Implement ? operator (key exists)
+  - [ ] Implement ?| operator (any key exists)
+  - [ ] Implement ?& operator (all keys exist)
+- [x] Core JSON functions - COMPLETED (2025-07-12)
+  - [x] json_valid() - validate JSON
+  - [x] json_typeof() / jsonb_typeof() - get JSON value type
+  - [x] json_array_length() / jsonb_array_length() - array length
+  - [x] jsonb_object_keys() - get object keys
+  - [x] to_json() / to_jsonb() - convert values to JSON
+  - [x] json_build_object() - build JSON from key-value pairs
+  - [x] json_extract_scalar() - extract scalar values
+  - [x] jsonb_contains() / jsonb_contained() - containment checks
+  - [x] json_array_elements() / jsonb_array_elements() - extract array elements
+  - [x] json_array_elements_text() - extract array elements as text
+  - [x] json_strip_nulls() / jsonb_strip_nulls() - remove null values
+- [x] Path & Manipulation functions - COMPLETED (2025-07-12)
+  - [x] jsonb_set() - set value at path
+  - [x] json_extract_path() - extract value at path
+  - [x] json_extract_path_text() - extract value at path as text
+- [ ] Advanced JSON features (Future work)
+  - [ ] json_each() / jsonb_each() - expand JSON to key-value pairs (table-valued function)
+  - [ ] json_each_text() / jsonb_each_text() - expand to text key-value pairs
+  - [ ] jsonb_insert() - insert value at path
+  - [ ] jsonb_delete() - delete value at path
+  - [ ] jsonb_delete_path() - delete at specific path
+  - [ ] jsonb_pretty() - pretty-print JSON
+  - [ ] json_populate_record() - populate record from JSON
+  - [ ] json_agg() / jsonb_agg() - aggregate values into JSON array
+  - [ ] json_object_agg() / jsonb_object_agg() - aggregate into JSON object
+  - [ ] row_to_json() - convert row to JSON
+  - [ ] json_to_record() - convert JSON to record
+  - [ ] Support JSON path expressions (jsonpath)
 
 #### Geometric Types
 - [ ] Implement POINT, LINE, LSEG, BOX, PATH, POLYGON, CIRCLE types
