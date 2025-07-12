@@ -29,6 +29,13 @@ pub fn register_array_functions(conn: &Connection) -> Result<()> {
     // Array aggregate function
     register_array_agg(conn)?;
     
+    // Table-valued functions (unnest)
+    register_unnest(conn)?;
+    
+    // Array constructor functions
+    register_string_to_array(conn)?;
+    register_array_to_string(conn)?;
+    
     Ok(())
 }
 
@@ -162,13 +169,26 @@ fn register_array_append(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let array_json: String = ctx.get(0)?;
-            let element: String = ctx.get(1)?;
+            
+            // Handle element parameter of different types
+            let elem_value = match ctx.get_raw(1) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
             
             match serde_json::from_str::<JsonValue>(&array_json) {
                 Ok(JsonValue::Array(mut arr)) => {
-                    // Parse element as JSON if possible, otherwise as string
-                    let elem_value = serde_json::from_str::<JsonValue>(&element)
-                        .unwrap_or_else(|_| JsonValue::String(element));
                     arr.push(elem_value);
                     Ok(serde_json::to_string(&arr).ok())
                 }
@@ -187,14 +207,27 @@ fn register_array_prepend(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let element: String = ctx.get(0)?;
+            // Handle element parameter of different types
+            let elem_value = match ctx.get_raw(0) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
             let array_json: String = ctx.get(1)?;
             
             match serde_json::from_str::<JsonValue>(&array_json) {
                 Ok(JsonValue::Array(mut arr)) => {
-                    // Parse element as JSON if possible, otherwise as string
-                    let elem_value = serde_json::from_str::<JsonValue>(&element)
-                        .unwrap_or_else(|_| JsonValue::String(element));
                     arr.insert(0, elem_value);
                     Ok(serde_json::to_string(&arr).ok())
                 }
@@ -523,6 +556,104 @@ fn register_array_agg(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// unnest(array) - Convert array to table (set-returning function)
+/// Note: This is a simplified implementation using a virtual table approach
+fn register_unnest(conn: &Connection) -> Result<()> {
+    // For now, create a simple scalar function that returns a comma-separated string
+    // A full implementation would require table-valued function support
+    conn.create_scalar_function(
+        "unnest",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let array_json: String = ctx.get(0)?;
+            
+            match serde_json::from_str::<JsonValue>(&array_json) {
+                Ok(JsonValue::Array(arr)) => {
+                    // Return elements as separate rows (simplified - returns concatenated string)
+                    let elements: Vec<String> = arr.iter()
+                        .map(|v| match v {
+                            JsonValue::String(s) => s.clone(),
+                            JsonValue::Number(n) => n.to_string(),
+                            JsonValue::Bool(b) => b.to_string(),
+                            JsonValue::Null => "NULL".to_string(),
+                            _ => serde_json::to_string(v).unwrap_or_default(),
+                        })
+                        .collect();
+                    Ok(Some(elements.join("\n")))
+                }
+                _ => Ok(None),
+            }
+        },
+    )?;
+    
+    Ok(())
+}
+
+/// string_to_array(string, delimiter) - Split string into array
+fn register_string_to_array(conn: &Connection) -> Result<()> {
+    conn.create_scalar_function(
+        "string_to_array",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let input_string: String = ctx.get(0)?;
+            let delimiter: String = ctx.get(1)?;
+            
+            if input_string.is_empty() {
+                return Ok(Some("[]".to_string()));
+            }
+            
+            let parts: Vec<JsonValue> = if delimiter.is_empty() {
+                // Split into individual characters
+                input_string.chars()
+                    .map(|c| JsonValue::String(c.to_string()))
+                    .collect()
+            } else {
+                // Split by delimiter
+                input_string.split(&delimiter)
+                    .map(|s| JsonValue::String(s.to_string()))
+                    .collect()
+            };
+            
+            Ok(serde_json::to_string(&parts).ok())
+        },
+    )?;
+    
+    Ok(())
+}
+
+/// array_to_string(array, delimiter) - Join array elements into string
+fn register_array_to_string(conn: &Connection) -> Result<()> {
+    conn.create_scalar_function(
+        "array_to_string",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let array_json: String = ctx.get(0)?;
+            let delimiter: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&array_json) {
+                Ok(JsonValue::Array(arr)) => {
+                    let elements: Vec<String> = arr.iter()
+                        .filter_map(|v| match v {
+                            JsonValue::String(s) => Some(s.clone()),
+                            JsonValue::Number(n) => Some(n.to_string()),
+                            JsonValue::Bool(b) => Some(b.to_string()),
+                            JsonValue::Null => None, // Skip NULL values like PostgreSQL
+                            _ => Some(serde_json::to_string(v).unwrap_or_default()),
+                        })
+                        .collect();
+                    Ok(Some(elements.join(&delimiter)))
+                }
+                _ => Ok(None),
+            }
+        },
+    )?;
+    
+    Ok(())
+}
+
 /// Helper function to count array dimensions
 fn count_dimensions(value: &JsonValue) -> i32 {
     match value {
@@ -530,16 +661,23 @@ fn count_dimensions(value: &JsonValue) -> i32 {
             if arr.is_empty() {
                 1
             } else {
-                1 + arr.iter()
+                // Check if any element is an array
+                let max_sub_dimensions = arr.iter()
                     .filter_map(|v| {
                         if matches!(v, JsonValue::Array(_)) {
-                            Some(count_dimensions(v) - 1)
+                            Some(count_dimensions(v))
                         } else {
                             None
                         }
                     })
                     .max()
-                    .unwrap_or(0)
+                    .unwrap_or(0);
+                
+                if max_sub_dimensions > 0 {
+                    1 + max_sub_dimensions
+                } else {
+                    1
+                }
             }
         }
         _ => 0,
