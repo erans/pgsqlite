@@ -342,11 +342,41 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Performance optimization with timezone conversion caching
 - [ ] Migration guide for existing users with datetime data
 
-#### Array Types
-- [ ] Complete array type implementation for all base types
-- [ ] Support multi-dimensional arrays
-- [ ] Implement array operators and functions
-- [ ] Handle array literals in queries
+#### Array Types - Basic Support COMPLETED (2025-07-12)
+- [x] Basic array type support in CREATE TABLE statements
+  - Array columns are translated to JSON TEXT with validation
+  - Metadata storage in __pgsqlite_array_types table
+  - Support for multi-dimensional array declarations
+  - JSON validation constraints added automatically (fixed NULL handling)
+- [x] Complete array type implementation for all base types
+  - Added array type OIDs for 30+ PostgreSQL types (INT4Array, TextArray, etc.)
+  - Array type mapping in TypeMapper with `is_array()` and `element_type()` helpers
+  - Updated pg_type view to include typarray field via migration v8
+- [x] Support array literals and type casts in queries
+  - InsertTranslator converts ARRAY[...] constructor to JSON format
+  - Supports PostgreSQL '{...}' array literal format
+  - Handles NULL values and nested arrays correctly
+  - Multi-row INSERT with array values fully supported
+- [x] Array value conversion in INSERT/UPDATE statements
+  - InsertTranslator detects array columns and converts values
+  - Automatic conversion from PostgreSQL array format to JSON storage
+  - Preserves data types (numbers, strings, booleans, nulls)
+  - Fixed simple_query_detector to ensure array patterns use translation path
+- [x] Basic wire protocol array support
+  - ValueHandler converts JSON arrays to PostgreSQL text format
+  - Text protocol converts JSON ["a","b"] to PostgreSQL {a,b}
+  - Array type OIDs properly transmitted in RowDescription
+- [x] Integration with CI/CD pipeline
+  - Array tests included in test_queries.sql
+  - Tested in all 5 CI modes (TCP with/without SSL, Unix socket, File DB with/without SSL)
+  - Fixed JSON validation constraint to handle NULL arrays properly
+- [ ] Implement array operators (ANY, ALL, @>, <@, &&, ||)
+- [ ] Array functions (unnest, array_length, array_position, etc.)
+- [ ] Array subscript access (e.g., array[1], array[1:3])
+- [ ] Array aggregation functions (array_agg, array_cat)
+- [ ] Binary protocol array encoding/decoding
+- [ ] Array type constraints and validation
+- [ ] Performance optimization for large arrays
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
@@ -451,6 +481,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - v4: DateTime INTEGER storage (convert all datetime types to microseconds)
     - v5: PostgreSQL catalog tables (pg_class, pg_namespace, pg_am, pg_type, pg_attribute views)
     - v6: VARCHAR/CHAR constraints (type_modifier column, __pgsqlite_string_constraints table)
+    - v7: NUMERIC/DECIMAL constraints (__pgsqlite_numeric_constraints table)
+    - v8: Array support (__pgsqlite_array_types table, pg_type typarray field)
 
 #### Indexing
 - [ ] Support for expression indexes

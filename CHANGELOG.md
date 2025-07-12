@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Array Type Support**: Comprehensive PostgreSQL array type implementation
+  - Support for all base type arrays (INTEGER[], TEXT[], BOOLEAN[], REAL[], etc.)
+  - Multi-dimensional array support (e.g., INTEGER[][])
+  - Array literal formats: ARRAY[1,2,3] and '{1,2,3}'
+  - JSON-based storage with automatic validation
+  - Wire protocol support with proper array type OIDs
+  - Migration v8 adds __pgsqlite_array_types table and pg_type enhancements
+  - Full integration with CI/CD test suite
 - **Batch INSERT Support**: Full support for multi-row INSERT syntax with dramatic performance improvements
   - Fast path optimization achieving up to 112.9x speedup for simple batch INSERTs
   - Prepared statement caching with fingerprinting for repeated batch patterns
@@ -20,12 +28,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 1000-row batches: 76.4x speedup
 
 ### Changed
+- Enhanced InsertTranslator to handle array value conversion from PostgreSQL to JSON format
+- Updated simple_query_detector to exclude array patterns from ultra-fast path
+- Modified CreateTableTranslator to support array column declarations
 - Enhanced InsertTranslator to handle multi-row VALUES clauses efficiently
 - Improved error handling to provide more helpful messages for batch operations
 - Updated simple query detector to recognize and optimize batch INSERT patterns
 - Modified statement pool to support batch INSERT fingerprinting for better caching
 
 ### Fixed
+- Fixed JSON validation constraint to handle NULL arrays properly (NULL check before json_valid())
 - Fixed migration execution order in benchmark tests
 - Fixed unused variable warnings in batch INSERT fingerprinting
 - Fixed batch INSERT handling of datetime functions (CURRENT_DATE, CURRENT_TIME, NOW(), etc.)

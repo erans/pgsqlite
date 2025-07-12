@@ -150,6 +150,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 
 ### Notable Features
 
+- **Array Types**: Full support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) stored as JSON
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
@@ -164,6 +165,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - ❌ Stored procedures and custom functions
 - ❌ PostgreSQL-specific system functions (`pg_*`)
 - ❌ Some advanced data types (ranges, geometric types, full-text search)
+- ❌ Array operators and functions (ANY, ALL, @>, unnest, array_agg)
 - ❌ Multiple concurrent writers (SQLite allows only one writer at a time)
 
 For detailed compatibility information, see [Type Mapping Documentation](docs/type-mapping-prd.md).

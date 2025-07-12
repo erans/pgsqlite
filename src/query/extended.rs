@@ -2909,14 +2909,14 @@ impl ExtendedQueryHandler {
         // Handle CREATE TABLE translation
         let translated_query = if query_starts_with_ignore_case(query, "CREATE TABLE") {
             // Use translator with connection for ENUM support
-            let (sqlite_sql, type_mappings, enum_columns) = {
+            let (sqlite_sql, type_mappings, enum_columns, array_columns) = {
                 let conn = db.get_mut_connection()
                     .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
                 
                 let result = crate::translator::CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
                     .map_err(|e| PgSqliteError::Protocol(e))?;
                 
-                (result.sql, result.type_mappings, result.enum_columns)
+                (result.sql, result.type_mappings, result.enum_columns, result.array_columns)
             }; // Drop connection guard here
             
             // Execute the translated CREATE TABLE
@@ -3000,6 +3000,36 @@ impl ExtendedQueryHandler {
                                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
                             
                             info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                        }
+                    }
+                    
+                    // Store array column metadata
+                    if !array_columns.is_empty() {
+                        let conn = db.get_mut_connection()
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {}", e)))?;
+                        
+                        // Create array metadata table if it doesn't exist (should exist from migration v8)
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS __pgsqlite_array_types (
+                                table_name TEXT NOT NULL,
+                                column_name TEXT NOT NULL,
+                                element_type TEXT NOT NULL,
+                                dimensions INTEGER DEFAULT 1,
+                                PRIMARY KEY (table_name, column_name)
+                            )", 
+                            []
+                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {}", e)))?;
+                        
+                        // Insert array column metadata
+                        for (column_name, element_type, dimensions) in &array_columns {
+                            conn.execute(
+                                "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
+                                 VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![table_name, column_name, element_type, dimensions]
+                            ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {}", e)))?;
+                            
+                            info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
+                                  table_name, column_name, element_type, dimensions);
                         }
                     }
                 }

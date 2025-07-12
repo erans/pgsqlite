@@ -47,11 +47,13 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
         return false;
     }
     
-    // Additional check for INSERT statements with datetime patterns
+    // Additional check for INSERT statements with datetime or array patterns
     if query.to_uppercase().starts_with("INSERT") {
         // Exclude if it contains date/time patterns that need conversion
         if (query.contains("'") && query.contains('-')) || // Date patterns like '2024-01-01'
-           (query.contains("'") && query.contains(':')) {   // Time patterns like '14:30:00'
+           (query.contains("'") && query.contains(':')) ||  // Time patterns like '14:30:00'
+           query.contains('{') ||                           // Array patterns like '{1,2,3}'
+           query.contains("ARRAY[") {                       // Array constructor like ARRAY[1,2,3]
             return false;
         }
     }
@@ -81,9 +83,11 @@ pub fn is_simple_batch_insert(query: &str) -> bool {
         return false;
     }
     
-    // Check for datetime patterns that need conversion
+    // Check for datetime or array patterns that need conversion
     if (query.contains("'") && query.contains('-')) || // Date patterns like '2024-01-01'
-       (query.contains("'") && query.contains(':')) {   // Time patterns like '14:30:00'
+       (query.contains("'") && query.contains(':')) ||  // Time patterns like '14:30:00'
+       query.contains('{') ||                           // Array patterns like '{1,2,3}'
+       query.contains("ARRAY[") {                       // Array constructor like ARRAY[1,2,3]
         return false;
     }
     

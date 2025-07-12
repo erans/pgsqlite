@@ -69,6 +69,7 @@ pgsqlite --database existingdb.db
 - **v5**: PostgreSQL catalog tables (creates pg_class, pg_namespace, pg_am, pg_type, pg_attribute views; pg_constraint, pg_attrdef, pg_index tables)
 - **v6**: VARCHAR/CHAR constraints (adds type_modifier to __pgsqlite_schema, creates __pgsqlite_string_constraints table)
 - **v7**: NUMERIC/DECIMAL constraints (creates __pgsqlite_numeric_constraints table for precision/scale validation)
+- **v8**: Array support (creates __pgsqlite_array_types table, updates pg_type view with typarray field)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:
@@ -188,11 +189,18 @@ INSERT INTO table (col1, col2) VALUES
 - **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
 - **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
 - **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
+- **Array Type Support (2025-07-12)**: 
+  - CREATE TABLE with array columns (INTEGER[], TEXT[][], etc.)
+  - JSON-based storage with automatic validation
+  - Array literal conversion (ARRAY[1,2,3] and '{1,2,3}' formats)
+  - Wire protocol array support with proper type OIDs
+  - Multi-row INSERT with array values
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
-- **Array types**: Not yet implemented
-- **System catalogs**: \d tablename not yet supported (requires enhanced pg_attribute implementation)
+- **Array operators**: Array-specific operators (ANY, ALL, @>, etc.) not yet implemented
+- **Array functions**: Functions like unnest(), array_agg() not yet implemented
+- **Array subscripts**: Array element access (arr[1]) not yet supported
 
 ## Database Handler Architecture
 Uses a Mutex-based implementation for thread safety:

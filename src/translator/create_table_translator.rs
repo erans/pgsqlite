@@ -10,10 +10,12 @@ pub struct CreateTableResult {
     pub sql: String,
     pub type_mappings: HashMap<String, TypeMapping>,
     pub enum_columns: Vec<(String, String)>, // (column_name, enum_type)
+    pub array_columns: Vec<(String, String, i32)>, // (column_name, element_type, dimensions)
 }
 
 thread_local! {
     static ENUM_COLUMNS: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
+    static ARRAY_COLUMNS: RefCell<Vec<(String, String, i32)>> = RefCell::new(Vec::new());
 }
 
 pub struct CreateTableTranslator;
@@ -42,8 +44,9 @@ impl CreateTableTranslator {
         let mut type_mapping = HashMap::new();
         let mut check_constraints = Vec::new();
         
-        // Clear enum columns tracker
+        // Clear enum and array columns trackers
         ENUM_COLUMNS.with(|ec| ec.borrow_mut().clear());
+        ARRAY_COLUMNS.with(|ac| ac.borrow_mut().clear());
         
         // Basic regex to match CREATE TABLE - use DOTALL flag to match newlines
         let create_regex = Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap();
@@ -71,13 +74,15 @@ impl CreateTableTranslator {
             // Reconstruct CREATE TABLE
             let sqlite_sql = format!("CREATE TABLE {} ({})", table_name, final_columns);
             
-            // Collect enum columns
+            // Collect enum and array columns
             let enum_columns = ENUM_COLUMNS.with(|ec| ec.borrow().clone());
+            let array_columns = ARRAY_COLUMNS.with(|ac| ac.borrow().clone());
             
             Ok(CreateTableResult {
                 sql: sqlite_sql,
                 type_mappings: type_mapping,
                 enum_columns,
+                array_columns,
             })
         } else {
             // Not a CREATE TABLE statement, return as-is
@@ -85,6 +90,7 @@ impl CreateTableTranslator {
                 sql: pg_sql.to_string(),
                 type_mappings: type_mapping,
                 enum_columns: Vec::new(),
+                array_columns: Vec::new(),
             })
         }
     }
@@ -216,8 +222,44 @@ impl CreateTableTranslator {
             pg_type = combined;
         }
         
-        // Check if this is an ENUM type
-        let (sqlite_type, normalized_pg_type) = if let Some(conn) = conn {
+        // Check for array types - handle [] notation
+        let (is_array, element_type, dimensions) = Self::parse_array_type(&pg_type, &parts, type_end_idx);
+        if is_array {
+            // Adjust type_end_idx to skip array brackets
+            for (i, part) in parts[type_end_idx..].iter().enumerate() {
+                if part.contains('[') || part.contains(']') {
+                    type_end_idx = type_end_idx + i + 1;
+                } else if i > 0 && !parts[type_end_idx + i - 1].contains(']') {
+                    // We've moved past the array brackets
+                    break;
+                }
+            }
+        }
+        
+        // Check if this is an array type first
+        let (sqlite_type, normalized_pg_type) = if is_array {
+            // Array types are stored as JSON TEXT
+            let sqlite_type = "TEXT".to_string();
+            
+            // Store array column info for later metadata insertion
+            ARRAY_COLUMNS.with(|ac| {
+                ac.borrow_mut().push((
+                    column_name.to_string(), 
+                    element_type.to_lowercase(), 
+                    dimensions
+                ));
+            });
+            
+            // Add CHECK constraint for JSON validation
+            // Note: json_valid() doesn't accept NULL, so we check for NULL first
+            let constraint_name = format!("chk_{}_{}_{}", table_name, column_name, "json");
+            check_constraints.push(format!(
+                "CONSTRAINT {} CHECK ({} IS NULL OR json_valid({}))",
+                constraint_name, column_name, column_name
+            ));
+            
+            (sqlite_type, pg_type.clone())
+        } else if let Some(conn) = conn {
             // Check if the type is an ENUM
             match EnumMetadata::get_enum_type(conn, &pg_type.to_lowercase()) {
                 Ok(Some(_enum_type)) => {
@@ -322,6 +364,54 @@ impl CreateTableTranslator {
             "BLOB" => "BYTEA".to_string(),
             _ => type_name.to_string(),
         }
+    }
+    
+    /// Parse array type notation and return (is_array, element_type, dimensions)
+    fn parse_array_type(pg_type: &str, parts: &[&str], type_start_idx: usize) -> (bool, String, i32) {
+        // Check if the type ends with [] or has [] in subsequent parts
+        let mut is_array = false;
+        let mut element_type = pg_type.to_string();
+        let mut dimensions = 0;
+        
+        // Check if the type itself contains []
+        if pg_type.contains('[') {
+            is_array = true;
+            // Extract base type and count dimensions
+            let base_end = pg_type.find('[').unwrap();
+            element_type = pg_type[..base_end].to_string();
+            dimensions = pg_type[base_end..].matches('[').count() as i32;
+        } else if parts.len() > type_start_idx {
+            // Check if [] appears in subsequent parts
+            for part in &parts[type_start_idx..] {
+                if part.starts_with('[') || *part == "[]" {
+                    is_array = true;
+                    dimensions += part.matches('[').count() as i32;
+                    if !part.contains(']') {
+                        // Multi-part array notation like [ ]
+                        continue;
+                    }
+                    break;
+                } else if dimensions > 0 && part.contains(']') {
+                    // Found closing bracket
+                    break;
+                } else if dimensions == 0 {
+                    // No array notation found yet
+                    break;
+                }
+            }
+        }
+        
+        // Normalize element type for known PostgreSQL array type names
+        if element_type.ends_with("[]") {
+            element_type = element_type[..element_type.len()-2].to_string();
+        }
+        
+        // Ensure we have at least 1 dimension for arrays
+        if is_array && dimensions == 0 {
+            dimensions = 1;
+        }
+        
+        (is_array, element_type, dimensions)
     }
     
     /// Extract type modifier from type definition
@@ -446,5 +536,65 @@ mod tests {
         assert_eq!(mappings["test.col1"].type_modifier, Some(10));
         assert_eq!(mappings["test.col2"].type_modifier, Some(20));
         assert_eq!(mappings["test.col3"].type_modifier, Some(5));
+    }
+    
+    #[test]
+    fn test_parse_array_type() {
+        // Test simple array types
+        let (is_array, element, dims) = CreateTableTranslator::parse_array_type("INTEGER[]", &[], 0);
+        assert!(is_array);
+        assert_eq!(element, "INTEGER");
+        assert_eq!(dims, 1);
+        
+        // Test multi-dimensional arrays
+        let (is_array, element, dims) = CreateTableTranslator::parse_array_type("TEXT[][]", &[], 0);
+        assert!(is_array);
+        assert_eq!(element, "TEXT");
+        assert_eq!(dims, 2);
+        
+        // Test array in separate parts
+        let parts = vec!["column", "INTEGER", "[]"];
+        let (is_array, element, dims) = CreateTableTranslator::parse_array_type("INTEGER", &parts, 2);
+        assert!(is_array);
+        assert_eq!(element, "INTEGER");
+        assert_eq!(dims, 1);
+        
+        // Test non-array types
+        let (is_array, _, _) = CreateTableTranslator::parse_array_type("VARCHAR(50)", &[], 0);
+        assert!(!is_array);
+    }
+    
+    #[test]
+    fn test_translate_array_columns() {
+        let sql = "CREATE TABLE array_test (
+            id INTEGER PRIMARY KEY,
+            int_array INTEGER[],
+            text_array TEXT[],
+            matrix REAL[][]
+        )";
+        
+        let result = CreateTableTranslator::translate_with_connection_full(sql, None).unwrap();
+        
+        // Check that array columns were detected
+        assert_eq!(result.array_columns.len(), 3);
+        
+        // Check array column metadata
+        assert!(result.array_columns.iter().any(|(name, elem, dims)| {
+            name == "int_array" && elem == "integer" && *dims == 1
+        }));
+        assert!(result.array_columns.iter().any(|(name, elem, dims)| {
+            name == "text_array" && elem == "text" && *dims == 1
+        }));
+        assert!(result.array_columns.iter().any(|(name, elem, dims)| {
+            name == "matrix" && elem == "real" && *dims == 2
+        }));
+        
+        // Check that columns are mapped to TEXT
+        assert_eq!(result.type_mappings["array_test.int_array"].sqlite_type, "TEXT");
+        assert_eq!(result.type_mappings["array_test.text_array"].sqlite_type, "TEXT");
+        assert_eq!(result.type_mappings["array_test.matrix"].sqlite_type, "TEXT");
+        
+        // Check that JSON validation constraints were added
+        assert!(result.sql.contains("json_valid"));
     }
 }

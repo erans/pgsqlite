@@ -2,6 +2,7 @@ use regex::Regex;
 use once_cell::sync::Lazy;
 use crate::session::DbHandler;
 use crate::types::ValueConverter;
+use serde_json;
 
 /// Translates INSERT statements to convert datetime literals to INTEGER values
 pub struct InsertTranslator;
@@ -17,11 +18,13 @@ static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 impl InsertTranslator {
-    /// Check if the query is an INSERT that might need datetime translation
+    /// Check if the query is an INSERT that might need datetime or array translation
     pub fn needs_translation(query: &str) -> bool {
         let result = (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
             query.contains('-') ||  // Date patterns like '2024-01-01'
-            query.contains(':')     // Time patterns like '14:30:00'
+            query.contains(':') ||  // Time patterns like '14:30:00'
+            query.contains('{') ||  // Array patterns like '{1,2,3}'
+            query.contains("ARRAY[") // Array constructor like ARRAY[1,2,3]
         );
         result
     }
@@ -42,8 +45,8 @@ impl InsertTranslator {
             // Get column types from __pgsqlite_schema
             let column_types = Self::get_column_types(db, table_name).await?;
             
-            // Check if any columns are datetime types
-            let has_datetime = columns.iter().any(|col| {
+            // Check if any columns are datetime or array types
+            let needs_conversion = columns.iter().any(|col| {
                 if let Some(pg_type) = column_types.get(&col.to_lowercase()) {
                     matches!(pg_type.as_str(),
                         "date" | "DATE" | 
@@ -52,14 +55,14 @@ impl InsertTranslator {
                         "timestamptz" | "TIMESTAMPTZ" |
                         "timetz" | "TIMETZ" |
                         "interval" | "INTERVAL"
-                    )
+                    ) || pg_type.ends_with("[]") || pg_type.starts_with("_")
                 } else {
                     false
                 }
             });
             
-            if !has_datetime {
-                // No datetime columns, return original query
+            if !needs_conversion {
+                // No datetime or array columns, return original query
                 return Ok(query.to_string());
             }
             
@@ -86,8 +89,8 @@ impl InsertTranslator {
             // Get all columns and types from __pgsqlite_schema
             let (columns, column_types) = Self::get_all_columns_and_types(db, table_name).await?;
             
-            // Check if any columns are datetime types
-            let has_datetime = column_types.values().any(|pg_type| {
+            // Check if any columns are datetime or array types
+            let needs_conversion = column_types.values().any(|pg_type| {
                 matches!(pg_type.as_str(),
                     "date" | "DATE" | 
                     "time" | "TIME" | 
@@ -95,11 +98,11 @@ impl InsertTranslator {
                     "timestamptz" | "TIMESTAMPTZ" |
                     "timetz" | "TIMETZ" |
                     "interval" | "INTERVAL"
-                )
+                ) || pg_type.ends_with("[]") || pg_type.starts_with("_")
             });
             
-            if !has_datetime {
-                // No datetime columns, return original query
+            if !needs_conversion {
+                // No datetime or array columns, return original query
                 return Ok(query.to_string());
             }
             
@@ -394,10 +397,180 @@ impl InsertTranslator {
                 Ok(value.to_string())
             }
             _ => {
-                // Not a datetime type, keep original value
-                Ok(value.to_string())
+                // Check if it's an array type
+                if pg_type.ends_with("[]") || pg_type.starts_with("_") {
+                    // Convert PostgreSQL array literal to JSON
+                    Self::convert_array_value(value)
+                } else {
+                    // Not a datetime or array type, keep original value
+                    Ok(value.to_string())
+                }
             }
         }
+    }
+    
+    /// Convert PostgreSQL array literal to JSON format
+    fn convert_array_value(value: &str) -> Result<String, String> {
+        let value = value.trim();
+        
+        // Handle NULL
+        if value.eq_ignore_ascii_case("NULL") {
+            return Ok("NULL".to_string());
+        }
+        
+        // Handle ARRAY[...] constructor
+        if value.starts_with("ARRAY[") && value.ends_with(']') {
+            let inner = &value[6..value.len()-1];
+            let elements = Self::parse_array_elements(inner)?;
+            let json_array = serde_json::to_string(&elements)
+                .map_err(|e| format!("Failed to convert array to JSON: {}", e))?;
+            return Ok(format!("'{}'", json_array));
+        }
+        
+        // Handle '{...}' literal
+        if value.starts_with("'{") && value.ends_with("}'") {
+            let inner = &value[2..value.len()-2];
+            let elements = Self::parse_pg_array_literal(inner)?;
+            let json_array = serde_json::to_string(&elements)
+                .map_err(|e| format!("Failed to convert array to JSON: {}", e))?;
+            return Ok(format!("'{}'", json_array));
+        }
+        
+        // If it's already a quoted value that doesn't look like an array, keep it
+        Ok(value.to_string())
+    }
+    
+    /// Parse elements from ARRAY[1,2,3] format
+    fn parse_array_elements(inner: &str) -> Result<Vec<serde_json::Value>, String> {
+        let mut elements = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+        let mut depth = 0;
+        
+        for ch in inner.chars() {
+            match ch {
+                '\'' if depth == 0 => {
+                    in_quotes = !in_quotes;
+                    current.push(ch);
+                }
+                ',' if !in_quotes && depth == 0 => {
+                    let elem = current.trim();
+                    elements.push(Self::parse_array_element(elem)?);
+                    current.clear();
+                }
+                '[' => {
+                    depth += 1;
+                    current.push(ch);
+                }
+                ']' => {
+                    depth -= 1;
+                    current.push(ch);
+                }
+                _ => current.push(ch),
+            }
+        }
+        
+        // Don't forget the last element
+        if !current.trim().is_empty() {
+            elements.push(Self::parse_array_element(current.trim())?);
+        }
+        
+        Ok(elements)
+    }
+    
+    /// Parse elements from PostgreSQL array literal format {1,2,3}
+    fn parse_pg_array_literal(inner: &str) -> Result<Vec<serde_json::Value>, String> {
+        let mut elements = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+        
+        for ch in inner.chars() {
+            match ch {
+                '"' => {
+                    // PostgreSQL uses double quotes for string elements
+                    in_quotes = !in_quotes;
+                }
+                ',' if !in_quotes => {
+                    let elem = current.trim();
+                    if !elem.is_empty() {
+                        elements.push(Self::parse_pg_array_element(elem)?);
+                    }
+                    current.clear();
+                }
+                _ => current.push(ch),
+            }
+        }
+        
+        // Don't forget the last element
+        if !current.trim().is_empty() {
+            elements.push(Self::parse_pg_array_element(current.trim())?);
+        }
+        
+        Ok(elements)
+    }
+    
+    /// Parse a single array element
+    fn parse_array_element(elem: &str) -> Result<serde_json::Value, String> {
+        let elem = elem.trim();
+        
+        // NULL
+        if elem.eq_ignore_ascii_case("NULL") {
+            return Ok(serde_json::Value::Null);
+        }
+        
+        // Quoted string
+        if elem.starts_with('\'') && elem.ends_with('\'') && elem.len() > 1 {
+            let unquoted = &elem[1..elem.len()-1];
+            return Ok(serde_json::Value::String(unquoted.to_string()));
+        }
+        
+        // Number
+        if let Ok(num) = elem.parse::<i64>() {
+            return Ok(serde_json::json!(num));
+        }
+        if let Ok(num) = elem.parse::<f64>() {
+            return Ok(serde_json::json!(num));
+        }
+        
+        // Boolean
+        if elem.eq_ignore_ascii_case("true") || elem.eq_ignore_ascii_case("false") {
+            return Ok(serde_json::json!(elem.eq_ignore_ascii_case("true")));
+        }
+        
+        // Default to string
+        Ok(serde_json::Value::String(elem.to_string()))
+    }
+    
+    /// Parse a single PostgreSQL array element (from {} format)
+    fn parse_pg_array_element(elem: &str) -> Result<serde_json::Value, String> {
+        let elem = elem.trim();
+        
+        // NULL
+        if elem.eq_ignore_ascii_case("NULL") {
+            return Ok(serde_json::Value::Null);
+        }
+        
+        // Quoted string (PostgreSQL uses double quotes in array literals)
+        if elem.starts_with('"') && elem.ends_with('"') && elem.len() > 1 {
+            let unquoted = &elem[1..elem.len()-1];
+            return Ok(serde_json::Value::String(unquoted.to_string()));
+        }
+        
+        // Number
+        if let Ok(num) = elem.parse::<i64>() {
+            return Ok(serde_json::json!(num));
+        }
+        if let Ok(num) = elem.parse::<f64>() {
+            return Ok(serde_json::json!(num));
+        }
+        
+        // Boolean
+        if elem.eq_ignore_ascii_case("true") || elem.eq_ignore_ascii_case("false") {
+            return Ok(serde_json::json!(elem.eq_ignore_ascii_case("true")));
+        }
+        
+        // Default to string
+        Ok(serde_json::Value::String(elem.to_string()))
     }
 }
 
@@ -421,6 +594,39 @@ mod tests {
     fn test_needs_translation() {
         assert!(InsertTranslator::needs_translation("INSERT INTO test (date_col) VALUES ('2024-01-15')"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (time_col) VALUES ('14:30:00')"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES ('{1,2,3}')"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES (ARRAY[1,2,3])"));
         assert!(!InsertTranslator::needs_translation("INSERT INTO test (id) VALUES (1)"));
+    }
+    
+    #[test]
+    fn test_convert_array_value() {
+        // Test ARRAY constructor
+        let result = InsertTranslator::convert_array_value("ARRAY[1,2,3]").unwrap();
+        assert_eq!(result, "'[1,2,3]'");
+        
+        // Test PostgreSQL array literal
+        let result = InsertTranslator::convert_array_value("'{1,2,3}'").unwrap();
+        assert_eq!(result, "'[1,2,3]'");
+        
+        // Test with strings
+        let result = InsertTranslator::convert_array_value("ARRAY['a','b','c']").unwrap();
+        assert_eq!(result, r#"'["a","b","c"]'"#);
+        
+        // Test with NULL
+        let result = InsertTranslator::convert_array_value("NULL").unwrap();
+        assert_eq!(result, "NULL");
+    }
+    
+    #[test]
+    fn test_parse_array_elements() {
+        let elements = InsertTranslator::parse_array_elements("1,2,3").unwrap();
+        assert_eq!(elements, vec![serde_json::json!(1), serde_json::json!(2), serde_json::json!(3)]);
+        
+        let elements = InsertTranslator::parse_array_elements("'a','b','c'").unwrap();
+        assert_eq!(elements, vec![serde_json::json!("a"), serde_json::json!("b"), serde_json::json!("c")]);
+        
+        let elements = InsertTranslator::parse_array_elements("1,NULL,3").unwrap();
+        assert_eq!(elements, vec![serde_json::json!(1), serde_json::Value::Null, serde_json::json!(3)]);
     }
 }

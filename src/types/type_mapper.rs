@@ -34,6 +34,37 @@ pub enum PgType {
     Bit = 1560,
     Varbit = 1562,
     Unknown = 705,
+    // Array types
+    BoolArray = 1000,
+    Int2Array = 1005,
+    Int4Array = 1007,
+    Int8Array = 1016,
+    Float4Array = 1021,
+    Float8Array = 1022,
+    TextArray = 1009,
+    VarcharArray = 1015,
+    CharArray = 1014,
+    UuidArray = 2951,
+    JsonArray = 199,
+    JsonbArray = 3807,
+    DateArray = 1182,
+    TimeArray = 1183,
+    TimestampArray = 1115,
+    TimestamptzArray = 1185,
+    TimetzArray = 1270,
+    IntervalArray = 1187,
+    NumericArray = 1231,
+    ByteaArray = 1001,
+    MoneyArray = 791,
+    Int4rangeArray = 3905,
+    Int8rangeArray = 3927,
+    NumrangeArray = 3907,
+    CidrArray = 651,
+    InetArray = 1041,
+    MacaddrArray = 1040,
+    Macaddr8Array = 775,
+    BitArray = 1561,
+    VarbitArray = 1563,
 }
 
 impl PgType {
@@ -70,6 +101,37 @@ impl PgType {
             1560 => Some(PgType::Bit),
             1562 => Some(PgType::Varbit),
             705 => Some(PgType::Unknown),
+            // Array types
+            1000 => Some(PgType::BoolArray),
+            1005 => Some(PgType::Int2Array),
+            1007 => Some(PgType::Int4Array),
+            1016 => Some(PgType::Int8Array),
+            1021 => Some(PgType::Float4Array),
+            1022 => Some(PgType::Float8Array),
+            1009 => Some(PgType::TextArray),
+            1015 => Some(PgType::VarcharArray),
+            1014 => Some(PgType::CharArray),
+            2951 => Some(PgType::UuidArray),
+            199 => Some(PgType::JsonArray),
+            3807 => Some(PgType::JsonbArray),
+            1182 => Some(PgType::DateArray),
+            1183 => Some(PgType::TimeArray),
+            1115 => Some(PgType::TimestampArray),
+            1185 => Some(PgType::TimestamptzArray),
+            1270 => Some(PgType::TimetzArray),
+            1187 => Some(PgType::IntervalArray),
+            1231 => Some(PgType::NumericArray),
+            1001 => Some(PgType::ByteaArray),
+            791 => Some(PgType::MoneyArray),
+            3905 => Some(PgType::Int4rangeArray),
+            3927 => Some(PgType::Int8rangeArray),
+            3907 => Some(PgType::NumrangeArray),
+            651 => Some(PgType::CidrArray),
+            1041 => Some(PgType::InetArray),
+            1040 => Some(PgType::MacaddrArray),
+            775 => Some(PgType::Macaddr8Array),
+            1561 => Some(PgType::BitArray),
+            1563 => Some(PgType::VarbitArray),
             _ => None,
         }
     }
@@ -111,6 +173,125 @@ impl PgType {
             PgType::Bit => "bit",
             PgType::Varbit => "varbit",
             PgType::Unknown => "unknown",
+            // Array types
+            PgType::BoolArray => "_bool",
+            PgType::Int2Array => "_int2",
+            PgType::Int4Array => "_int4",
+            PgType::Int8Array => "_int8",
+            PgType::Float4Array => "_float4",
+            PgType::Float8Array => "_float8",
+            PgType::TextArray => "_text",
+            PgType::VarcharArray => "_varchar",
+            PgType::CharArray => "_char",
+            PgType::UuidArray => "_uuid",
+            PgType::JsonArray => "_json",
+            PgType::JsonbArray => "_jsonb",
+            PgType::DateArray => "_date",
+            PgType::TimeArray => "_time",
+            PgType::TimestampArray => "_timestamp",
+            PgType::TimestamptzArray => "_timestamptz",
+            PgType::TimetzArray => "_timetz",
+            PgType::IntervalArray => "_interval",
+            PgType::NumericArray => "_numeric",
+            PgType::ByteaArray => "_bytea",
+            PgType::MoneyArray => "_money",
+            PgType::Int4rangeArray => "_int4range",
+            PgType::Int8rangeArray => "_int8range",
+            PgType::NumrangeArray => "_numrange",
+            PgType::CidrArray => "_cidr",
+            PgType::InetArray => "_inet",
+            PgType::MacaddrArray => "_macaddr",
+            PgType::Macaddr8Array => "_macaddr8",
+            PgType::BitArray => "_bit",
+            PgType::VarbitArray => "_varbit",
+        }
+    }
+
+    /// Check if this is an array type
+    pub fn is_array(&self) -> bool {
+        matches!(self,
+            PgType::BoolArray | PgType::Int2Array | PgType::Int4Array | PgType::Int8Array |
+            PgType::Float4Array | PgType::Float8Array | PgType::TextArray | PgType::VarcharArray |
+            PgType::CharArray | PgType::UuidArray | PgType::JsonArray | PgType::JsonbArray |
+            PgType::DateArray | PgType::TimeArray | PgType::TimestampArray | PgType::TimestamptzArray |
+            PgType::TimetzArray | PgType::IntervalArray | PgType::NumericArray | PgType::ByteaArray |
+            PgType::MoneyArray | PgType::Int4rangeArray | PgType::Int8rangeArray | PgType::NumrangeArray |
+            PgType::CidrArray | PgType::InetArray | PgType::MacaddrArray | PgType::Macaddr8Array |
+            PgType::BitArray | PgType::VarbitArray
+        )
+    }
+
+    /// Get the element type OID for array types
+    pub fn element_type(&self) -> Option<PgType> {
+        match self {
+            PgType::BoolArray => Some(PgType::Bool),
+            PgType::Int2Array => Some(PgType::Int2),
+            PgType::Int4Array => Some(PgType::Int4),
+            PgType::Int8Array => Some(PgType::Int8),
+            PgType::Float4Array => Some(PgType::Float4),
+            PgType::Float8Array => Some(PgType::Float8),
+            PgType::TextArray => Some(PgType::Text),
+            PgType::VarcharArray => Some(PgType::Varchar),
+            PgType::CharArray => Some(PgType::Char),
+            PgType::UuidArray => Some(PgType::Uuid),
+            PgType::JsonArray => Some(PgType::Json),
+            PgType::JsonbArray => Some(PgType::Jsonb),
+            PgType::DateArray => Some(PgType::Date),
+            PgType::TimeArray => Some(PgType::Time),
+            PgType::TimestampArray => Some(PgType::Timestamp),
+            PgType::TimestamptzArray => Some(PgType::Timestamptz),
+            PgType::TimetzArray => Some(PgType::Timetz),
+            PgType::IntervalArray => Some(PgType::Interval),
+            PgType::NumericArray => Some(PgType::Numeric),
+            PgType::ByteaArray => Some(PgType::Bytea),
+            PgType::MoneyArray => Some(PgType::Money),
+            PgType::Int4rangeArray => Some(PgType::Int4range),
+            PgType::Int8rangeArray => Some(PgType::Int8range),
+            PgType::NumrangeArray => Some(PgType::Numrange),
+            PgType::CidrArray => Some(PgType::Cidr),
+            PgType::InetArray => Some(PgType::Inet),
+            PgType::MacaddrArray => Some(PgType::Macaddr),
+            PgType::Macaddr8Array => Some(PgType::Macaddr8),
+            PgType::BitArray => Some(PgType::Bit),
+            PgType::VarbitArray => Some(PgType::Varbit),
+            _ => None,
+        }
+    }
+
+    /// Get the array type for a base type
+    pub fn array_type(&self) -> Option<PgType> {
+        match self {
+            PgType::Bool => Some(PgType::BoolArray),
+            PgType::Int2 => Some(PgType::Int2Array),
+            PgType::Int4 => Some(PgType::Int4Array),
+            PgType::Int8 => Some(PgType::Int8Array),
+            PgType::Float4 => Some(PgType::Float4Array),
+            PgType::Float8 => Some(PgType::Float8Array),
+            PgType::Text => Some(PgType::TextArray),
+            PgType::Varchar => Some(PgType::VarcharArray),
+            PgType::Char => Some(PgType::CharArray),
+            PgType::Uuid => Some(PgType::UuidArray),
+            PgType::Json => Some(PgType::JsonArray),
+            PgType::Jsonb => Some(PgType::JsonbArray),
+            PgType::Date => Some(PgType::DateArray),
+            PgType::Time => Some(PgType::TimeArray),
+            PgType::Timestamp => Some(PgType::TimestampArray),
+            PgType::Timestamptz => Some(PgType::TimestamptzArray),
+            PgType::Timetz => Some(PgType::TimetzArray),
+            PgType::Interval => Some(PgType::IntervalArray),
+            PgType::Numeric => Some(PgType::NumericArray),
+            PgType::Bytea => Some(PgType::ByteaArray),
+            PgType::Money => Some(PgType::MoneyArray),
+            PgType::Int4range => Some(PgType::Int4rangeArray),
+            PgType::Int8range => Some(PgType::Int8rangeArray),
+            PgType::Numrange => Some(PgType::NumrangeArray),
+            PgType::Cidr => Some(PgType::CidrArray),
+            PgType::Inet => Some(PgType::InetArray),
+            PgType::Macaddr => Some(PgType::MacaddrArray),
+            PgType::Macaddr8 => Some(PgType::Macaddr8Array),
+            PgType::Bit => Some(PgType::BitArray),
+            PgType::Varbit => Some(PgType::VarbitArray),
+            _ => None,
         }
     }
 }
@@ -180,6 +361,40 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("bit".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("bit varying".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("varbit".to_string(), "TEXT".to_string());
+
+        // Array type mappings - all arrays stored as JSON TEXT
+        mapper.pg_to_sqlite.insert("bool[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("boolean[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("int2[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("smallint[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("int4[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("integer[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("int8[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("bigint[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("float4[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("real[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("float8[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("double precision[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("text[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("varchar[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("char[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("uuid[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("json[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("jsonb[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("date[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("time[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("timestamp[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("timestamptz[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("numeric[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("decimal[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("bytea[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("money[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("cidr[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("inet[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("macaddr[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("macaddr8[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("bit[]".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("varbit[]".to_string(), "TEXT".to_string());
 
         // SQLite to PostgreSQL mappings (for result sets) 
         // Note: These should match SchemaTypeMapper::sqlite_type_to_pg_oid for consistency
