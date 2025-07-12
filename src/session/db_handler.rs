@@ -278,7 +278,9 @@ impl DbHandler {
             }
             
             // Fall back to direct execution
-            let rows_affected = conn.execute(query, [])?;
+            // Restore JSON path $ characters right before SQLite execution
+            let final_query = crate::translator::JsonTranslator::restore_json_path_root(query);
+            let rows_affected = conn.execute(&final_query, [])?;
             return Ok(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -351,8 +353,10 @@ impl DbHandler {
             // Check INSERT query cache to avoid re-parsing
             if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
                 // Use cached rewritten query if available
-                let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-                match conn.execute(final_query, []) {
+                let cached_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
+                // Restore JSON path $ characters right before SQLite execution
+                let final_query = crate::translator::JsonTranslator::restore_json_path_root(cached_query);
+                match conn.execute(&final_query, []) {
                     Ok(rows_affected) => return Ok(DbResponse {
                         columns: Vec::new(),
                         rows: Vec::new(),
@@ -367,7 +371,9 @@ impl DbHandler {
         }
         
         // Fall back to normal execution - but skip decimal rewriting since processor already did it
-        match conn.execute(query_to_execute, []) {
+        // Restore JSON path $ characters right before SQLite execution
+        let final_query = crate::translator::JsonTranslator::restore_json_path_root(query_to_execute);
+        match conn.execute(&final_query, []) {
             Ok(rows_affected) => Ok(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -907,7 +913,9 @@ fn build_execution_metadata(
         query.to_string()
     };
     
-    let stmt = conn.prepare(&prepared_sql)?;
+    // Restore JSON path $ characters right before SQLite preparation
+    let final_sql = crate::translator::JsonTranslator::restore_json_path_root(&prepared_sql);
+    let stmt = conn.prepare(&final_sql)?;
     let column_count = stmt.column_count();
     
     // Extract column information
@@ -950,7 +958,7 @@ fn build_execution_metadata(
         type_oids: vec![PgType::Text.to_oid(); column_count], // Default to TEXT, will be populated later
         result_formats: vec![], // Will be populated from Portal when executing
         fast_path_eligible,
-        prepared_sql,
+        prepared_sql: final_sql,
         param_count: 0, // TODO: Count parameters
     })
 }
@@ -1189,7 +1197,7 @@ pub fn extract_insert_table_name(query: &str) -> Option<String> {
 
 /// Rewrite query to handle DECIMAL types if needed
 pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
-    // Parse the SQL statement
+    // Parse the SQL statement (keep JSON path placeholders for now)
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, query)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -1221,7 +1229,7 @@ struct ParsedQueryInfo {
 
 /// Parse and rewrite query, returning rewritten query and parsed info
 fn parse_and_rewrite_query(query: &str, conn: &Connection, schema_cache: &SchemaCache) -> Result<(String, ParsedQueryInfo), rusqlite::Error> {
-    // Parse the SQL statement
+    // Parse the SQL statement (keep JSON path placeholders for now)
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, query)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;

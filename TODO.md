@@ -450,7 +450,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Created __pgsqlite_enum_usage table to track ENUM column usage
   - Added EnumTriggers module for managing validation triggers
 
-#### JSON/JSONB - MOSTLY COMPLETED (2025-07-12)
+#### JSON/JSONB - COMPLETED (2025-07-12)
 - [x] Implement JSON/JSONB types - COMPLETED (2025-07-06)
   - Both types stored as TEXT in SQLite
   - JsonTranslator handles type conversion in CREATE TABLE/ALTER TABLE
@@ -466,9 +466,19 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Integrated into query executor pipeline
   - [x] Full test coverage for all operators
   - [x] Comprehensive documentation in docs/json-support.md
-  - [ ] Implement ? operator (key exists)
-  - [ ] Implement ?| operator (any key exists)
-  - [ ] Implement ?& operator (all keys exist)
+- [x] **JSON Path Operator Fix** - COMPLETED (2025-07-12)
+  - [x] Fixed "sql parser error: Expected: ), found: $ at Line: 1, Column: 55" for JSON path queries
+  - [x] Root cause: SQL parser treating $ characters in JSON paths as parameter placeholders
+  - [x] Solution: Replaced json_extract calls with custom SQLite functions to avoid $ character
+  - [x] Created 6 custom JSON functions: pgsqlite_json_get_text, pgsqlite_json_get_json, pgsqlite_json_get_array_text, pgsqlite_json_get_array_json, pgsqlite_json_path_text, pgsqlite_json_path_json
+  - [x] Enhanced type handling to support chained operations (handles Text, Integer, Real inputs)
+  - [x] Updated JsonTranslator to use custom functions instead of json_extract
+  - [x] All JSON path operators (#>, #>>, ->, ->>) now work without SQL parser errors
+  - [x] Comprehensive unit tests for custom functions and chained operations
+  - [x] Zero compilation warnings, all tests passing (199/199 core tests)
+- [ ] Implement ? operator (key exists)
+- [ ] Implement ?| operator (any key exists)
+- [ ] Implement ?& operator (all keys exist)
 - [x] Core JSON functions - COMPLETED (2025-07-12)
   - [x] json_valid() - validate JSON
   - [x] json_typeof() / jsonb_typeof() - get JSON value type

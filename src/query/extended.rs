@@ -5,6 +5,7 @@ use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::{DecimalHandler, PgType};
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
 use crate::validator::NumericValidator;
+use crate::query::ParameterParser;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
@@ -157,7 +158,7 @@ impl ExtendedQueryHandler {
                             }
                             Err(_) => {
                                 // If we can't determine types, default to text
-                                let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                                let param_count = ParameterParser::count_parameters(&query);
                                 let types = vec![PgType::Text.to_oid(); param_count];
                                 (types.clone(), Some(types), None, Vec::new())
                             }
@@ -165,7 +166,7 @@ impl ExtendedQueryHandler {
                     } else if query_starts_with_ignore_case(&query, "SELECT") {
                         let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
                             // If we can't determine types, default to text
-                            let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                            let param_count = ParameterParser::count_parameters(&query);
                             vec![PgType::Text.to_oid(); param_count]
                         });
                         info!("Analyzed SELECT parameter types: {:?}", types);
@@ -174,7 +175,7 @@ impl ExtendedQueryHandler {
                         (types.clone(), Some(types), table, Vec::new())
                     } else {
                         // Other query types - just count parameters
-                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                        let param_count = ParameterParser::count_parameters(&query);
                         let types = vec![PgType::Text.to_oid(); param_count];
                         (types.clone(), Some(types), None, Vec::new())
                     };
@@ -190,7 +191,7 @@ impl ExtendedQueryHandler {
                         created_at: std::time::Instant::now(),
                     });
                     
-                    // Also update query cache if it's a parseable query
+                    // Also update query cache if it's a parseable query (keep JSON path placeholders for now)
                     if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
                         &sqlparser::dialect::PostgreSqlDialect {},
                         &cleaned_query
@@ -263,13 +264,13 @@ impl ExtendedQueryHandler {
                 // For parameterized queries, substitute dummy values
                 // Use the translated query for analysis
                 let mut test_query = translated_for_analysis.to_string();
-                let param_count = (1..=99).filter(|i| translated_for_analysis.contains(&format!("${}", i))).count();
+                let param_count = ParameterParser::count_parameters(&translated_for_analysis);
                 
                 if param_count > 0 {
-                    // Replace parameters with dummy values
-                    for i in 1..=param_count {
-                        test_query = test_query.replace(&format!("${}", i), "NULL");
-                    }
+                    // Replace parameters with dummy values using proper parser
+                    let dummy_values = vec!["NULL".to_string(); param_count];
+                    test_query = ParameterParser::substitute_parameters(&test_query, &dummy_values)
+                        .unwrap_or_else(|_| test_query); // Fall back to original if substitution fails
                 }
                 
                 // First, analyze the original query for type casts in the SELECT clause
@@ -893,7 +894,7 @@ impl ExtendedQueryHandler {
                 // even though we skipped them during Parse
                 info!("Catalog query detected in Describe, generating field descriptions");
                 
-                // Parse the query to extract the selected columns
+                // Parse the query to extract the selected columns (keep JSON path placeholders for now)
                 let field_descriptions = if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
                     &sqlparser::dialect::PostgreSqlDialect {},
                     query
@@ -1375,17 +1376,12 @@ impl ExtendedQueryHandler {
     }
     
     fn substitute_parameters(query: &str, values: &[Option<Vec<u8>>], formats: &[i16], param_types: &[i32]) -> Result<String, PgSqliteError> {
-        let mut result = query.to_string();
+        // Convert parameter values to strings for substitution
+        let mut string_values = Vec::new();
         
-        
-        // Simple parameter substitution - replace $1, $2, etc. with actual values
-        // This is a simplified version - a real implementation would parse the SQL
         for (i, value) in values.iter().enumerate() {
-            let param = format!("${}", i + 1);
             let format = formats.get(i).copied().unwrap_or(0); // Default to text format
             let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to text
-            
-            
             
             let replacement = match value {
                 None => "NULL".to_string(),
@@ -1545,13 +1541,17 @@ impl ExtendedQueryHandler {
                     }
                 }
             };
-            result = result.replace(&param, &replacement);
+            string_values.push(replacement);
         }
+        
+        // Use the proper parameter parser that respects string literals
+        let result = ParameterParser::substitute_parameters(query, &string_values)
+            .map_err(|e| PgSqliteError::InvalidParameter(format!("Parameter substitution error: {}", e)))?;
         
         // Remove PostgreSQL-style casts (::type) as SQLite doesn't support them
         // Be careful not to match IPv6 addresses like ::1
         let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
-        result = cast_regex.replace_all(&result, "").to_string();
+        let result = cast_regex.replace_all(&result, "").to_string();
         
         Ok(result)
     }

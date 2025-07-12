@@ -15,9 +15,10 @@ static ARRAY_OVERLAP_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r#"(\b\w+(?:\.\w+)*)\s*&&\s*(\b\w+(?:\.\w+)*|'[^']+'|"[^"]+"|'\[[^\]]+\]')"#).unwrap()
 });
 
-static ARRAY_CONCAT_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"(\b\w+(?:\.\w+)*)\s*\|\|\s*('[^']+'|"[^"]+"|'\[[^\]]+\]')"#).unwrap()
-});
+// TODO: Re-enable when we can differentiate array concat from string concat
+// static ARRAY_CONCAT_REGEX: Lazy<Regex> = Lazy::new(|| {
+//     Regex::new(r#"(\b\w+(?:\.\w+)*)\s*\|\|\s*('[^']+'|"[^"]+"|'\[[^\]]+\]')"#).unwrap()
+// });
 
 static ARRAY_SUBSCRIPT_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(\b\w+(?:\.\w+)*)\[(\d+)\]").unwrap()
@@ -188,20 +189,21 @@ impl ArrayTranslator {
         Ok(result)
     }
     
-    /// Translate || operator: array1 || array2 -> array_cat(array1, array2)
-    fn translate_concat_operator(sql: &str) -> Result<String, PgSqliteError> {
-        let mut result = sql.to_string();
-        
-        while let Some(captures) = ARRAY_CONCAT_REGEX.captures(&result) {
-            let array1 = &captures[1];
-            let array2 = captures[2].trim();
-            
-            let replacement = format!("array_cat({}, {})", array1, array2);
-            result = result.replace(&captures[0], &replacement);
-        }
-        
-        Ok(result)
-    }
+    // TODO: Re-enable when we can differentiate array concat from string concat
+    // /// Translate || operator: array1 || array2 -> array_cat(array1, array2)
+    // fn translate_concat_operator(sql: &str) -> Result<String, PgSqliteError> {
+    //     let mut result = sql.to_string();
+    //     
+    //     while let Some(captures) = ARRAY_CONCAT_REGEX.captures(&result) {
+    //         let array1 = &captures[1];
+    //         let array2 = captures[2].trim();
+    //         
+    //         let replacement = format!("array_cat({}, {})", array1, array2);
+    //         result = result.replace(&captures[0], &replacement);
+    //     }
+    //     
+    //     Ok(result)
+    // }
 }
 
 #[cfg(test)]

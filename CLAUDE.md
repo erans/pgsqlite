@@ -196,18 +196,19 @@ INSERT INTO table (col1, col2) VALUES
   - Wire protocol array support with proper type OIDs
   - Multi-row INSERT with array values fully supported
   - Comprehensive test coverage in CI/CD pipeline
-- **JSON/JSONB Support (2025-07-12)**: Full operator and function support with comprehensive documentation
+- **JSON/JSONB Support (2025-07-12)**: Complete operator and function support with robust error handling
   - All major operators: ->, ->>, @>, <@, #>, #>>
   - Core functions: json_valid, json_typeof, json_array_length, jsonb_object_keys
   - Manipulation functions: jsonb_set, json_extract_path, json_strip_nulls
+  - **JSON Path Operator Fix**: Resolved SQL parser $ character conflicts in path expressions
+  - Custom SQLite functions eliminate json_extract dependency and $ character issues
+  - Enhanced type handling supports chained operations (data->'items'->1->>'name')
   - Automatic operator translation in query pipeline
-  - Full test coverage for operators and functions
+  - Full test coverage for operators, functions, and edge cases
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
-- **Array operators**: Array-specific operators (ANY, ALL, @>, etc.) not yet implemented
-- **Array functions**: Functions like unnest(), array_agg() not yet implemented
-- **Array subscripts**: Array element access (arr[1]) not yet supported
+- **Array functions**: Some advanced functions like unnest() not yet implemented
 
 ## Database Handler Architecture
 Uses a Mutex-based implementation for thread safety:

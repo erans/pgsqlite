@@ -20,7 +20,7 @@ impl RegexTranslator {
         // First, handle OPERATOR(pg_catalog.op) syntax with string replacement
         let query = Self::translate_operator_syntax(query);
         
-        // Parse the SQL query
+        // Parse the SQL query (keep JSON path placeholders for now)
         let dialect = PostgreSqlDialect {};
         let mut statements = Parser::parse_sql(&dialect, &query)?;
         

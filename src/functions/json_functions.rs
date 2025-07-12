@@ -379,6 +379,204 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // Custom functions for JSON operators to avoid $ character issues
+    
+    // pgsqlite_json_get_text(json, key) - Extract key as text (->> operator with string key)
+    conn.create_scalar_function(
+        "pgsqlite_json_get_text",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Handle both string and direct input for JSON
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(None),
+                ValueRef::Blob(_) => return Ok(None),
+            };
+            
+            let key: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Object(map)) => {
+                    match map.get(&key) {
+                        Some(JsonValue::String(s)) => Ok(Some(s.clone())),
+                        Some(JsonValue::Null) => Ok(None),
+                        Some(v) => Ok(Some(match v {
+                            JsonValue::Bool(b) => b.to_string(),
+                            JsonValue::Number(n) => n.to_string(),
+                            _ => serde_json::to_string(v).unwrap_or_default(),
+                        })),
+                        None => Ok(None),
+                    }
+                }
+                _ => Ok(None),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_get_json(json, key) - Extract key as JSON (-> operator with string key)
+    conn.create_scalar_function(
+        "pgsqlite_json_get_json",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Handle both string and direct input for JSON
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(None),
+                ValueRef::Blob(_) => return Ok(None),
+            };
+            
+            let key: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Object(map)) => {
+                    match map.get(&key) {
+                        Some(value) => Ok(Some(serde_json::to_string(value).unwrap_or_default())),
+                        None => Ok(None),
+                    }
+                }
+                Ok(JsonValue::Array(_)) => {
+                    // If it's an array and we're using a string key, return null
+                    Ok(None)
+                }
+                _ => Ok(None),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_get_array_text(json, index) - Extract array element as text (->> operator with integer index)
+    conn.create_scalar_function(
+        "pgsqlite_json_get_array_text",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Handle both string and direct input for JSON
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(None),
+                ValueRef::Blob(_) => return Ok(None),
+            };
+            
+            let index: i64 = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Array(arr)) => {
+                    if let Some(value) = arr.get(index as usize) {
+                        match value {
+                            JsonValue::String(s) => Ok(Some(s.clone())),
+                            JsonValue::Null => Ok(None),
+                            JsonValue::Bool(b) => Ok(Some(b.to_string())),
+                            JsonValue::Number(n) => Ok(Some(n.to_string())),
+                            _ => Ok(Some(serde_json::to_string(value).unwrap_or_default())),
+                        }
+                    } else {
+                        Ok(None)
+                    }
+                }
+                _ => Ok(None),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_get_array_json(json, index) - Extract array element as JSON (-> operator with integer index)
+    conn.create_scalar_function(
+        "pgsqlite_json_get_array_json",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Handle both string and direct input for JSON
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(None),
+                ValueRef::Blob(_) => return Ok(None),
+            };
+            
+            let index: i64 = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Array(arr)) => {
+                    if let Some(value) = arr.get(index as usize) {
+                        Ok(Some(serde_json::to_string(value).unwrap_or_default()))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                _ => Ok(None),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_path_text(json, path) - Extract path as text (#>> operator)
+    conn.create_scalar_function(
+        "pgsqlite_json_path_text",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Handle both string and direct input for JSON
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(None),
+                ValueRef::Blob(_) => return Ok(None),
+            };
+            
+            let path_str: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    let path_parts: Vec<&str> = path_str.split(',').collect();
+                    let result = extract_json_path_by_parts(&json, &path_parts);
+                    Ok(result.map(|v| match v {
+                        JsonValue::String(s) => s,
+                        JsonValue::Null => "null".to_string(),
+                        JsonValue::Bool(b) => b.to_string(),
+                        JsonValue::Number(n) => n.to_string(),
+                        _ => serde_json::to_string(&v).unwrap_or_default(),
+                    }))
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_path_json(json, path) - Extract path as JSON (#> operator)
+    conn.create_scalar_function(
+        "pgsqlite_json_path_json",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Handle both string and direct input for JSON
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(None),
+                ValueRef::Blob(_) => return Ok(None),
+            };
+            
+            let path_str: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    let path_parts: Vec<&str> = path_str.split(',').collect();
+                    let result = extract_json_path_by_parts(&json, &path_parts);
+                    Ok(result.map(|v| serde_json::to_string(&v).unwrap_or_default()))
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
     Ok(())
 }
 
@@ -453,6 +651,27 @@ fn json_typeof(ctx: &rusqlite::functions::Context) -> Result<Option<String>> {
         Ok(JsonValue::Object(_)) => Ok(Some("object".to_string())),
         Err(_) => Ok(None),
     }
+}
+
+/// Extract value from JSON using array of path parts
+fn extract_json_path_by_parts(json: &JsonValue, path_parts: &[&str]) -> Option<JsonValue> {
+    let mut current = json;
+    
+    for part in path_parts {
+        let part = part.trim();
+        match current {
+            JsonValue::Object(map) => {
+                current = map.get(part)?;
+            }
+            JsonValue::Array(arr) => {
+                let index: usize = part.parse().ok()?;
+                current = arr.get(index)?;
+            }
+            _ => return None,
+        }
+    }
+    
+    Some(current.clone())
 }
 
 /// Extract value from JSON using simple path notation
@@ -607,5 +826,73 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert!(!not_contains);
+    }
+    
+    #[test]
+    fn test_custom_json_path_functions() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        let test_json = r#"{"name": "John", "age": 30, "items": ["item1", "item2"], "address": {"city": "NYC", "zip": "10001"}}"#;
+        
+        // Test pgsqlite_json_get_text (string key)
+        let name: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_get_text(?, ?)",
+            [test_json, "name"],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(name, Some("John".to_string()));
+        
+        // Test pgsqlite_json_get_json (string key)
+        let address: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_get_json(?, ?)",
+            [test_json, "address"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(address.is_some());
+        assert!(address.unwrap().contains("NYC"));
+        
+        // Test pgsqlite_json_get_array_text (array index)
+        let first_item: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_get_array_text(?, ?)",
+            (r#"["item1", "item2", "item3"]"#, 0i64),
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(first_item, Some("item1".to_string()));
+        
+        // Test pgsqlite_json_get_array_json (array index)
+        let second_item: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_get_array_json(?, ?)",
+            (r#"["item1", {"nested": "value"}, "item3"]"#, 1i64),
+            |row| row.get(0)
+        ).unwrap();
+        assert!(second_item.is_some());
+        assert!(second_item.unwrap().contains("nested"));
+        
+        // Test pgsqlite_json_path_text (path navigation)
+        let city: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_path_text(?, ?)",
+            [test_json, "address,city"],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(city, Some("NYC".to_string()));
+        
+        // Test pgsqlite_json_path_json (path navigation)
+        let address_json: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_path_json(?, ?)",
+            [test_json, "address"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(address_json.is_some());
+        assert!(address_json.unwrap().contains("NYC"));
+        
+        // Test array access via path
+        let nested_json = r#"{"items": [{"name": "first"}, {"name": "second"}]}"#;
+        let item_name: Option<String> = conn.query_row(
+            "SELECT pgsqlite_json_path_text(?, ?)",
+            [nested_json, "items,0,name"],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(item_name, Some("first".to_string()));
     }
 }

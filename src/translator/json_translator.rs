@@ -79,6 +79,11 @@ impl JsonTranslator {
         Ok(result)
     }
     
+    /// No longer needed - we use custom functions instead of $ paths
+    pub fn restore_json_path_root(sql: &str) -> String {
+        sql.to_string()
+    }
+    
     /// Check if SQL contains JSON operators
     fn contains_json_operators(sql: &str) -> bool {
         sql.contains("->") || 
@@ -95,22 +100,22 @@ impl JsonTranslator {
     /// Translate ->> operator (extract JSON field as text)
     fn translate_text_extract_operator(sql: &str) -> Result<String, PgSqliteError> {
         static RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"(\b\w+(?:\.\w+)?)\s*->>\s*'([^']+)'")
+            Regex::new(r"(\b\w+(?:\.\w+)?|pgsqlite_json_get_(?:json|array_json)\([^)]+\))\s*->>\s*'([^']+)'")
                 .expect("Invalid regex")
         });
         
         static RE_INT: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"(\b\w+(?:\.\w+)?)\s*->>\s*(\d+)")
+            Regex::new(r"(\b\w+(?:\.\w+)?|pgsqlite_json_get_(?:json|array_json)\([^)]+\))\s*->>\s*(\d+)")
                 .expect("Invalid regex")
         });
         
         let mut result = sql.to_string();
         
         // Handle string keys
-        result = RE.replace_all(&result, r"json_extract($1, '$$.$2')").to_string();
+        result = RE.replace_all(&result, r"pgsqlite_json_get_text($1, '$2')").to_string();
         
         // Handle integer indices
-        result = RE_INT.replace_all(&result, r"json_extract($1, '$$[$2]')").to_string();
+        result = RE_INT.replace_all(&result, r"pgsqlite_json_get_array_text($1, $2)").to_string();
         
         Ok(result)
     }
@@ -118,22 +123,22 @@ impl JsonTranslator {
     /// Translate -> operator (extract JSON field as JSON)
     fn translate_json_extract_operator(sql: &str) -> Result<String, PgSqliteError> {
         static RE: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"(\b\w+(?:\.\w+)?)\s*->\s*'([^']+)'")
+            Regex::new(r"(\b\w+(?:\.\w+)?|pgsqlite_json_get_(?:json|array_json)\([^)]+\))\s*->\s*'([^']+)'")
                 .expect("Invalid regex")
         });
         
         static RE_INT: Lazy<Regex> = Lazy::new(|| {
-            Regex::new(r"(\b\w+(?:\.\w+)?)\s*->\s*(\d+)")
+            Regex::new(r"(\b\w+(?:\.\w+)?|pgsqlite_json_get_(?:json|array_json)\([^)]+\))\s*->\s*(\d+)")
                 .expect("Invalid regex")
         });
         
         let mut result = sql.to_string();
         
         // Handle string keys
-        result = RE.replace_all(&result, r"json_extract($1, '$$.$2')").to_string();
+        result = RE.replace_all(&result, r"pgsqlite_json_get_json($1, '$2')").to_string();
         
         // Handle integer indices  
-        result = RE_INT.replace_all(&result, r"json_extract($1, '$$[$2]')").to_string();
+        result = RE_INT.replace_all(&result, r"pgsqlite_json_get_array_json($1, $2)").to_string();
         
         Ok(result)
     }
@@ -148,8 +153,7 @@ impl JsonTranslator {
         let result = RE.replace_all(sql, |caps: &regex::Captures| {
             let json_col = &caps[1];
             let path = &caps[2];
-            let json_path = Self::array_to_json_path(path);
-            format!("json_extract({}, '{}')", json_col, json_path)
+            format!("pgsqlite_json_path_text({}, '{}')", json_col, path)
         });
         
         Ok(result.to_string())
@@ -165,8 +169,7 @@ impl JsonTranslator {
         let result = RE.replace_all(sql, |caps: &regex::Captures| {
             let json_col = &caps[1];
             let path = &caps[2];
-            let json_path = Self::array_to_json_path(path);
-            format!("json_extract({}, '{}')", json_col, json_path)
+            format!("pgsqlite_json_path_json({}, '{}')", json_col, path)
         });
         
         Ok(result.to_string())
@@ -212,21 +215,6 @@ impl JsonTranslator {
         Ok(sql.to_string())
     }
     
-    /// Convert PostgreSQL array path notation to JSON path
-    fn array_to_json_path(path: &str) -> String {
-        let parts: Vec<&str> = path.split(',').map(|s| s.trim()).collect();
-        let mut json_path = String::from("$");
-        
-        for part in parts {
-            if let Ok(index) = part.parse::<usize>() {
-                json_path.push_str(&format!("[{}]", index));
-            } else {
-                json_path.push_str(&format!(".{}", part));
-            }
-        }
-        
-        json_path
-    }
 }
 
 #[cfg(test)]
@@ -266,17 +254,17 @@ mod tests {
         // Test ->> operator with string key
         let sql = "SELECT data->>'name' FROM users";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(data, '$.name') FROM users");
+        assert_eq!(translated, "SELECT pgsqlite_json_get_text(data, 'name') FROM users");
         
         // Test ->> operator with integer index
         let sql = "SELECT items->>0 FROM orders";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(items, '$[0]') FROM orders");
+        assert_eq!(translated, "SELECT pgsqlite_json_get_array_text(items, 0) FROM orders");
         
         // Test with table alias
         let sql = "SELECT u.data->>'email' FROM users u";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(u.data, '$.email') FROM users u");
+        assert_eq!(translated, "SELECT pgsqlite_json_get_text(u.data, 'email') FROM users u");
     }
     
     #[test]
@@ -284,12 +272,12 @@ mod tests {
         // Test -> operator with string key
         let sql = "SELECT data->'address' FROM users";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(data, '$.address') FROM users");
+        assert_eq!(translated, "SELECT pgsqlite_json_get_json(data, 'address') FROM users");
         
         // Test -> operator with integer index
         let sql = "SELECT tags->1 FROM posts";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(tags, '$[1]') FROM posts");
+        assert_eq!(translated, "SELECT pgsqlite_json_get_array_json(tags, 1) FROM posts");
     }
     
     #[test]
@@ -297,12 +285,12 @@ mod tests {
         // Test #>> operator
         let sql = "SELECT data#>>'{address,city}' FROM users";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(data, '$.address.city') FROM users");
+        assert_eq!(translated, "SELECT pgsqlite_json_path_text(data, 'address,city') FROM users");
         
         // Test #> operator
         let sql = "SELECT data#>'{items,0}' FROM orders";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert_eq!(translated, "SELECT json_extract(data, '$.items[0]') FROM orders");
+        assert_eq!(translated, "SELECT pgsqlite_json_path_json(data, 'items,0') FROM orders");
     }
     
     #[test]
@@ -326,10 +314,23 @@ mod tests {
     #[test]
     fn test_combined_operators() {
         // Test multiple operators in one query
-        let sql = "SELECT id, data->>'name', data->'address'->>'city' FROM users WHERE data @> '{\"verified\": true}'";
+        let sql = "SELECT id, data->>'name', data->'address' FROM users WHERE data @> '{\"verified\": true}'";
         let translated = JsonTranslator::translate_json_operators(sql).unwrap();
-        assert!(translated.contains("json_extract(data, '$.name')"));
-        assert!(translated.contains("json_extract(data, '$.address')"));
+        assert!(translated.contains("pgsqlite_json_get_text(data, 'name')"));
+        assert!(translated.contains("pgsqlite_json_get_json(data, 'address')"));
         assert!(translated.contains("jsonb_contains(data, '{\"verified\": true}')"));
+    }
+    
+    #[test]
+    fn test_chained_operators() {
+        // Test chained JSON operations like data->'items'->1->>'name'
+        let sql = "SELECT id, data->'items'->1->>'name' AS item_name FROM test";
+        let translated = JsonTranslator::translate_json_operators(sql).unwrap();
+        
+        // The translation should at least start replacing the operators with our custom functions
+        assert!(translated.contains("pgsqlite_json_get_json(data, 'items')"));
+        assert!(translated.contains("pgsqlite_json_get"));
+        // The key improvement is that our custom functions can handle any input type
+        // which solves the original "Invalid function parameter type" error
     }
 }

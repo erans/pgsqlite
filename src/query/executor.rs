@@ -215,6 +215,9 @@ impl QueryExecutor {
                     // Continue with original query - some operators might not be supported yet
                 }
             }
+            
+            // Note: JSON path $ restoration will happen right before SQLite execution
+            debug!("Query after JSON translation ($ placeholders preserved): {}", translated_query);
         }
         
         // Translate array operators
