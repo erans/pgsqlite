@@ -371,10 +371,32 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Comprehensive Rust integration tests in array_types_test.rs
   - Tested in all 5 CI modes (TCP with/without SSL, Unix socket, File DB with/without SSL)
   - Fixed JSON validation constraint to handle NULL arrays properly
-- [ ] Future work: Array operators (ANY, ALL, @>, <@, &&, ||)
-- [ ] Future work: Array functions (unnest, array_length, array_position, etc.)
-- [ ] Future work: Array subscript access (e.g., array[1], array[1:3])
-- [ ] Future work: Array aggregation functions (array_agg, array_cat)
+- [x] Array operators - COMPLETED (2025-07-12)
+  - [x] ANY operator: `value = ANY(array)` translates to EXISTS subquery
+  - [x] ALL operator: `value > ALL(array)` translates to NOT EXISTS with inverted condition
+  - [x] @> operator (contains): `array1 @> array2` uses array_contains function
+  - [x] <@ operator (is contained by): `array1 <@ array2` uses array_contained function
+  - [x] && operator (overlap): `array1 && array2` uses array_overlap function
+  - [x] || operator (concatenation): `array1 || array2` uses array_cat function
+- [x] Array functions - COMPLETED (2025-07-12)
+  - [x] array_length(array, dimension) - returns array length for given dimension
+  - [x] array_upper/array_lower - return bounds (always 1-based for PostgreSQL compatibility)
+  - [x] array_ndims - returns number of dimensions
+  - [x] array_append/array_prepend - add elements to arrays
+  - [x] array_cat - concatenate arrays (also used for || operator)
+  - [x] array_remove - remove all occurrences of an element
+  - [x] array_replace - replace all occurrences of an element
+  - [x] array_position/array_positions - find element positions (1-based)
+  - [x] array_slice - extract array slice
+  - [ ] unnest - set-returning function (requires more complex implementation)
+- [x] Array subscript access - COMPLETED (2025-07-12)
+  - [x] Single subscript: `array[1]` translates to `json_extract(array, '$[0]')`
+  - [x] Array slicing: `array[1:3]` translates to `array_slice(array, 1, 3)`
+  - [x] Handles 1-based PostgreSQL indexing to 0-based JSON indexing
+- [x] Array aggregation functions - COMPLETED (2025-07-12)
+  - [x] array_agg - aggregate values into an array
+  - [ ] array_agg with ORDER BY (requires aggregate function enhancement)
+  - [ ] array_agg with DISTINCT (requires aggregate function enhancement)
 - [ ] Future work: Binary protocol array encoding/decoding
 
 #### ENUM Types

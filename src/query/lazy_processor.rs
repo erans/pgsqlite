@@ -13,6 +13,7 @@ pub struct LazyQueryProcessor<'a> {
     needs_regex_translation: bool,
     needs_schema_translation: bool,
     needs_numeric_cast_translation: bool,
+    needs_array_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -27,6 +28,9 @@ impl<'a> LazyQueryProcessor<'a> {
                                      query.contains(" ~* ") || query.contains(" !~* "),
             needs_schema_translation: query.contains("pg_catalog.") || query.contains("PG_CATALOG."),
             needs_numeric_cast_translation: crate::translator::NumericCastTranslator::needs_translation(query),
+            needs_array_translation: query.contains("[") || query.contains("ANY(") || query.contains("ALL(") ||
+                                    query.contains("@>") || query.contains("<@") || query.contains("&&") ||
+                                    query.contains("||"),
         }
     }
     
@@ -50,6 +54,10 @@ impl<'a> LazyQueryProcessor<'a> {
         }
         
         if self.needs_numeric_cast_translation {
+            return true;
+        }
+        
+        if self.needs_array_translation {
             return true;
         }
         
@@ -137,7 +145,24 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 5: Decimal rewriting if needed
+        // Step 5: Array translation if needed
+        if self.needs_array_translation {
+            tracing::debug!("Before array translation: {}", current_query);
+            match crate::translator::ArrayTranslator::translate_array_operators(&current_query) {
+                Ok(translated) => {
+                    if translated != current_query {
+                        tracing::debug!("After array translation: {}", translated);
+                        current_query = Cow::Owned(translated);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to translate array operators: {}", e);
+                    // Continue with original query
+                }
+            }
+        }
+        
+        // Step 6: Decimal rewriting if needed
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
         
         // Check if we need decimal rewriting

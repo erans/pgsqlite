@@ -217,6 +217,21 @@ impl QueryExecutor {
             }
         }
         
+        // Translate array operators
+        use crate::translator::ArrayTranslator;
+        match ArrayTranslator::translate_array_operators(&translated_query) {
+            Ok(translated) => {
+                if translated != translated_query {
+                    debug!("Query after array operator translation: {}", translated);
+                    translated_query = translated;
+                }
+            }
+            Err(e) => {
+                debug!("Array operator translation failed: {}", e);
+                // Continue with original query
+            }
+        }
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
