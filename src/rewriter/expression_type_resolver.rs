@@ -335,9 +335,20 @@ impl<'a> ExpressionTypeResolver<'a> {
             context.table_aliases.get(t)
                 .cloned()
                 .unwrap_or_else(|| t.to_string())
+        } else if let Some(default) = &context.default_table {
+            // Use default table if available
+            default.clone()
         } else {
-            // Use default table
-            context.default_table.clone().unwrap_or_default()
+            // No table specified and no default - search all tables in context
+            // This handles unqualified columns in JOIN queries
+            for (_, actual_table) in &context.table_aliases {
+                if let Some(type_oid) = SchemaTypeMapper::get_type_from_schema(self.conn, actual_table, column) {
+                    let pg_type = PgType::from_oid(type_oid).unwrap_or(PgType::Text);
+                    return pg_type;
+                }
+            }
+            // If not found in any aliased table, return empty string to continue normal flow
+            String::new()
         };
         
         // Check if this is a derived table or CTE

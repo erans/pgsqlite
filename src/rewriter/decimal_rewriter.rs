@@ -331,6 +331,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                     self.resolver.process_table_with_joins(&table_with_joins.relation, &table_with_joins.joins, &mut local_context);
                 }
                 
+                
                 // Update default table if there's exactly one table in FROM clause
                 if current_tables.len() == 1 {
                     local_context.default_table = Some(current_tables[0].clone());
