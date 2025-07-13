@@ -163,16 +163,35 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ### Query Optimization
 
-#### Decimal Query Rewriting - Cast Detection
-- [ ] Implement implicit cast detection in decimal query rewriting
-- [ ] Handle implicit casts in comparisons (e.g., `integer_column = '123.45'`)
-- [ ] Detect function parameter implicit casts to decimal types
-- [ ] Support type promotion in arithmetic operations (integer + decimal -> decimal)
-- [ ] Handle assignment casts in INSERT/UPDATE statements
-- [ ] Implement full PostgreSQL-style implicit cast analysis in ExpressionTypeResolver
+#### Decimal Query Rewriting - Cast Detection - COMPLETED (2025-07-13)
+- [x] Implement implicit cast detection in decimal query rewriting
+  - [x] Created ImplicitCastDetector module for detecting when implicit casts are needed
+  - [x] Enhanced DecimalQueryRewriter to process expressions even without decimal columns
+- [x] Handle implicit casts in comparisons (e.g., `integer_column = '123.45'`)
+  - [x] Integer columns compared with decimal string literals work correctly
+  - [x] String literals containing numbers (with or without decimals) trigger implicit casts
+- [x] Detect function parameter implicit casts to decimal types
+  - [x] Functions like ROUND(), TRUNC(), math functions detect when arguments need casting
+  - [x] Implicit casts are applied before function processing
+- [x] Support type promotion in arithmetic operations (integer + decimal -> decimal)
+  - [x] Mixed type arithmetic correctly promotes integers to decimals
+  - [x] Type promotion works across binary operations
+- [x] Handle assignment casts in INSERT/UPDATE statements
+  - [x] UPDATE WHERE clauses with implicit casts are processed correctly
+  - [x] INSERT statements preserve string values as expected
+- [x] Implement full PostgreSQL-style implicit cast analysis in ExpressionTypeResolver
+  - [x] Enhanced type resolver to search all tables for unqualified columns in JOINs
+  - [x] Fixed type resolution for columns from multiple joined tables
+- **Known Limitation**: Complex nested arithmetic expressions like `(a * 2 + 5) * b` are not fully decomposed
 
 #### Decimal Query Rewriting - Context Handling
 - [ ] Optimize context merging performance for deeply nested subqueries
+
+#### Decimal Query Rewriting - Nested Expression Handling
+- [ ] Fully decompose complex nested arithmetic expressions (e.g., `(a * 2 + 5) * b`)
+- [ ] Process inner expressions before wrapping in decimal functions
+- [ ] Handle parenthesized expressions with proper recursion
+- [ ] Ensure all arithmetic operations within nested expressions use decimal functions
 
 #### Performance Enhancements
 - [x] Profile protocol serialization overhead - COMPLETED (2025-07-06)
