@@ -6,6 +6,7 @@ use sqlparser::ast::{
 use rusqlite::Connection;
 use crate::types::PgType;
 use super::expression_type_resolver::{ExpressionTypeResolver, QueryContext};
+use super::implicit_cast_detector::{ImplicitCastDetector, ImplicitCast};
 
 /// Rewrites queries to use decimal functions for NUMERIC operations
 pub struct DecimalQueryRewriter<'a> {
@@ -128,24 +129,24 @@ impl<'a> DecimalQueryRewriter<'a> {
                 // Check if the table has decimal columns
                 if let sqlparser::ast::TableFactor::Table { name, .. } = &table.relation {
                     let table_name = name.to_string();
-                    if !self.any_table_has_decimal_columns(&[table_name.clone()]) {
-                        return Ok(()); // Skip rewriting
-                    }
+                    let has_decimal_columns = self.any_table_has_decimal_columns(&[table_name.clone()]);
                     
                     // Create context with table name
                     let mut context = QueryContext::default();
                     context.default_table = Some(table_name);
                     
-                    // Rewrite WHERE clause
+                    // Always rewrite WHERE clause to check for implicit casts
                     if let Some(expr) = selection {
-                        self.rewrite_expression(expr, &context)?;
+                        self.rewrite_expression_for_implicit_casts(expr, &context)?;
                     }
                     
-                    // Rewrite assignment expressions
-                    // For UPDATE assignments, we don't want to wrap simple numeric literals
-                    // because rust_decimal can't handle very large numbers (>28 digits)
-                    for assignment in assignments {
-                        self.rewrite_update_assignment(&mut assignment.value, &context)?;
+                    // Rewrite assignment expressions only if table has decimal columns
+                    if has_decimal_columns {
+                        // For UPDATE assignments, we don't want to wrap simple numeric literals
+                        // because rust_decimal can't handle very large numbers (>28 digits)
+                        for assignment in assignments {
+                            self.rewrite_update_assignment(&mut assignment.value, &context)?;
+                        }
                     }
                 }
                 Ok(())
@@ -345,22 +346,33 @@ impl<'a> DecimalQueryRewriter<'a> {
                     }
                 }
                 
-                // Rewrite projection if needed
+                // Rewrite projection - always check for implicit casts
                 for item in &mut select.projection {
                     match item {
                         SelectItem::UnnamedExpr(expr) => {
-                            self.rewrite_expression_with_optimization(expr, &local_context, has_decimal_columns)?;
+                            if has_decimal_columns {
+                                self.rewrite_expression_with_optimization(expr, &local_context, has_decimal_columns)?;
+                            } else {
+                                // Even without decimal columns, check for implicit casts
+                                self.rewrite_expression_for_implicit_casts(expr, &local_context)?;
+                            }
                         }
                         SelectItem::ExprWithAlias { expr, .. } => {
-                            self.rewrite_expression_with_optimization(expr, &local_context, has_decimal_columns)?;
+                            if has_decimal_columns {
+                                self.rewrite_expression_with_optimization(expr, &local_context, has_decimal_columns)?;
+                            } else {
+                                // Even without decimal columns, check for implicit casts
+                                self.rewrite_expression_for_implicit_casts(expr, &local_context)?;
+                            }
                         }
                         _ => {}
                     }
                 }
                 
-                // Rewrite WHERE clause
+                // Rewrite WHERE clause - always process to handle implicit casts
                 if let Some(expr) = &mut select.selection {
-                    self.rewrite_expression_with_optimization(expr, &local_context, has_decimal_columns)?;
+                    // For WHERE clauses, we always need to check for implicit casts even if no decimal columns
+                    self.rewrite_expression_for_implicit_casts(expr, &local_context)?;
                 }
                 
                 // Rewrite GROUP BY if needed
@@ -459,7 +471,9 @@ impl<'a> DecimalQueryRewriter<'a> {
                 // Check if we need to rewrite this function before processing arguments
                 let is_aggregate = self.is_aggregate_function(&func.name);
                 let is_math = self.is_math_function(&func.name);
+                let func_name = func.name.to_string();
                 let mut has_decimal_arg = false;
+                let mut has_implicit_cast = false;
                 
                 // Check arguments for decimal involvement
                 if let FunctionArguments::List(list) = &func.args {
@@ -470,19 +484,30 @@ impl<'a> DecimalQueryRewriter<'a> {
                     }
                 }
                 
-                // Rewrite function arguments
+                // Rewrite function arguments with implicit cast detection
                 if let FunctionArguments::List(list) = &mut func.args {
-                    for arg in &mut list.args {
+                    for (arg_pos, arg) in list.args.iter_mut().enumerate() {
                         if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
-                            self.rewrite_expression(e, context)?;
+                            // First check for implicit casts needed by the function
+                            let arg_type = self.resolver.resolve_expr_type(e, context);
+                            if let Some(cast) = ImplicitCastDetector::check_function_arg_cast(
+                                &func_name, arg_pos, e, arg_type
+                            ) {
+                                *e = cast.apply();
+                                has_implicit_cast = true;
+                                has_decimal_arg = true; // Implicit cast means we're dealing with decimals
+                            } else {
+                                // Then do regular expression rewriting
+                                self.rewrite_expression(e, context)?;
+                            }
                         }
                     }
                 }
                 
-                // Apply function rewrites if needed
-                if is_aggregate && has_decimal_arg {
+                // Apply function rewrites if needed - also check has_implicit_cast
+                if is_aggregate && (has_decimal_arg || has_implicit_cast) {
                     self.rewrite_aggregate_to_decimal(func, context)?;
-                } else if is_math && has_decimal_arg {
+                } else if is_math && (has_decimal_arg || has_implicit_cast) {
                     self.rewrite_math_function_to_decimal(func)?;
                 }
             }
@@ -547,7 +572,7 @@ impl<'a> DecimalQueryRewriter<'a> {
     
     /// Create decimal function expression from binary operation
     fn create_decimal_function_expr(
-        &self,
+        &mut self,
         op: BinaryOperator,
         left: Expr,
         right: Expr,
@@ -571,21 +596,72 @@ impl<'a> DecimalQueryRewriter<'a> {
             }), // Other operators not supported - return unchanged
         };
         
-        // Wrap non-decimal operands in decimal_from_text
-        let wrapped_left = if left_type != PgType::Numeric && 
-                              left_type != PgType::Float4 && 
-                              left_type != PgType::Float8 {
-            self.wrap_in_decimal_from_text(left)
+        // Check for implicit casts for left operand
+        let wrapped_left = if let Some(cast) = ImplicitCastDetector::needs_implicit_cast(
+            &left, left_type, &op, &right, right_type
+        ) {
+            // Check if this cast applies to the left operand
+            match &cast {
+                ImplicitCast::IntegerToDecimal { expr } |
+                ImplicitCast::StringToDecimal { expr, .. } |
+                ImplicitCast::ToDecimal { expr, .. } => {
+                    if expr == &left {
+                        cast.apply()
+                    } else {
+                        // Regular wrapping for non-decimal types
+                        if left_type != PgType::Numeric && 
+                           left_type != PgType::Float4 && 
+                           left_type != PgType::Float8 {
+                            self.wrap_in_decimal_from_text(left)
+                        } else {
+                            left
+                        }
+                    }
+                }
+            }
         } else {
-            left
+            // Regular wrapping for non-decimal types
+            if left_type != PgType::Numeric && 
+               left_type != PgType::Float4 && 
+               left_type != PgType::Float8 {
+                self.wrap_in_decimal_from_text(left)
+            } else {
+                left
+            }
         };
         
-        let wrapped_right = if right_type != PgType::Numeric && 
-                               right_type != PgType::Float4 && 
-                               right_type != PgType::Float8 {
-            self.wrap_in_decimal_from_text(right)
+        // Check for implicit casts for right operand (need to use original left)
+        let wrapped_right = if let Some(cast) = ImplicitCastDetector::needs_implicit_cast(
+            &wrapped_left, left_type, &op, &right, right_type
+        ) {
+            // Check if this cast applies to the right operand
+            match &cast {
+                ImplicitCast::IntegerToDecimal { expr } |
+                ImplicitCast::StringToDecimal { expr, .. } |
+                ImplicitCast::ToDecimal { expr, .. } => {
+                    if expr == &right {
+                        cast.apply()
+                    } else {
+                        // Regular wrapping for non-decimal types
+                        if right_type != PgType::Numeric && 
+                           right_type != PgType::Float4 && 
+                           right_type != PgType::Float8 {
+                            self.wrap_in_decimal_from_text(right)
+                        } else {
+                            right
+                        }
+                    }
+                }
+            }
         } else {
-            right
+            // Regular wrapping for non-decimal types
+            if right_type != PgType::Numeric && 
+               right_type != PgType::Float4 && 
+               right_type != PgType::Float8 {
+                self.wrap_in_decimal_from_text(right)
+            } else {
+                right
+            }
         };
         
         // Create function call
@@ -611,7 +687,15 @@ impl<'a> DecimalQueryRewriter<'a> {
     }
     
     /// Wrap expression in decimal_from_text function
-    fn wrap_in_decimal_from_text(&self, expr: Expr) -> Expr {
+    fn wrap_in_decimal_from_text(&self, mut expr: Expr) -> Expr {
+        // If this is a nested arithmetic expression, don't wrap it - it should be rewritten
+        if let Expr::Nested(inner) = &expr {
+            if matches!(inner.as_ref(), Expr::BinaryOp { .. }) {
+                // Return the inner expression without wrapping, it will be processed
+                return *inner.clone();
+            }
+        }
+        
         // First cast to text if needed
         let text_expr = match &expr {
             Expr::Value(val) => {
@@ -824,6 +908,79 @@ impl<'a> DecimalQueryRewriter<'a> {
         }
     }
     
+    /// Rewrite expression specifically for implicit casts (always processes)
+    fn rewrite_expression_for_implicit_casts(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
+        match expr {
+            Expr::BinaryOp { left, op, right } => {
+                // First rewrite children recursively
+                self.rewrite_expression_for_implicit_casts(left, context)?;
+                self.rewrite_expression_for_implicit_casts(right, context)?;
+                
+                // Check types
+                let left_type = self.resolver.resolve_expr_type(left, context);
+                let right_type = self.resolver.resolve_expr_type(right, context);
+                
+                // Check if we need implicit casts
+                // Always check if we need decimal operations (either due to types or implicit casts)
+                if left_type == PgType::Numeric || right_type == PgType::Numeric ||
+                   left_type == PgType::Float4 || right_type == PgType::Float4 ||
+                   left_type == PgType::Float8 || right_type == PgType::Float8 ||
+                   ImplicitCastDetector::needs_implicit_cast(left, left_type, op, right, right_type).is_some() {
+                    // One of the operands needs decimal handling
+                    let left_clone = left.as_ref().clone();
+                    let right_clone = right.as_ref().clone();
+                    let op_clone = op.clone();
+                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                }
+            }
+            Expr::Nested(inner) => {
+                self.rewrite_expression_for_implicit_casts(inner, context)?;
+            }
+            Expr::InList { expr, list, .. } => {
+                self.rewrite_expression_for_implicit_casts(expr, context)?;
+                for item in list {
+                    self.rewrite_expression_for_implicit_casts(item, context)?;
+                }
+            }
+            Expr::Between { expr, low, high, .. } => {
+                self.rewrite_expression_for_implicit_casts(expr, context)?;
+                self.rewrite_expression_for_implicit_casts(low, context)?;
+                self.rewrite_expression_for_implicit_casts(high, context)?;
+            }
+            Expr::Subquery(subquery) => {
+                self.rewrite_query_with_context(subquery, Some(context))?;
+            }
+            Expr::Exists { subquery, .. } => {
+                self.rewrite_query_with_context(subquery, Some(context))?;
+            }
+            Expr::InSubquery { expr, subquery, .. } => {
+                self.rewrite_expression_for_implicit_casts(expr, context)?;
+                let temp_query = Query {
+                    with: None,
+                    body: subquery.clone(),
+                    order_by: None,
+                    limit_clause: None,
+                    fetch: None,
+                    for_clause: None,
+                    settings: None,
+                    format_clause: None,
+                    pipe_operators: vec![],
+                    locks: vec![],
+                };
+                let subquery_context = self.resolver.build_context(&temp_query);
+                self.rewrite_set_expr(subquery, &subquery_context)?;
+            }
+            _ => {
+                // For other expressions, check if they involve decimals
+                if self.resolver.involves_decimal(expr, context) {
+                    self.rewrite_expression(expr, context)?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
     /// Rewrite aggregate function to use decimal version
     fn rewrite_aggregate_to_decimal(&mut self, func: &mut Function, context: &QueryContext) -> Result<(), String> {
         let func_name = func.name.to_string().to_uppercase();
