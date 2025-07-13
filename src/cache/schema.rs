@@ -235,6 +235,8 @@ impl SchemaCache {
                     crate::types::PgType::Timetz => "timetz",
                     crate::types::PgType::Interval => "interval",
                     crate::types::PgType::Unknown => "unknown",
+                    // Array types - use the name() method which handles all types
+                    _ => pg_type.name(),
                 };
                 (pg_type_str.to_string(), oid)
             };

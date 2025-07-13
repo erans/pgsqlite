@@ -6,6 +6,7 @@ pub mod datetime_functions;
 pub mod regex_functions;
 pub mod catalog_functions;
 pub mod hash_functions;
+pub mod array_functions;
 
 use rusqlite::{Connection, Result};
 
@@ -18,5 +19,6 @@ pub fn register_all_functions(conn: &Connection) -> Result<()> {
     regex_functions::register_regex_functions(conn)?;
     catalog_functions::register_catalog_functions(conn)?;
     hash_functions::register_hash_functions(conn)?;
+    array_functions::register_array_functions(conn)?;
     Ok(())
 }

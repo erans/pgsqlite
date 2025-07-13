@@ -63,7 +63,7 @@ impl CatalogInterceptor {
             }
         };
 
-        // Parse the query
+        // Parse the query (keep JSON path placeholders for now)
         let dialect = PostgreSqlDialect {};
         match Parser::parse_sql(&dialect, &query_to_parse) {
             Ok(mut statements) => {

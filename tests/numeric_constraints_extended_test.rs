@@ -1,7 +1,5 @@
 mod common;
 use common::*;
-use rust_decimal::Decimal;
-use std::str::FromStr;
 
 #[tokio::test]
 async fn test_numeric_literal_validation() {

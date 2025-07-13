@@ -4,6 +4,7 @@ use crate::protocol::{MappedValue, MappedValueFactory, MemoryMappedConfig};
 use crate::types::PgType;
 // use crate::types::value_converter::ValueConverter; // Reserved for future enhanced type conversion
 use tracing::debug;
+use serde_json;
 
 /// Configuration for value handling strategies
 #[derive(Debug, Clone)]
@@ -122,20 +123,32 @@ impl ValueHandler {
     fn handle_text_value(
         &self,
         text_data: &str,
-        _pg_type_oid: i32,
-        _binary_format: bool,
+        pg_type_oid: i32,
+        binary_format: bool,
     ) -> io::Result<Option<MappedValue>> {
         if text_data.is_empty() {
             return Ok(Some(MappedValue::Memory(Vec::new())));
         }
         
+        // Check if this is an array type and needs JSON to array conversion
+        let pg_data = if PgType::from_oid(pg_type_oid).is_some_and(|t| t.is_array()) {
+            // Convert JSON array to PostgreSQL array format for text protocol
+            if !binary_format {
+                self.convert_json_to_pg_array(text_data)?
+            } else {
+                // Binary format will be handled in a future update
+                text_data.as_bytes().to_vec()
+            }
+        } else {
+            text_data.as_bytes().to_vec()
+        };
+        
         // Check if this should use memory mapping
-        if self.config.enable_mmap && text_data.len() >= self.config.large_value_threshold {
-            debug!("Using memory mapping for large text value: {} bytes", text_data.len());
-            Ok(Some(self.mmap_factory.create_from_text(text_data)?))
+        if self.config.enable_mmap && pg_data.len() >= self.config.large_value_threshold {
+            debug!("Using memory mapping for large text value: {} bytes", pg_data.len());
+            Ok(Some(self.mmap_factory.create_from_blob(&pg_data)?))
         } else {
             // Use regular memory storage
-            let pg_data = text_data.as_bytes().to_vec();
             Ok(Some(MappedValue::Memory(pg_data)))
         }
     }
@@ -235,6 +248,54 @@ impl ValueHandler {
             t if t == PgType::Float8.to_oid() => BinaryEncoder::encode_float8(value),        // FLOAT8
             _ => value.to_string().into_bytes(),              // Fallback to text
         }
+    }
+    
+    /// Convert JSON array to PostgreSQL text array format
+    fn convert_json_to_pg_array(&self, json_str: &str) -> io::Result<Vec<u8>> {
+        // Try to parse as JSON array
+        match serde_json::from_str::<serde_json::Value>(json_str) {
+            Ok(json_val) => {
+                if let serde_json::Value::Array(arr) = json_val {
+                    // Convert to PostgreSQL array literal format
+                    let pg_array = self.json_array_to_pg_text(&arr);
+                    Ok(pg_array.into_bytes())
+                } else {
+                    // Not an array, return as-is
+                    Ok(json_str.as_bytes().to_vec())
+                }
+            }
+            Err(_) => {
+                // Not valid JSON, return as-is
+                Ok(json_str.as_bytes().to_vec())
+            }
+        }
+    }
+    
+    /// Convert JSON array elements to PostgreSQL text array format
+    fn json_array_to_pg_text(&self, arr: &[serde_json::Value]) -> String {
+        let elements: Vec<String> = arr.iter().map(|elem| {
+            match elem {
+                serde_json::Value::Null => "NULL".to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => {
+                    // Escape quotes and backslashes
+                    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{escaped}\"")
+                }
+                serde_json::Value::Array(_) => {
+                    // Nested arrays - convert recursively
+                    // For now, just stringify
+                    elem.to_string()
+                }
+                serde_json::Value::Object(_) => {
+                    // Objects - stringify
+                    elem.to_string()
+                }
+            }
+        }).collect();
+        
+        format!("{{{}}}", elements.join(","))
     }
     
     /// Convert a row of SQLite values to mapped values

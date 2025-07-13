@@ -61,8 +61,8 @@ pub fn datetime_to_microseconds(dt: &NaiveDateTime) -> i64 {
 pub fn parse_date_to_days(date_str: &str) -> Option<i64> {
     // Handle special values
     match date_str {
-        "infinity" | "+infinity" => return Some(i64::MAX / 86400_000_000), // Max days
-        "-infinity" => return Some(i64::MIN / 86400_000_000), // Min days
+        "infinity" | "+infinity" => return Some(i64::MAX / 86_400_000_000), // Max days
+        "-infinity" => return Some(i64::MIN / 86_400_000_000), // Min days
         _ => {}
     }
     
@@ -123,10 +123,10 @@ pub fn parse_timestamp_to_microseconds(timestamp_str: &str) -> Option<i64> {
 /// Format epoch days as PostgreSQL date string
 pub fn format_days_to_date(days: i64) -> String {
     // Handle special values
-    if days >= i64::MAX / 86400_000_000 {
+    if days >= i64::MAX / 86_400_000_000 {
         return "infinity".to_string();
     }
-    if days <= i64::MIN / 86400_000_000 {
+    if days <= i64::MIN / 86_400_000_000 {
         return "-infinity".to_string();
     }
     
@@ -138,12 +138,12 @@ pub fn format_days_to_date(days: i64) -> String {
 /// Returns the number of bytes written
 pub fn format_days_to_date_buf(days: i32, buf: &mut [u8]) -> usize {
     // Handle special values efficiently
-    if days >= (i64::MAX / 86400_000_000) as i32 {
+    if days >= (i64::MAX / 86_400_000_000) as i32 {
         let inf = b"infinity";
         buf[..inf.len()].copy_from_slice(inf);
         return inf.len();
     }
-    if days <= (i64::MIN / 86400_000_000) as i32 {
+    if days <= (i64::MIN / 86_400_000_000) as i32 {
         let ninf = b"-infinity";
         buf[..ninf.len()].copy_from_slice(ninf);
         return ninf.len();
@@ -316,7 +316,7 @@ mod tests {
         assert_eq!(format_microseconds_to_timestamp(0), "1970-01-01 00:00:00");
         
         // Test a specific timestamp (2023-06-15 14:30:45.123456)
-        let timestamp_micros = 1686839445_123456;
+        let timestamp_micros = 1_686_839_445_123_456;
         let formatted = format_microseconds_to_timestamp(timestamp_micros);
         assert!(formatted.starts_with("2023-06-15"));
         

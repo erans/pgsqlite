@@ -50,7 +50,7 @@ pub enum BackendMessage {
     DataRow(Vec<Option<Vec<u8>>>),
     CommandComplete { tag: String },
     EmptyQueryResponse,
-    ErrorResponse(ErrorResponse),
+    ErrorResponse(Box<ErrorResponse>),
     NoticeResponse(NoticeResponse),
     ParseComplete,
     BindComplete,

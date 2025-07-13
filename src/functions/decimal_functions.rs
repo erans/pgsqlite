@@ -91,6 +91,21 @@ pub fn register_decimal_functions(conn: &Connection) -> Result<()> {
         numeric_cast,
     )?;
     
+    // Decimal math functions
+    conn.create_scalar_function(
+        "decimal_round",
+        2,
+        FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_INNOCUOUS,
+        decimal_round,
+    )?;
+    
+    conn.create_scalar_function(
+        "decimal_abs",
+        1,
+        FunctionFlags::SQLITE_DETERMINISTIC | FunctionFlags::SQLITE_INNOCUOUS,
+        decimal_abs,
+    )?;
+    
     Ok(())
 }
 
@@ -198,9 +213,18 @@ fn get_decimal(ctx: &Context<'_>, idx: usize) -> Result<Option<Decimal>> {
             Ok(Some(Decimal::new(i, 0)))
         }
         rusqlite::types::ValueRef::Real(f) => {
+            // Check for special floating point values
+            if f.is_nan() {
+                return Err(rusqlite::Error::UserFunctionError("Cannot convert NaN to decimal".into()));
+            }
+            if f.is_infinite() {
+                return Err(rusqlite::Error::UserFunctionError("Cannot convert infinity to decimal".into()));
+            }
+            
+            // Try conversion and provide detailed error information
             Decimal::try_from(f)
                 .map(Some)
-                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Cannot convert float to decimal: {}", e).into()))
+                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Invalid function parameter type Real at index 0: Cannot convert float {} to decimal: {}", f, e).into()))
         }
     }
 }
@@ -382,6 +406,33 @@ fn numeric_cast(ctx: &Context<'_>) -> Result<Option<String>> {
                 Some(e.to_string())
             ))
         }
+    }
+}
+
+/// decimal_round function that rounds a decimal value to specified decimal places
+fn decimal_round(ctx: &Context<'_>) -> Result<Option<String>> {
+    let decimal_opt = get_decimal(ctx, 0)?;
+    let scale = ctx.get::<i32>(1)?;
+    
+    match decimal_opt {
+        Some(decimal) => {
+            let rounded = decimal.round_dp(scale as u32);
+            Ok(Some(rounded.to_string()))
+        }
+        None => Ok(None)
+    }
+}
+
+/// decimal_abs function that returns the absolute value of a decimal
+fn decimal_abs(ctx: &Context<'_>) -> Result<Option<String>> {
+    let decimal_opt = get_decimal(ctx, 0)?;
+    
+    match decimal_opt {
+        Some(decimal) => {
+            let absolute = decimal.abs();
+            Ok(Some(absolute.to_string()))
+        }
+        None => Ok(None)
     }
 }
 

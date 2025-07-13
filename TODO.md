@@ -342,11 +342,86 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Performance optimization with timezone conversion caching
 - [ ] Migration guide for existing users with datetime data
 
-#### Array Types
-- [ ] Complete array type implementation for all base types
-- [ ] Support multi-dimensional arrays
-- [ ] Implement array operators and functions
-- [ ] Handle array literals in queries
+#### Array Types - COMPLETED (2025-07-12)
+- [x] Basic array type support in CREATE TABLE statements
+  - Array columns are translated to JSON TEXT with validation
+  - Metadata storage in __pgsqlite_array_types table
+  - Support for multi-dimensional array declarations
+  - JSON validation constraints added automatically (fixed NULL handling)
+- [x] Complete array type implementation for all base types
+  - Added array type OIDs for 30+ PostgreSQL types (INT4Array, TextArray, etc.)
+  - Array type mapping in TypeMapper with `is_array()` and `element_type()` helpers
+  - Updated pg_type view to include typarray field via migration v8
+- [x] Support array literals and type casts in queries
+  - InsertTranslator converts ARRAY[...] constructor to JSON format
+  - Supports PostgreSQL '{...}' array literal format
+  - Handles NULL values and nested arrays correctly
+  - Multi-row INSERT with array values fully supported
+- [x] Array value conversion in INSERT/UPDATE statements
+  - InsertTranslator detects array columns and converts values
+  - Automatic conversion from PostgreSQL array format to JSON storage
+  - Preserves data types (numbers, strings, booleans, nulls)
+  - Fixed simple_query_detector to ensure array patterns use translation path
+- [x] Basic wire protocol array support
+  - ValueHandler converts JSON arrays to PostgreSQL text format
+  - Text protocol converts JSON ["a","b"] to PostgreSQL {a,b}
+  - Array type OIDs properly transmitted in RowDescription
+- [x] Integration with CI/CD pipeline
+  - Array tests included in test_queries.sql with PostgreSQL array literal syntax
+  - Comprehensive Rust integration tests in array_types_test.rs
+  - Tested in all 5 CI modes (TCP with/without SSL, Unix socket, File DB with/without SSL)
+  - Fixed JSON validation constraint to handle NULL arrays properly
+- [x] Array operators - COMPLETED (2025-07-12)
+  - [x] ANY operator: `value = ANY(array)` translates to EXISTS subquery
+  - [x] ALL operator: `value > ALL(array)` translates to NOT EXISTS with inverted condition
+  - [x] @> operator (contains): `array1 @> array2` uses array_contains function
+  - [x] <@ operator (is contained by): `array1 <@ array2` uses array_contained function
+  - [x] && operator (overlap): `array1 && array2` uses array_overlap function
+  - [x] || operator (concatenation): `array1 || array2` uses array_cat function
+- [x] Array functions - COMPLETED (2025-07-12)
+  - [x] array_length(array, dimension) - returns array length for given dimension
+  - [x] array_upper/array_lower - return bounds (always 1-based for PostgreSQL compatibility)
+  - [x] array_ndims - returns number of dimensions
+  - [x] array_append/array_prepend - add elements to arrays
+  - [x] array_cat - concatenate arrays (also used for || operator)
+  - [x] array_remove - remove all occurrences of an element
+  - [x] array_replace - replace all occurrences of an element
+  - [x] array_position/array_positions - find element positions (1-based)
+  - [x] array_slice - extract array slice
+  - [ ] unnest - set-returning function (requires more complex implementation)
+- [x] Array subscript access - COMPLETED (2025-07-12)
+  - [x] Single subscript: `array[1]` translates to `json_extract(array, '$[0]')`
+  - [x] Array slicing: `array[1:3]` translates to `array_slice(array, 1, 3)`
+  - [x] Handles 1-based PostgreSQL indexing to 0-based JSON indexing
+- [x] Array aggregation functions - COMPLETED (2025-07-12)
+  - [x] array_agg - aggregate values into an array
+  - [ ] array_agg with ORDER BY (requires aggregate function enhancement)
+  - [ ] array_agg with DISTINCT (requires aggregate function enhancement)
+- [x] **Array Type Wire Protocol Fix** - COMPLETED (2025-07-12)
+  - [x] Fixed "cannot convert between Rust type String and Postgres type _text" error
+  - [x] Root cause: Array functions returned JSON strings but declared PostgreSQL array OIDs
+  - [x] Solution: Implemented JSON to PostgreSQL array format conversion in query executor
+  - [x] Added convert_array_data_in_rows() to transform JSON arrays to PostgreSQL format
+  - [x] Text protocol now correctly converts ["a","b"] to {a,b} format
+  - [x] Comprehensive unit tests added for array conversion logic
+  - [x] Integration tests still failing (expected) pending full array support
+- [x] **Array Function Type Inference Fix** - COMPLETED (2025-07-13)
+  - [x] Fixed ArithmeticAnalyzer incorrectly matching array expressions as arithmetic
+  - [x] Updated regex pattern to be more specific about arithmetic operations
+  - [x] Fixed array function return types to be TEXT instead of array OIDs
+  - [x] Arrays are stored as JSON strings and returned as TEXT type to clients
+  - [x] All 4 array operator tests now passing
+  - [x] Fixed array function parameter handling for non-JSON literals
+    - Modified array_remove, array_replace, array_position, array_positions to accept any value type
+    - Functions now use get_raw() to handle Integer, Real, Text, Null, and Blob parameters
+    - Automatically converts non-string parameters to appropriate JSON values
+- [x] **Arithmetic Expression Type Inference Fix** - COMPLETED (2025-07-13)
+  - [x] Fixed test_nested_parentheses failure in arithmetic_complex_test.rs
+  - [x] Enhanced ArithmeticAnalyzer regex to handle complex nested parentheses expressions
+  - [x] Pattern now matches expressions like ((a + b) * c) / d with proper type inference
+  - [x] Extracts all column identifiers from expressions for accurate type detection
+  - [x] All 203 unit tests + all integration tests now pass
+- [ ] Future work: Binary protocol array encoding/decoding
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
@@ -399,11 +474,64 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Created __pgsqlite_enum_usage table to track ENUM column usage
   - Added EnumTriggers module for managing validation triggers
 
-#### JSON/JSONB
-- [ ] Implement JSONB type (binary JSON)
-- [ ] Add JSON operators (->, ->>, @>, etc.)
-- [ ] Support JSON path expressions
-- [ ] Implement JSON aggregation functions
+#### JSON/JSONB - COMPLETED (2025-07-12)
+- [x] Implement JSON/JSONB types - COMPLETED (2025-07-06)
+  - Both types stored as TEXT in SQLite
+  - JsonTranslator handles type conversion in CREATE TABLE/ALTER TABLE
+  - JSON validation constraints automatically added to columns
+- [x] Add JSON operators (->, ->>, @>, etc.) - COMPLETED (2025-07-12)
+  - [x] Implemented -> operator (extract JSON field as JSON)
+  - [x] Implemented ->> operator (extract JSON field as text)
+  - [x] Implemented #> operator (extract path as JSON)
+  - [x] Implemented #>> operator (extract path as text)
+  - [x] Implemented @> operator (contains)
+  - [x] Implemented <@ operator (is contained by)
+  - [x] Added JsonTranslator::translate_json_operators for query translation
+  - [x] Integrated into query executor pipeline
+  - [x] Full test coverage for all operators
+  - [x] Comprehensive documentation in docs/json-support.md
+- [x] **JSON Path Operator Fix** - COMPLETED (2025-07-12)
+  - [x] Fixed "sql parser error: Expected: ), found: $ at Line: 1, Column: 55" for JSON path queries
+  - [x] Root cause: SQL parser treating $ characters in JSON paths as parameter placeholders
+  - [x] Solution: Replaced json_extract calls with custom SQLite functions to avoid $ character
+  - [x] Created 6 custom JSON functions: pgsqlite_json_get_text, pgsqlite_json_get_json, pgsqlite_json_get_array_text, pgsqlite_json_get_array_json, pgsqlite_json_path_text, pgsqlite_json_path_json
+  - [x] Enhanced type handling to support chained operations (handles Text, Integer, Real inputs)
+  - [x] Updated JsonTranslator to use custom functions instead of json_extract
+  - [x] All JSON path operators (#>, #>>, ->, ->>) now work without SQL parser errors
+  - [x] Comprehensive unit tests for custom functions and chained operations
+  - [x] Zero compilation warnings, all tests passing (199/199 core tests)
+- [ ] Implement ? operator (key exists)
+- [ ] Implement ?| operator (any key exists)
+- [ ] Implement ?& operator (all keys exist)
+- [x] Core JSON functions - COMPLETED (2025-07-12)
+  - [x] json_valid() - validate JSON
+  - [x] json_typeof() / jsonb_typeof() - get JSON value type
+  - [x] json_array_length() / jsonb_array_length() - array length
+  - [x] jsonb_object_keys() - get object keys
+  - [x] to_json() / to_jsonb() - convert values to JSON
+  - [x] json_build_object() - build JSON from key-value pairs
+  - [x] json_extract_scalar() - extract scalar values
+  - [x] jsonb_contains() / jsonb_contained() - containment checks
+  - [x] json_array_elements() / jsonb_array_elements() - extract array elements
+  - [x] json_array_elements_text() - extract array elements as text
+  - [x] json_strip_nulls() / jsonb_strip_nulls() - remove null values
+- [x] Path & Manipulation functions - COMPLETED (2025-07-12)
+  - [x] jsonb_set() - set value at path
+  - [x] json_extract_path() - extract value at path
+  - [x] json_extract_path_text() - extract value at path as text
+- [ ] Advanced JSON features (Future work)
+  - [ ] json_each() / jsonb_each() - expand JSON to key-value pairs (table-valued function)
+  - [ ] json_each_text() / jsonb_each_text() - expand to text key-value pairs
+  - [ ] jsonb_insert() - insert value at path
+  - [ ] jsonb_delete() - delete value at path
+  - [ ] jsonb_delete_path() - delete at specific path
+  - [ ] jsonb_pretty() - pretty-print JSON
+  - [ ] json_populate_record() - populate record from JSON
+  - [ ] json_agg() / jsonb_agg() - aggregate values into JSON array
+  - [ ] json_object_agg() / jsonb_object_agg() - aggregate into JSON object
+  - [ ] row_to_json() - convert row to JSON
+  - [ ] json_to_record() - convert JSON to record
+  - [ ] Support JSON path expressions (jsonpath)
 
 #### Geometric Types
 - [ ] Implement POINT, LINE, LSEG, BOX, PATH, POLYGON, CIRCLE types
@@ -451,6 +579,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - v4: DateTime INTEGER storage (convert all datetime types to microseconds)
     - v5: PostgreSQL catalog tables (pg_class, pg_namespace, pg_am, pg_type, pg_attribute views)
     - v6: VARCHAR/CHAR constraints (type_modifier column, __pgsqlite_string_constraints table)
+    - v7: NUMERIC/DECIMAL constraints (__pgsqlite_numeric_constraints table)
+    - v8: Array support (__pgsqlite_array_types table, pg_type typarray field)
 
 #### Indexing
 - [ ] Support for expression indexes
@@ -634,6 +764,36 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 ---
 
 ## ✅ COMPLETED TASKS
+
+### 🧹 Code Quality - Clippy Warning Fixes - COMPLETED (2025-07-12)
+
+#### Background
+Fixed major clippy warnings to improve code quality and performance.
+
+#### Work Completed
+- [x] **Inconsistent digit grouping** - Fixed all instances in datetime_utils.rs
+  - Changed `86400_000_000` to `86_400_000_000` (6 instances)
+  - Changed `1686839445_123456` to `1_686_839_445_123_456`
+- [x] **Empty line after doc comment** - Fixed in comment_stripper.rs
+  - Removed empty line between module and function documentation
+- [x] **Large enum variant** - Fixed in messages.rs
+  - Boxed `ErrorResponse` variant to reduce enum size from 360 to ~8 bytes
+  - Changed `ErrorResponse(ErrorResponse)` to `ErrorResponse(Box<ErrorResponse>)`
+  - Updated all 16 usage sites across codebase to use `Box::new()`
+- [x] **Unnecessary map_or** - Fixed in value_handler.rs
+  - Changed `map_or(false, |t| t.is_array())` to `is_some_and(|t| t.is_array())`
+- [x] **Complex type definition** - Fixed in memory_monitor.rs
+  - Added type aliases `CleanupCallback` and `CleanupCallbacks`
+  - Simplified complex nested type definitions
+- [x] **Format string warnings** - Fixed multiple instances
+  - Updated to use inline format syntax (e.g., `{e}` instead of `{}`, e)
+  - Fixed in value_handler.rs, db_handler.rs
+
+#### Results
+- All 203 unit tests pass ✅
+- No compiler warnings from `cargo check` or `cargo build` ✅
+- Significantly reduced clippy warnings (major performance and quality issues resolved)
+- Improved code maintainability and reduced memory usage
 
 ### 🚀 Performance Optimization Phase 1 - COMPLETED (2025-06-30)
 

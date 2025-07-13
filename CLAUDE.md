@@ -69,6 +69,7 @@ pgsqlite --database existingdb.db
 - **v5**: PostgreSQL catalog tables (creates pg_class, pg_namespace, pg_am, pg_type, pg_attribute views; pg_constraint, pg_attrdef, pg_index tables)
 - **v6**: VARCHAR/CHAR constraints (adds type_modifier to __pgsqlite_schema, creates __pgsqlite_string_constraints table)
 - **v7**: NUMERIC/DECIMAL constraints (creates __pgsqlite_numeric_constraints table for precision/scale validation)
+- **v8**: Array support (creates __pgsqlite_array_types table, updates pg_type view with typarray field)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:
@@ -187,12 +188,31 @@ INSERT INTO table (col1, col2) VALUES
 - **Multi-row INSERT Support (2025-07-08)**: Enhanced InsertTranslator to handle multi-row VALUES with datetime conversion
 - **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
 - **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
+  - Enhanced to handle complex nested parentheses expressions like ((a + b) * c) / d
+  - Improved regex patterns to properly match complex arithmetic operations
+  - Fixed type inference for float columns in arithmetic operations
 - **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
+- **Array Type Support (2025-07-12)**: Complete PostgreSQL array implementation with JSON storage
+  - Support for 30+ array types (INTEGER[], TEXT[][], BOOLEAN[], etc.)
+  - JSON-based storage with automatic validation constraints
+  - Array literal conversion (ARRAY[1,2,3] and '{1,2,3}' formats)
+  - Wire protocol array support with proper type OIDs
+  - Multi-row INSERT with array values fully supported
+  - Comprehensive test coverage in CI/CD pipeline
+  - Fixed wire protocol conversion: JSON arrays now properly convert to PostgreSQL format
+- **JSON/JSONB Support (2025-07-12)**: Complete operator and function support with robust error handling
+  - All major operators: ->, ->>, @>, <@, #>, #>>
+  - Core functions: json_valid, json_typeof, json_array_length, jsonb_object_keys
+  - Manipulation functions: jsonb_set, json_extract_path, json_strip_nulls
+  - **JSON Path Operator Fix**: Resolved SQL parser $ character conflicts in path expressions
+  - Custom SQLite functions eliminate json_extract dependency and $ character issues
+  - Enhanced type handling supports chained operations (data->'items'->1->>'name')
+  - Automatic operator translation in query pipeline
+  - Full test coverage for operators, functions, and edge cases
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
-- **Array types**: Not yet implemented
-- **System catalogs**: \d tablename not yet supported (requires enhanced pg_attribute implementation)
+- **Array functions**: Some advanced functions like unnest() not yet implemented
 
 ## Database Handler Architecture
 Uses a Mutex-based implementation for thread safety:

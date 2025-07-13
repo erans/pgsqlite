@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
 use tracing::{info, debug};
+use serde_json;
 
 /// Database response structure
 pub struct DbResponse {
@@ -81,7 +82,7 @@ impl DbHandler {
             Err(e) => {
                 return Err(rusqlite::Error::SqliteFailure(
                     rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                    Some(format!("Test migration failed: {}", e))
+                    Some(format!("Test migration failed: {e}"))
                 ));
             }
         }
@@ -154,7 +155,7 @@ impl DbHandler {
                 Err(e) => {
                     return Err(rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("In-memory database migration failed: {}", e))
+                        Some(format!("In-memory database migration failed: {e}"))
                     ));
                 }
             }
@@ -199,7 +200,7 @@ impl DbHandler {
                 Err(e) => {
                     return Err(rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Initial migration failed for new database: {}", e))
+                        Some(format!("Initial migration failed for new database: {e}"))
                     ));
                 }
             }
@@ -278,7 +279,9 @@ impl DbHandler {
             }
             
             // Fall back to direct execution
-            let rows_affected = conn.execute(query, [])?;
+            // Restore JSON path $ characters right before SQLite execution
+            let final_query = crate::translator::JsonTranslator::restore_json_path_root(query);
+            let rows_affected = conn.execute(&final_query, [])?;
             return Ok(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -351,8 +354,10 @@ impl DbHandler {
             // Check INSERT query cache to avoid re-parsing
             if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
                 // Use cached rewritten query if available
-                let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-                match conn.execute(final_query, []) {
+                let cached_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
+                // Restore JSON path $ characters right before SQLite execution
+                let final_query = crate::translator::JsonTranslator::restore_json_path_root(cached_query);
+                match conn.execute(&final_query, []) {
                     Ok(rows_affected) => return Ok(DbResponse {
                         columns: Vec::new(),
                         rows: Vec::new(),
@@ -367,7 +372,9 @@ impl DbHandler {
         }
         
         // Fall back to normal execution - but skip decimal rewriting since processor already did it
-        match conn.execute(query_to_execute, []) {
+        // Restore JSON path $ characters right before SQLite execution
+        let final_query = crate::translator::JsonTranslator::restore_json_path_root(query_to_execute);
+        match conn.execute(&final_query, []) {
             Ok(rows_affected) => Ok(DbResponse {
                 columns: Vec::new(),
                 rows: Vec::new(),
@@ -907,7 +914,9 @@ fn build_execution_metadata(
         query.to_string()
     };
     
-    let stmt = conn.prepare(&prepared_sql)?;
+    // Restore JSON path $ characters right before SQLite preparation
+    let final_sql = crate::translator::JsonTranslator::restore_json_path_root(&prepared_sql);
+    let stmt = conn.prepare(&final_sql)?;
     let column_count = stmt.column_count();
     
     // Extract column information
@@ -950,7 +959,7 @@ fn build_execution_metadata(
         type_oids: vec![PgType::Text.to_oid(); column_count], // Default to TEXT, will be populated later
         result_formats: vec![], // Will be populated from Portal when executing
         fast_path_eligible,
-        prepared_sql,
+        prepared_sql: final_sql,
         param_count: 0, // TODO: Count parameters
     })
 }
@@ -1082,7 +1091,6 @@ fn infer_column_type(col_name: &str, query: &str, schema_cache: &SchemaCache) ->
                 if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
                     return col_info.pg_type.clone();
                 }
-            } else {
             }
         }
     }
@@ -1189,7 +1197,7 @@ pub fn extract_insert_table_name(query: &str) -> Option<String> {
 
 /// Rewrite query to handle DECIMAL types if needed
 pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
-    // Parse the SQL statement
+    // Parse the SQL statement (keep JSON path placeholders for now)
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, query)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -1221,7 +1229,7 @@ struct ParsedQueryInfo {
 
 /// Parse and rewrite query, returning rewritten query and parsed info
 fn parse_and_rewrite_query(query: &str, conn: &Connection, schema_cache: &SchemaCache) -> Result<(String, ParsedQueryInfo), rusqlite::Error> {
-    // Parse the SQL statement
+    // Parse the SQL statement (keep JSON path placeholders for now)
     let dialect = PostgreSqlDialect {};
     let statements = Parser::parse_sql(&dialect, query)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -1327,6 +1335,7 @@ fn execute_cached_query(
     let mut is_date_col = vec![false; column_count];
     let mut is_time_col = vec![false; column_count];
     let mut is_timestamp_col = vec![false; column_count];
+    let mut is_array_col = vec![false; column_count];
     
     for (i, col_name) in columns.iter().enumerate() {
         for (cached_col, pg_type) in &cached.column_types {
@@ -1336,6 +1345,15 @@ fn execute_cached_query(
                     PgType::Date => is_date_col[i] = true,
                     PgType::Time | PgType::Timetz => is_time_col[i] = true,
                     PgType::Timestamp | PgType::Timestamptz => is_timestamp_col[i] = true,
+                    // Array types - detect any array type
+                    PgType::BoolArray | PgType::Int2Array | PgType::Int4Array | PgType::Int8Array |
+                    PgType::Float4Array | PgType::Float8Array | PgType::TextArray | PgType::VarcharArray |
+                    PgType::CharArray | PgType::UuidArray | PgType::JsonArray | PgType::JsonbArray |
+                    PgType::DateArray | PgType::TimeArray | PgType::TimestampArray | PgType::TimestamptzArray |
+                    PgType::IntervalArray | PgType::NumericArray | PgType::MoneyArray | PgType::ByteaArray |
+                    PgType::BitArray | PgType::VarbitArray | PgType::CidrArray | PgType::InetArray |
+                    PgType::MacaddrArray | PgType::Macaddr8Array | PgType::Int4rangeArray | 
+                    PgType::Int8rangeArray | PgType::NumrangeArray => is_array_col[i] = true,
                     _ => {}
                 }
                 break;
@@ -1384,7 +1402,17 @@ fn execute_cached_query(
                     row_data.push(Some(f.to_string().into_bytes()));
                 },
                 rusqlite::types::ValueRef::Text(s) => {
-                    row_data.push(Some(s.to_vec()));
+                    if is_array_col[i] {
+                        // Convert JSON array to PostgreSQL array format
+                        if let Ok(converted) = convert_json_to_pg_array(s) {
+                            row_data.push(Some(converted));
+                        } else {
+                            // If conversion fails, use original value
+                            row_data.push(Some(s.to_vec()));
+                        }
+                    } else {
+                        row_data.push(Some(s.to_vec()));
+                    }
                 },
                 rusqlite::types::ValueRef::Blob(b) => {
                     row_data.push(Some(b.to_vec()));
@@ -1523,4 +1551,55 @@ fn extract_enum_type_from_constraint(constraint: &str) -> Option<String> {
         return Some(type_name.to_string());
     }
     None
+}
+
+/// Convert JSON array string to PostgreSQL array format
+fn convert_json_to_pg_array(json_str: &[u8]) -> Result<Vec<u8>, String> {
+    // Convert bytes to string
+    let s = std::str::from_utf8(json_str).map_err(|_| "Invalid UTF-8")?;
+    
+    // Try to parse as JSON array
+    match serde_json::from_str::<serde_json::Value>(s) {
+        Ok(json_val) => {
+            if let serde_json::Value::Array(arr) = json_val {
+                // Convert to PostgreSQL array literal format
+                let pg_array = json_array_to_pg_text(&arr);
+                Ok(pg_array.into_bytes())
+            } else {
+                // Not an array, return as-is
+                Ok(json_str.to_vec())
+            }
+        }
+        Err(_) => {
+            // Not valid JSON, return as-is
+            Ok(json_str.to_vec())
+        }
+    }
+}
+
+/// Convert JSON array elements to PostgreSQL text array format
+fn json_array_to_pg_text(arr: &[serde_json::Value]) -> String {
+    let elements: Vec<String> = arr.iter().map(|elem| {
+        match elem {
+            serde_json::Value::Null => "NULL".to_string(),
+            serde_json::Value::Bool(b) => b.to_string(),
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::String(s) => {
+                // Escape quotes and backslashes
+                let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                format!("\"{}\"", escaped)
+            }
+            serde_json::Value::Array(_) => {
+                // Nested arrays - convert recursively
+                // For now, just stringify
+                elem.to_string()
+            }
+            serde_json::Value::Object(_) => {
+                // Objects - stringify
+                elem.to_string()
+            }
+        }
+    }).collect();
+    
+    format!("{{{}}}", elements.join(","))
 }

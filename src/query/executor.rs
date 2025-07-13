@@ -10,6 +10,8 @@ use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tracing::{info, debug};
 use std::sync::Arc;
+use rusqlite::params;
+use serde_json;
 
 /// Create a command complete tag with optimized static strings for common cases
 fn create_command_tag(operation: &str, rows_affected: usize) -> String {
@@ -200,6 +202,45 @@ impl QueryExecutor {
             }
         }
         
+        // Translate JSON operators if present
+        if crate::translator::JsonTranslator::contains_json_operations(&translated_query) {
+            use crate::translator::JsonTranslator;
+            debug!("Query needs JSON operator translation: {}", translated_query);
+            match JsonTranslator::translate_json_operators(&translated_query) {
+                Ok(translated) => {
+                    debug!("Query after JSON operator translation: {}", translated);
+                    translated_query = translated;
+                }
+                Err(e) => {
+                    debug!("JSON operator translation failed: {}", e);
+                    // Continue with original query - some operators might not be supported yet
+                }
+            }
+            
+            // Note: JSON path $ restoration will happen right before SQLite execution
+            debug!("Query after JSON translation ($ placeholders preserved): {}", translated_query);
+        }
+        
+        // Translate array operators with metadata
+        use crate::translator::ArrayTranslator;
+        match ArrayTranslator::translate_with_metadata(&translated_query) {
+            Ok((translated, metadata)) => {
+                if translated != translated_query {
+                    info!("Query after array operator translation: {}", translated);
+                    translated_query = translated;
+                }
+                info!("Array translation metadata: {} hints", metadata.column_mappings.len());
+                for (col, hint) in &metadata.column_mappings {
+                    info!("  Column '{}': type={:?}", col, hint.suggested_type);
+                }
+                translation_metadata.merge(metadata);
+            }
+            Err(e) => {
+                debug!("Array operator translation failed: {}", e);
+                // Continue with original query
+            }
+        }
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
@@ -302,12 +343,12 @@ impl QueryExecutor {
                         } else {
                             crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                         }
-                    } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
+                    } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, Some(query)) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
                     } else if let Some(hint) = translation_metadata.get_hint(name) {
                         // Third priority: Check translation metadata (datetime or arithmetic)
-                        debug!("Found translation hint for column '{}'", name);
+                        debug!("Found translation hint for column '{}': {:?}", name, hint.suggested_type);
                         
                         // Check if we pre-fetched the source type
                         if let Some(source_type) = hint_source_types.get(name) {
@@ -353,6 +394,7 @@ impl QueryExecutor {
                         PgType::Text.to_oid()
                     };
                     
+                    
                     FieldDescription {
                         name: name.clone(),
                         table_oid: 0,
@@ -372,16 +414,21 @@ impl QueryExecutor {
         };
         
         // Send RowDescription
-        framed.send(BackendMessage::RowDescription(fields)).await
+        framed.send(BackendMessage::RowDescription(fields.clone())).await
             .map_err(|e| PgSqliteError::Io(e))?;
         
+        
+        // Convert array data before sending rows
+        info!("Converting array data for {} rows", response.rows.len());
+        let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
+        
         // Optimized data row sending for better SELECT performance
-        if response.rows.len() > 5 {
+        if converted_rows.len() > 5 {
             // Use batch sending for larger result sets
-            Self::send_data_rows_batched(framed, response.rows).await?;
+            Self::send_data_rows_batched(framed, converted_rows).await?;
         } else {
             // Use individual sending for small result sets
-            for row in response.rows {
+            for row in converted_rows {
                 framed.send(BackendMessage::DataRow(row)).await
                     .map_err(|e| PgSqliteError::Io(e))?;
             }
@@ -450,7 +497,7 @@ impl QueryExecutor {
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
             let error_response = e.to_error_response();
-            framed.send(BackendMessage::ErrorResponse(error_response)).await
+            framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(|e| PgSqliteError::Io(e))?;
             return Ok(());
         }
@@ -686,7 +733,7 @@ impl QueryExecutor {
             return Ok(());
         }
         
-        let (translated_query, type_mappings, enum_columns) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
+        let (translated_query, type_mappings, enum_columns, array_columns) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
             // Use CREATE TABLE translator with connection for ENUM support
             let conn = db.get_mut_connection()
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
@@ -695,7 +742,7 @@ impl QueryExecutor {
                 .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?;
             
             // Connection guard is dropped here
-            (result.sql, result.type_mappings, result.enum_columns)
+            (result.sql, result.type_mappings, result.enum_columns, result.array_columns)
         } else {
             // For other DDL, check for JSON/JSONB types
             let translated = if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {
@@ -703,7 +750,7 @@ impl QueryExecutor {
             } else {
                 query.to_string()
             };
-            (translated, std::collections::HashMap::new(), Vec::new())
+            (translated, std::collections::HashMap::new(), Vec::new(), Vec::new())
         };
         
         // Execute the translated query
@@ -810,6 +857,36 @@ impl QueryExecutor {
                             .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
                         
                         info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                    }
+                }
+                
+                // Store array column metadata
+                if !array_columns.is_empty() {
+                    let conn = db.get_mut_connection()
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {}", e)))?;
+                    
+                    // Create array metadata table if it doesn't exist (should exist from migration v8)
+                    conn.execute(
+                        "CREATE TABLE IF NOT EXISTS __pgsqlite_array_types (
+                            table_name TEXT NOT NULL,
+                            column_name TEXT NOT NULL,
+                            element_type TEXT NOT NULL,
+                            dimensions INTEGER DEFAULT 1,
+                            PRIMARY KEY (table_name, column_name)
+                        )", 
+                        []
+                    ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {}", e)))?;
+                    
+                    // Insert array column metadata
+                    for (column_name, element_type, dimensions) in &array_columns {
+                        conn.execute(
+                            "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
+                             VALUES (?1, ?2, ?3, ?4)",
+                            params![table_name, column_name, element_type, dimensions]
+                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {}", e)))?;
+                        
+                        info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
+                              table_name, column_name, element_type, dimensions);
                     }
                 }
                 
@@ -964,6 +1041,160 @@ impl QueryExecutor {
                               column_name.starts_with("DATETIME(");
         
         has_datetime_translation || is_date_function
+    }
+    
+    /// Convert array data in rows using type OIDs from field descriptions
+    fn convert_array_data_in_rows(
+        rows: Vec<Vec<Option<Vec<u8>>>>,
+        fields: &[FieldDescription],
+    ) -> Result<Vec<Vec<Option<Vec<u8>>>>, PgSqliteError> {
+        // Extract type OIDs from field descriptions
+        let type_oids: Vec<i32> = fields.iter().map(|f| f.type_oid).collect();
+        
+        // Convert each row
+        let mut converted_rows = Vec::with_capacity(rows.len());
+        
+        for row in rows {
+            let mut converted_row = Vec::with_capacity(row.len());
+            
+            for (col_idx, cell) in row.into_iter().enumerate() {
+                let converted_cell = if let Some(data) = cell {
+                    let type_oid = type_oids.get(col_idx).copied().unwrap_or(25); // Default to TEXT
+                    
+                    // Check if this is an array type that needs conversion
+                    if PgType::from_oid(type_oid).map_or(false, |t| t.is_array()) {
+                        // Try to convert JSON array to PostgreSQL array format
+                        match Self::convert_json_to_pg_array(&data) {
+                            Ok(converted_data) => Some(converted_data),
+                            Err(_) => Some(data), // Keep original data if conversion fails
+                        }
+                    } else {
+                        Some(data)
+                    }
+                } else {
+                    None
+                };
+                
+                converted_row.push(converted_cell);
+            }
+            
+            converted_rows.push(converted_row);
+        }
+        
+        Ok(converted_rows)
+    }
+    
+    /// Convert JSON array string to PostgreSQL array format
+    pub fn convert_json_to_pg_array(json_data: &[u8]) -> Result<Vec<u8>, String> {
+        // Convert bytes to string
+        let s = std::str::from_utf8(json_data).map_err(|_| "Invalid UTF-8")?;
+        
+        // Try to parse as JSON array
+        match serde_json::from_str::<serde_json::Value>(s) {
+            Ok(json_val) => {
+                if let serde_json::Value::Array(arr) = json_val {
+                    // Convert to PostgreSQL array literal format
+                    let pg_array = Self::json_array_to_pg_text(&arr);
+                    Ok(pg_array.into_bytes())
+                } else {
+                    // Not an array, return as-is
+                    Ok(json_data.to_vec())
+                }
+            }
+            Err(_) => {
+                // Not valid JSON, return as-is
+                Ok(json_data.to_vec())
+            }
+        }
+    }
+    
+    /// Convert JSON array elements to PostgreSQL text array format
+    fn json_array_to_pg_text(arr: &[serde_json::Value]) -> String {
+        let elements: Vec<String> = arr.iter().map(|elem| {
+            match elem {
+                serde_json::Value::Null => "NULL".to_string(),
+                serde_json::Value::Bool(b) => b.to_string(),
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => {
+                    // Escape quotes and backslashes
+                    let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
+                    format!("\"{}\"", escaped)
+                }
+                serde_json::Value::Array(_) => {
+                    // Nested arrays - convert recursively
+                    // For now, just stringify
+                    elem.to_string()
+                }
+                serde_json::Value::Object(_) => {
+                    // Objects - stringify
+                    elem.to_string()
+                }
+            }
+        }).collect();
+        
+        format!("{{{}}}", elements.join(","))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_json_to_pg_array_conversion() {
+        let json_data = b"[\"a\", \"b\", \"c\"]";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        let pg_array = String::from_utf8(result).unwrap();
+        assert_eq!(pg_array, r#"{"a","b","c"}"#);
+    }
+    
+    #[test]
+    fn test_json_to_pg_array_numbers() {
+        let json_data = b"[1, 2, 3]";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        let pg_array = String::from_utf8(result).unwrap();
+        assert_eq!(pg_array, "{1,2,3}");
+    }
+    
+    #[test]
+    fn test_non_array_json() {
+        let json_data = b"\"not an array\"";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        assert_eq!(result, json_data);
+    }
+    
+    #[test]
+    fn test_array_type_detection() {
+        use crate::protocol::FieldDescription;
+        
+        // Test that TextArray type OID 1009 is correctly detected as an array
+        let text_array_type = PgType::TextArray.to_oid();
+        assert_eq!(text_array_type, 1009);
+        assert!(PgType::from_oid(text_array_type).map_or(false, |t| t.is_array()));
+        
+        // Test that regular text is not detected as an array
+        let text_type = PgType::Text.to_oid();
+        assert_eq!(text_type, 25);
+        assert!(!PgType::from_oid(text_type).map_or(false, |t| t.is_array()));
+        
+        // Test conversion with array type
+        let fields = vec![
+            FieldDescription {
+                name: "test_col".to_string(),
+                table_oid: 0,
+                column_id: 1,
+                type_oid: 1009, // TextArray
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            }
+        ];
+        
+        let rows = vec![vec![Some(b"[\"a\", \"b\", \"c\"]".to_vec())]];
+        let converted = QueryExecutor::convert_array_data_in_rows(rows, &fields).unwrap();
+        let result_data = &converted[0][0].as_ref().unwrap();
+        let result_str = String::from_utf8_lossy(result_data);
+        assert_eq!(result_str, r#"{"a","b","c"}"#);
     }
 }
 

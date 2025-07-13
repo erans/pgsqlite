@@ -14,6 +14,7 @@ mod regex_translator;
 mod schema_prefix_translator;
 mod numeric_format_translator;
 mod numeric_cast_translator;
+mod array_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -29,3 +30,4 @@ pub use regex_translator::RegexTranslator;
 pub use schema_prefix_translator::SchemaPrefixTranslator;
 pub use numeric_format_translator::NumericFormatTranslator;
 pub use numeric_cast_translator::NumericCastTranslator;
+pub use array_translator::ArrayTranslator;

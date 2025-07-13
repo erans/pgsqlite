@@ -456,6 +456,20 @@ impl<'a> DecimalQueryRewriter<'a> {
                 }
             }
             Expr::Function(func) => {
+                // Check if we need to rewrite this function before processing arguments
+                let is_aggregate = self.is_aggregate_function(&func.name);
+                let is_math = self.is_math_function(&func.name);
+                let mut has_decimal_arg = false;
+                
+                // Check arguments for decimal involvement
+                if let FunctionArguments::List(list) = &func.args {
+                    if !list.args.is_empty() {
+                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(arg_expr)) = &list.args[0] {
+                            has_decimal_arg = self.resolver.involves_decimal(arg_expr, context);
+                        }
+                    }
+                }
+                
                 // Rewrite function arguments
                 if let FunctionArguments::List(list) = &mut func.args {
                     for arg in &mut list.args {
@@ -463,17 +477,13 @@ impl<'a> DecimalQueryRewriter<'a> {
                             self.rewrite_expression(e, context)?;
                         }
                     }
-                    
-                    // Check if this is an aggregate function on decimal column
-                    if self.is_aggregate_function(&func.name) {
-                        if !list.args.is_empty() {
-                            if let FunctionArg::Unnamed(FunctionArgExpr::Expr(arg_expr)) = &list.args[0] {
-                                if self.resolver.involves_decimal(arg_expr, context) {
-                                    self.rewrite_aggregate_to_decimal(func, context)?;
-                                }
-                            }
-                        }
-                    }
+                }
+                
+                // Apply function rewrites if needed
+                if is_aggregate && has_decimal_arg {
+                    self.rewrite_aggregate_to_decimal(func, context)?;
+                } else if is_math && has_decimal_arg {
+                    self.rewrite_math_function_to_decimal(func)?;
                 }
             }
             Expr::Nested(inner) => {
@@ -719,6 +729,29 @@ impl<'a> DecimalQueryRewriter<'a> {
     fn is_aggregate_function(&self, name: &ObjectName) -> bool {
         let func_name = name.to_string().to_uppercase();
         matches!(func_name.as_str(), "SUM" | "AVG" | "MIN" | "MAX" | "COUNT")
+    }
+    
+    /// Check if function is a math function that needs decimal handling
+    fn is_math_function(&self, name: &ObjectName) -> bool {
+        let func_name = name.to_string().to_uppercase();
+        matches!(func_name.as_str(), "ROUND" | "ABS")
+    }
+    
+    /// Rewrite math function to use decimal equivalent
+    fn rewrite_math_function_to_decimal(&self, func: &mut Function) -> Result<(), String> {
+        let func_name = func.name.to_string().to_uppercase();
+        
+        match func_name.as_str() {
+            "ROUND" => {
+                func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_round"))]);
+            }
+            "ABS" => {
+                func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_abs"))]);
+            }
+            _ => return Err(format!("Unsupported math function: {}", func_name)),
+        }
+        
+        Ok(())
     }
     
     /// Check if a column needs decimal wrapping based on its storage type

@@ -2,7 +2,6 @@
 /// 
 /// This module provides functionality to strip SQL comments from queries
 /// to prevent issues with query parsing and execution.
-
 /// Strip SQL comments from a query
 /// 
 /// Removes both single-line (--) and multi-line (/* */) comments

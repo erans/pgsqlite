@@ -5,6 +5,7 @@ use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::{DecimalHandler, PgType};
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
 use crate::validator::NumericValidator;
+use crate::query::ParameterParser;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
@@ -157,7 +158,7 @@ impl ExtendedQueryHandler {
                             }
                             Err(_) => {
                                 // If we can't determine types, default to text
-                                let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                                let param_count = ParameterParser::count_parameters(&query);
                                 let types = vec![PgType::Text.to_oid(); param_count];
                                 (types.clone(), Some(types), None, Vec::new())
                             }
@@ -165,7 +166,7 @@ impl ExtendedQueryHandler {
                     } else if query_starts_with_ignore_case(&query, "SELECT") {
                         let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
                             // If we can't determine types, default to text
-                            let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                            let param_count = ParameterParser::count_parameters(&query);
                             vec![PgType::Text.to_oid(); param_count]
                         });
                         info!("Analyzed SELECT parameter types: {:?}", types);
@@ -174,7 +175,7 @@ impl ExtendedQueryHandler {
                         (types.clone(), Some(types), table, Vec::new())
                     } else {
                         // Other query types - just count parameters
-                        let param_count = (1..=99).filter(|i| query.contains(&format!("${}", i))).count();
+                        let param_count = ParameterParser::count_parameters(&query);
                         let types = vec![PgType::Text.to_oid(); param_count];
                         (types.clone(), Some(types), None, Vec::new())
                     };
@@ -190,7 +191,7 @@ impl ExtendedQueryHandler {
                         created_at: std::time::Instant::now(),
                     });
                     
-                    // Also update query cache if it's a parseable query
+                    // Also update query cache if it's a parseable query (keep JSON path placeholders for now)
                     if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
                         &sqlparser::dialect::PostgreSqlDialect {},
                         &cleaned_query
@@ -240,6 +241,23 @@ impl ExtendedQueryHandler {
             translation_metadata.merge(metadata);
         }
         
+        // Translate array operators with metadata
+        use crate::translator::ArrayTranslator;
+        info!("Translating array operators for query: {}", translated_for_analysis);
+        match ArrayTranslator::translate_with_metadata(&translated_for_analysis) {
+            Ok((translated, metadata)) => {
+                if translated != translated_for_analysis {
+                    info!("Array translation changed query to: {}", translated);
+                    translated_for_analysis = translated;
+                }
+                info!("Array metadata has {} hints", metadata.column_mappings.len());
+                translation_metadata.merge(metadata);
+            }
+            Err(_) => {
+                // Continue with original query
+            }
+        }
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);
@@ -263,13 +281,13 @@ impl ExtendedQueryHandler {
                 // For parameterized queries, substitute dummy values
                 // Use the translated query for analysis
                 let mut test_query = translated_for_analysis.to_string();
-                let param_count = (1..=99).filter(|i| translated_for_analysis.contains(&format!("${}", i))).count();
+                let param_count = ParameterParser::count_parameters(&translated_for_analysis);
                 
                 if param_count > 0 {
-                    // Replace parameters with dummy values
-                    for i in 1..=param_count {
-                        test_query = test_query.replace(&format!("${}", i), "NULL");
-                    }
+                    // Replace parameters with dummy values using proper parser
+                    let dummy_values = vec!["NULL".to_string(); param_count];
+                    test_query = ParameterParser::substitute_parameters(&test_query, &dummy_values)
+                        .unwrap_or_else(|_| test_query); // Fall back to original if substitution fails
                 }
                 
                 // First, analyze the original query for type casts in the SELECT clause
@@ -320,6 +338,7 @@ impl ExtendedQueryHandler {
                                                     crate::types::PgType::Time => "TIME",
                                                     crate::types::PgType::Timestamp => "TIMESTAMP",
                                                     crate::types::PgType::Timestamptz => "TIMESTAMPTZ",
+                                                    crate::types::PgType::TextArray => "TEXT[]",
                                                     _ => "TEXT", // Default to TEXT for unknown types
                                                 };
                                                 schema_types.insert(col_name.clone(), type_string.to_string());
@@ -404,6 +423,8 @@ impl ExtendedQueryHandler {
                                         info!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
                                         return suggested_type.to_oid();
                                     }
+                                } else {
+                                    info!("No type hint found in translation metadata for '{}'", col_name);
                                 }
                                 
                                 // Third priority: Check schema table for stored type mappings
@@ -417,7 +438,8 @@ impl ExtendedQueryHandler {
                                 
                                 // Third priority: Check for aggregate functions
                                 let col_lower = col_name.to_lowercase();
-                                if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                                if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&cleaned_query)) {
+                                    info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
                                     return oid;
                                 }
                                 
@@ -427,11 +449,16 @@ impl ExtendedQueryHandler {
                                 // Last resort: Try to infer from value if we have data
                                 if !response.rows.is_empty() {
                                     if let Some(value) = response.rows[0].get(i) {
-                                        crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                        let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
+                                        let inferred_type = crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref());
+                                        info!("Column '{}': inferring type from value '{}' -> type OID {}", col_name, value_str, inferred_type);
+                                        inferred_type
                                     } else {
+                                        info!("Column '{}': NULL value, defaulting to text", col_name);
                                         PgType::Text.to_oid() // text for NULL
                                     }
                                 } else {
+                                    info!("Column '{}': no data rows, defaulting to text", col_name);
                                     PgType::Text.to_oid() // text default when no data
                                 }
                             })
@@ -797,7 +824,7 @@ impl ExtendedQueryHandler {
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
             let error_response = e.to_error_response();
-            framed.send(BackendMessage::ErrorResponse(error_response)).await
+            framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(|e| PgSqliteError::Io(e))?;
             return Ok(());
         }
@@ -893,7 +920,7 @@ impl ExtendedQueryHandler {
                 // even though we skipped them during Parse
                 info!("Catalog query detected in Describe, generating field descriptions");
                 
-                // Parse the query to extract the selected columns
+                // Parse the query to extract the selected columns (keep JSON path placeholders for now)
                 let field_descriptions = if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
                     &sqlparser::dialect::PostgreSqlDialect {},
                     query
@@ -1375,17 +1402,12 @@ impl ExtendedQueryHandler {
     }
     
     fn substitute_parameters(query: &str, values: &[Option<Vec<u8>>], formats: &[i16], param_types: &[i32]) -> Result<String, PgSqliteError> {
-        let mut result = query.to_string();
+        // Convert parameter values to strings for substitution
+        let mut string_values = Vec::new();
         
-        
-        // Simple parameter substitution - replace $1, $2, etc. with actual values
-        // This is a simplified version - a real implementation would parse the SQL
         for (i, value) in values.iter().enumerate() {
-            let param = format!("${}", i + 1);
             let format = formats.get(i).copied().unwrap_or(0); // Default to text format
             let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to text
-            
-            
             
             let replacement = match value {
                 None => "NULL".to_string(),
@@ -1545,13 +1567,17 @@ impl ExtendedQueryHandler {
                     }
                 }
             };
-            result = result.replace(&param, &replacement);
+            string_values.push(replacement);
         }
+        
+        // Use the proper parameter parser that respects string literals
+        let result = ParameterParser::substitute_parameters(query, &string_values)
+            .map_err(|e| PgSqliteError::InvalidParameter(format!("Parameter substitution error: {}", e)))?;
         
         // Remove PostgreSQL-style casts (::type) as SQLite doesn't support them
         // Be careful not to match IPv6 addresses like ::1
         let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
-        result = cast_regex.replace_all(&result, "").to_string();
+        let result = cast_regex.replace_all(&result, "").to_string();
         
         Ok(result)
     }
@@ -2036,6 +2062,10 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
+                            // NOTE: Array type handling removed because:
+                            // 1. Arrays are stored as JSON strings in SQLite
+                            // 2. We return them as TEXT type to clients
+                            // 3. Binary array encoding is not implemented
                             t if t == PgType::Uuid.to_oid() => {
                                 // uuid - convert text to binary (16 bytes)
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
@@ -2283,6 +2313,8 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
+                            // NOTE: Array type handling removed for text format too
+                            // Arrays are returned as JSON strings with TEXT type
                             _ => {
                                 // For other types, keep as-is
                                 Some(bytes.clone())
@@ -2909,14 +2941,14 @@ impl ExtendedQueryHandler {
         // Handle CREATE TABLE translation
         let translated_query = if query_starts_with_ignore_case(query, "CREATE TABLE") {
             // Use translator with connection for ENUM support
-            let (sqlite_sql, type_mappings, enum_columns) = {
+            let (sqlite_sql, type_mappings, enum_columns, array_columns) = {
                 let conn = db.get_mut_connection()
                     .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
                 
                 let result = crate::translator::CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
                     .map_err(|e| PgSqliteError::Protocol(e))?;
                 
-                (result.sql, result.type_mappings, result.enum_columns)
+                (result.sql, result.type_mappings, result.enum_columns, result.array_columns)
             }; // Drop connection guard here
             
             // Execute the translated CREATE TABLE
@@ -3000,6 +3032,36 @@ impl ExtendedQueryHandler {
                                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
                             
                             info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                        }
+                    }
+                    
+                    // Store array column metadata
+                    if !array_columns.is_empty() {
+                        let conn = db.get_mut_connection()
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {}", e)))?;
+                        
+                        // Create array metadata table if it doesn't exist (should exist from migration v8)
+                        conn.execute(
+                            "CREATE TABLE IF NOT EXISTS __pgsqlite_array_types (
+                                table_name TEXT NOT NULL,
+                                column_name TEXT NOT NULL,
+                                element_type TEXT NOT NULL,
+                                dimensions INTEGER DEFAULT 1,
+                                PRIMARY KEY (table_name, column_name)
+                            )", 
+                            []
+                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {}", e)))?;
+                        
+                        // Insert array column metadata
+                        for (column_name, element_type, dimensions) in &array_columns {
+                            conn.execute(
+                                "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
+                                 VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![table_name, column_name, element_type, dimensions]
+                            ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {}", e)))?;
+                            
+                            info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
+                                  table_name, column_name, element_type, dimensions);
                         }
                     }
                 }

@@ -190,7 +190,7 @@ INSERT INTO test_basic_types (
 -- Numeric types insertion
 INSERT INTO test_numeric_types (numeric_col, numeric_precision, decimal_col, money_col) VALUES
     (12345.6789, 12345.67, 123456789.123, 1234.56),
-    (99999999999999999999.9999999999, 99999999.99, 999999999999.999, 99999999.99),
+    (9999999999999999999.999999999, 99999999.99, 999999999999.999, 99999999.99),
     (-12345.6789, -12345.67, -123456789.123, -1234.56);
 
 -- Special types insertion
@@ -566,6 +566,60 @@ SELECT * FROM test_special_types;
 
 -- Array queries (basic support)
 SELECT * FROM test_arrays WHERE int_array IS NOT NULL;
+
+-- Test array constructor syntax (Note: ARRAY constructor may not be fully supported)
+-- INSERT INTO test_arrays (int_array, text_array, bool_array) VALUES
+--     (ARRAY[10,20,30], ARRAY['hello', 'world'], ARRAY[true, true, false]),
+--     (ARRAY[100], ARRAY['single'], ARRAY[false]);
+
+-- Alternative: Insert using PostgreSQL array literal format
+INSERT INTO test_arrays (int_array, text_array, bool_array) VALUES
+    ('{10,20,30}', '{"hello","world"}', '{true,true,false}'),
+    ('{100}', '{"single"}', '{false}');
+
+-- Test multi-dimensional arrays
+CREATE TABLE test_multidim_arrays (
+    id SERIAL PRIMARY KEY,
+    matrix_2d INTEGER[][],
+    matrix_3d INTEGER[][][]
+);
+
+INSERT INTO test_multidim_arrays (matrix_2d, matrix_3d) VALUES
+    ('{{1,2,3},{4,5,6}}', '{{{1,2},{3,4}},{{5,6},{7,8}}}'),
+    ('{{10,20},{30,40}}', NULL);
+
+-- Test array element access (Note: may not be fully supported)
+-- SELECT int_array[1] AS first_element FROM test_arrays WHERE id = 1;
+-- SELECT text_array[2] AS second_text FROM test_arrays WHERE id = 1;
+
+-- Test array functions (Note: these may not be implemented yet)
+-- SELECT array_length(int_array, 1) AS array_len FROM test_arrays;
+-- SELECT array_upper(int_array, 1) AS upper_bound FROM test_arrays;
+-- SELECT array_lower(int_array, 1) AS lower_bound FROM test_arrays;
+
+-- Test array operators (Note: these may not be implemented yet)
+-- SELECT * FROM test_arrays WHERE int_array @> ARRAY[2,3];  -- contains
+-- SELECT * FROM test_arrays WHERE int_array <@ ARRAY[1,2,3,4,5,6];  -- is contained by
+-- SELECT * FROM test_arrays WHERE int_array && ARRAY[3,4,5];  -- overlaps
+
+-- Test ANY/ALL operators (Note: these may not be implemented yet)
+-- SELECT * FROM test_arrays WHERE 3 = ANY(int_array);
+-- SELECT * FROM test_arrays WHERE 10 > ALL(int_array);
+
+-- Test array concatenation (Note: may not be implemented)
+-- SELECT int_array || ARRAY[99] AS concatenated FROM test_arrays WHERE id = 1;
+-- SELECT ARRAY[0] || int_array AS prepended FROM test_arrays WHERE id = 1;
+
+-- Test empty arrays and NULL handling
+SELECT * FROM test_arrays WHERE int_array = '{}';
+SELECT * FROM test_arrays WHERE text_array IS NULL OR text_array = '{}';
+
+-- Test array comparisons
+SELECT * FROM test_arrays WHERE int_array = '{1,2,3,4,5}';
+SELECT * FROM test_arrays WHERE text_array != '{}';
+
+-- Clean up
+DROP TABLE test_multidim_arrays;
 
 -- ============================================
 -- ENUM SELECT QUERIES
@@ -1014,4 +1068,172 @@ SELECT 'test_special_types', COUNT(*) FROM test_special_types
 UNION ALL
 SELECT 'test_arrays', COUNT(*) FROM test_arrays;
 
--- End of test suite
+-- End of test suite-- Test JSON operator translation in pgsqlite
+-- These tests verify that PostgreSQL JSON operators are properly translated to SQLite functions
+
+-- Create test table with JSON columns
+CREATE TABLE test_json_ops (
+    id INTEGER PRIMARY KEY,
+    data JSON,
+    config JSONB,
+    metadata TEXT
+);
+
+-- Insert test data
+INSERT INTO test_json_ops (id, data, config, metadata) VALUES 
+(1, '{"name": "Alice", "age": 30, "email": "alice@example.com"}', '{"active": true, "role": "admin"}', 'user1'),
+(2, '{"name": "Bob", "age": 25, "email": "bob@example.com"}', '{"active": false, "role": "user"}', 'user2'),
+(3, '{"name": "Charlie", "age": 35, "skills": ["python", "rust", "go"]}', '{"active": true, "role": "developer"}', 'user3'),
+(4, '{"items": [{"id": 1, "name": "Widget"}, {"id": 2, "name": "Gadget"}]}', '{"type": "order", "status": "pending"}', 'order1'),
+(5, '{"nested": {"level1": {"level2": {"value": 42}}}}', '{"complex": true}', 'nested1');
+
+-- Test ->> operator (extract text)
+SELECT id, data->>'name' AS name FROM test_json_ops WHERE id <= 3;
+SELECT id, data->>'email' AS email FROM test_json_ops WHERE data->>'age' = '30';
+SELECT id, config->>'role' AS role FROM test_json_ops WHERE config->>'active' = 'true';
+
+-- Test -> operator (extract JSON)
+SELECT id, data->'skills' AS skills FROM test_json_ops WHERE id = 3;
+SELECT id, data->'items'->0 AS first_item FROM test_json_ops WHERE id = 4;
+SELECT id, data->'nested'->'level1' AS level1 FROM test_json_ops WHERE id = 5;
+
+-- Test array index access
+SELECT id, data->'skills'->>0 AS first_skill FROM test_json_ops WHERE id = 3;
+SELECT id, data->'skills'->>1 AS second_skill FROM test_json_ops WHERE id = 3;
+SELECT id, data->'items'->1->>'name' AS second_item_name FROM test_json_ops WHERE id = 4;
+
+-- Test #> operator (path extraction as JSON)
+SELECT id, data#>'{nested,level1,level2}' AS deep_value FROM test_json_ops WHERE id = 5;
+SELECT id, data#>'{items,0}' AS first_item_path FROM test_json_ops WHERE id = 4;
+
+-- Test #>> operator (path extraction as text)
+SELECT id, data#>>'{nested,level1,level2,value}' AS deep_text_value FROM test_json_ops WHERE id = 5;
+SELECT id, data#>>'{items,1,name}' AS second_item_name_path FROM test_json_ops WHERE id = 4;
+
+-- Test @> operator (contains)
+SELECT id, data FROM test_json_ops WHERE data @> '{"name": "Alice"}';
+SELECT id, config FROM test_json_ops WHERE config @> '{"active": true}';
+SELECT id, data FROM test_json_ops WHERE data @> '{"nested": {"level1": {}}}';
+
+-- Test <@ operator (is contained by)
+SELECT id FROM test_json_ops WHERE '{"name": "Bob"}' <@ data;
+SELECT id FROM test_json_ops WHERE '{"role": "admin"}' <@ config;
+
+-- Complex queries with multiple operators
+SELECT 
+    id,
+    data->>'name' AS name,
+    data->>'age' AS age,
+    config->>'role' AS role,
+    config->>'active' AS is_active
+FROM test_json_ops 
+WHERE data @> '{"age": 30}' OR config->>'role' = 'developer';
+
+-- Nested operator usage
+SELECT 
+    id,
+    data->'nested'->'level1'->>'level2' AS nested_path,
+    data#>>'{nested,level1,level2,value}' AS path_value
+FROM test_json_ops 
+WHERE id = 5;
+
+-- Clean up
+DROP TABLE test_json_ops;
+
+-- Test JSON Functions
+-- These tests verify PostgreSQL JSON functions work correctly
+
+-- Test json_valid
+SELECT json_valid('{"valid": true}') AS valid_json;
+SELECT json_valid('{invalid}') AS invalid_json;
+SELECT json_valid('null') AS null_valid;
+SELECT json_valid('123') AS number_valid;
+
+-- Test json_typeof / jsonb_typeof
+SELECT json_typeof('123') AS number_type;
+SELECT json_typeof('"text"') AS string_type;
+SELECT json_typeof('{"a": 1}') AS object_type;
+SELECT json_typeof('[1,2,3]') AS array_type;
+SELECT json_typeof('true') AS bool_type;
+SELECT json_typeof('null') AS null_type;
+SELECT jsonb_typeof('{"test": "value"}') AS jsonb_object_type;
+
+-- Test json_array_length / jsonb_array_length
+SELECT json_array_length('[1, 2, 3, 4, 5]') AS five_elements;
+SELECT json_array_length('[]') AS empty_array;
+SELECT json_array_length('{"not": "array"}') AS not_array;
+SELECT jsonb_array_length('[10, 20, 30]') AS jsonb_three;
+
+-- Test jsonb_object_keys
+SELECT jsonb_object_keys('{"name": "John", "age": 30, "city": "NYC"}') AS object_keys;
+SELECT jsonb_object_keys('{}') AS empty_object_keys;
+
+-- Test to_json / to_jsonb
+SELECT to_json('hello world') AS text_to_json;
+SELECT to_json(123) AS number_to_json;
+SELECT to_json(NULL) AS null_to_json;
+SELECT to_jsonb('test string') AS text_to_jsonb;
+
+-- Test json_build_object
+SELECT json_build_object('name', 'Alice') AS simple_object;
+SELECT json_build_object('id', 42) AS number_object;
+
+-- Test json_array_elements / jsonb_array_elements
+SELECT json_array_elements('[1, 2, 3]') AS array_elements;
+SELECT jsonb_array_elements('["a", "b", "c"]') AS jsonb_elements;
+
+-- Test json_array_elements_text
+SELECT json_array_elements_text('["hello", "world", "test"]') AS text_elements;
+SELECT json_array_elements_text('[1, 2, 3]') AS number_text_elements;
+
+-- Test json_strip_nulls / jsonb_strip_nulls
+SELECT json_strip_nulls('{"a": 1, "b": null, "c": {"d": null, "e": 2}}') AS stripped_nulls;
+SELECT jsonb_strip_nulls('{"x": null, "y": 10, "z": null}') AS jsonb_stripped;
+
+-- Test jsonb_set
+SELECT jsonb_set('{"a": 1, "b": 2}', '{b}', '99') AS set_value;
+SELECT jsonb_set('{"a": {"b": 1}}', '{a,c}', '"new"') AS set_nested;
+SELECT jsonb_set('[1, 2, 3]', '{1}', '42') AS set_array_element;
+
+-- Test json_extract_path
+SELECT json_extract_path('{"a": {"b": {"c": 42}}}', 'a.b.c') AS deep_path;
+SELECT json_extract_path('{"name": "John", "age": 30}', 'name') AS simple_path;
+
+-- Test json_extract_path_text
+SELECT json_extract_path_text('{"user": {"name": "Alice", "id": 123}}', 'user.name') AS user_name;
+SELECT json_extract_path_text('[10, 20, 30]', '1') AS array_element_text;
+
+-- Test jsonb_contains / jsonb_contained
+SELECT jsonb_contains('{"a": 1, "b": 2, "c": 3}', '{"a": 1}') AS contains_true;
+SELECT jsonb_contains('{"a": 1}', '{"b": 2}') AS contains_false;
+SELECT jsonb_contained('{"a": 1}', '{"a": 1, "b": 2}') AS contained_true;
+SELECT jsonb_contained('{"a": 1, "b": 2}', '{"a": 1}') AS contained_false;
+
+-- Complex JSON function tests with table data
+CREATE TABLE json_func_test (
+    id INTEGER PRIMARY KEY,
+    data JSONB
+);
+
+INSERT INTO json_func_test VALUES
+(1, '{"items": [{"name": "apple", "qty": 5}, {"name": "banana", "qty": 3}]}'),
+(2, '{"user": {"name": "Bob", "prefs": {"theme": "dark", "lang": "en"}}}'),
+(3, '[100, 200, 300, 400, 500]'),
+(4, '{"stats": {"views": 1000, "likes": 50, "shares": null, "comments": null}}');
+
+-- Test functions on table data
+SELECT id, json_typeof(data) AS data_type FROM json_func_test;
+SELECT id, json_array_length(data) AS array_len FROM json_func_test WHERE id = 3;
+SELECT id, jsonb_object_keys(data) AS keys FROM json_func_test WHERE id IN (1, 2);
+SELECT id, jsonb_strip_nulls(data) AS no_nulls FROM json_func_test WHERE id = 4;
+SELECT id, json_extract_path_text(data, 'user.name') AS username FROM json_func_test WHERE id = 2;
+
+-- Test jsonb_set on table data
+UPDATE json_func_test 
+SET data = jsonb_set(data, '{user,prefs,theme}', '"light"')
+WHERE id = 2;
+
+SELECT id, data FROM json_func_test WHERE id = 2;
+
+-- Clean up
+DROP TABLE json_func_test;

@@ -63,7 +63,7 @@ impl Encoder<BackendMessage> for PostgresCodec {
             BackendMessage::DataRow(values) => encode_data_row(values, dst),
             BackendMessage::CommandComplete { tag } => encode_command_complete(&tag, dst),
             BackendMessage::EmptyQueryResponse => encode_empty_query_response(dst),
-            BackendMessage::ErrorResponse(err) => encode_error_response(err, dst),
+            BackendMessage::ErrorResponse(err) => encode_error_response(*err, dst),
             BackendMessage::NoticeResponse(notice) => encode_notice_response(notice, dst),
             BackendMessage::ParseComplete => encode_parse_complete(dst),
             BackendMessage::BindComplete => encode_bind_complete(dst),

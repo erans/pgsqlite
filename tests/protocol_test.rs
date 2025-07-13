@@ -44,7 +44,7 @@ fn test_encode_error_response() {
         "relation \"users\" does not exist".to_string(),
     );
     
-    let msg = BackendMessage::ErrorResponse(err);
+    let msg = BackendMessage::ErrorResponse(Box::new(err));
     codec.encode(msg, &mut buf).unwrap();
     
     assert_eq!(buf[0], b'E');
