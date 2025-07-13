@@ -221,14 +221,19 @@ impl QueryExecutor {
             debug!("Query after JSON translation ($ placeholders preserved): {}", translated_query);
         }
         
-        // Translate array operators
+        // Translate array operators with metadata
         use crate::translator::ArrayTranslator;
-        match ArrayTranslator::translate_array_operators(&translated_query) {
-            Ok(translated) => {
+        match ArrayTranslator::translate_with_metadata(&translated_query) {
+            Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    debug!("Query after array operator translation: {}", translated);
+                    info!("Query after array operator translation: {}", translated);
                     translated_query = translated;
                 }
+                info!("Array translation metadata: {} hints", metadata.column_mappings.len());
+                for (col, hint) in &metadata.column_mappings {
+                    info!("  Column '{}': type={:?}", col, hint.suggested_type);
+                }
+                translation_metadata.merge(metadata);
             }
             Err(e) => {
                 debug!("Array operator translation failed: {}", e);
@@ -338,12 +343,12 @@ impl QueryExecutor {
                         } else {
                             crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                         }
-                    } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(name, None, None) {
+                    } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, Some(query)) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
                     } else if let Some(hint) = translation_metadata.get_hint(name) {
                         // Third priority: Check translation metadata (datetime or arithmetic)
-                        debug!("Found translation hint for column '{}'", name);
+                        debug!("Found translation hint for column '{}': {:?}", name, hint.suggested_type);
                         
                         // Check if we pre-fetched the source type
                         if let Some(source_type) = hint_source_types.get(name) {
@@ -414,6 +419,7 @@ impl QueryExecutor {
         
         
         // Convert array data before sending rows
+        info!("Converting array data for {} rows", response.rows.len());
         let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
         
         // Optimized data row sending for better SELECT performance
@@ -1079,7 +1085,7 @@ impl QueryExecutor {
     }
     
     /// Convert JSON array string to PostgreSQL array format
-    fn convert_json_to_pg_array(json_data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn convert_json_to_pg_array(json_data: &[u8]) -> Result<Vec<u8>, String> {
         // Convert bytes to string
         let s = std::str::from_utf8(json_data).map_err(|_| "Invalid UTF-8")?;
         

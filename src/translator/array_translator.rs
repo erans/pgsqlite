@@ -1,6 +1,9 @@
 use crate::PgSqliteError;
+use crate::translator::{TranslationMetadata, ColumnTypeHint, ExpressionType};
+use crate::types::PgType;
 use regex::Regex;
 use once_cell::sync::Lazy;
+use tracing::info;
 
 /// Regex patterns for array operators
 static ARRAY_CONTAINS_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -59,6 +62,35 @@ impl ArrayTranslator {
         result = Self::translate_concat_operator(&result)?;
         
         Ok(result)
+    }
+    
+    /// Translate array operators and return metadata about array expressions
+    pub fn translate_with_metadata(sql: &str) -> Result<(String, TranslationMetadata), PgSqliteError> {
+        let mut result = sql.to_string();
+        let mut metadata = TranslationMetadata::new();
+        
+        // Translate array subscript access first (most specific)
+        result = Self::translate_array_subscript(&result)?;
+        result = Self::translate_array_slice(&result)?;
+        
+        // Translate ANY/ALL operators
+        result = Self::translate_any_operator(&result)?;
+        result = Self::translate_all_operator(&result)?;
+        
+        // Translate array operators
+        result = Self::translate_contains_operator(&result)?;
+        result = Self::translate_contained_operator(&result)?;
+        result = Self::translate_overlap_operator(&result)?;
+        
+        // Translate concat operator and capture metadata
+        let (new_result, concat_metadata) = Self::translate_concat_operator_with_metadata(&result)?;
+        result = new_result;
+        metadata.merge(concat_metadata);
+        
+        // Extract metadata for all array functions with aliases
+        Self::extract_array_function_metadata(&result, &mut metadata);
+        
+        Ok((result, metadata))
     }
     
     /// Translate array subscript access: array[1] -> json_extract(array, '$[0]')
@@ -223,6 +255,150 @@ impl ArrayTranslator {
         }
         
         Ok(result)
+    }
+    
+    /// Translate || operator with metadata tracking
+    fn translate_concat_operator_with_metadata(sql: &str) -> Result<(String, TranslationMetadata), PgSqliteError> {
+        let mut metadata = TranslationMetadata::new();
+        
+        // More specific regex for array concatenation - only match if the second operand looks like a JSON array
+        let array_concat_regex = regex::Regex::new(r#"(\b\w+(?:\.\w+)*)\s*\|\|\s*('\[[^\]]+\]')"#).unwrap();
+        
+        let result = sql.to_string();
+        
+        // Collect all replacements first
+        let mut replacements = Vec::new();
+        for captures in array_concat_regex.captures_iter(&result) {
+            let array1 = captures[1].to_string();
+            let array2 = captures[2].trim();
+            
+            let original = captures[0].to_string();
+            let replacement = format!("array_cat({}, {})", array1, array2);
+            
+            replacements.push((original, replacement, array1));
+        }
+        
+        // First find aliases in the original query before replacement
+        let alias_regex = regex::Regex::new(r#"(?i)(\b\w+(?:\.\w+)*)\s*\|\|\s*(?:'[^']+'|"[^"]+"|'\[[^\]]+\]')\s+(?:AS\s+)?(\w+)"#).unwrap();
+        let mut alias_map = std::collections::HashMap::new();
+        for captures in alias_regex.captures_iter(&result) {
+            let expr = captures[0].to_string();
+            let alias = captures[2].to_string();
+            alias_map.insert(expr, alias);
+        }
+        
+        // Apply replacements
+        let mut final_result = result;
+        for (original, replacement, array1) in replacements {
+            final_result = final_result.replace(&original, &replacement);
+            
+            // Check if this expression had an alias
+            if let Some(alias) = alias_map.get(&original) {
+                info!("Found alias '{}' for array concat expression", alias);
+                metadata.add_hint(alias.clone(), ColumnTypeHint {
+                    source_column: Some(array1),
+                    suggested_type: Some(PgType::Text), // Return as TEXT (JSON array)
+                    datetime_subtype: None,
+                    is_expression: true,
+                    expression_type: Some(ExpressionType::Other),
+                });
+            }
+        }
+        
+        Ok((final_result, metadata))
+    }
+    
+    /// Extract metadata for all array functions with aliases
+    fn extract_array_function_metadata(sql: &str, metadata: &mut TranslationMetadata) {
+        use tracing::info;
+        info!("Extracting array function metadata from: {}", sql);
+        // Array functions that return arrays
+        let array_functions = [
+            "array_agg", "array_append", "array_prepend", "array_cat", 
+            "array_remove", "array_replace", "array_slice", "string_to_array",
+            "array_positions"
+        ];
+        
+        // Array functions that return non-array types
+        let int_functions = [
+            "array_length", "array_upper", "array_lower", "array_ndims",
+            "array_position", "json_array_length"
+        ];
+        
+        let bool_functions = [
+            "array_contains", "array_contained", "array_overlap"
+        ];
+        
+        let text_functions = [
+            "array_to_string", "unnest"
+        ];
+        
+        // Look for patterns like "function_name(...) AS alias"
+        for func in &array_functions {
+            let pattern = format!(r"(?i){}\s*\([^)]+\)\s+(?:AS\s+)?(\w+)", regex::escape(func));
+            info!("Checking pattern for {}: {}", func, pattern);
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                for captures in re.captures_iter(sql) {
+                    let alias = captures[1].to_string();
+                    info!("Found array function {} with alias: {}", func, alias);
+                    metadata.add_hint(alias, ColumnTypeHint {
+                        source_column: None,
+                        suggested_type: Some(PgType::Text), // Return as TEXT (JSON array)
+                        datetime_subtype: None,
+                        is_expression: true,
+                        expression_type: Some(ExpressionType::Other),
+                    });
+                }
+            }
+        }
+        
+        for func in &int_functions {
+            let pattern = format!(r"(?i){}\\s*\\([^)]+\\)\\s+(?:AS\\s+)?(\\w+)", regex::escape(func));
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                for captures in re.captures_iter(sql) {
+                    let alias = captures[1].to_string();
+                    metadata.add_hint(alias, ColumnTypeHint {
+                        source_column: None,
+                        suggested_type: Some(PgType::Int4),
+                        datetime_subtype: None,
+                        is_expression: true,
+                        expression_type: Some(ExpressionType::Other),
+                    });
+                }
+            }
+        }
+        
+        for func in &bool_functions {
+            let pattern = format!(r"(?i){}\\s*\\([^)]+\\)\\s+(?:AS\\s+)?(\\w+)", regex::escape(func));
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                for captures in re.captures_iter(sql) {
+                    let alias = captures[1].to_string();
+                    metadata.add_hint(alias, ColumnTypeHint {
+                        source_column: None,
+                        suggested_type: Some(PgType::Bool),
+                        datetime_subtype: None,
+                        is_expression: true,
+                        expression_type: Some(ExpressionType::Other),
+                    });
+                }
+            }
+        }
+        
+        for func in &text_functions {
+            let pattern = format!(r"(?i){}\\s*\\([^)]+\\)\\s+(?:AS\\s+)?(\\w+)", regex::escape(func));
+            if let Ok(re) = regex::Regex::new(&pattern) {
+                for captures in re.captures_iter(sql) {
+                    let alias = captures[1].to_string();
+                    metadata.add_hint(alias, ColumnTypeHint {
+                        source_column: None,
+                        suggested_type: Some(PgType::Text),
+                        datetime_subtype: None,
+                        is_expression: true,
+                        expression_type: Some(ExpressionType::Other),
+                    });
+                }
+            }
+        }
     }
 }
 

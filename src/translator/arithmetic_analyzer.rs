@@ -14,14 +14,21 @@ static SELECT_CLAUSE_PATTERN: Lazy<Regex> = Lazy::new(|| {
 
 static ARITHMETIC_EXPR_PATTERN: Lazy<Regex> = Lazy::new(|| {
     // Match arithmetic expressions with explicit AS alias
-    // This pattern is more permissive to catch complex expressions
-    // Captures: (1) full expression (anything with arithmetic operators), (2) alias
-    Regex::new(r"(?i)([^\s,]+(?:\s*[\+\-\*/]\s*[^\s,]+)+)\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap()
+    // This pattern matches complex arithmetic expressions including nested parentheses
+    // Captures: (1) full expression, (2) alias
+    // The expression part now matches any combination of:
+    // - identifiers (column names)
+    // - numbers (integers or decimals)
+    // - arithmetic operators (+, -, *, /)
+    // - parentheses for grouping
+    // - whitespace
+    Regex::new(r"(?i)([\w\.\s\+\-\*/\(\)]+[\+\-\*/][\w\.\s\+\-\*/\(\)]+)\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap()
 });
 
 static COLUMN_IN_EXPR_PATTERN: Lazy<Regex> = Lazy::new(|| {
     // Match column names within arithmetic expressions
-    Regex::new(r"(?i)([a-zA-Z_][a-zA-Z0-9_\.]*)\s*[\+\-\*/]").unwrap()
+    // Look for identifiers that are not pure numbers
+    Regex::new(r"(?i)\b([a-zA-Z_][a-zA-Z0-9_\.]*)").unwrap()
 });
 
 impl ArithmeticAnalyzer {
@@ -53,10 +60,19 @@ impl ArithmeticAnalyzer {
                 
                 debug!("Found arithmetic expression '{}' aliased as '{}'", expression, alias);
                 
-                // Extract the primary column from the expression
-                if let Some(column_match) = COLUMN_IN_EXPR_PATTERN.captures(expression) {
-                    let source_column = column_match[1].to_string();
-                    info!("Detected arithmetic on column '{}' aliased as '{}'", source_column, alias);
+                // Extract all columns from the expression
+                let mut columns = Vec::new();
+                for column_match in COLUMN_IN_EXPR_PATTERN.captures_iter(expression) {
+                    let col = column_match[1].to_string();
+                    if !col.chars().all(|c| c.is_numeric() || c == '.') {
+                        columns.push(col);
+                    }
+                }
+                
+                if !columns.is_empty() {
+                    // Use the first column found as the source
+                    let source_column = columns[0].clone();
+                    info!("Detected arithmetic on columns {:?} aliased as '{}', using '{}' as source", columns, alias, source_column);
                     
                     // Create metadata hint for arithmetic on float
                     // The actual type will be determined by looking up the source column
@@ -82,10 +98,19 @@ impl ArithmeticAnalyzer {
                 
                 debug!("Found arithmetic expression '{}' with implicit alias '{}'", expression, alias);
                 
-                // Extract the primary column from the expression
-                if let Some(column_match) = COLUMN_IN_EXPR_PATTERN.captures(expression) {
-                    let source_column = column_match[1].to_string();
-                    info!("Detected arithmetic on column '{}' implicitly aliased as '{}'", source_column, alias);
+                // Extract all columns from the expression
+                let mut columns = Vec::new();
+                for column_match in COLUMN_IN_EXPR_PATTERN.captures_iter(expression) {
+                    let col = column_match[1].to_string();
+                    if !col.chars().all(|c| c.is_numeric() || c == '.') {
+                        columns.push(col);
+                    }
+                }
+                
+                if !columns.is_empty() {
+                    // Use the first column found as the source
+                    let source_column = columns[0].clone();
+                    info!("Detected arithmetic on columns {:?} implicitly aliased as '{}', using '{}' as source", columns, alias, source_column);
                     
                     let hint = super::ColumnTypeHint::arithmetic_on_float(source_column);
                     metadata.add_hint(alias.to_string(), hint);

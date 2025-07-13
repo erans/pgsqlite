@@ -273,13 +273,26 @@ fn register_array_remove(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let array_json: String = ctx.get(0)?;
-            let element: String = ctx.get(1)?;
+            
+            // Handle element parameter of different types
+            let elem_value = match ctx.get_raw(1) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
             
             match serde_json::from_str::<JsonValue>(&array_json) {
                 Ok(JsonValue::Array(arr)) => {
-                    let elem_value = serde_json::from_str::<JsonValue>(&element)
-                        .unwrap_or_else(|_| JsonValue::String(element.clone()));
-                    
                     let filtered: Vec<JsonValue> = arr.into_iter()
                         .filter(|v| v != &elem_value)
                         .collect();
@@ -302,16 +315,43 @@ fn register_array_replace(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let array_json: String = ctx.get(0)?;
-            let old_element: String = ctx.get(1)?;
-            let new_element: String = ctx.get(2)?;
+            
+            // Handle old_element parameter of different types
+            let old_value = match ctx.get_raw(1) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
+            // Handle new_element parameter of different types
+            let new_value = match ctx.get_raw(2) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
             
             match serde_json::from_str::<JsonValue>(&array_json) {
                 Ok(JsonValue::Array(arr)) => {
-                    let old_value = serde_json::from_str::<JsonValue>(&old_element)
-                        .unwrap_or_else(|_| JsonValue::String(old_element));
-                    let new_value = serde_json::from_str::<JsonValue>(&new_element)
-                        .unwrap_or_else(|_| JsonValue::String(new_element));
-                    
                     let replaced: Vec<JsonValue> = arr.into_iter()
                         .map(|v| if v == old_value { new_value.clone() } else { v })
                         .collect();
@@ -447,13 +487,26 @@ fn register_array_position(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let array_json: String = ctx.get(0)?;
-            let element: String = ctx.get(1)?;
+            
+            // Handle element parameter of different types
+            let elem_value = match ctx.get_raw(1) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
             
             match serde_json::from_str::<JsonValue>(&array_json) {
                 Ok(JsonValue::Array(arr)) => {
-                    let elem_value = serde_json::from_str::<JsonValue>(&element)
-                        .unwrap_or_else(|_| JsonValue::String(element));
-                    
                     // Find first occurrence (1-based index)
                     for (i, val) in arr.iter().enumerate() {
                         if val == &elem_value {
@@ -478,13 +531,26 @@ fn register_array_positions(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let array_json: String = ctx.get(0)?;
-            let element: String = ctx.get(1)?;
+            
+            // Handle element parameter of different types
+            let elem_value = match ctx.get_raw(1) {
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str::<JsonValue>(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    JsonValue::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0)))
+                }
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
             
             match serde_json::from_str::<JsonValue>(&array_json) {
                 Ok(JsonValue::Array(arr)) => {
-                    let elem_value = serde_json::from_str::<JsonValue>(&element)
-                        .unwrap_or_else(|_| JsonValue::String(element));
-                    
                     // Find all occurrences (1-based indices)
                     let positions: Vec<i32> = arr.iter()
                         .enumerate()

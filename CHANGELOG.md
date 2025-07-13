@@ -48,6 +48,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated simple query detector to recognize and optimize batch INSERT patterns
 - Modified statement pool to support batch INSERT fingerprinting for better caching
 - **Code Quality Improvements**: Fixed major clippy warnings for better performance and maintainability
+
+### Fixed
+- **Array Function Type Inference**: Fixed incorrect type detection for array operations
+  - ArithmeticAnalyzer regex pattern was too permissive, incorrectly matching array expressions
+  - Array functions now correctly return TEXT type instead of array OIDs (since data is stored as JSON)
+  - Array concatenation operator (||) properly detected and typed
+  - All 4 array operator integration tests now pass
+  - Fixed array function parameter handling to accept non-string types (INTEGER, REAL, NULL, etc.)
+- **Arithmetic Expression Type Inference**: Fixed complex nested parentheses expressions
+  - Enhanced ArithmeticAnalyzer to properly handle expressions like ((a + b) * c) / d
+  - Improved regex pattern to match complex arithmetic including nested parentheses
+  - Fixed type inference for arithmetic operations to correctly return float types
+  - Resolved test_nested_parentheses failure in arithmetic_complex_test.rs
   - Boxed large ErrorResponse enum variant to reduce memory usage
   - Fixed inconsistent digit grouping in datetime constants
   - Simplified complex type definitions with type aliases

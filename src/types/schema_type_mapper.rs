@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use crate::types::PgType;
 use crate::metadata::EnumMetadata;
+use regex;
 
 /// Maps between PostgreSQL and SQLite types using actual schema information
 pub struct SchemaTypeMapper;
@@ -149,6 +150,11 @@ impl SchemaTypeMapper {
             // Money
             "MONEY" => PgType::Money.to_oid(),
             
+            // Array types
+            "TEXT[]" | "_TEXT" => PgType::TextArray.to_oid(),
+            "INT[]" | "INT4[]" | "INTEGER[]" | "_INT4" => PgType::Int4Array.to_oid(),
+            "BIGINT[]" | "INT8[]" | "_INT8" => PgType::Int8Array.to_oid(),
+            
             // Range types
             "INT4RANGE" => PgType::Int4range.to_oid(),
             "INT8RANGE" => PgType::Int8range.to_oid(),
@@ -271,9 +277,10 @@ impl SchemaTypeMapper {
             return PgType::Json.to_oid(); // json object
         }
         
-        // Check for JSON arrays - treat as PostgreSQL arrays
+        // Check for JSON arrays - keep as JSON/TEXT for now
+        // We don't have proper binary array encoding yet
         if s.starts_with('[') && s.ends_with(']') {
-            return PgType::TextArray.to_oid(); // text[] array
+            return PgType::Text.to_oid(); // text (JSON array)
         }
         
         PgType::Text.to_oid() // Default to text
@@ -283,13 +290,48 @@ impl SchemaTypeMapper {
     pub fn get_aggregate_return_type(
         function_name: &str,
         conn: Option<&Connection>,
-        table_name: Option<&str>
+        table_name: Option<&str>,
+    ) -> Option<i32> {
+        Self::get_aggregate_return_type_with_query(function_name, conn, table_name, None)
+    }
+    
+    /// Get type OID for aggregate functions with optional query context
+    pub fn get_aggregate_return_type_with_query(
+        function_name: &str,
+        conn: Option<&Connection>,
+        table_name: Option<&str>,
+        query: Option<&str>
     ) -> Option<i32> {
         let upper = function_name.to_uppercase();
         
         // Handle aliased columns - if it's just a simple name, skip function detection
         // This prevents false positives for columns named "year_col", "hour_trunc", etc.
         if !function_name.contains('(') && !function_name.contains(' ') {
+            // If we have the query, try to find what function produces this alias
+            if let Some(q) = query {
+                // Look for patterns like "array_cat(...) AS function_name"
+                let pattern = format!(r"(\w+)\s*\([^)]+\)\s+(?:AS\s+)?{}\b", regex::escape(function_name));
+                if let Ok(re) = regex::Regex::new(&pattern) {
+                    if let Some(captures) = re.captures(q) {
+                        let actual_function = captures[1].to_uppercase();
+                        // Recursively call with the actual function name
+                        return Self::get_aggregate_return_type_with_query(&format!("{}()", actual_function), conn, table_name, None);
+                    }
+                }
+                
+                // Also check for array concatenation operator pattern: column || array AS alias
+                // NOTE: For now, we return TEXT instead of TextArray because:
+                // 1. The data is stored as JSON strings in SQLite
+                // 2. Clients expect to get strings, not PostgreSQL arrays
+                // 3. Binary array encoding is not yet implemented
+                let concat_pattern = format!(r"\w+\s*\|\|\s*[^\s]+\s+(?:AS\s+)?{}\b", regex::escape(function_name));
+                if let Ok(re) = regex::Regex::new(&concat_pattern) {
+                    if re.is_match(q) {
+                        // This is an array concatenation operation - return as TEXT
+                        return Some(PgType::Text.to_oid());
+                    }
+                }
+            }
             return None;
         }
         
@@ -370,8 +412,9 @@ impl SchemaTypeMapper {
         }
         
         // Array functions
+        // NOTE: Return TEXT instead of array types because data is stored as JSON strings
         if upper.starts_with("ARRAY_AGG(") {
-            return Some(PgType::TextArray.to_oid()); // text[]
+            return Some(PgType::Text.to_oid()); // text (JSON array)
         }
         
         if upper.starts_with("ARRAY_LENGTH(") || upper.starts_with("ARRAY_UPPER(") || 
@@ -383,7 +426,7 @@ impl SchemaTypeMapper {
            upper.starts_with("ARRAY_CAT(") || upper.starts_with("ARRAY_REMOVE(") || 
            upper.starts_with("ARRAY_REPLACE(") || upper.starts_with("ARRAY_SLICE(") ||
            upper.starts_with("STRING_TO_ARRAY(") {
-            return Some(PgType::TextArray.to_oid()); // text[]
+            return Some(PgType::Text.to_oid()); // text (JSON array)
         }
         
         if upper.starts_with("ARRAY_POSITION(") {
@@ -391,7 +434,7 @@ impl SchemaTypeMapper {
         }
         
         if upper.starts_with("ARRAY_POSITIONS(") {
-            return Some(PgType::Int4Array.to_oid()); // int4[]
+            return Some(PgType::Text.to_oid()); // text (JSON array)
         }
         
         if upper.starts_with("ARRAY_TO_STRING(") || upper.starts_with("UNNEST(") {

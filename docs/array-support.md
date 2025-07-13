@@ -167,34 +167,120 @@ Example of how arrays are stored:
 - PostgreSQL: `'{"a","b","c"}'` → SQLite: `'["a","b","c"]'`
 - PostgreSQL: `'{{1,2},{3,4}}'` → SQLite: `'[[1,2],[3,4]]'`
 
-## Limitations
+## Array Operators and Functions
 
-Currently not supported (planned for future releases):
+pgsqlite supports most PostgreSQL array operators and functions:
 
-1. **Array Operators**:
-   - `@>` (contains)
-   - `<@` (is contained by) 
-   - `&&` (overlaps)
-   - `||` (concatenation)
+### Array Operators
 
-2. **Array Functions**:
-   - `array_length(array, dimension)`
-   - `array_upper(array, dimension)`
-   - `array_lower(array, dimension)`
-   - `array_append(array, element)`
-   - `array_prepend(element, array)`
-   - `array_cat(array1, array2)`
-   - `unnest(array)`
-   - `array_agg(expression)`
+- **`@>` (contains)**: Check if array contains another array
+  ```sql
+  SELECT * FROM products WHERE tags @> '["electronics"]';
+  ```
 
-3. **Array Access**:
-   - Subscript access: `array[1]`, `array[1:3]`
-   - Array slicing
-   - Multi-dimensional subscripts
+- **`<@` (is contained by)**: Check if array is contained by another
+  ```sql
+  SELECT * FROM products WHERE '["laptop"]' <@ tags;
+  ```
 
-4. **ANY/ALL Operators**:
-   - `value = ANY(array)`
-   - `value = ALL(array)`
+- **`&&` (overlap)**: Check if arrays have any elements in common
+  ```sql
+  SELECT * FROM products WHERE tags && '["electronics", "books"]';
+  ```
+
+- **`||` (concatenation)**: Concatenate arrays
+  ```sql
+  SELECT tags || '["new-tag"]' FROM products;
+  ```
+
+### Array Functions
+
+- **`array_length(array, dimension)`**: Get array length for specified dimension
+  ```sql
+  SELECT array_length(tags, 1) FROM products;
+  ```
+
+- **`array_upper(array, dimension)` / `array_lower(array, dimension)`**: Get array bounds (always 1-based)
+  ```sql
+  SELECT array_upper(scores, 1), array_lower(scores, 1) FROM example;
+  ```
+
+- **`array_append(array, element)` / `array_prepend(element, array)`**: Add elements
+  ```sql
+  SELECT array_append(tags, 'new-tag') FROM products;
+  SELECT array_prepend('first', tags) FROM products;
+  ```
+
+- **`array_cat(array1, array2)`**: Concatenate arrays (same as || operator)
+  ```sql
+  SELECT array_cat(tags, '["extra", "tags"]') FROM products;
+  ```
+
+- **`array_remove(array, element)`**: Remove all occurrences of an element
+  ```sql
+  -- Note: element must be JSON-encoded for now
+  SELECT array_remove(tags, '"electronics"') FROM products;
+  ```
+
+- **`array_replace(array, search, replace)`**: Replace all occurrences
+  ```sql
+  SELECT array_replace(tags, '"old"', '"new"') FROM products;
+  ```
+
+- **`array_position(array, element)` / `array_positions(array, element)`**: Find element positions (1-based)
+  ```sql
+  SELECT array_position(tags, '"electronics"') FROM products;
+  ```
+
+- **`array_slice(array, start, end)`**: Extract array slice
+  ```sql
+  SELECT array_slice(tags, 2, 4) FROM products;
+  ```
+
+- **`array_agg(expression)`**: Aggregate values into an array
+  ```sql
+  SELECT category, array_agg(name) FROM products GROUP BY category;
+  ```
+
+### Array Access
+
+- **Subscript access**: Access individual elements (1-based indexing)
+  ```sql
+  SELECT tags[1] FROM products;  -- First element
+  ```
+
+- **Array slicing**: Extract a range of elements
+  ```sql
+  SELECT tags[2:4] FROM products;  -- Elements 2 through 4
+  ```
+
+### ANY/ALL Operators
+
+- **`value = ANY(array)`**: Check if value equals any array element
+  ```sql
+  SELECT * FROM products WHERE 'electronics' = ANY(tags);
+  ```
+
+- **`value = ALL(array)`**: Check if value satisfies condition for all elements
+  ```sql
+  SELECT * FROM orders WHERE 100 < ALL(quantities);
+  ```
+
+## Current Limitations
+
+The following features are not yet supported:
+
+1. **Advanced Array Functions**:
+   - `unnest(array)` - Set-returning function (requires table function support)
+   - `array_agg` with ORDER BY or DISTINCT
+
+2. **Binary Protocol**:
+   - Arrays are returned as JSON strings, not in PostgreSQL binary array format
+   - Clients expecting binary array encoding may have issues
+
+3. **Array Constructors**:
+   - Limited ARRAY[...] constructor support (converted to JSON internally)
+   - Array input/output functions
 
 ## Workarounds
 

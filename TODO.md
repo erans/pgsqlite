@@ -405,6 +405,22 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Text protocol now correctly converts ["a","b"] to {a,b} format
   - [x] Comprehensive unit tests added for array conversion logic
   - [x] Integration tests still failing (expected) pending full array support
+- [x] **Array Function Type Inference Fix** - COMPLETED (2025-07-13)
+  - [x] Fixed ArithmeticAnalyzer incorrectly matching array expressions as arithmetic
+  - [x] Updated regex pattern to be more specific about arithmetic operations
+  - [x] Fixed array function return types to be TEXT instead of array OIDs
+  - [x] Arrays are stored as JSON strings and returned as TEXT type to clients
+  - [x] All 4 array operator tests now passing
+  - [x] Fixed array function parameter handling for non-JSON literals
+    - Modified array_remove, array_replace, array_position, array_positions to accept any value type
+    - Functions now use get_raw() to handle Integer, Real, Text, Null, and Blob parameters
+    - Automatically converts non-string parameters to appropriate JSON values
+- [x] **Arithmetic Expression Type Inference Fix** - COMPLETED (2025-07-13)
+  - [x] Fixed test_nested_parentheses failure in arithmetic_complex_test.rs
+  - [x] Enhanced ArithmeticAnalyzer regex to handle complex nested parentheses expressions
+  - [x] Pattern now matches expressions like ((a + b) * c) / d with proper type inference
+  - [x] Extracts all column identifiers from expressions for accurate type detection
+  - [x] All 203 unit tests + all integration tests now pass
 - [ ] Future work: Binary protocol array encoding/decoding
 
 #### ENUM Types

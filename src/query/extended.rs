@@ -241,6 +241,23 @@ impl ExtendedQueryHandler {
             translation_metadata.merge(metadata);
         }
         
+        // Translate array operators with metadata
+        use crate::translator::ArrayTranslator;
+        info!("Translating array operators for query: {}", translated_for_analysis);
+        match ArrayTranslator::translate_with_metadata(&translated_for_analysis) {
+            Ok((translated, metadata)) => {
+                if translated != translated_for_analysis {
+                    info!("Array translation changed query to: {}", translated);
+                    translated_for_analysis = translated;
+                }
+                info!("Array metadata has {} hints", metadata.column_mappings.len());
+                translation_metadata.merge(metadata);
+            }
+            Err(_) => {
+                // Continue with original query
+            }
+        }
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);
@@ -321,6 +338,7 @@ impl ExtendedQueryHandler {
                                                     crate::types::PgType::Time => "TIME",
                                                     crate::types::PgType::Timestamp => "TIMESTAMP",
                                                     crate::types::PgType::Timestamptz => "TIMESTAMPTZ",
+                                                    crate::types::PgType::TextArray => "TEXT[]",
                                                     _ => "TEXT", // Default to TEXT for unknown types
                                                 };
                                                 schema_types.insert(col_name.clone(), type_string.to_string());
@@ -405,6 +423,8 @@ impl ExtendedQueryHandler {
                                         info!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
                                         return suggested_type.to_oid();
                                     }
+                                } else {
+                                    info!("No type hint found in translation metadata for '{}'", col_name);
                                 }
                                 
                                 // Third priority: Check schema table for stored type mappings
@@ -418,7 +438,8 @@ impl ExtendedQueryHandler {
                                 
                                 // Third priority: Check for aggregate functions
                                 let col_lower = col_name.to_lowercase();
-                                if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                                if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&cleaned_query)) {
+                                    info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
                                     return oid;
                                 }
                                 
@@ -428,11 +449,16 @@ impl ExtendedQueryHandler {
                                 // Last resort: Try to infer from value if we have data
                                 if !response.rows.is_empty() {
                                     if let Some(value) = response.rows[0].get(i) {
-                                        crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                        let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
+                                        let inferred_type = crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref());
+                                        info!("Column '{}': inferring type from value '{}' -> type OID {}", col_name, value_str, inferred_type);
+                                        inferred_type
                                     } else {
+                                        info!("Column '{}': NULL value, defaulting to text", col_name);
                                         PgType::Text.to_oid() // text for NULL
                                     }
                                 } else {
+                                    info!("Column '{}': no data rows, defaulting to text", col_name);
                                     PgType::Text.to_oid() // text default when no data
                                 }
                             })
@@ -2036,6 +2062,10 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
+                            // NOTE: Array type handling removed because:
+                            // 1. Arrays are stored as JSON strings in SQLite
+                            // 2. We return them as TEXT type to clients
+                            // 3. Binary array encoding is not implemented
                             t if t == PgType::Uuid.to_oid() => {
                                 // uuid - convert text to binary (16 bytes)
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
@@ -2283,6 +2313,8 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
+                            // NOTE: Array type handling removed for text format too
+                            // Arrays are returned as JSON strings with TEXT type
                             _ => {
                                 // For other types, keep as-is
                                 Some(bytes.clone())

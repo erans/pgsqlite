@@ -188,6 +188,9 @@ INSERT INTO table (col1, col2) VALUES
 - **Multi-row INSERT Support (2025-07-08)**: Enhanced InsertTranslator to handle multi-row VALUES with datetime conversion
 - **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
 - **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
+  - Enhanced to handle complex nested parentheses expressions like ((a + b) * c) / d
+  - Improved regex patterns to properly match complex arithmetic operations
+  - Fixed type inference for float columns in arithmetic operations
 - **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
 - **Array Type Support (2025-07-12)**: Complete PostgreSQL array implementation with JSON storage
   - Support for 30+ array types (INTEGER[], TEXT[][], BOOLEAN[], etc.)
