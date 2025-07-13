@@ -187,11 +187,13 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 #### Decimal Query Rewriting - Context Handling
 - [ ] Optimize context merging performance for deeply nested subqueries
 
-#### Decimal Query Rewriting - Nested Expression Handling
-- [ ] Fully decompose complex nested arithmetic expressions (e.g., `(a * 2 + 5) * b`)
-- [ ] Process inner expressions before wrapping in decimal functions
-- [ ] Handle parenthesized expressions with proper recursion
-- [ ] Ensure all arithmetic operations within nested expressions use decimal functions
+#### Decimal Query Rewriting - Nested Expression Handling - COMPLETED (2025-07-13)
+- [x] Fully decompose complex nested arithmetic expressions (e.g., `(a * 2 + 5) * b`)
+- [x] Process inner expressions before wrapping in decimal functions
+- [x] Handle parenthesized expressions with proper recursion
+- [x] Ensure all arithmetic operations within nested expressions use decimal functions
+- [x] Fixed float arithmetic to NOT be converted to decimal operations
+- [x] Added proper type checking to skip decimal conversion for float types
 
 #### Performance Enhancements
 - [x] Profile protocol serialization overhead - COMPLETED (2025-07-06)

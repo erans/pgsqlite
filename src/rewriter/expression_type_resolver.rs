@@ -290,7 +290,18 @@ impl<'a> ExpressionTypeResolver<'a> {
             }
             Expr::Cast { data_type, .. } => {
                 // Convert SQL data type to PgType
-                self.sql_type_to_pg_type(&data_type.to_string())
+                let type_str = data_type.to_string().to_uppercase();
+                match type_str.as_str() {
+                    "REAL" | "FLOAT4" => PgType::Float4,
+                    "DOUBLE PRECISION" | "FLOAT8" | "FLOAT" => PgType::Float8,
+                    "INTEGER" | "INT" | "INT4" => PgType::Int4,
+                    "BIGINT" | "INT8" => PgType::Int8,
+                    "SMALLINT" | "INT2" => PgType::Int2,
+                    "NUMERIC" | "DECIMAL" => PgType::Numeric,
+                    "BOOLEAN" | "BOOL" => PgType::Bool,
+                    "TEXT" | "VARCHAR" | "CHAR" => PgType::Text,
+                    _ => self.sql_type_to_pg_type(&data_type.to_string())
+                }
             }
             Expr::Case { else_result, .. } => {
                 // For CASE expressions, use the type of else_result or Text
@@ -606,7 +617,7 @@ impl<'a> ExpressionTypeResolver<'a> {
                             match item {
                                 SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => {
                                     let t = self.resolve_expr_type(e, &subquery_context);
-                                    t == PgType::Numeric || t == PgType::Float4 || t == PgType::Float8
+                                    t == PgType::Numeric
                                 }
                                 _ => false,
                             }
@@ -617,7 +628,7 @@ impl<'a> ExpressionTypeResolver<'a> {
             }
             _ => {
                 let t = self.resolve_expr_type(expr, context);
-                t == PgType::Numeric || t == PgType::Float4 || t == PgType::Float8
+                t == PgType::Numeric
             }
         }
     }

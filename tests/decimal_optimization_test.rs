@@ -40,7 +40,7 @@ fn setup_test_db() -> Connection {
     conn.execute(
         "INSERT INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
          ('products', 'price', 'NUMERIC', 'DECIMAL'),
-         ('products', 'cost', 'REAL', 'DECIMAL')",
+         ('products', 'cost', 'NUMERIC', 'DECIMAL')",
         [],
     ).unwrap();
     
