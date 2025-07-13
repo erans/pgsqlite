@@ -4,24 +4,50 @@ use sqlparser::ast::{
     GroupByExpr, OrderBy, OrderByKind
 };
 use rusqlite::Connection;
+use std::collections::HashMap;
 use crate::types::PgType;
 use super::expression_type_resolver::{ExpressionTypeResolver, QueryContext};
 use super::implicit_cast_detector::{ImplicitCastDetector, ImplicitCast};
 
+/// Cache for schema type lookups to avoid repeated database queries
+#[derive(Debug, Clone)]
+struct SchemaCache {
+    /// Maps table -> bool (whether table has any decimal columns)
+    decimal_table_cache: HashMap<String, bool>,
+}
+
+impl SchemaCache {
+    fn new() -> Self {
+        Self {
+            decimal_table_cache: HashMap::new(),
+        }
+    }
+    
+    fn get_table_has_decimal(&self, table: &str) -> Option<bool> {
+        self.decimal_table_cache.get(table).copied()
+    }
+    
+    fn cache_table_has_decimal(&mut self, table: &str, has_decimal: bool) {
+        self.decimal_table_cache.insert(table.to_string(), has_decimal);
+    }
+}
+
 /// Rewrites queries to use decimal functions for NUMERIC operations
 pub struct DecimalQueryRewriter<'a> {
     resolver: ExpressionTypeResolver<'a>,
+    schema_cache: SchemaCache,
 }
 
 impl<'a> DecimalQueryRewriter<'a> {
     pub fn new(conn: &'a Connection) -> Self {
         Self {
             resolver: ExpressionTypeResolver::new(conn),
+            schema_cache: SchemaCache::new(),
         }
     }
     
     /// Check if any table in the query has decimal columns
-    fn query_has_decimal_columns(&self, query: &Query) -> bool {
+    fn query_has_decimal_columns(&mut self, query: &Query) -> bool {
         let tables = self.extract_table_names_from_query(query);
         self.any_table_has_decimal_columns(&tables)
     }
@@ -78,11 +104,19 @@ impl<'a> DecimalQueryRewriter<'a> {
         }
     }
     
-    /// Check if any of the given tables has decimal columns
-    fn any_table_has_decimal_columns(&self, tables: &[String]) -> bool {
+    /// Check if any of the given tables has decimal columns (with caching)
+    fn any_table_has_decimal_columns(&mut self, tables: &[String]) -> bool {
         let conn = self.resolver.conn();
         
         for table in tables {
+            // Check cache first
+            if let Some(has_decimal) = self.schema_cache.get_table_has_decimal(table) {
+                if has_decimal {
+                    return true;
+                }
+                continue;
+            }
+            
             // Check if this table has any decimal columns in the schema
             let query = "SELECT 1 FROM __pgsqlite_schema 
                          WHERE table_name = ?1 
@@ -90,9 +124,13 @@ impl<'a> DecimalQueryRewriter<'a> {
                          LIMIT 1";
             
             // Check using exists query
-            match conn.query_row(query, [table], |_| Ok(())) {
-                Ok(_) => return true,
-                Err(_) => continue,
+            let has_decimal = conn.query_row(query, [table], |_| Ok(())).is_ok();
+            
+            // Cache the result
+            self.schema_cache.cache_table_has_decimal(table, has_decimal);
+            
+            if has_decimal {
+                return true;
             }
         }
         
@@ -448,15 +486,6 @@ impl<'a> DecimalQueryRewriter<'a> {
 
     /// Rewrite an expression to use decimal functions
     fn rewrite_expression(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
-        // For binary operations, check if the expression contains float types with non-decimal storage
-        if let Expr::BinaryOp { .. } = expr {
-            let expr_clone = expr.clone();
-            if self.contains_non_decimal_float(&expr_clone, context) {
-                // Skip rewriting expressions that contain float types with non-decimal storage
-                return Ok(());
-            }
-        }
-        
         match expr {
             Expr::BinaryOp { left, op, right } => {
                 // First rewrite children
@@ -467,52 +496,23 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let left_type = self.resolver.resolve_expr_type(left, context);
                 let right_type = self.resolver.resolve_expr_type(right, context);
                 
-                // Check if either operand is a float column without decimal storage
-                let left_has_non_decimal_float = if let Expr::Cast { data_type, .. } = left.as_ref() {
-                    let type_str = data_type.to_string().to_uppercase();
-                    matches!(type_str.as_str(), "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION" | "FLOAT")
-                } else if let Expr::Identifier(ident) = left.as_ref() {
-                    if let Some(table) = context.find_table_for_column(&ident.value) {
-                        self.is_float_column_without_decimal_storage(&table, &ident.value)
-                    } else {
-                        false
-                    }
-                } else if let Expr::CompoundIdentifier(parts) = left.as_ref() {
-                    if parts.len() >= 2 {
-                        self.is_float_column_without_decimal_storage(&parts[parts.len() - 2].value, &parts[parts.len() - 1].value)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                
-                let right_has_non_decimal_float = if let Expr::Cast { data_type, .. } = right.as_ref() {
-                    let type_str = data_type.to_string().to_uppercase();
-                    matches!(type_str.as_str(), "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION" | "FLOAT")
-                } else if let Expr::Identifier(ident) = right.as_ref() {
-                    if let Some(table) = context.find_table_for_column(&ident.value) {
-                        self.is_float_column_without_decimal_storage(&table, &ident.value)
-                    } else {
-                        false
-                    }
-                } else if let Expr::CompoundIdentifier(parts) = right.as_ref() {
-                    if parts.len() >= 2 {
-                        self.is_float_column_without_decimal_storage(&parts[parts.len() - 2].value, &parts[parts.len() - 1].value)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                
-                // Only convert if we have numeric types AND no float columns without decimal storage
-                if !left_has_non_decimal_float && !right_has_non_decimal_float && (left_type == PgType::Numeric || right_type == PgType::Numeric) {
-                    // Rewrite to decimal function
+                // Only process arithmetic with NUMERIC types or float types with decimal storage
+                if left_type == PgType::Numeric || right_type == PgType::Numeric {
+                    // Always process arithmetic with NUMERIC operands (decimal literals)
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
                     *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                } else if left_type == PgType::Float4 || right_type == PgType::Float4 ||
+                          left_type == PgType::Float8 || right_type == PgType::Float8 {
+                    // For float types, only process if they have decimal storage (from schema)
+                    let should_process = self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context);
+                    if should_process {
+                        let left_clone = left.as_ref().clone();
+                        let right_clone = right.as_ref().clone();
+                        let op_clone = op.clone();
+                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                    }
                 }
             }
             Expr::Function(func) => {
@@ -645,35 +645,7 @@ impl<'a> DecimalQueryRewriter<'a> {
         };
         
         // Check for implicit casts for left operand
-        // Check if expressions already involve decimal types or contain arithmetic
-        // For nested expressions, check the inner expression
-        let left_expr_to_check = if let Expr::Nested(inner) = &left {
-            inner.as_ref()
-        } else {
-            &left
-        };
-        let right_expr_to_check = if let Expr::Nested(inner) = &right {
-            inner.as_ref()
-        } else {
-            &right
-        };
-        
-        let left_needs_processing = self.contains_arithmetic(left_expr_to_check);
-        let right_needs_processing = self.contains_arithmetic(right_expr_to_check);
-        
-        let wrapped_left = if left_needs_processing && right_type == PgType::Numeric {
-            // For nested expressions containing arithmetic that will be used with decimal types
-            let mut unwrapped = if let Expr::Nested(inner) = left {
-                *inner
-            } else {
-                left
-            };
-            // Process the unwrapped expression to decompose arithmetic
-            // Force it to be treated as decimal since it will be used in decimal context
-            let context = QueryContext::default();
-            self.force_decimal_arithmetic(&mut unwrapped, &context)?;
-            unwrapped
-        } else if let Some(cast) = ImplicitCastDetector::needs_implicit_cast(
+        let wrapped_left = if let Some(cast) = ImplicitCastDetector::needs_implicit_cast(
             &left, left_type, &op, &right, right_type
         ) {
             // Check if this cast applies to the left operand
@@ -707,19 +679,7 @@ impl<'a> DecimalQueryRewriter<'a> {
         };
         
         // Check for implicit casts for right operand (need to use original left)
-        let wrapped_right = if right_needs_processing && left_type == PgType::Numeric {
-            // For nested expressions containing arithmetic that will be used with decimal types
-            let mut unwrapped = if let Expr::Nested(inner) = right {
-                *inner
-            } else {
-                right
-            };
-            // Process the unwrapped expression to decompose arithmetic
-            // Force it to be treated as decimal since it will be used in decimal context
-            let context = QueryContext::default();
-            self.force_decimal_arithmetic(&mut unwrapped, &context)?;
-            unwrapped
-        } else if let Some(cast) = ImplicitCastDetector::needs_implicit_cast(
+        let wrapped_right = if let Some(cast) = ImplicitCastDetector::needs_implicit_cast(
             &wrapped_left, left_type, &op, &right, right_type
         ) {
             // Check if this cast applies to the right operand
@@ -775,7 +735,7 @@ impl<'a> DecimalQueryRewriter<'a> {
     }
     
     /// Wrap expression in decimal_from_text function
-    fn wrap_in_decimal_from_text(&self, expr: Expr) -> Expr {
+    fn wrap_in_decimal_from_text(&mut self, expr: Expr) -> Expr {
         // If this is a nested expression, check the inner expression
         if let Expr::Nested(inner) = &expr {
             // If the inner expression contains arithmetic, unwrap it so it can be processed
@@ -786,8 +746,14 @@ impl<'a> DecimalQueryRewriter<'a> {
         
         // Check if this expression contains arithmetic operations that should be rewritten
         if self.contains_arithmetic(&expr) {
-            // Return the expression without wrapping, it will be processed by rewrite_expression
-            return expr;
+            // Force decimal arithmetic processing and return the processed expression
+            let mut arithmetic_expr = expr;
+            let context = QueryContext::default(); // Use default context for isolated expressions
+            if let Err(_) = self.force_decimal_arithmetic(&mut arithmetic_expr, &context) {
+                // If processing fails, return the original expression
+                return arithmetic_expr;
+            }
+            return arithmetic_expr;
         }
         
         // First cast to text if needed
@@ -1004,15 +970,6 @@ impl<'a> DecimalQueryRewriter<'a> {
     
     /// Rewrite expression specifically for implicit casts (always processes)
     fn rewrite_expression_for_implicit_casts(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
-        // For binary operations, check if the expression contains float types with non-decimal storage
-        if let Expr::BinaryOp { .. } = expr {
-            let expr_clone = expr.clone();
-            if self.contains_non_decimal_float(&expr_clone, context) {
-                // Skip rewriting expressions that contain float types with non-decimal storage
-                return Ok(());
-            }
-        }
-        
         match expr {
             Expr::BinaryOp { left, op, right } => {
                 // First rewrite children recursively
@@ -1023,62 +980,29 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let left_type = self.resolver.resolve_expr_type(left, context);
                 let right_type = self.resolver.resolve_expr_type(right, context);
                 
-                // Check if we need implicit casts
-                // Only convert to decimal operations if we have NUMERIC types or implicit casts
-                // BUT: Don't convert if operands are float types with non-decimal storage
-                // Check actual storage, not just type
-                let left_has_non_decimal_float = if let Expr::Identifier(ident) = left.as_ref() {
-                    if let Some(table) = context.find_table_for_column(&ident.value) {
-                        self.is_float_column_without_decimal_storage(&table, &ident.value)
-                    } else {
-                        false
-                    }
-                } else if let Expr::CompoundIdentifier(parts) = left.as_ref() {
-                    if parts.len() >= 2 {
-                        self.is_float_column_without_decimal_storage(&parts[parts.len() - 2].value, &parts[parts.len() - 1].value)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                // Check if we need implicit casts or decimal operations
+                let needs_implicit_cast = ImplicitCastDetector::needs_implicit_cast(left, left_type, op, right, right_type).is_some();
                 
-                let right_has_non_decimal_float = if let Expr::Cast { data_type, .. } = right.as_ref() {
-                    let type_str = data_type.to_string().to_uppercase();
-                    matches!(type_str.as_str(), "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION" | "FLOAT")
-                } else if let Expr::Identifier(ident) = right.as_ref() {
-                    if let Some(table) = context.find_table_for_column(&ident.value) {
-                        self.is_float_column_without_decimal_storage(&table, &ident.value)
-                    } else {
-                        false
-                    }
-                } else if let Expr::CompoundIdentifier(parts) = right.as_ref() {
-                    if parts.len() >= 2 {
-                        self.is_float_column_without_decimal_storage(&parts[parts.len() - 2].value, &parts[parts.len() - 1].value)
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-                
-                let has_non_decimal_float = left_has_non_decimal_float || right_has_non_decimal_float;
-                
-                if !has_non_decimal_float && (left_type == PgType::Numeric || right_type == PgType::Numeric ||
-                   ImplicitCastDetector::needs_implicit_cast(left, left_type, op, right, right_type).is_some()) {
-                    // One of the operands needs decimal handling
+                if left_type == PgType::Numeric || right_type == PgType::Numeric || needs_implicit_cast {
+                    // Always process NUMERIC operands or implicit casts
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
                     *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                } else if left_type == PgType::Float4 || right_type == PgType::Float4 ||
+                          left_type == PgType::Float8 || right_type == PgType::Float8 {
+                    // For float types, only process if they have decimal storage
+                    let should_process = self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context);
+                    if should_process {
+                        let left_clone = left.as_ref().clone();
+                        let right_clone = right.as_ref().clone();
+                        let op_clone = op.clone();
+                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                    }
                 }
             }
             Expr::Nested(inner) => {
                 self.rewrite_expression_for_implicit_casts(inner, context)?;
-                // If the inner expression is now a decimal operation, replace the nested expression
-                if matches!(inner.as_ref(), Expr::Function(f) if f.name.to_string().starts_with("decimal_")) {
-                    *expr = inner.as_ref().clone();
-                }
             }
             Expr::InList { expr, list, .. } => {
                 self.rewrite_expression_for_implicit_casts(expr, context)?;
@@ -1160,50 +1084,22 @@ impl<'a> DecimalQueryRewriter<'a> {
         Ok(())
     }
     
-    /// Force decimal processing of arithmetic expressions
-    fn force_decimal_arithmetic(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
-        match expr {
-            Expr::BinaryOp { left, op, right } => {
-                // First process children
-                self.force_decimal_arithmetic(left, context)?;
-                self.force_decimal_arithmetic(right, context)?;
-                
-                // For arithmetic operations, force decimal processing
-                if matches!(op, 
-                    BinaryOperator::Plus | 
-                    BinaryOperator::Minus | 
-                    BinaryOperator::Multiply | 
-                    BinaryOperator::Divide
-                ) {
-                    let left_clone = left.as_ref().clone();
-                    let right_clone = right.as_ref().clone();
-                    let op_clone = op.clone();
-                    // Force types to trigger decimal processing
-                    let left_type = PgType::Numeric; // Force as numeric
-                    let right_type = PgType::Numeric; // Force as numeric
-                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
-                }
-            }
-            Expr::Nested(inner) => {
-                self.force_decimal_arithmetic(inner, context)?;
-            }
-            _ => {
-                // For non-arithmetic expressions, use regular processing
-                if self.resolver.involves_decimal(expr, context) {
-                    self.rewrite_expression(expr, context)?;
-                }
-            }
-        }
-        Ok(())
+    /// Check if float arithmetic should be processed as decimal operations
+    fn should_process_float_arithmetic(&mut self, left: &Expr, right: &Expr, context: &QueryContext) -> bool {
+        // Check if either operand is a float column with DECIMAL storage
+        let left_has_decimal_storage = self.is_float_with_decimal_storage(left, context);
+        let right_has_decimal_storage = self.is_float_with_decimal_storage(right, context);
+        
+        // Process if at least one operand has decimal storage
+        left_has_decimal_storage || right_has_decimal_storage
     }
     
-    /// Check if expression tree contains float types with non-decimal storage
-    fn contains_non_decimal_float(&mut self, expr: &Expr, context: &QueryContext) -> bool {
+    /// Check if an expression is a float column with decimal storage
+    fn is_float_with_decimal_storage(&self, expr: &Expr, context: &QueryContext) -> bool {
         match expr {
             Expr::Identifier(ident) => {
-                // Check if this is a float column with non-decimal storage
                 if let Some(table) = context.find_table_for_column(&ident.value) {
-                    self.is_float_column_without_decimal_storage(&table, &ident.value)
+                    self.check_column_has_decimal_storage(&table, &ident.value)
                 } else {
                     false
                 }
@@ -1212,80 +1108,34 @@ impl<'a> DecimalQueryRewriter<'a> {
                 if parts.len() >= 2 {
                     let table = &parts[parts.len() - 2].value;
                     let column = &parts[parts.len() - 1].value;
-                    self.is_float_column_without_decimal_storage(table, column)
+                    self.check_column_has_decimal_storage(table, column)
                 } else {
                     false
                 }
             }
-            Expr::BinaryOp { left, right, .. } => {
-                self.contains_non_decimal_float(left, context) || self.contains_non_decimal_float(right, context)
-            }
-            Expr::Nested(inner) => self.contains_non_decimal_float(inner, context),
-            Expr::Function(func) => {
-                if let FunctionArguments::List(list) = &func.args {
-                    list.args.iter().any(|arg| {
-                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
-                            self.contains_non_decimal_float(e, context)
-                        } else {
-                            false
-                        }
-                    })
-                } else {
-                    false
-                }
-            }
-            Expr::Cast { data_type, .. } => {
-                // Check if casting to a float type
-                let type_str = data_type.to_string().to_uppercase();
-                matches!(type_str.as_str(), "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION" | "FLOAT")
-            }
-            _ => false,
+            _ => false, // Literals and other expressions don't have storage
         }
     }
     
-    /// Check if a column is a float type without decimal storage
-    fn is_float_column_without_decimal_storage(&self, table: &str, column: &str) -> bool {
-        // First check if there's an entry in __pgsqlite_schema
-        let pg_type_query = "SELECT pg_type, sqlite_type FROM __pgsqlite_schema 
-                           WHERE table_name = ?1 AND column_name = ?2";
+    /// Check if a column has DECIMAL storage in the schema
+    fn check_column_has_decimal_storage(&self, table: &str, column: &str) -> bool {
+        let query = "SELECT sqlite_type FROM __pgsqlite_schema 
+                     WHERE table_name = ?1 AND column_name = ?2";
         
-        if let Ok((pg_type, sqlite_type)) = self.resolver.conn().query_row(
-            pg_type_query, 
+        if let Ok(sqlite_type) = self.resolver.conn().query_row(
+            query, 
             [table, column], 
             |row| {
-                let pg_type: String = row.get(0)?;
-                let sqlite_type: String = row.get(1)?;
-                Ok((pg_type, sqlite_type))
+                let sqlite_type: String = row.get(0)?;
+                Ok(sqlite_type)
             }
         ) {
-            // It's a float column with non-decimal storage if:
-            // 1. PG type is REAL, FLOAT4, FLOAT8, or DOUBLE PRECISION
-            // 2. SQLite type is NOT DECIMAL
-            let is_float_type = matches!(pg_type.as_str(), 
-                "REAL" | "FLOAT4" | "FLOAT8" | "DOUBLE PRECISION" | "FLOAT"
-            );
-            is_float_type && sqlite_type != "DECIMAL"
+            sqlite_type == "DECIMAL"
         } else {
-            // No __pgsqlite_schema entry - check SQLite's native type
-            let pragma_query = format!("PRAGMA table_info({})", table);
-            if let Ok(mut stmt) = self.resolver.conn().prepare(&pragma_query) {
-                let col_exists = stmt.query_map([], |row| {
-                    let col_name: String = row.get(1)?;
-                    let col_type: String = row.get(2)?;
-                    Ok((col_name, col_type))
-                }).ok().and_then(|rows| {
-                    rows.filter_map(Result::ok)
-                        .find(|(name, dtype)| name == column && dtype.to_uppercase() == "REAL")
-                }).is_some();
-                
-                // If it's a REAL column in SQLite with no metadata, it's a float without decimal storage
-                col_exists
-            } else {
-                false
-            }
+            false // No schema entry means no decimal storage
         }
     }
-
+    
     /// Check if an expression contains arithmetic operations
     fn contains_arithmetic(&self, expr: &Expr) -> bool {
         match expr {
@@ -1318,5 +1168,39 @@ impl<'a> DecimalQueryRewriter<'a> {
             }
             _ => false,
         }
+    }
+    
+    /// Force decimal processing of arithmetic expressions
+    fn force_decimal_arithmetic(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
+        match expr {
+            Expr::BinaryOp { left, op, right } => {
+                // First process children
+                self.force_decimal_arithmetic(left, context)?;
+                self.force_decimal_arithmetic(right, context)?;
+                
+                // For arithmetic operations, force decimal processing
+                if matches!(op, 
+                    BinaryOperator::Plus | 
+                    BinaryOperator::Minus | 
+                    BinaryOperator::Multiply | 
+                    BinaryOperator::Divide
+                ) {
+                    let left_clone = left.as_ref().clone();
+                    let right_clone = right.as_ref().clone();
+                    let op_clone = op.clone();
+                    // Force types to trigger decimal processing
+                    let left_type = PgType::Numeric; // Force as numeric
+                    let right_type = PgType::Numeric; // Force as numeric
+                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                }
+            }
+            Expr::Nested(inner) => {
+                self.force_decimal_arithmetic(inner, context)?;
+            }
+            _ => {
+                // For non-arithmetic expressions, leave as-is
+            }
+        }
+        Ok(())
     }
 }
