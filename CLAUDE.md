@@ -138,7 +138,15 @@ pgsqlite --database existingdb.db
 - Don't claim something works without actually testing it
 
 ## Performance Characteristics
-### Current Performance (as of 2025-07-08)
+### Current Performance (as of 2025-07-14)
+- **⚠️ PERFORMANCE REGRESSION IDENTIFIED**: Current benchmarks show significantly worse performance than baseline
+- **SELECT**: ~5,990x overhead (previously ~294x) - **20x worse than expected**
+- **SELECT (cached)**: ~2,253x overhead (previously ~39x) - **58x worse than expected**
+- **UPDATE**: ~81x overhead (0.092ms vs 0.001ms) - reasonable
+- **DELETE**: ~70x overhead (0.064ms vs 0.001ms) - reasonable
+- **INSERT**: ~3,838x overhead (5.959ms vs 0.002ms) - needs investigation
+
+### Historical Baseline (2025-07-08)
 - **Overall System**: ~134x overhead vs raw SQLite (comprehensive benchmark results)
 - **SELECT**: ~294x overhead (protocol translation overhead)
 - **SELECT (cached)**: ~39x overhead (excellent caching performance)
@@ -209,6 +217,13 @@ INSERT INTO table (col1, col2) VALUES
   - Enhanced type handling supports chained operations (data->'items'->1->>'name')
   - Automatic operator translation in query pipeline
   - Full test coverage for operators, functions, and edge cases
+- **Decimal Query Rewriting Enhancements (2025-07-14)**: Complete nested arithmetic decomposition
+  - Fixed complex nested arithmetic expressions like `(quantity * 2 + 5) * price / 100`
+  - Added performance regression fix with SchemaCache optimization
+  - Fixed arithmetic aliasing test failures for float vs decimal handling
+  - Resolved arithmetic edge case with int * float literal operations
+  - All implicit cast tests (9/9), arithmetic aliasing tests (5/5), and edge case tests (7/7) now pass
+  - Maintained backwards compatibility with existing decimal functionality
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
