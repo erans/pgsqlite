@@ -39,6 +39,36 @@ static ALL_OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(\b\w+(?:\.\w+)*|\d+)\s*([><=!]+)\s*ALL\s*\(([^)]+)\)").unwrap()
 });
 
+/// Pre-compiled regex patterns for array function detection with aliases
+static ARRAY_FUNCTION_ALIAS_REGEXES: Lazy<Vec<(&'static str, Regex)>> = Lazy::new(|| {
+    vec![
+        // Array functions that return arrays
+        ("array_agg", Regex::new(r"(?i)array_agg\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_append", Regex::new(r"(?i)array_append\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_prepend", Regex::new(r"(?i)array_prepend\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_cat", Regex::new(r"(?i)array_cat\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_remove", Regex::new(r"(?i)array_remove\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_replace", Regex::new(r"(?i)array_replace\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_slice", Regex::new(r"(?i)array_slice\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("string_to_array", Regex::new(r"(?i)string_to_array\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_positions", Regex::new(r"(?i)array_positions\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        // Array functions that return integers
+        ("array_length", Regex::new(r"(?i)array_length\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_upper", Regex::new(r"(?i)array_upper\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_lower", Regex::new(r"(?i)array_lower\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_ndims", Regex::new(r"(?i)array_ndims\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_position", Regex::new(r"(?i)array_position\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("json_array_length", Regex::new(r"(?i)json_array_length\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        // Array functions that return booleans
+        ("array_contains", Regex::new(r"(?i)array_contains\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_contained", Regex::new(r"(?i)array_contained\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("array_overlap", Regex::new(r"(?i)array_overlap\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        // Array functions that return text
+        ("array_to_string", Regex::new(r"(?i)array_to_string\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+        ("unnest", Regex::new(r"(?i)unnest\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap()),
+    ]
+});
+
 /// Translates PostgreSQL array operators to SQLite-compatible functions
 pub struct ArrayTranslator;
 
@@ -356,7 +386,7 @@ impl ArrayTranslator {
         Ok((final_result, metadata))
     }
     
-    /// Extract metadata for all array functions with aliases
+    /// Extract metadata for all array functions with aliases using pre-compiled regex patterns
     fn extract_array_function_metadata(sql: &str, metadata: &mut TranslationMetadata) {
         // Early exit optimization: check if query contains any array function keywords
         if !Self::contains_array_functions(sql) {
@@ -364,91 +394,40 @@ impl ArrayTranslator {
         }
         
         debug!("Extracting array function metadata from: {}", sql);
-        // Array functions that return arrays
-        let array_functions = [
-            "array_agg", "array_append", "array_prepend", "array_cat", 
-            "array_remove", "array_replace", "array_slice", "string_to_array",
-            "array_positions"
-        ];
         
-        // Array functions that return non-array types
-        let int_functions = [
-            "array_length", "array_upper", "array_lower", "array_ndims",
-            "array_position", "json_array_length"
-        ];
-        
-        let bool_functions = [
-            "array_contains", "array_contained", "array_overlap"
-        ];
-        
-        let text_functions = [
-            "array_to_string", "unnest"
-        ];
-        
-        // Look for patterns like "function_name(...) AS alias"
-        for func in &array_functions {
-            let pattern = format!(r"(?i){}\s*\([^)]+\)\s+(?:AS\s+)?(\w+)", regex::escape(func));
-            debug!("Checking pattern for {}: {}", func, pattern);
-            if let Ok(re) = regex::Regex::new(&pattern) {
-                for captures in re.captures_iter(sql) {
-                    let alias = captures[1].to_string();
-                    debug!("Found array function {} with alias: {}", func, alias);
-                    metadata.add_hint(alias, ColumnTypeHint {
-                        source_column: None,
-                        suggested_type: Some(PgType::Text), // Return as TEXT (JSON array)
-                        datetime_subtype: None,
-                        is_expression: true,
-                        expression_type: Some(ExpressionType::Other),
-                    });
-                }
-            }
-        }
-        
-        for func in &int_functions {
-            let pattern = format!(r"(?i){}\\s*\\([^)]+\\)\\s+(?:AS\\s+)?(\\w+)", regex::escape(func));
-            if let Ok(re) = regex::Regex::new(&pattern) {
-                for captures in re.captures_iter(sql) {
-                    let alias = captures[1].to_string();
-                    metadata.add_hint(alias, ColumnTypeHint {
-                        source_column: None,
-                        suggested_type: Some(PgType::Int4),
-                        datetime_subtype: None,
-                        is_expression: true,
-                        expression_type: Some(ExpressionType::Other),
-                    });
-                }
-            }
-        }
-        
-        for func in &bool_functions {
-            let pattern = format!(r"(?i){}\\s*\\([^)]+\\)\\s+(?:AS\\s+)?(\\w+)", regex::escape(func));
-            if let Ok(re) = regex::Regex::new(&pattern) {
-                for captures in re.captures_iter(sql) {
-                    let alias = captures[1].to_string();
-                    metadata.add_hint(alias, ColumnTypeHint {
-                        source_column: None,
-                        suggested_type: Some(PgType::Bool),
-                        datetime_subtype: None,
-                        is_expression: true,
-                        expression_type: Some(ExpressionType::Other),
-                    });
-                }
-            }
-        }
-        
-        for func in &text_functions {
-            let pattern = format!(r"(?i){}\\s*\\([^)]+\\)\\s+(?:AS\\s+)?(\\w+)", regex::escape(func));
-            if let Ok(re) = regex::Regex::new(&pattern) {
-                for captures in re.captures_iter(sql) {
-                    let alias = captures[1].to_string();
-                    metadata.add_hint(alias, ColumnTypeHint {
-                        source_column: None,
-                        suggested_type: Some(PgType::Text),
-                        datetime_subtype: None,
-                        is_expression: true,
-                        expression_type: Some(ExpressionType::Other),
-                    });
-                }
+        // Use pre-compiled regex patterns for optimal performance
+        for (func_name, regex) in ARRAY_FUNCTION_ALIAS_REGEXES.iter() {
+            for captures in regex.captures_iter(sql) {
+                let alias = captures[1].to_string();
+                debug!("Found array function {} with alias: {}", func_name, alias);
+                
+                // Determine return type based on function name
+                let suggested_type = match *func_name {
+                    // Functions that return arrays (stored as JSON TEXT)
+                    "array_agg" | "array_append" | "array_prepend" | "array_cat" |
+                    "array_remove" | "array_replace" | "array_slice" | "string_to_array" |
+                    "array_positions" => PgType::Text,
+                    
+                    // Functions that return integers
+                    "array_length" | "array_upper" | "array_lower" | "array_ndims" |
+                    "array_position" | "json_array_length" => PgType::Int4,
+                    
+                    // Functions that return booleans
+                    "array_contains" | "array_contained" | "array_overlap" => PgType::Bool,
+                    
+                    // Functions that return text
+                    "array_to_string" | "unnest" => PgType::Text,
+                    
+                    _ => PgType::Text, // Default to text for unknown functions
+                };
+                
+                metadata.add_hint(alias, ColumnTypeHint {
+                    source_column: None,
+                    suggested_type: Some(suggested_type),
+                    datetime_subtype: None,
+                    is_expression: true,
+                    expression_type: Some(ExpressionType::Other),
+                });
             }
         }
     }
