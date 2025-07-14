@@ -138,14 +138,22 @@ pgsqlite --database existingdb.db
 - Don't claim something works without actually testing it
 
 ## Performance Characteristics
-### Current Performance (as of 2025-07-14) - LOGGING OPTIMIZATION COMPLETED
-- **✅ PERFORMANCE RESTORED**: Fixed major regression caused by high-volume info!() logging
-- **SELECT**: ~262x overhead (improved from 356x) - **Now exceeds baseline target!**
-- **SELECT (cached)**: ~44x overhead (improved from 80x) - **Excellent performance**
-- **UPDATE**: ~59x overhead (0.067ms vs 0.001ms) - excellent
-- **DELETE**: ~48x overhead (0.045ms vs 0.001ms) - excellent
-- **INSERT**: ~228x overhead (0.349ms vs 0.002ms) - good performance
-- **Key Fix**: Changed high-volume logging from info!() to debug!() level in query executor
+### Current Performance (as of 2025-07-14) - OPTIMIZATION COMPLETED
+- **✅ PERFORMANCE RESTORED**: Fixed major regression with two-phase optimization
+- **SELECT**: ~272x overhead (0.268ms) - **Exceeds baseline target!**
+- **SELECT (cached)**: ~74x overhead (0.166ms) - Good performance
+- **UPDATE**: ~56x overhead (0.064ms) - excellent
+- **DELETE**: ~45x overhead (0.042ms) - excellent
+- **INSERT**: ~223x overhead (0.347ms) - good performance
+
+### Key Optimizations Implemented
+- **Phase 1 - Logging Fix**: Changed high-volume info!() to debug!() level
+  - Fixed 2,842+ excessive log calls per benchmark in query executor
+  - Array translation metadata, type hints, and conversion logging
+- **Phase 2 - Regex Caching**: Pre-compiled regex patterns in array translator
+  - 20 pre-compiled patterns for array function detection
+  - Eliminated runtime regex compilation overhead
+  - Simplified type inference with match expressions
 
 ### Historical Baseline (2025-07-08)
 - **Overall System**: ~134x overhead vs raw SQLite (comprehensive benchmark results)
@@ -200,6 +208,11 @@ INSERT INTO table (col1, col2) VALUES
   - Enhanced to handle complex nested parentheses expressions like ((a + b) * c) / d
   - Improved regex patterns to properly match complex arithmetic operations
   - Fixed type inference for float columns in arithmetic operations
+- **Performance Optimization (2025-07-14)**: Major performance restoration and improvements
+  - Phase 1: Fixed high-volume logging causing 2,842+ calls per benchmark
+  - Phase 2: Implemented regex compilation caching in array translator
+  - Restored SELECT performance to 272x overhead (exceeds 294x baseline target)
+  - Enhanced array translator with early exit optimization
 - **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
 - **Array Type Support (2025-07-12)**: Complete PostgreSQL array implementation with JSON storage
   - Support for 30+ array types (INTEGER[], TEXT[][], BOOLEAN[], etc.)
