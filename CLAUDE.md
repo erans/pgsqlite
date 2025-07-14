@@ -244,10 +244,18 @@ INSERT INTO table (col1, col2) VALUES
   - ArrayAggTranslator handles ORDER BY and DISTINCT clauses in array_agg
   - Performance optimization: fast-path checks eliminate expensive string operations for non-array queries
   - Results: SELECT performance improved from 318x to 305x overhead, cached SELECT exceeds baseline by 44%
+- **Array Concatenation Operator Enhancement (2025-07-14)**: Improved || operator with ARRAY[] syntax detection
+  - Enhanced to detect ARRAY[] syntax patterns (e.g., ARRAY[1,2] || ARRAY[3,4])
+  - Custom character-based parser for proper balanced bracket matching
+  - Fixed early exit optimization bug by detecting || operator in contains_array_functions
+  - All 6 integration tests and 23 unit tests pass
+  - Note: ARRAY literal translation (ARRAY[1,2,3] → JSON) requires separate implementation
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
-- **Array function limitations**: ORDER BY in array_agg relies on outer query ORDER BY
+- **Array function limitations**: 
+  - ORDER BY in array_agg relies on outer query ORDER BY
+  - ARRAY[1,2,3] literal syntax requires translation to JSON format (not yet implemented)
 
 ## Database Handler Architecture
 Uses a Mutex-based implementation for thread safety:

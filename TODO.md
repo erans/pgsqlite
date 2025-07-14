@@ -502,11 +502,21 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 ### Missing Array Features - MEDIUM PRIORITY
 
 #### Advanced Array Functions
-- [ ] **Array Concatenation Operator (||)** - HIGH PRIORITY
-  - Currently disabled due to conflict with string concatenation
-  - Location: src/translator/array_translator.rs:21-24 (TODO comment)
-  - Issue: Cannot differentiate `array1 || array2` from `string1 || string2`
-  - Requires type-aware operator resolution
+- [x] **Array Concatenation Operator (||)** - COMPLETED (2025-07-14)
+  - [x] Implemented type-aware resolution to differentiate array vs string concatenation
+  - [x] Supports array literal concatenation: `'{a,b}' || '{c,d}'` → `array_cat('{a,b}', '{c,d}')`
+  - [x] Supports column concatenation: `tags || category_names` → `array_cat(tags, category_names)`
+  - [x] Supports mixed operations: `'{extra}' || tags_array` → `array_cat('{extra}', tags_array)`
+  - [x] Preserves string concatenation behavior: `'hello' || ' world'` remains unchanged
+  - [x] Uses pattern matching and heuristics for operator resolution
+  - [x] Comprehensive test coverage with 6 test functions and edge cases
+  - [x] Enhanced to detect ARRAY[] syntax patterns (e.g., `ARRAY[1,2] || ARRAY[3,4]`)
+  - [x] Note: ARRAY[] literal translation (ARRAY[1,2,3] → JSON) requires separate implementation
+- [ ] **ARRAY Literal Translator**
+  - [ ] Implement ARRAY[1,2,3] constructor syntax translation to JSON format
+  - [ ] Support nested arrays: ARRAY[ARRAY[1,2], ARRAY[3,4]]
+  - [ ] Handle mixed types: ARRAY['text', 123, true, NULL]
+  - [ ] Integrate with array concatenation operator for full functionality
 - [ ] **Enhanced unnest() Features**
   - [ ] `unnest(array) WITH ORDINALITY` - Return array elements with row numbers
   - [ ] Multi-array unnest: `unnest(array1, array2, ...)` - Unnest multiple arrays in parallel
