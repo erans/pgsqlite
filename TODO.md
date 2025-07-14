@@ -499,7 +499,93 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - Only perform lowercase conversion when array keywords are actually present
     - Results: SELECT performance improved from 318x to 305x overhead
     - Cached SELECT performance improved from 62x to 42x overhead (exceeds baseline by 44%)
-- [ ] Future work: Binary protocol array encoding/decoding
+### Missing Array Features - MEDIUM PRIORITY
+
+#### Advanced Array Functions
+- [ ] **Array Concatenation Operator (||)** - HIGH PRIORITY
+  - Currently disabled due to conflict with string concatenation
+  - Location: src/translator/array_translator.rs:21-24 (TODO comment)
+  - Issue: Cannot differentiate `array1 || array2` from `string1 || string2`
+  - Requires type-aware operator resolution
+- [ ] **Enhanced unnest() Features**
+  - [ ] `unnest(array) WITH ORDINALITY` - Return array elements with row numbers
+  - [ ] Multi-array unnest: `unnest(array1, array2, ...)` - Unnest multiple arrays in parallel
+  - [ ] Set-returning function infrastructure for proper table-valued functions
+- [ ] **array_agg ORDER BY Enhancement**
+  - Current limitation: ORDER BY clause is stripped and relies on outer query ORDER BY
+  - Need true aggregate-level ORDER BY support within array_agg function
+- [ ] **Advanced Array Manipulation Functions**
+  - [ ] `generate_subscripts(array, dimension [, reverse])` - Generate subscripts for array dimensions
+  - [ ] `array_dims(array)` - Get dimensions as text (e.g., "[1:3][1:2]")
+  - [ ] `array_fill(value, dimensions [, lower_bounds])` - Create array filled with value
+  - [ ] `cardinality(array)` - Get total number of elements in all dimensions
+  - [ ] `width_bucket(operand, array)` - Find bucket for value in sorted array
+
+#### Array Assignment and Indexing
+- [ ] **Array Assignment Operations**
+  - [ ] Array slice assignment: `array[1:3] = subarray`
+  - [ ] Array element assignment: `array[1] = value`
+  - [ ] Complex array comparison operators
+- [ ] **Array Indexing and Performance**
+  - [ ] GIN/GiST index support for arrays (currently no indexing on array elements)
+  - [ ] Array content search optimization (currently requires full table scans)
+  - [ ] Performance optimizations for large arrays
+
+#### Binary Protocol and Advanced Features
+- [ ] **Binary Protocol Array Support**
+  - Arrays currently returned as JSON strings, not PostgreSQL binary array format
+  - Some clients may expect proper binary array encoding/decoding
+  - Impact: Client compatibility for binary protocol users
+- [ ] **Table-Valued Functions Infrastructure**
+  - [ ] Proper set-returning function support beyond simple translations
+  - [ ] Framework for functions that return table rows (needed for enhanced unnest)
+
+### Missing JSON Features - MEDIUM PRIORITY
+
+#### JSON Existence Operators
+- [ ] **? operator** (key exists) - `json_col ? 'key'`
+- [ ] **?| operator** (any key exists) - `json_col ?| ARRAY['key1', 'key2']`
+- [ ] **?& operator** (all keys exist) - `json_col ?& ARRAY['key1', 'key2']`
+
+#### Advanced JSON Table-Valued Functions
+- [ ] **json_each() / jsonb_each()** - Expand JSON to key-value pairs as table rows
+- [ ] **json_each_text() / jsonb_each_text()** - Expand to text key-value pairs as table rows
+- [ ] **Proper table-valued function infrastructure** (shared with array functions)
+
+#### JSON Aggregation and Record Functions  
+- [ ] **json_agg() / jsonb_agg()** - Aggregate values into JSON array
+- [ ] **json_object_agg() / jsonb_object_agg()** - Aggregate into JSON object
+- [ ] **json_populate_record()** - Populate record from JSON
+- [ ] **json_to_record()** - Convert JSON to record
+- [ ] **row_to_json()** - Convert row to JSON
+
+#### JSON Manipulation and Advanced Features
+- [ ] **jsonb_insert()** - Insert value at path
+- [ ] **jsonb_delete()** - Delete value at path
+- [ ] **jsonb_delete_path()** - Delete at specific path
+- [ ] **jsonb_pretty()** - Pretty-print JSON
+- [ ] **JSON path expressions (jsonpath)** - Support for JSONPath syntax
+
+### Implementation Priority Assessment
+
+**HIGH PRIORITY (Core functionality gaps):**
+1. Array concatenation operator (||) - Most impactful missing feature
+2. Enhanced unnest() with ORDINALITY - Common PostgreSQL pattern
+3. JSON existence operators (?, ?|, ?&) - Frequently used in applications
+
+**MEDIUM PRIORITY (Advanced features):**
+4. Advanced array functions (generate_subscripts, array_dims, etc.)
+5. JSON aggregation functions (json_agg, json_object_agg)
+6. Binary protocol array support
+7. array_agg ORDER BY enhancement
+
+**LOW PRIORITY (Specialized/edge cases):**
+8. Array assignment operations
+9. Table-valued function infrastructure
+10. JSON record manipulation functions
+11. Array indexing and performance optimizations
+
+**Current Status:** Array and JSON support is approximately **85% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
