@@ -229,9 +229,9 @@ impl QueryExecutor {
                     info!("Query after array operator translation: {}", translated);
                     translated_query = translated;
                 }
-                info!("Array translation metadata: {} hints", metadata.column_mappings.len());
+                debug!("Array translation metadata: {} hints", metadata.column_mappings.len());
                 for (col, hint) in &metadata.column_mappings {
-                    info!("  Column '{}': type={:?}", col, hint.suggested_type);
+                    debug!("  Column '{}': type={:?}", col, hint.suggested_type);
                 }
                 translation_metadata.merge(metadata);
             }
@@ -245,7 +245,7 @@ impl QueryExecutor {
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
             translation_metadata.merge(arithmetic_metadata);
-            info!("Found {} type hints from translation", translation_metadata.column_mappings.len());
+            debug!("Found {} type hints from translation", translation_metadata.column_mappings.len());
         }
         
         let query_to_execute = translated_query.as_str();
@@ -419,7 +419,7 @@ impl QueryExecutor {
         
         
         // Convert array data before sending rows
-        info!("Converting array data for {} rows", response.rows.len());
+        debug!("Converting array data for {} rows", response.rows.len());
         let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
         
         // Optimized data row sending for better SELECT performance

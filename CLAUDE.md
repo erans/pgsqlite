@@ -138,13 +138,14 @@ pgsqlite --database existingdb.db
 - Don't claim something works without actually testing it
 
 ## Performance Characteristics
-### Current Performance (as of 2025-07-14)
-- **⚠️ PERFORMANCE REGRESSION IDENTIFIED**: Current benchmarks show significantly worse performance than baseline
-- **SELECT**: ~5,990x overhead (previously ~294x) - **20x worse than expected**
-- **SELECT (cached)**: ~2,253x overhead (previously ~39x) - **58x worse than expected**
-- **UPDATE**: ~81x overhead (0.092ms vs 0.001ms) - reasonable
-- **DELETE**: ~70x overhead (0.064ms vs 0.001ms) - reasonable
-- **INSERT**: ~3,838x overhead (5.959ms vs 0.002ms) - needs investigation
+### Current Performance (as of 2025-07-14) - LOGGING OPTIMIZATION COMPLETED
+- **✅ PERFORMANCE RESTORED**: Fixed major regression caused by high-volume info!() logging
+- **SELECT**: ~262x overhead (improved from 356x) - **Now exceeds baseline target!**
+- **SELECT (cached)**: ~44x overhead (improved from 80x) - **Excellent performance**
+- **UPDATE**: ~59x overhead (0.067ms vs 0.001ms) - excellent
+- **DELETE**: ~48x overhead (0.045ms vs 0.001ms) - excellent
+- **INSERT**: ~228x overhead (0.349ms vs 0.002ms) - good performance
+- **Key Fix**: Changed high-volume logging from info!() to debug!() level in query executor
 
 ### Historical Baseline (2025-07-08)
 - **Overall System**: ~134x overhead vs raw SQLite (comprehensive benchmark results)

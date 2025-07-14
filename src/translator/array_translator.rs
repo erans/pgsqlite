@@ -3,7 +3,7 @@ use crate::translator::{TranslationMetadata, ColumnTypeHint, ExpressionType};
 use crate::types::PgType;
 use regex::Regex;
 use once_cell::sync::Lazy;
-use tracing::info;
+use tracing::debug;
 
 /// Regex patterns for array operators
 static ARRAY_CONTAINS_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -43,8 +43,51 @@ static ALL_OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
 pub struct ArrayTranslator;
 
 impl ArrayTranslator {
+    /// Check if SQL contains any array functions or operators (early exit optimization)
+    fn contains_array_functions(sql: &str) -> bool {
+        // Quick text scan for array-related keywords
+        let sql_lower = sql.to_lowercase();
+        
+        // Array operators
+        if sql_lower.contains("@>") || sql_lower.contains("<@") || sql_lower.contains("&&") {
+            return true;
+        }
+        
+        // Array subscript/slice notation
+        if sql_lower.contains("[") && sql_lower.contains("]") {
+            return true;
+        }
+        
+        // ANY/ALL operators
+        if sql_lower.contains(" any(") || sql_lower.contains(" all(") {
+            return true;
+        }
+        
+        // Array functions
+        const ARRAY_FUNCTIONS: &[&str] = &[
+            "array_agg", "array_append", "array_prepend", "array_cat", "array_remove",
+            "array_replace", "array_slice", "string_to_array", "array_positions",
+            "array_length", "array_upper", "array_lower", "array_ndims", "array_position",
+            "array_contains", "array_contained", "array_overlap", "array_to_string", "unnest",
+            "json_array_length"
+        ];
+        
+        for func in ARRAY_FUNCTIONS {
+            if sql_lower.contains(func) {
+                return true;
+            }
+        }
+        
+        false
+    }
+    
     /// Translate array operators in SQL statement
     pub fn translate_array_operators(sql: &str) -> Result<String, PgSqliteError> {
+        // Early exit: if no array functions/operators detected, return unchanged
+        if !Self::contains_array_functions(sql) {
+            return Ok(sql.to_string());
+        }
+        
         let mut result = sql.to_string();
         
         // Translate array subscript access first (most specific)
@@ -66,6 +109,11 @@ impl ArrayTranslator {
     
     /// Translate array operators and return metadata about array expressions
     pub fn translate_with_metadata(sql: &str) -> Result<(String, TranslationMetadata), PgSqliteError> {
+        // Early exit: if no array functions/operators detected, return unchanged
+        if !Self::contains_array_functions(sql) {
+            return Ok((sql.to_string(), TranslationMetadata::new()));
+        }
+        
         let mut result = sql.to_string();
         let mut metadata = TranslationMetadata::new();
         
@@ -294,7 +342,7 @@ impl ArrayTranslator {
             
             // Check if this expression had an alias
             if let Some(alias) = alias_map.get(&original) {
-                info!("Found alias '{}' for array concat expression", alias);
+                debug!("Found alias '{}' for array concat expression", alias);
                 metadata.add_hint(alias.clone(), ColumnTypeHint {
                     source_column: Some(array1),
                     suggested_type: Some(PgType::Text), // Return as TEXT (JSON array)
@@ -310,8 +358,12 @@ impl ArrayTranslator {
     
     /// Extract metadata for all array functions with aliases
     fn extract_array_function_metadata(sql: &str, metadata: &mut TranslationMetadata) {
-        use tracing::info;
-        info!("Extracting array function metadata from: {}", sql);
+        // Early exit optimization: check if query contains any array function keywords
+        if !Self::contains_array_functions(sql) {
+            return;
+        }
+        
+        debug!("Extracting array function metadata from: {}", sql);
         // Array functions that return arrays
         let array_functions = [
             "array_agg", "array_append", "array_prepend", "array_cat", 
@@ -336,11 +388,11 @@ impl ArrayTranslator {
         // Look for patterns like "function_name(...) AS alias"
         for func in &array_functions {
             let pattern = format!(r"(?i){}\s*\([^)]+\)\s+(?:AS\s+)?(\w+)", regex::escape(func));
-            info!("Checking pattern for {}: {}", func, pattern);
+            debug!("Checking pattern for {}: {}", func, pattern);
             if let Ok(re) = regex::Regex::new(&pattern) {
                 for captures in re.captures_iter(sql) {
                     let alias = captures[1].to_string();
-                    info!("Found array function {} with alias: {}", func, alias);
+                    debug!("Found array function {} with alias: {}", func, alias);
                     metadata.add_hint(alias, ColumnTypeHint {
                         source_column: None,
                         suggested_type: Some(PgType::Text), // Return as TEXT (JSON array)
