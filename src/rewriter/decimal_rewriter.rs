@@ -1010,12 +1010,16 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let right_type = self.resolver.resolve_expr_type(right, context);
                 
                 // Check if we need implicit casts or decimal operations
-                let needs_implicit_cast = ImplicitCastDetector::needs_implicit_cast(left, left_type, op, right, right_type).is_some();
+                let needs_implicit_cast = ImplicitCastDetector::needs_implicit_cast(left, left_type, op, right, right_type);
                 
                 // Determine if we should use decimal arithmetic (same logic as rewrite_expression)
-                let should_use_decimal = if needs_implicit_cast {
-                    // Always process implicit casts
-                    true
+                let should_use_decimal = if let Some(cast) = &needs_implicit_cast {
+                    // Always process implicit casts because they result in NUMERIC
+                    match cast {
+                        ImplicitCast::StringToDecimal { .. } | 
+                        ImplicitCast::IntegerToDecimal { .. } | 
+                        ImplicitCast::ToDecimal { .. } => true,
+                    }
                 } else if left_type == PgType::Numeric && right_type == PgType::Numeric {
                     // Both operands are NUMERIC - always use decimal
                     true
@@ -1219,7 +1223,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                 self.force_decimal_arithmetic(left, context)?;
                 self.force_decimal_arithmetic(right, context)?;
                 
-                // For arithmetic operations, force decimal processing
+                // For arithmetic operations, check if we should process as decimal
                 if matches!(op, 
                     BinaryOperator::Plus | 
                     BinaryOperator::Minus | 
@@ -1229,10 +1233,19 @@ impl<'a> DecimalQueryRewriter<'a> {
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
-                    // Get actual types but ensure at least one is Numeric to trigger decimal processing
+                    
+                    // Get actual types
                     let left_type = self.resolver.resolve_expr_type(&left_clone, context);
-                    let right_type = PgType::Numeric; // Force right to be numeric to ensure decimal processing
-                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
+                    let right_type = self.resolver.resolve_expr_type(&right_clone, context);
+                    
+                    // Force all arithmetic to decimal when we're processing nested expressions
+                    // The right type should be overridden to ensure decimal processing
+                    let forced_right_type = if right_type == PgType::Numeric || left_type == PgType::Numeric {
+                        right_type  // Keep actual type if already NUMERIC
+                    } else {
+                        PgType::Numeric  // Force to NUMERIC to ensure decimal processing
+                    };
+                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, forced_right_type, context)?;
                 }
             }
             Expr::Nested(inner) => {
