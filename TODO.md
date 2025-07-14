@@ -187,13 +187,27 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 #### Decimal Query Rewriting - Context Handling
 - [ ] Optimize context merging performance for deeply nested subqueries
 
-#### Decimal Query Rewriting - Nested Expression Handling - COMPLETED (2025-07-13)
+#### Decimal Query Rewriting - Nested Expression Handling - COMPLETED (2025-07-14)
 - [x] Fully decompose complex nested arithmetic expressions (e.g., `(a * 2 + 5) * b`)
 - [x] Process inner expressions before wrapping in decimal functions
 - [x] Handle parenthesized expressions with proper recursion
 - [x] Ensure all arithmetic operations within nested expressions use decimal functions
 - [x] Fixed float arithmetic to NOT be converted to decimal operations
 - [x] Added proper type checking to skip decimal conversion for float types
+- [x] **Performance Regression Fix** - COMPLETED (2025-07-14)
+  - [x] Identified and fixed 18x-40x performance degradation caused by decimal rewriter changes
+  - [x] Added SchemaCache to reduce repeated database queries from hot path
+  - [x] Implemented early exit optimization for non-decimal queries
+  - [x] Added lazy type checking - only check storage when conversion is needed
+  - [x] Performance restored to baseline levels (~134x overhead vs raw SQLite)
+- [x] **Arithmetic Aliasing Test Fixes** - COMPLETED (2025-07-14)
+  - [x] Fixed "invalid buffer size" errors in arithmetic aliasing tests
+  - [x] Root cause: Float4/Float8 types incorrectly treated as requiring decimal conversion
+  - [x] Fixed ImplicitCastDetector.is_numeric_type() to only include PgType::Numeric
+  - [x] Updated decimal conversion logic to be storage-aware (REAL vs DECIMAL storage)
+  - [x] All 5 arithmetic aliasing tests now pass
+  - [x] Preserved nested arithmetic decomposition functionality
+  - [x] Fixed both rewrite_expression() and rewrite_expression_for_implicit_casts() methods
 
 #### Performance Enhancements
 - [x] Profile protocol serialization overhead - COMPLETED (2025-07-06)
