@@ -7,6 +7,7 @@ pub mod regex_functions;
 pub mod catalog_functions;
 pub mod hash_functions;
 pub mod array_functions;
+pub mod unnest_vtab;
 
 use rusqlite::{Connection, Result};
 
@@ -20,5 +21,6 @@ pub fn register_all_functions(conn: &Connection) -> Result<()> {
     catalog_functions::register_catalog_functions(conn)?;
     hash_functions::register_hash_functions(conn)?;
     array_functions::register_array_functions(conn)?;
+    unnest_vtab::register_unnest_vtab(conn)?;
     Ok(())
 }

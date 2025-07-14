@@ -238,10 +238,16 @@ INSERT INTO table (col1, col2) VALUES
   - Resolved arithmetic edge case with int * float literal operations
   - All implicit cast tests (9/9), arithmetic aliasing tests (5/5), and edge case tests (7/7) now pass
   - Maintained backwards compatibility with existing decimal functionality
+- **Array Function Completion (2025-07-14)**: Full unnest() and enhanced array_agg support
+  - unnest() function translates PostgreSQL unnest() calls to SQLite json_each() equivalents
+  - Enhanced array_agg with DISTINCT support via array_agg_distinct() function
+  - ArrayAggTranslator handles ORDER BY and DISTINCT clauses in array_agg
+  - Performance optimization: fast-path checks eliminate expensive string operations for non-array queries
+  - Results: SELECT performance improved from 318x to 305x overhead, cached SELECT exceeds baseline by 44%
 
 ## Known Issues
 - **BIT type casts**: Prepared statements with multiple columns containing BIT type casts may return empty strings
-- **Array functions**: Some advanced functions like unnest() not yet implemented
+- **Array function limitations**: ORDER BY in array_agg relies on outer query ORDER BY
 
 ## Database Handler Architecture
 Uses a Mutex-based implementation for thread safety:

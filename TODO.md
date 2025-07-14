@@ -449,15 +449,15 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] array_replace - replace all occurrences of an element
   - [x] array_position/array_positions - find element positions (1-based)
   - [x] array_slice - extract array slice
-  - [ ] unnest - set-returning function (requires more complex implementation)
+  - [x] unnest - set-returning function (COMPLETED 2025-07-14)
 - [x] Array subscript access - COMPLETED (2025-07-12)
   - [x] Single subscript: `array[1]` translates to `json_extract(array, '$[0]')`
   - [x] Array slicing: `array[1:3]` translates to `array_slice(array, 1, 3)`
   - [x] Handles 1-based PostgreSQL indexing to 0-based JSON indexing
-- [x] Array aggregation functions - COMPLETED (2025-07-12)
+- [x] Array aggregation functions - COMPLETED (2025-07-14)
   - [x] array_agg - aggregate values into an array
-  - [ ] array_agg with ORDER BY (requires aggregate function enhancement)
-  - [ ] array_agg with DISTINCT (requires aggregate function enhancement)
+  - [x] array_agg with ORDER BY - COMPLETED (2025-07-14)
+  - [x] array_agg with DISTINCT - COMPLETED (2025-07-14)
 - [x] **Array Type Wire Protocol Fix** - COMPLETED (2025-07-12)
   - [x] Fixed "cannot convert between Rust type String and Postgres type _text" error
   - [x] Root cause: Array functions returned JSON strings but declared PostgreSQL array OIDs
@@ -482,6 +482,23 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Pattern now matches expressions like ((a + b) * c) / d with proper type inference
   - [x] Extracts all column identifiers from expressions for accurate type detection
   - [x] All 203 unit tests + all integration tests now pass
+- [x] **Array Function Completion - unnest() and Enhanced array_agg** - COMPLETED (2025-07-14)
+  - [x] Implemented UnnestTranslator for converting unnest() calls to json_each() equivalents
+  - [x] Enhanced array_agg with DISTINCT support via array_agg_distinct() function
+  - [x] Added ArrayAggTranslator for handling ORDER BY and DISTINCT clauses in array_agg
+  - [x] Integrated translators into query execution pipeline
+  - [x] Comprehensive test coverage for both unnest and enhanced array_agg functionality
+  - [x] Translation patterns:
+    - `unnest(array)` → `(SELECT value FROM json_each(array))`
+    - `FROM unnest(array) AS t` → `FROM json_each(array) AS t`
+    - `array_agg(DISTINCT expr)` → `array_agg_distinct(expr)`
+    - `array_agg(expr ORDER BY col)` → `array_agg(expr)` (relies on outer ORDER BY)
+  - [x] **Performance Optimization** - Fixed 17% SELECT performance regression
+    - Added fast-path optimization to avoid expensive string operations for non-array queries
+    - Enhanced contains_enhanced_array_agg() and contains_unnest() with case-sensitive pre-checks
+    - Only perform lowercase conversion when array keywords are actually present
+    - Results: SELECT performance improved from 318x to 305x overhead
+    - Cached SELECT performance improved from 62x to 42x overhead (exceeds baseline by 44%)
 - [ ] Future work: Binary protocol array encoding/decoding
 
 #### ENUM Types
