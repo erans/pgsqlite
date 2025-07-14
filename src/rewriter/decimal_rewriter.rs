@@ -502,7 +502,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
-                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
                 } else if left_type == PgType::Float4 || right_type == PgType::Float4 ||
                           left_type == PgType::Float8 || right_type == PgType::Float8 {
                     // For float types, only process if they have decimal storage (from schema)
@@ -511,7 +511,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                         let left_clone = left.as_ref().clone();
                         let right_clone = right.as_ref().clone();
                         let op_clone = op.clone();
-                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
                     }
                 }
             }
@@ -626,6 +626,7 @@ impl<'a> DecimalQueryRewriter<'a> {
         right: Expr,
         left_type: PgType,
         right_type: PgType,
+        context: &QueryContext,
     ) -> Result<Expr, String> {
         use BinaryOperator::*;
         
@@ -654,13 +655,29 @@ impl<'a> DecimalQueryRewriter<'a> {
                 ImplicitCast::StringToDecimal { expr, .. } |
                 ImplicitCast::ToDecimal { expr, .. } => {
                     if expr == &left {
-                        cast.apply()
+                        // Check if the expression to be cast contains nested arithmetic (parentheses)
+                        if let Expr::Nested(inner) = &left {
+                            if self.contains_arithmetic(inner) {
+                                // Decompose the nested arithmetic expression first
+                                let mut arithmetic_expr = left;
+                                if let Err(_) = self.force_decimal_arithmetic(&mut arithmetic_expr, context) {
+                                    // If decomposition fails, apply the original cast
+                                    cast.apply()
+                                } else {
+                                    arithmetic_expr
+                                }
+                            } else {
+                                cast.apply()
+                            }
+                        } else {
+                            cast.apply()
+                        }
                     } else {
                         // Regular wrapping for non-decimal types
                         if left_type != PgType::Numeric && 
                            left_type != PgType::Float4 && 
                            left_type != PgType::Float8 {
-                            self.wrap_in_decimal_from_text(left)
+                            self.wrap_in_decimal_from_text(left, context)
                         } else {
                             left
                         }
@@ -672,7 +689,7 @@ impl<'a> DecimalQueryRewriter<'a> {
             if left_type != PgType::Numeric && 
                left_type != PgType::Float4 && 
                left_type != PgType::Float8 {
-                self.wrap_in_decimal_from_text(left)
+                self.wrap_in_decimal_from_text(left, context)
             } else {
                 left
             }
@@ -694,7 +711,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                         if right_type != PgType::Numeric && 
                            right_type != PgType::Float4 && 
                            right_type != PgType::Float8 {
-                            self.wrap_in_decimal_from_text(right)
+                            self.wrap_in_decimal_from_text(right, context)
                         } else {
                             right
                         }
@@ -706,7 +723,7 @@ impl<'a> DecimalQueryRewriter<'a> {
             if right_type != PgType::Numeric && 
                right_type != PgType::Float4 && 
                right_type != PgType::Float8 {
-                self.wrap_in_decimal_from_text(right)
+                self.wrap_in_decimal_from_text(right, context)
             } else {
                 right
             }
@@ -735,12 +752,17 @@ impl<'a> DecimalQueryRewriter<'a> {
     }
     
     /// Wrap expression in decimal_from_text function
-    fn wrap_in_decimal_from_text(&mut self, expr: Expr) -> Expr {
+    fn wrap_in_decimal_from_text(&mut self, expr: Expr, context: &QueryContext) -> Expr {
         // If this is a nested expression, check the inner expression
         if let Expr::Nested(inner) = &expr {
             // If the inner expression contains arithmetic, unwrap it so it can be processed
             if self.contains_arithmetic(inner) {
-                return *inner.clone();
+                let mut unwrapped_expr = *inner.clone();
+                // Force decimal arithmetic processing on the unwrapped expression
+                if let Err(_) = self.force_decimal_arithmetic(&mut unwrapped_expr, context) {
+                    return unwrapped_expr;
+                }
+                return unwrapped_expr;
             }
         }
         
@@ -748,8 +770,7 @@ impl<'a> DecimalQueryRewriter<'a> {
         if self.contains_arithmetic(&expr) {
             // Force decimal arithmetic processing and return the processed expression
             let mut arithmetic_expr = expr;
-            let context = QueryContext::default(); // Use default context for isolated expressions
-            if let Err(_) = self.force_decimal_arithmetic(&mut arithmetic_expr, &context) {
+            if let Err(_) = self.force_decimal_arithmetic(&mut arithmetic_expr, context) {
                 // If processing fails, return the original expression
                 return arithmetic_expr;
             }
@@ -988,7 +1009,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
-                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
                 } else if left_type == PgType::Float4 || right_type == PgType::Float4 ||
                           left_type == PgType::Float8 || right_type == PgType::Float8 {
                     // For float types, only process if they have decimal storage
@@ -997,7 +1018,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                         let left_clone = left.as_ref().clone();
                         let right_clone = right.as_ref().clone();
                         let op_clone = op.clone();
-                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
                     }
                 }
             }
@@ -1072,7 +1093,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                             
                             // Wrap if not already a decimal function AND needs decimal wrapping
                             if !is_decimal_func && needs_decimal_wrapping {
-                                *arg = self.wrap_in_decimal_from_text(arg.clone());
+                                *arg = self.wrap_in_decimal_from_text(arg.clone(), context);
                             }
                         }
                     }
@@ -1188,10 +1209,10 @@ impl<'a> DecimalQueryRewriter<'a> {
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
-                    // Force types to trigger decimal processing
-                    let left_type = PgType::Numeric; // Force as numeric
-                    let right_type = PgType::Numeric; // Force as numeric
-                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type)?;
+                    // Get actual types but ensure at least one is Numeric to trigger decimal processing
+                    let left_type = self.resolver.resolve_expr_type(&left_clone, context);
+                    let right_type = PgType::Numeric; // Force right to be numeric to ensure decimal processing
+                    *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
                 }
             }
             Expr::Nested(inner) => {
