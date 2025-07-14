@@ -290,7 +290,18 @@ impl<'a> ExpressionTypeResolver<'a> {
             }
             Expr::Cast { data_type, .. } => {
                 // Convert SQL data type to PgType
-                self.sql_type_to_pg_type(&data_type.to_string())
+                let type_str = data_type.to_string().to_uppercase();
+                match type_str.as_str() {
+                    "REAL" | "FLOAT4" => PgType::Float4,
+                    "DOUBLE PRECISION" | "FLOAT8" | "FLOAT" => PgType::Float8,
+                    "INTEGER" | "INT" | "INT4" => PgType::Int4,
+                    "BIGINT" | "INT8" => PgType::Int8,
+                    "SMALLINT" | "INT2" => PgType::Int2,
+                    "NUMERIC" | "DECIMAL" => PgType::Numeric,
+                    "BOOLEAN" | "BOOL" => PgType::Bool,
+                    "TEXT" | "VARCHAR" | "CHAR" => PgType::Text,
+                    _ => self.sql_type_to_pg_type(&data_type.to_string())
+                }
             }
             Expr::Case { else_result, .. } => {
                 // For CASE expressions, use the type of else_result or Text
@@ -335,9 +346,20 @@ impl<'a> ExpressionTypeResolver<'a> {
             context.table_aliases.get(t)
                 .cloned()
                 .unwrap_or_else(|| t.to_string())
+        } else if let Some(default) = &context.default_table {
+            // Use default table if available
+            default.clone()
         } else {
-            // Use default table
-            context.default_table.clone().unwrap_or_default()
+            // No table specified and no default - search all tables in context
+            // This handles unqualified columns in JOIN queries
+            for (_, actual_table) in &context.table_aliases {
+                if let Some(type_oid) = SchemaTypeMapper::get_type_from_schema(self.conn, actual_table, column) {
+                    let pg_type = PgType::from_oid(type_oid).unwrap_or(PgType::Text);
+                    return pg_type;
+                }
+            }
+            // If not found in any aliased table, return empty string to continue normal flow
+            String::new()
         };
         
         // Check if this is a derived table or CTE
@@ -595,7 +617,7 @@ impl<'a> ExpressionTypeResolver<'a> {
                             match item {
                                 SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => {
                                     let t = self.resolve_expr_type(e, &subquery_context);
-                                    t == PgType::Numeric || t == PgType::Float4 || t == PgType::Float8
+                                    t == PgType::Numeric
                                 }
                                 _ => false,
                             }
@@ -606,7 +628,7 @@ impl<'a> ExpressionTypeResolver<'a> {
             }
             _ => {
                 let t = self.resolve_expr_type(expr, context);
-                t == PgType::Numeric || t == PgType::Float4 || t == PgType::Float8
+                t == PgType::Numeric
             }
         }
     }
