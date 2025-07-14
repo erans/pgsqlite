@@ -496,23 +496,31 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let left_type = self.resolver.resolve_expr_type(left, context);
                 let right_type = self.resolver.resolve_expr_type(right, context);
                 
-                // Only process arithmetic with NUMERIC types or float types with decimal storage
-                if left_type == PgType::Numeric || right_type == PgType::Numeric {
-                    // Always process arithmetic with NUMERIC operands (decimal literals)
+                // Determine if we should use decimal arithmetic
+                let should_use_decimal = if left_type == PgType::Numeric && right_type == PgType::Numeric {
+                    // Both operands are NUMERIC - always use decimal
+                    true
+                } else if (left_type == PgType::Numeric || right_type == PgType::Numeric) &&
+                         (left_type == PgType::Float4 || left_type == PgType::Float8 ||
+                          right_type == PgType::Float4 || right_type == PgType::Float8) {
+                    // Mixed NUMERIC and FLOAT - only use decimal if the float has decimal storage
+                    self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context)
+                } else if (left_type == PgType::Float4 || left_type == PgType::Float8) &&
+                         (right_type == PgType::Float4 || right_type == PgType::Float8) {
+                    // Both are float types - only use decimal if they have decimal storage
+                    self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context)
+                } else if left_type == PgType::Numeric || right_type == PgType::Numeric {
+                    // One is NUMERIC, other is not float - use decimal
+                    true
+                } else {
+                    false
+                };
+
+                if should_use_decimal {
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
                     *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
-                } else if left_type == PgType::Float4 || right_type == PgType::Float4 ||
-                          left_type == PgType::Float8 || right_type == PgType::Float8 {
-                    // For float types, only process if they have decimal storage (from schema)
-                    let should_process = self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context);
-                    if should_process {
-                        let left_clone = left.as_ref().clone();
-                        let right_clone = right.as_ref().clone();
-                        let op_clone = op.clone();
-                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
-                    }
                 }
             }
             Expr::Function(func) => {
@@ -1004,22 +1012,34 @@ impl<'a> DecimalQueryRewriter<'a> {
                 // Check if we need implicit casts or decimal operations
                 let needs_implicit_cast = ImplicitCastDetector::needs_implicit_cast(left, left_type, op, right, right_type).is_some();
                 
-                if left_type == PgType::Numeric || right_type == PgType::Numeric || needs_implicit_cast {
-                    // Always process NUMERIC operands or implicit casts
+                // Determine if we should use decimal arithmetic (same logic as rewrite_expression)
+                let should_use_decimal = if needs_implicit_cast {
+                    // Always process implicit casts
+                    true
+                } else if left_type == PgType::Numeric && right_type == PgType::Numeric {
+                    // Both operands are NUMERIC - always use decimal
+                    true
+                } else if (left_type == PgType::Numeric || right_type == PgType::Numeric) &&
+                         (left_type == PgType::Float4 || left_type == PgType::Float8 ||
+                          right_type == PgType::Float4 || right_type == PgType::Float8) {
+                    // Mixed NUMERIC and FLOAT - only use decimal if the float has decimal storage
+                    self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context)
+                } else if (left_type == PgType::Float4 || left_type == PgType::Float8) &&
+                         (right_type == PgType::Float4 || right_type == PgType::Float8) {
+                    // Both are float types - only use decimal if they have decimal storage
+                    self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context)
+                } else if left_type == PgType::Numeric || right_type == PgType::Numeric {
+                    // One is NUMERIC, other is not float - use decimal
+                    true
+                } else {
+                    false
+                };
+
+                if should_use_decimal {
                     let left_clone = left.as_ref().clone();
                     let right_clone = right.as_ref().clone();
                     let op_clone = op.clone();
                     *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
-                } else if left_type == PgType::Float4 || right_type == PgType::Float4 ||
-                          left_type == PgType::Float8 || right_type == PgType::Float8 {
-                    // For float types, only process if they have decimal storage
-                    let should_process = self.should_process_float_arithmetic(left.as_ref(), right.as_ref(), context);
-                    if should_process {
-                        let left_clone = left.as_ref().clone();
-                        let right_clone = right.as_ref().clone();
-                        let op_clone = op.clone();
-                        *expr = self.create_decimal_function_expr(op_clone, left_clone, right_clone, left_type, right_type, context)?;
-                    }
                 }
             }
             Expr::Nested(inner) => {

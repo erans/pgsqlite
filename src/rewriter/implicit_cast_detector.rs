@@ -120,7 +120,7 @@ impl ImplicitCastDetector {
     
     /// Check if type is a numeric/decimal type
     fn is_numeric_type(pg_type: PgType) -> bool {
-        matches!(pg_type, PgType::Numeric | PgType::Float4 | PgType::Float8)
+        matches!(pg_type, PgType::Numeric)
     }
     
     /// Detect implicit casts in function arguments
