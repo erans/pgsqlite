@@ -269,14 +269,15 @@ INSERT INTO table (col1, col2) VALUES
   - Fixed early exit optimization bug by detecting || operator in contains_array_functions
   - All 6 integration tests and 23 unit tests pass
   - Note: ARRAY literal translation (ARRAY[1,2,3] → JSON) requires separate implementation
-- **JSON Manipulation Functions (2025-07-15)**: Complete jsonb_delete and jsonb_insert implementation
+- **JSON Manipulation Functions (2025-07-15)**: Complete jsonb_delete, jsonb_insert, and jsonb_pretty implementation
   - jsonb_insert(target, path, new_value, insert_after): inserts values into JSON objects/arrays
   - jsonb_delete(target, path): deletes values from JSON objects/arrays by path
   - jsonb_delete_path(target, path): alias for jsonb_delete for PostgreSQL compatibility
+  - jsonb_pretty(jsonb): pretty-prints JSON with 2-space indentation for readability
   - Supports nested JSON operations with PostgreSQL-compatible path syntax ({key1,key2})
   - Handles object key insertion/deletion and array element insertion/deletion
   - Error handling for invalid paths and non-existent keys (returns original JSON)
-  - Comprehensive unit tests (17 test cases) and integration tests (6 test cases)
+  - Comprehensive unit tests (26 test cases) and integration tests (11 test cases)
   - Zero performance impact on system - all benchmarks maintained or improved
 
 ## Known Issues

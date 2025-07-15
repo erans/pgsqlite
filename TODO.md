@@ -573,7 +573,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] **jsonb_insert()** - Insert value at path - COMPLETED (2025-07-15)
 - [x] **jsonb_delete()** - Delete value at path - COMPLETED (2025-07-15)
 - [x] **jsonb_delete_path()** - Delete at specific path - COMPLETED (2025-07-15)
-- [ ] **jsonb_pretty()** - Pretty-print JSON
+- [x] **jsonb_pretty()** - Pretty-print JSON - COMPLETED (2025-07-15)
 - [ ] **JSON path expressions (jsonpath)** - Support for JSONPath syntax
 
 #### JSON Features Implementation Status - COMPLETED (2025-07-15)
@@ -611,6 +611,14 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] Integration tests cover object, array, and nested operations
 - [x] Zero performance impact on system benchmarks
 
+**Phase 5: jsonb_pretty Function - COMPLETED (2025-07-15)**
+- [x] Implemented jsonb_pretty() function for pretty-printing JSON output
+- [x] Uses serde_json::to_string_pretty() with 2-space indentation
+- [x] Handles all JSON types: objects, arrays, strings, numbers, booleans, null
+- [x] Returns original JSON if parsing fails (defensive programming)
+- [x] Comprehensive unit tests (9 test cases) and integration tests (5 test cases)
+- [x] Zero performance impact - only formats when explicitly called
+
 **Implementation Details:**
 - All functions registered in src/functions/json_functions.rs
 - Translation logic in src/translator/json_each_translator.rs
@@ -638,9 +646,9 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 11. JSON record manipulation functions
 12. Array indexing and performance optimizations
 
-**Current Status:** Array and JSON support is approximately **95% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
+**Current Status:** Array and JSON support is approximately **97% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
 
-**Next Phase:** Phase 6 - jsonb_pretty() function for pretty-printing JSON output (low priority).
+**Next Phase:** Implement row_to_json() function for converting table rows to JSON objects.
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)

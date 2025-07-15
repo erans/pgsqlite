@@ -754,6 +754,27 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // jsonb_pretty(jsonb) - Pretty-print JSON
+    conn.create_scalar_function(
+        "jsonb_pretty",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(json) => {
+                    // Pretty print with 2-space indentation
+                    match serde_json::to_string_pretty(&json) {
+                        Ok(pretty) => Ok(Some(pretty)),
+                        Err(_) => Ok(Some(json_str)), // Return original if pretty-print fails
+                    }
+                }
+                Err(_) => Ok(Some(json_str)), // Return original if not valid JSON
+            }
+        },
+    )?;
+    
     // JSON aggregation functions
     register_json_agg(conn)?;
     register_jsonb_agg(conn)?;
@@ -1740,5 +1761,124 @@ mod tests {
             }
             _ => panic!("Expected JSON object"),
         }
+    }
+    
+    #[test]
+    fn test_jsonb_pretty_function() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        // Test pretty-printing a simple object
+        let test_json = r#"{"name":"John","age":30,"active":true}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [test_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let pretty = result.unwrap();
+        assert!(pretty.contains("{\n"));
+        assert!(pretty.contains("  \"name\": \"John\""));
+        assert!(pretty.contains("  \"age\": 30"));
+        assert!(pretty.contains("  \"active\": true"));
+        assert!(pretty.contains("\n}"));
+        
+        // Test pretty-printing nested objects
+        let nested_json = r#"{"user":{"name":"Alice","email":"alice@example.com"},"items":[1,2,3]}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [nested_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let pretty = result.unwrap();
+        assert!(pretty.contains("  \"user\": {"));
+        assert!(pretty.contains("    \"name\": \"Alice\""));
+        assert!(pretty.contains("    \"email\": \"alice@example.com\""));
+        assert!(pretty.contains("  \"items\": ["));
+        assert!(pretty.contains("    1,"));
+        assert!(pretty.contains("    2,"));
+        assert!(pretty.contains("    3"));
+        
+        // Test pretty-printing array
+        let array_json = r#"[{"id":1,"name":"Item 1"},{"id":2,"name":"Item 2"}]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [array_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let pretty = result.unwrap();
+        assert!(pretty.contains("[\n"));
+        assert!(pretty.contains("  {\n"));
+        assert!(pretty.contains("    \"id\": 1,"));
+        assert!(pretty.contains("    \"name\": \"Item 1\""));
+        assert!(pretty.contains("  },"));
+        assert!(pretty.contains("    \"id\": 2,"));
+        assert!(pretty.contains("    \"name\": \"Item 2\""));
+        assert!(pretty.contains("\n]"));
+        
+        // Test with simple values
+        let simple_json = r#""hello world""#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [simple_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("\"hello world\"".to_string()));
+        
+        // Test with number
+        let number_json = "42";
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [number_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("42".to_string()));
+        
+        // Test with null
+        let null_json = "null";
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [null_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("null".to_string()));
+        
+        // Test with invalid JSON (should return original)
+        let invalid_json = "{not valid json}";
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [invalid_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some(invalid_json.to_string()));
+        
+        // Test with empty object
+        let empty_obj = "{}";
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [empty_obj],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("{}".to_string()));
+        
+        // Test with empty array
+        let empty_arr = "[]";
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_pretty(?)",
+            [empty_arr],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("[]".to_string()));
     }
 }
