@@ -577,6 +577,81 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // pgsqlite_json_has_key(json, key) - Check if JSON object has key (? operator)
+    conn.create_scalar_function(
+        "pgsqlite_json_has_key",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(false),
+                ValueRef::Blob(_) => return Ok(false),
+            };
+            
+            let key: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Object(map)) => Ok(map.contains_key(&key)),
+                _ => Ok(false),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_has_any_key(json, keys) - Check if JSON object has any of the keys (?| operator)
+    conn.create_scalar_function(
+        "pgsqlite_json_has_any_key",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(false),
+                ValueRef::Blob(_) => return Ok(false),
+            };
+            
+            let keys_str: String = ctx.get(1)?;
+            let keys: Vec<&str> = keys_str.split(',').map(|s| s.trim()).collect();
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Object(map)) => {
+                    Ok(keys.iter().any(|key| map.contains_key(*key)))
+                }
+                _ => Ok(false),
+            }
+        },
+    )?;
+    
+    // pgsqlite_json_has_all_keys(json, keys) - Check if JSON object has all of the keys (?& operator)
+    conn.create_scalar_function(
+        "pgsqlite_json_has_all_keys",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str = match ctx.get_raw(0) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                ValueRef::Real(r) => r.to_string(),
+                ValueRef::Null => return Ok(false),
+                ValueRef::Blob(_) => return Ok(false),
+            };
+            
+            let keys_str: String = ctx.get(1)?;
+            let keys: Vec<&str> = keys_str.split(',').map(|s| s.trim()).collect();
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Object(map)) => {
+                    Ok(keys.iter().all(|key| map.contains_key(*key)))
+                }
+                _ => Ok(false),
+            }
+        },
+    )?;
+    
     Ok(())
 }
 
@@ -894,5 +969,67 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert_eq!(item_name, Some("first".to_string()));
+    }
+    
+    #[test]
+    fn test_json_existence_functions() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        let test_json = r#"{"name": "John", "age": 30, "address": {"city": "NYC"}, "tags": ["work", "friend"]}"#;
+        
+        // Test pgsqlite_json_has_key (? operator)
+        let has_name: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_key(?, ?)",
+            [test_json, "name"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(has_name);
+        
+        let has_missing: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_key(?, ?)",
+            [test_json, "missing"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(!has_missing);
+        
+        // Test pgsqlite_json_has_any_key (?| operator)
+        let has_any: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_any_key(?, ?)",
+            [test_json, "email,name,phone"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(has_any); // has 'name'
+        
+        let has_none: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_any_key(?, ?)",
+            [test_json, "email,phone,country"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(!has_none);
+        
+        // Test pgsqlite_json_has_all_keys (?& operator)
+        let has_all: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_all_keys(?, ?)",
+            [test_json, "name,age"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(has_all);
+        
+        let missing_one: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_all_keys(?, ?)",
+            [test_json, "name,age,email"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(!missing_one); // missing 'email'
+        
+        // Test with non-object JSON (should return false)
+        let array_json = r#"["item1", "item2"]"#;
+        let not_object: bool = conn.query_row(
+            "SELECT pgsqlite_json_has_key(?, ?)",
+            [array_json, "name"],
+            |row| row.get(0)
+        ).unwrap();
+        assert!(!not_object);
     }
 }
