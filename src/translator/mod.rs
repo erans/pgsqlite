@@ -17,6 +17,7 @@ mod numeric_cast_translator;
 mod array_translator;
 mod array_agg_translator;
 mod unnest_translator;
+mod json_each_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -35,3 +36,4 @@ pub use numeric_cast_translator::NumericCastTranslator;
 pub use array_translator::ArrayTranslator;
 pub use array_agg_translator::ArrayAggTranslator;
 pub use unnest_translator::UnnestTranslator;
+pub use json_each_translator::JsonEachTranslator;

@@ -652,6 +652,108 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // jsonb_insert(target, path, new_value, insert_after) - Insert value at path
+    // For simplicity, implement a 3-arg version without insert_after flag (defaults to false)
+    conn.create_scalar_function(
+        "jsonb_insert",
+        3,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path_str: String = ctx.get(1)?;
+            let new_value_str: String = ctx.get(2)?;
+            
+            match (serde_json::from_str::<JsonValue>(&json_str), 
+                   serde_json::from_str::<JsonValue>(&new_value_str)) {
+                (Ok(mut json), Ok(new_value)) => {
+                    // Parse path - expecting format like '{key1,key2}' or '{key1,0}' for array index
+                    let path = parse_json_path(&path_str);
+                    if insert_json_value(&mut json, &path, new_value, false) {
+                        Ok(serde_json::to_string(&json).ok())
+                    } else {
+                        Ok(Some(json_str)) // Return original if insertion failed
+                    }
+                }
+                _ => Ok(Some(json_str)), // Return original if parsing failed
+            }
+        },
+    )?;
+    
+    // jsonb_insert(target, path, new_value, insert_after) - 4-arg version with insert_after flag
+    conn.create_scalar_function(
+        "jsonb_insert",
+        4,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path_str: String = ctx.get(1)?;
+            let new_value_str: String = ctx.get(2)?;
+            let insert_after: bool = ctx.get(3)?;
+            
+            match (serde_json::from_str::<JsonValue>(&json_str), 
+                   serde_json::from_str::<JsonValue>(&new_value_str)) {
+                (Ok(mut json), Ok(new_value)) => {
+                    // Parse path - expecting format like '{key1,key2}' or '{key1,0}' for array index
+                    let path = parse_json_path(&path_str);
+                    if insert_json_value(&mut json, &path, new_value, insert_after) {
+                        Ok(serde_json::to_string(&json).ok())
+                    } else {
+                        Ok(Some(json_str)) // Return original if insertion failed
+                    }
+                }
+                _ => Ok(Some(json_str)), // Return original if parsing failed
+            }
+        },
+    )?;
+    
+    // jsonb_delete(target, path) - Delete value at path
+    conn.create_scalar_function(
+        "jsonb_delete",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path_str: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(mut json) => {
+                    // Parse path - expecting format like '{key1,key2}' or '{key1,0}' for array index
+                    let path = parse_json_path(&path_str);
+                    if delete_json_value(&mut json, &path) {
+                        Ok(serde_json::to_string(&json).ok())
+                    } else {
+                        Ok(Some(json_str)) // Return original if deletion failed
+                    }
+                }
+                _ => Ok(Some(json_str)), // Return original if parsing failed
+            }
+        },
+    )?;
+    
+    // jsonb_delete_path(target, path) - Delete value at path (alias for jsonb_delete)
+    conn.create_scalar_function(
+        "jsonb_delete_path",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            let path_str: String = ctx.get(1)?;
+            
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(mut json) => {
+                    // Parse path - expecting format like '{key1,key2}' or '{key1,0}' for array index
+                    let path = parse_json_path(&path_str);
+                    if delete_json_value(&mut json, &path) {
+                        Ok(serde_json::to_string(&json).ok())
+                    } else {
+                        Ok(Some(json_str)) // Return original if deletion failed
+                    }
+                }
+                _ => Ok(Some(json_str)), // Return original if parsing failed
+            }
+        },
+    )?;
+    
     // JSON aggregation functions
     register_json_agg(conn)?;
     register_jsonb_agg(conn)?;
@@ -833,6 +935,141 @@ fn set_json_value(json: &mut JsonValue, path: &[String], new_value: JsonValue) {
             }
         }
         _ => {},
+    }
+}
+
+/// Delete value at path in JSON
+/// For objects: removes the key-value pair
+/// For arrays: removes the element at specified index
+/// Returns true if deletion was successful
+fn delete_json_value(json: &mut JsonValue, path: &[String]) -> bool {
+    if path.is_empty() {
+        return false; // Cannot delete root
+    }
+    
+    // Navigate to the parent container and delete at the specified location
+    let (parent_path, last_key) = path.split_at(path.len() - 1);
+    let last_key = &last_key[0];
+    
+    let mut current = json;
+    for key in parent_path {
+        match current {
+            JsonValue::Object(map) => {
+                // Check if the key exists before navigating
+                if let Some(value) = map.get_mut(key) {
+                    current = value;
+                } else {
+                    return false; // Key doesn't exist, cannot delete
+                }
+            }
+            JsonValue::Array(arr) => {
+                if let Ok(index) = key.parse::<usize>() {
+                    if index < arr.len() {
+                        current = &mut arr[index];
+                    } else {
+                        return false; // Index out of bounds
+                    }
+                } else {
+                    return false; // Invalid array index
+                }
+            }
+            _ => return false, // Cannot navigate further
+        }
+    }
+    
+    // Delete the value at the last key
+    match current {
+        JsonValue::Object(map) => {
+            // For objects, remove the key-value pair
+            map.remove(last_key).is_some()
+        }
+        JsonValue::Array(arr) => {
+            // For arrays, remove the element at the specified index
+            if let Ok(index) = last_key.parse::<usize>() {
+                if index < arr.len() {
+                    arr.remove(index);
+                    true
+                } else {
+                    false // Index out of bounds
+                }
+            } else {
+                false // Invalid array index
+            }
+        }
+        _ => false, // Cannot delete from non-container types
+    }
+}
+
+/// Insert value at path in JSON
+/// For objects: inserts a new key-value pair
+/// For arrays: inserts value at specified index (insert_after determines before/after)
+/// Returns true if insertion was successful
+fn insert_json_value(json: &mut JsonValue, path: &[String], new_value: JsonValue, insert_after: bool) -> bool {
+    if path.is_empty() {
+        return false; // Cannot insert at root
+    }
+    
+    // Navigate to the parent container and insert at the specified location
+    let (parent_path, last_key) = path.split_at(path.len() - 1);
+    let last_key = &last_key[0];
+    
+    let mut current = json;
+    for key in parent_path {
+        match current {
+            JsonValue::Object(map) => {
+                // Check if the key exists before navigating
+                if let Some(value) = map.get_mut(key) {
+                    current = value;
+                } else {
+                    return false; // Key doesn't exist, cannot insert
+                }
+            }
+            JsonValue::Array(arr) => {
+                if let Ok(index) = key.parse::<usize>() {
+                    if index < arr.len() {
+                        current = &mut arr[index];
+                    } else {
+                        return false; // Index out of bounds
+                    }
+                } else {
+                    return false; // Invalid array index
+                }
+            }
+            _ => return false, // Cannot navigate further
+        }
+    }
+    
+    // Insert the value at the last key
+    match current {
+        JsonValue::Object(map) => {
+            // For objects, insert new key-value pair (only if key doesn't exist)
+            if !map.contains_key(last_key) {
+                map.insert(last_key.clone(), new_value);
+                true
+            } else {
+                false // Key already exists
+            }
+        }
+        JsonValue::Array(arr) => {
+            // For arrays, insert at the specified index
+            if let Ok(index) = last_key.parse::<usize>() {
+                let insert_index = if insert_after {
+                    index + 1
+                } else {
+                    index
+                };
+                
+                if insert_index <= arr.len() {
+                    arr.insert(insert_index, new_value);
+                    true
+                } else {
+                    false // Index out of bounds
+                }
+            } else {
+                false // Invalid array index
+            }
+        }
+        _ => false, // Cannot insert into non-container types
     }
 }
 
@@ -1246,5 +1483,262 @@ mod tests {
         ).unwrap();
         
         assert_eq!(result, Some("[]".to_string()));
+    }
+    
+    #[test]
+    fn test_jsonb_insert_function() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        // Test inserting into object
+        let test_json = r#"{"name": "John", "age": 30}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?)",
+            [test_json, "{email}", "\"john@example.com\""],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Object(map) => {
+                assert_eq!(map.get("name"), Some(&JsonValue::String("John".to_string())));
+                assert_eq!(map.get("age"), Some(&JsonValue::Number(serde_json::Number::from(30))));
+                assert_eq!(map.get("email"), Some(&JsonValue::String("john@example.com".to_string())));
+            }
+            _ => panic!("Expected JSON object"),
+        }
+        
+        // Test inserting into nested object
+        let nested_json = r#"{"user": {"name": "Alice"}, "active": true}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?)",
+            [nested_json, "{user,email}", "\"alice@example.com\""],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Object(map) => {
+                if let Some(JsonValue::Object(user_map)) = map.get("user") {
+                    assert_eq!(user_map.get("name"), Some(&JsonValue::String("Alice".to_string())));
+                    assert_eq!(user_map.get("email"), Some(&JsonValue::String("alice@example.com".to_string())));
+                } else {
+                    panic!("Expected nested user object");
+                }
+            }
+            _ => panic!("Expected JSON object"),
+        }
+        
+        // Test inserting into array (before index)
+        let array_json = r#"["apple", "banana", "cherry"]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?)",
+            [array_json, "{1}", "\"orange\""],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 4);
+                assert_eq!(arr[0], JsonValue::String("apple".to_string()));
+                assert_eq!(arr[1], JsonValue::String("orange".to_string()));
+                assert_eq!(arr[2], JsonValue::String("banana".to_string()));
+                assert_eq!(arr[3], JsonValue::String("cherry".to_string()));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test inserting into array (after index) using 4-arg version
+        let array_json = r#"["apple", "banana", "cherry"]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?, ?)",
+            (array_json, "{1}", "\"orange\"", true),
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 4);
+                assert_eq!(arr[0], JsonValue::String("apple".to_string()));
+                assert_eq!(arr[1], JsonValue::String("banana".to_string()));
+                assert_eq!(arr[2], JsonValue::String("orange".to_string()));
+                assert_eq!(arr[3], JsonValue::String("cherry".to_string()));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test inserting with key that already exists (should fail)
+        let test_json = r#"{"name": "John", "age": 30}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?)",
+            [test_json, "{name}", "\"Jane\""],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Object(map) => {
+                // Should still be "John" since key already exists
+                assert_eq!(map.get("name"), Some(&JsonValue::String("John".to_string())));
+                assert_eq!(map.len(), 2); // No new key added
+            }
+            _ => panic!("Expected JSON object"),
+        }
+        
+        // Test inserting at array end
+        let array_json = r#"["apple", "banana"]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?)",
+            [array_json, "{2}", "\"cherry\""],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0], JsonValue::String("apple".to_string()));
+                assert_eq!(arr[1], JsonValue::String("banana".to_string()));
+                assert_eq!(arr[2], JsonValue::String("cherry".to_string()));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test inserting with invalid path (should return original)
+        let test_json = r#"{"name": "John"}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_insert(?, ?, ?)",
+            [test_json, "{invalid,path,structure}", "\"value\""],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some(test_json.to_string()));
+    }
+    
+    #[test]
+    fn test_jsonb_delete_function() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        // Test deleting from object
+        let test_json = r#"{"name": "John", "age": 30, "email": "john@example.com"}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete(?, ?)",
+            [test_json, "{email}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Object(map) => {
+                assert_eq!(map.get("name"), Some(&JsonValue::String("John".to_string())));
+                assert_eq!(map.get("age"), Some(&JsonValue::Number(serde_json::Number::from(30))));
+                assert_eq!(map.get("email"), None); // Should be deleted
+                assert_eq!(map.len(), 2); // Only 2 keys remaining
+            }
+            _ => panic!("Expected JSON object"),
+        }
+        
+        // Test deleting from nested object
+        let nested_json = r#"{"user": {"name": "Alice", "email": "alice@example.com"}, "active": true}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete(?, ?)",
+            [nested_json, "{user,email}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Object(map) => {
+                if let Some(JsonValue::Object(user_map)) = map.get("user") {
+                    assert_eq!(user_map.get("name"), Some(&JsonValue::String("Alice".to_string())));
+                    assert_eq!(user_map.get("email"), None); // Should be deleted
+                    assert_eq!(user_map.len(), 1); // Only name remaining
+                } else {
+                    panic!("Expected nested user object");
+                }
+            }
+            _ => panic!("Expected JSON object"),
+        }
+        
+        // Test deleting from array
+        let array_json = r#"["apple", "banana", "cherry", "date"]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete(?, ?)",
+            [array_json, "{1}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0], JsonValue::String("apple".to_string()));
+                assert_eq!(arr[1], JsonValue::String("cherry".to_string())); // banana was deleted
+                assert_eq!(arr[2], JsonValue::String("date".to_string()));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test deleting non-existent key (should return original)
+        let test_json = r#"{"name": "John", "age": 30}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete(?, ?)",
+            [test_json, "{email}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some(test_json.to_string()));
+        
+        // Test deleting with invalid path (should return original)
+        let test_json = r#"{"name": "John"}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete(?, ?)",
+            [test_json, "{invalid,path,structure}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some(test_json.to_string()));
+        
+        // Test deleting array element out of bounds (should return original)
+        let array_json = r#"["apple", "banana"]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete(?, ?)",
+            [array_json, "{5}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some(array_json.to_string()));
+        
+        // Test jsonb_delete_path (should behave identically to jsonb_delete)
+        let test_json = r#"{"name": "John", "age": 30, "email": "john@example.com"}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT jsonb_delete_path(?, ?)",
+            [test_json, "{age}"],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let parsed: JsonValue = serde_json::from_str(&result.unwrap()).unwrap();
+        match parsed {
+            JsonValue::Object(map) => {
+                assert_eq!(map.get("name"), Some(&JsonValue::String("John".to_string())));
+                assert_eq!(map.get("age"), None); // Should be deleted
+                assert_eq!(map.get("email"), Some(&JsonValue::String("john@example.com".to_string())));
+                assert_eq!(map.len(), 2); // Only 2 keys remaining
+            }
+            _ => panic!("Expected JSON object"),
+        }
     }
 }
