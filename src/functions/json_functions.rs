@@ -652,6 +652,128 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // JSON aggregation functions
+    register_json_agg(conn)?;
+    register_jsonb_agg(conn)?;
+    
+    Ok(())
+}
+
+/// json_agg(expression) - Aggregate values into a JSON array
+fn register_json_agg(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::Aggregate;
+    
+    #[derive(Default)]
+    struct JsonAgg;
+    
+    impl Aggregate<Vec<JsonValue>, Option<String>> for JsonAgg {
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> Result<Vec<JsonValue>> {
+            Ok(Vec::new())
+        }
+        
+        fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, agg: &mut Vec<JsonValue>) -> Result<()> {
+            let value = ctx.get_raw(0);
+            
+            let json_value = match value {
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    if let Some(num) = serde_json::Number::from_f64(f) {
+                        JsonValue::Number(num)
+                    } else {
+                        JsonValue::Null
+                    }
+                }
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    // Try to parse as JSON first, if it fails treat as string
+                    serde_json::from_str(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Blob(b) => {
+                    // Convert blob to hex string
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
+            agg.push(json_value);
+            Ok(())
+        }
+        
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, agg: Option<Vec<JsonValue>>) -> Result<Option<String>> {
+            match agg {
+                Some(values) => Ok(Some(serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string()))),
+                None => Ok(Some("[]".to_string())), // Return empty array for no rows
+            }
+        }
+    }
+    
+    conn.create_aggregate_function(
+        "json_agg",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        JsonAgg,
+    )?;
+    
+    Ok(())
+}
+
+/// jsonb_agg(expression) - Aggregate values into a JSONB array (alias for json_agg)
+fn register_jsonb_agg(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::Aggregate;
+    
+    #[derive(Default)]
+    struct JsonbAgg;
+    
+    impl Aggregate<Vec<JsonValue>, Option<String>> for JsonbAgg {
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> Result<Vec<JsonValue>> {
+            Ok(Vec::new())
+        }
+        
+        fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, agg: &mut Vec<JsonValue>) -> Result<()> {
+            let value = ctx.get_raw(0);
+            
+            let json_value = match value {
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    if let Some(num) = serde_json::Number::from_f64(f) {
+                        JsonValue::Number(num)
+                    } else {
+                        JsonValue::Null
+                    }
+                }
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    // Try to parse as JSON first, if it fails treat as string
+                    serde_json::from_str(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Blob(b) => {
+                    // Convert blob to hex string
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
+            agg.push(json_value);
+            Ok(())
+        }
+        
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, agg: Option<Vec<JsonValue>>) -> Result<Option<String>> {
+            match agg {
+                Some(values) => Ok(Some(serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string()))),
+                None => Ok(Some("[]".to_string())), // Return empty array for no rows
+            }
+        }
+    }
+    
+    conn.create_aggregate_function(
+        "jsonb_agg",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        JsonbAgg,
+    )?;
+    
     Ok(())
 }
 
@@ -1031,5 +1153,98 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert!(!not_object);
+    }
+    
+    #[test]
+    fn test_json_agg_functions() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        // Create test data
+        conn.execute_batch(r#"
+            CREATE TABLE test_agg (id INTEGER, name TEXT, score INTEGER);
+            INSERT INTO test_agg VALUES (1, 'Alice', 95);
+            INSERT INTO test_agg VALUES (2, 'Bob', 87);
+            INSERT INTO test_agg VALUES (3, 'Charlie', 92);
+        "#).unwrap();
+        
+        // Test json_agg with simple values
+        let result: String = conn.query_row(
+            "SELECT json_agg(name) FROM test_agg ORDER BY id",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        
+        let parsed: JsonValue = serde_json::from_str(&result).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0], JsonValue::String("Alice".to_string()));
+                assert_eq!(arr[1], JsonValue::String("Bob".to_string()));
+                assert_eq!(arr[2], JsonValue::String("Charlie".to_string()));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test json_agg with numbers
+        let result: String = conn.query_row(
+            "SELECT json_agg(score) FROM test_agg ORDER BY id",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        
+        let parsed: JsonValue = serde_json::from_str(&result).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0], JsonValue::Number(serde_json::Number::from(95)));
+                assert_eq!(arr[1], JsonValue::Number(serde_json::Number::from(87)));
+                assert_eq!(arr[2], JsonValue::Number(serde_json::Number::from(92)));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test jsonb_agg (should behave identically)
+        let result: String = conn.query_row(
+            "SELECT jsonb_agg(name) FROM test_agg ORDER BY id",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        
+        let parsed: JsonValue = serde_json::from_str(&result).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 3);
+                assert_eq!(arr[0], JsonValue::String("Alice".to_string()));
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test with NULL values
+        conn.execute("INSERT INTO test_agg VALUES (4, NULL, 88)", []).unwrap();
+        
+        let result: String = conn.query_row(
+            "SELECT json_agg(name) FROM test_agg WHERE id >= 4",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        
+        let parsed: JsonValue = serde_json::from_str(&result).unwrap();
+        match parsed {
+            JsonValue::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+                assert_eq!(arr[0], JsonValue::Null);
+            }
+            _ => panic!("Expected JSON array"),
+        }
+        
+        // Test empty result
+        let result: Option<String> = conn.query_row(
+            "SELECT json_agg(name) FROM test_agg WHERE id > 100",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("[]".to_string()));
     }
 }
