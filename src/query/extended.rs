@@ -263,12 +263,15 @@ impl ExtendedQueryHandler {
         match JsonEachTranslator::translate_with_metadata(&translated_for_analysis) {
             Ok((translated, metadata)) => {
                 if translated != translated_for_analysis {
+                    info!("JSON each translation changed query from: {}", translated_for_analysis);
                     info!("JSON each translation changed query to: {}", translated);
                     translated_for_analysis = translated;
                 }
+                debug!("JSON each metadata hints: {:?}", metadata);
                 translation_metadata.merge(metadata);
             }
-            Err(_) => {
+            Err(e) => {
+                debug!("JSON each translation failed: {:?}", e);
                 // Continue with original query
             }
         }
