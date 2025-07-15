@@ -269,6 +269,13 @@ INSERT INTO table (col1, col2) VALUES
   - Fixed early exit optimization bug by detecting || operator in contains_array_functions
   - All 6 integration tests and 23 unit tests pass
   - Note: ARRAY literal translation (ARRAY[1,2,3] → JSON) requires separate implementation
+- **JSON Each Text Functions (2025-07-15)**: Complete json_each_text() and jsonb_each_text() implementation
+  - Implemented json_each_text_value() custom SQLite function for proper text conversion
+  - Enhanced JsonEachTranslator to handle both regular and _text variants
+  - Comprehensive text conversion: booleans to "true"/"false", numbers to text, arrays/objects to JSON strings
+  - Supports both FROM clause and cross join patterns with proper PostgreSQL compatibility
+  - 5 integration tests and 6 unit tests with comprehensive coverage
+  - Zero performance impact - maintains system performance characteristics
 - **JSON Manipulation Functions (2025-07-15)**: Complete jsonb_delete, jsonb_insert, and jsonb_pretty implementation
   - jsonb_insert(target, path, new_value, insert_after): inserts values into JSON objects/arrays
   - jsonb_delete(target, path): deletes values from JSON objects/arrays by path

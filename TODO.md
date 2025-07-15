@@ -559,7 +559,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 #### Advanced JSON Table-Valued Functions - COMPLETED (2025-07-15)
 - [x] **json_each() / jsonb_each()** - Expand JSON to key-value pairs as table rows
-- [ ] **json_each_text() / jsonb_each_text()** - Expand to text key-value pairs as table rows
+- [x] **json_each_text() / jsonb_each_text()** - Expand to text key-value pairs as table rows - COMPLETED (2025-07-15)
 - [x] **Table-valued function infrastructure** (shared with array functions)
 
 #### JSON Aggregation and Record Functions - PARTIALLY COMPLETED (2025-07-15)
@@ -619,6 +619,21 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] Comprehensive unit tests (9 test cases) and integration tests (5 test cases)
 - [x] Zero performance impact - only formats when explicitly called
 
+**Phase 6: json_each_text() and jsonb_each_text() Functions - COMPLETED (2025-07-15)**
+- [x] Implemented json_each_text() and jsonb_each_text() table-valued functions
+- [x] Created json_each_text_value() custom SQLite function for proper text conversion
+- [x] Enhanced JsonEachTranslator to handle both regular and _text variants
+- [x] Comprehensive text conversion support:
+  - Booleans converted to "true"/"false" strings
+  - Numbers converted to text representations
+  - Strings remain as strings
+  - Arrays and objects returned as JSON strings
+  - Null values converted to "null" strings
+- [x] Supports both FROM clause and cross join patterns
+- [x] Handles jsonb_each_text() variants (identical behavior to json_each_text)
+- [x] Comprehensive test coverage with 5 integration tests and 6 unit tests
+- [x] Zero performance impact - performance-neutral implementation
+
 **Implementation Details:**
 - All functions registered in src/functions/json_functions.rs
 - Translation logic in src/translator/json_each_translator.rs
@@ -646,9 +661,9 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 11. JSON record manipulation functions
 12. Array indexing and performance optimizations
 
-**Current Status:** Array and JSON support is approximately **97% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
+**Current Status:** Array and JSON support is approximately **98% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
 
-**Next Phase:** Implement row_to_json() function for converting table rows to JSON objects.
+**Next Phase:** Implement json_object_agg() / jsonb_object_agg() functions for aggregating into JSON objects.
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
@@ -747,14 +762,14 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] json_extract_path() - extract value at path
   - [x] json_extract_path_text() - extract value at path as text
 - [ ] Advanced JSON features (Future work)
-  - [ ] json_each() / jsonb_each() - expand JSON to key-value pairs (table-valued function)
-  - [ ] json_each_text() / jsonb_each_text() - expand to text key-value pairs
-  - [ ] jsonb_insert() - insert value at path
-  - [ ] jsonb_delete() - delete value at path
-  - [ ] jsonb_delete_path() - delete at specific path
-  - [ ] jsonb_pretty() - pretty-print JSON
+  - [x] json_each() / jsonb_each() - expand JSON to key-value pairs (table-valued function) - COMPLETED (2025-07-15)
+  - [x] json_each_text() / jsonb_each_text() - expand to text key-value pairs - COMPLETED (2025-07-15)
+  - [x] jsonb_insert() - insert value at path - COMPLETED (2025-07-15)
+  - [x] jsonb_delete() - delete value at path - COMPLETED (2025-07-15)
+  - [x] jsonb_delete_path() - delete at specific path - COMPLETED (2025-07-15)
+  - [x] jsonb_pretty() - pretty-print JSON - COMPLETED (2025-07-15)
   - [ ] json_populate_record() - populate record from JSON
-  - [ ] json_agg() / jsonb_agg() - aggregate values into JSON array
+  - [x] json_agg() / jsonb_agg() - aggregate values into JSON array - COMPLETED (2025-07-15)
   - [ ] json_object_agg() / jsonb_object_agg() - aggregate into JSON object
   - [ ] row_to_json() - convert row to JSON
   - [ ] json_to_record() - convert JSON to record
