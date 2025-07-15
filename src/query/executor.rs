@@ -241,6 +241,40 @@ impl QueryExecutor {
             }
         }
         
+        // Translate array_agg functions with ORDER BY/DISTINCT support
+        use crate::translator::ArrayAggTranslator;
+        match ArrayAggTranslator::translate_with_metadata(&translated_query) {
+            Ok((translated, metadata)) => {
+                if translated != translated_query {
+                    info!("Query after array_agg translation: {}", translated);
+                    translated_query = translated;
+                }
+                debug!("Array_agg translation metadata: {} hints", metadata.column_mappings.len());
+                translation_metadata.merge(metadata);
+            }
+            Err(e) => {
+                debug!("Array_agg translation failed: {}", e);
+                // Continue with original query
+            }
+        }
+        
+        // Translate unnest() functions to json_each() equivalents
+        use crate::translator::UnnestTranslator;
+        match UnnestTranslator::translate_with_metadata(&translated_query) {
+            Ok((translated, metadata)) => {
+                if translated != translated_query {
+                    info!("Query after unnest translation: {}", translated);
+                    translated_query = translated;
+                }
+                debug!("Unnest translation metadata: {} hints", metadata.column_mappings.len());
+                translation_metadata.merge(metadata);
+            }
+            Err(e) => {
+                debug!("Unnest translation failed: {}", e);
+                // Continue with original query
+            }
+        }
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);

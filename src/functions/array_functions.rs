@@ -29,8 +29,7 @@ pub fn register_array_functions(conn: &Connection) -> Result<()> {
     // Array aggregate function
     register_array_agg(conn)?;
     
-    // Table-valued functions (unnest)
-    register_unnest(conn)?;
+    // Note: unnest() is now implemented as a virtual table in unnest_vtab.rs
     
     // Array constructor functions
     register_string_to_array(conn)?;
@@ -612,6 +611,7 @@ fn register_array_agg(conn: &Connection) -> Result<()> {
         }
     }
     
+    // Basic array_agg function (existing)
     conn.create_aggregate_function(
         "array_agg",
         1,
@@ -619,42 +619,96 @@ fn register_array_agg(conn: &Connection) -> Result<()> {
         ArrayAgg,
     )?;
     
+    // Enhanced array_agg_distinct function for DISTINCT support
+    register_array_agg_distinct(conn)?;
+    
     Ok(())
 }
 
-/// unnest(array) - Convert array to table (set-returning function)
-/// Note: This is a simplified implementation using a virtual table approach
-fn register_unnest(conn: &Connection) -> Result<()> {
-    // For now, create a simple scalar function that returns a comma-separated string
-    // A full implementation would require table-valued function support
-    conn.create_scalar_function(
-        "unnest",
-        1,
-        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
-        |ctx| {
-            let array_json: String = ctx.get(0)?;
+/// array_agg_distinct aggregate function - supports DISTINCT functionality
+fn register_array_agg_distinct(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::Aggregate;
+    use std::collections::HashSet;
+    
+    #[derive(Default)]
+    struct ArrayAggDistinct;
+    
+    impl Aggregate<HashSet<String>, Option<String>> for ArrayAggDistinct {
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> Result<HashSet<String>> {
+            Ok(HashSet::new())
+        }
+        
+        fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, agg: &mut HashSet<String>) -> Result<()> {
+            let value = ctx.get_raw(0);
             
-            match serde_json::from_str::<JsonValue>(&array_json) {
-                Ok(JsonValue::Array(arr)) => {
-                    // Return elements as separate rows (simplified - returns concatenated string)
-                    let elements: Vec<String> = arr.iter()
-                        .map(|v| match v {
-                            JsonValue::String(s) => s.clone(),
-                            JsonValue::Number(n) => n.to_string(),
-                            JsonValue::Bool(b) => b.to_string(),
-                            JsonValue::Null => "NULL".to_string(),
-                            _ => serde_json::to_string(v).unwrap_or_default(),
-                        })
-                        .collect();
-                    Ok(Some(elements.join("\n")))
+            let json_value = match value {
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Integer(i) => json!(i),
+                rusqlite::types::ValueRef::Real(f) => json!(f),
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    serde_json::from_str(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
                 }
-                _ => Ok(None),
+                rusqlite::types::ValueRef::Blob(b) => {
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
+            // Use string representation for uniqueness check
+            let key = match &json_value {
+                JsonValue::String(s) => s.clone(),
+                JsonValue::Number(n) => n.to_string(),
+                JsonValue::Bool(b) => b.to_string(),
+                JsonValue::Null => "null".to_string(),
+                _ => serde_json::to_string(&json_value).unwrap_or_default(),
+            };
+            
+            agg.insert(key);
+            Ok(())
+        }
+        
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, agg: Option<HashSet<String>>) -> Result<Option<String>> {
+            if let Some(values) = agg {
+                let mut sorted_values: Vec<String> = values.into_iter().collect();
+                sorted_values.sort();
+                
+                let json_values: Vec<JsonValue> = sorted_values.into_iter()
+                    .map(|s| {
+                        // Try to parse back to appropriate JSON type
+                        if s == "null" {
+                            JsonValue::Null
+                        } else if s == "true" {
+                            JsonValue::Bool(true)
+                        } else if s == "false" {
+                            JsonValue::Bool(false)
+                        } else if let Ok(num) = s.parse::<i64>() {
+                            json!(num)
+                        } else if let Ok(num) = s.parse::<f64>() {
+                            json!(num)
+                        } else {
+                            JsonValue::String(s)
+                        }
+                    })
+                    .collect();
+                
+                Ok(Some(serde_json::to_string(&json_values).unwrap_or_else(|_| "[]".to_string())))
+            } else {
+                Ok(Some("[]".to_string()))
             }
-        },
+        }
+    }
+    
+    conn.create_aggregate_function(
+        "array_agg_distinct",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        ArrayAggDistinct,
     )?;
     
     Ok(())
 }
+
 
 /// string_to_array(string, delimiter) - Split string into array
 fn register_string_to_array(conn: &Connection) -> Result<()> {
