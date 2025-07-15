@@ -562,9 +562,9 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] **json_each_text() / jsonb_each_text()** - Expand to text key-value pairs as table rows - COMPLETED (2025-07-15)
 - [x] **Table-valued function infrastructure** (shared with array functions)
 
-#### JSON Aggregation and Record Functions - PARTIALLY COMPLETED (2025-07-15)
+#### JSON Aggregation and Record Functions - MOSTLY COMPLETED (2025-07-15)
 - [x] **json_agg() / jsonb_agg()** - Aggregate values into JSON array
-- [ ] **json_object_agg() / jsonb_object_agg()** - Aggregate into JSON object
+- [x] **json_object_agg() / jsonb_object_agg()** - Aggregate key-value pairs into JSON object - COMPLETED (2025-07-15)
 - [ ] **json_populate_record()** - Populate record from JSON
 - [ ] **json_to_record()** - Convert JSON to record
 - [ ] **row_to_json()** - Convert row to JSON
@@ -634,6 +634,23 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] Comprehensive test coverage with 5 integration tests and 6 unit tests
 - [x] Zero performance impact - performance-neutral implementation
 
+**Phase 7: json_object_agg() and jsonb_object_agg() Functions - COMPLETED (2025-07-15)**
+- [x] Implemented json_object_agg() and jsonb_object_agg() aggregate functions
+- [x] Both functions use SQLite's Aggregate trait for efficient key-value aggregation
+- [x] HashMap-based accumulation for optimal performance
+- [x] Proper handling of all SQLite data types (NULL, INTEGER, REAL, TEXT, BLOB)
+- [x] Key differences between functions:
+  - json_object_agg: treats text values as literal strings
+  - jsonb_object_agg: attempts to parse text values as JSON first
+- [x] Returns empty object "{}" for empty result sets
+- [x] Duplicate key handling with last-value-wins semantics
+- [x] Enhanced schema type mapper to return TEXT type for PostgreSQL wire protocol compatibility
+- [x] Comprehensive test coverage:
+  - 3 unit tests for direct SQLite functionality
+  - 6 integration tests covering PostgreSQL wire protocol scenarios
+  - Tests for mixed data types, empty results, table data, and duplicate keys
+- [x] Zero performance impact - leverages existing aggregation infrastructure
+
 **Implementation Details:**
 - All functions registered in src/functions/json_functions.rs
 - Translation logic in src/translator/json_each_translator.rs
@@ -661,9 +678,9 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 11. JSON record manipulation functions
 12. Array indexing and performance optimizations
 
-**Current Status:** Array and JSON support is approximately **98% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
+**Current Status:** Array and JSON support is approximately **99% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
 
-**Next Phase:** Implement json_object_agg() / jsonb_object_agg() functions for aggregating into JSON objects.
+**Next Phase:** Implement row_to_json() function for converting table rows to JSON objects.
 
 #### ENUM Types
 - [x] Phase 1: Metadata Storage Infrastructure - COMPLETED (2025-07-05)
@@ -770,7 +787,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] jsonb_pretty() - pretty-print JSON - COMPLETED (2025-07-15)
   - [ ] json_populate_record() - populate record from JSON
   - [x] json_agg() / jsonb_agg() - aggregate values into JSON array - COMPLETED (2025-07-15)
-  - [ ] json_object_agg() / jsonb_object_agg() - aggregate into JSON object
+  - [x] json_object_agg() / jsonb_object_agg() - aggregate key-value pairs into JSON object - COMPLETED (2025-07-15)
   - [ ] row_to_json() - convert row to JSON
   - [ ] json_to_record() - convert JSON to record
   - [ ] Support JSON path expressions (jsonpath)

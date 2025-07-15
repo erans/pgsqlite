@@ -243,6 +243,14 @@ INSERT INTO table (col1, col2) VALUES
   - Proper NULL handling and empty result set behavior (returns "[]")
   - Uses SQLite's Aggregate trait for efficient aggregation
   - Comprehensive test coverage including multi-row scenarios and NULL values
+- **JSON Object Aggregation Functions (2025-07-15)**: Complete json_object_agg and jsonb_object_agg implementation
+  - json_object_agg(key, value): aggregates key-value pairs into JSON object
+  - jsonb_object_agg(key, value): attempts JSON parsing of text values, otherwise treats as strings
+  - HashMap-based accumulation for optimal performance
+  - Handles all SQLite data types (NULL, INTEGER, REAL, TEXT, BLOB)
+  - Returns empty object "{}" for empty result sets
+  - Duplicate key handling with last-value-wins semantics
+  - Enhanced schema type mapper for PostgreSQL wire protocol compatibility
 - **JSON Table-Valued Functions (2025-07-15)**: Complete json_each/jsonb_each implementation
   - json_each(json_data): expands JSON object to key-value pairs as table rows
   - jsonb_each(json_data): identical behavior to json_each

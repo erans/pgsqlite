@@ -868,6 +868,8 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
     // JSON aggregation functions
     register_json_agg(conn)?;
     register_jsonb_agg(conn)?;
+    register_json_object_agg(conn)?;
+    register_jsonb_object_agg(conn)?;
     
     Ok(())
 }
@@ -985,6 +987,153 @@ fn register_jsonb_agg(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8,
         JsonbAgg,
+    )?;
+    
+    Ok(())
+}
+
+/// json_object_agg(key, value) - Aggregate key-value pairs into a JSON object
+fn register_json_object_agg(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::Aggregate;
+    use std::collections::HashMap;
+    
+    #[derive(Default)]
+    struct JsonObjectAgg;
+    
+    impl Aggregate<HashMap<String, JsonValue>, Option<String>> for JsonObjectAgg {
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> Result<HashMap<String, JsonValue>> {
+            Ok(HashMap::new())
+        }
+        
+        fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, agg: &mut HashMap<String, JsonValue>) -> Result<()> {
+            // Get the key (first argument)
+            let key_value = ctx.get_raw(0);
+            let key = match key_value {
+                rusqlite::types::ValueRef::Text(s) => std::str::from_utf8(s).unwrap_or("").to_string(),
+                rusqlite::types::ValueRef::Integer(i) => i.to_string(),
+                rusqlite::types::ValueRef::Real(f) => f.to_string(),
+                rusqlite::types::ValueRef::Null => "null".to_string(),
+                rusqlite::types::ValueRef::Blob(_) => return Ok(()), // Skip blob keys
+            };
+            
+            // Get the value (second argument)
+            let value_raw = ctx.get_raw(1);
+            let json_value = match value_raw {
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    if let Some(num) = serde_json::Number::from_f64(f) {
+                        JsonValue::Number(num)
+                    } else {
+                        JsonValue::Null
+                    }
+                }
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    // For json_object_agg, treat text as literal strings (not JSON)
+                    JsonValue::String(text.to_string())
+                }
+                rusqlite::types::ValueRef::Blob(b) => {
+                    // Convert blob to hex string
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
+            agg.insert(key, json_value);
+            Ok(())
+        }
+        
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, agg: Option<HashMap<String, JsonValue>>) -> Result<Option<String>> {
+            match agg {
+                Some(map) => {
+                    let json_map: serde_json::Map<String, JsonValue> = map.into_iter().collect();
+                    let json_object = JsonValue::Object(json_map);
+                    Ok(Some(serde_json::to_string(&json_object).unwrap_or_else(|_| "{}".to_string())))
+                }
+                None => Ok(Some("{}".to_string())), // Return empty object for no rows
+            }
+        }
+    }
+    
+    conn.create_aggregate_function(
+        "json_object_agg",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        JsonObjectAgg,
+    )?;
+    
+    Ok(())
+}
+
+/// jsonb_object_agg(key, value) - Aggregate key-value pairs into a JSON object
+fn register_jsonb_object_agg(conn: &Connection) -> Result<()> {
+    use rusqlite::functions::Aggregate;
+    use std::collections::HashMap;
+    
+    #[derive(Default)]
+    struct JsonbObjectAgg;
+    
+    impl Aggregate<HashMap<String, JsonValue>, Option<String>> for JsonbObjectAgg {
+        fn init(&self, _: &mut rusqlite::functions::Context<'_>) -> Result<HashMap<String, JsonValue>> {
+            Ok(HashMap::new())
+        }
+        
+        fn step(&self, ctx: &mut rusqlite::functions::Context<'_>, agg: &mut HashMap<String, JsonValue>) -> Result<()> {
+            // Get the key (first argument)
+            let key_value = ctx.get_raw(0);
+            let key = match key_value {
+                rusqlite::types::ValueRef::Text(s) => std::str::from_utf8(s).unwrap_or("").to_string(),
+                rusqlite::types::ValueRef::Integer(i) => i.to_string(),
+                rusqlite::types::ValueRef::Real(f) => f.to_string(),
+                rusqlite::types::ValueRef::Null => "null".to_string(),
+                rusqlite::types::ValueRef::Blob(_) => return Ok(()), // Skip blob keys
+            };
+            
+            // Get the value (second argument)
+            let value_raw = ctx.get_raw(1);
+            let json_value = match value_raw {
+                rusqlite::types::ValueRef::Null => JsonValue::Null,
+                rusqlite::types::ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+                rusqlite::types::ValueRef::Real(f) => {
+                    if let Some(num) = serde_json::Number::from_f64(f) {
+                        JsonValue::Number(num)
+                    } else {
+                        JsonValue::Null
+                    }
+                }
+                rusqlite::types::ValueRef::Text(s) => {
+                    let text = std::str::from_utf8(s).unwrap_or("");
+                    // For jsonb_object_agg, try to parse as JSON first, if it fails treat as string
+                    serde_json::from_str(text)
+                        .unwrap_or_else(|_| JsonValue::String(text.to_string()))
+                }
+                rusqlite::types::ValueRef::Blob(b) => {
+                    // Convert blob to hex string
+                    JsonValue::String(format!("\\x{}", hex::encode(b)))
+                }
+            };
+            
+            agg.insert(key, json_value);
+            Ok(())
+        }
+        
+        fn finalize(&self, _: &mut rusqlite::functions::Context<'_>, agg: Option<HashMap<String, JsonValue>>) -> Result<Option<String>> {
+            match agg {
+                Some(map) => {
+                    let json_map: serde_json::Map<String, JsonValue> = map.into_iter().collect();
+                    let json_object = JsonValue::Object(json_map);
+                    Ok(Some(serde_json::to_string(&json_object).unwrap_or_else(|_| "{}".to_string())))
+                }
+                None => Ok(Some("{}".to_string())), // Return empty object for no rows
+            }
+        }
+    }
+    
+    conn.create_aggregate_function(
+        "jsonb_object_agg",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        JsonbObjectAgg,
     )?;
     
     Ok(())
