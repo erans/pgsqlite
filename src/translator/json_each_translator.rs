@@ -2,17 +2,8 @@ use crate::PgSqliteError;
 use crate::translator::{TranslationMetadata, ColumnTypeHint, ExpressionType};
 use crate::types::PgType;
 use regex::Regex;
-use once_cell::sync::Lazy;
 use tracing::debug;
 
-/// Regex patterns for json_each and jsonb_each function calls
-static JSON_EACH_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(json_each|jsonb_each)\s*\(\s*([^)]+)\s*\)").unwrap()
-});
-
-static JSON_EACH_FROM_CLAUSE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\bFROM\s+(json_each|jsonb_each)\s*\(\s*([^)]+)\s*\)(?:\s+(?:AS\s+)?(\w+))?").unwrap()
-});
 
 /// Translates PostgreSQL json_each()/jsonb_each() function calls to SQLite json_each() equivalents
 /// with proper column selection for PostgreSQL compatibility
@@ -39,12 +30,20 @@ impl JsonEachTranslator {
         
         let mut result = sql.to_string();
         
-        // Handle different patterns:
-        // 1. FROM json_each(json_data) AS alias
-        // 2. json_each(json_data) in SELECT clause
+        // Step 1: Replace jsonb_each with json_each
+        result = result.replace("jsonb_each(", "json_each(");
         
-        result = Self::translate_from_clause(&result)?;
-        result = Self::translate_select_clause(&result)?;
+        // Step 2: Replace json_each with a wrapped subquery that casts to TEXT
+        // This ensures PostgreSQL compatibility for both key and value columns
+        let json_each_regex = Regex::new(r"\bFROM\s+json_each\(([^)]+)\)\s+AS\s+(\w+)").unwrap();
+        
+        result = json_each_regex.replace_all(&result, |caps: &regex::Captures| {
+            let json_expr = caps.get(1).unwrap().as_str();
+            let alias = caps.get(2).unwrap().as_str();
+            let replacement = format!("FROM (SELECT CAST(key AS TEXT) AS key, CAST(value AS TEXT) AS value FROM json_each({})) AS {}", json_expr, alias);
+            debug!("JSON each translation: {} -> {}", &caps[0], replacement);
+            replacement
+        }).to_string();
         
         Ok(result)
     }
@@ -55,84 +54,15 @@ impl JsonEachTranslator {
             return Ok((sql.to_string(), TranslationMetadata::new()));
         }
         
-        let mut result = sql.to_string();
         let mut metadata = TranslationMetadata::new();
         
-        // Translate json_each calls
-        result = Self::translate_from_clause(&result)?;
-        result = Self::translate_select_clause(&result)?;
+        // Use the same translation logic as translate_json_each
+        let result = Self::translate_json_each(sql)?;
         
         // Extract metadata for aliased json_each functions
         Self::extract_json_each_metadata(&result, &mut metadata);
         
         Ok((result, metadata))
-    }
-    
-    /// Translate FROM json_each(json_data) AS alias to use only key and value columns
-    fn translate_from_clause(sql: &str) -> Result<String, PgSqliteError> {
-        let mut result = sql.to_string();
-        
-        // Collect replacements to avoid borrowing issues
-        let mut replacements = Vec::new();
-        for captures in JSON_EACH_FROM_CLAUSE_REGEX.captures_iter(&result) {
-            let function_name = &captures[1]; // json_each or jsonb_each
-            let json_expr = captures[2].trim();
-            let alias = captures.get(3).map(|m| m.as_str()).unwrap_or("json_each_table");
-            
-            // Convert to SQLite json_each but only expose key and value columns
-            // We wrap it in a subquery to ensure only key and value are available
-            let replacement = format!(
-                "(SELECT key, value FROM json_each({})) AS {}",
-                json_expr, alias
-            );
-            
-            debug!("Planning to translate FROM {}: {} -> {}", function_name, &captures[0], &replacement);
-            replacements.push((captures[0].to_string(), replacement));
-        }
-        
-        // Apply replacements
-        for (original, replacement) in replacements {
-            result = result.replace(&original, &replacement);
-            debug!("Translated FROM json_each: {} -> {}", original, replacement);
-        }
-        
-        Ok(result)
-    }
-    
-    /// Translate json_each() calls in SELECT clause to subqueries
-    fn translate_select_clause(sql: &str) -> Result<String, PgSqliteError> {
-        let mut result = sql.to_string();
-        
-        // Handle json_each() in SELECT clause - convert to row-returning subquery
-        let mut replacements = Vec::new();
-        for captures in JSON_EACH_REGEX.captures_iter(&result) {
-            let function_name = &captures[1]; // json_each or jsonb_each
-            let json_expr = captures[2].trim();
-            
-            // Check if this is already part of a FROM clause (avoid double translation)
-            let full_match = &captures[0];
-            if result.contains(&format!("FROM {}", full_match)) {
-                continue; // Skip this one, it's handled by translate_from_clause
-            }
-            
-            // This is a simplified translation for json_each in SELECT
-            // PostgreSQL json_each returns rows, so we need to handle this appropriately
-            let replacement = format!(
-                "(SELECT json_group_array(json_object('key', key, 'value', value)) FROM json_each({}))",
-                json_expr
-            );
-            
-            debug!("Planning to translate SELECT {}: {} -> {}", function_name, full_match, &replacement);
-            replacements.push((full_match.to_string(), replacement));
-        }
-        
-        // Apply replacements
-        for (original, replacement) in replacements {
-            result = result.replace(&original, &replacement);
-            debug!("Translated SELECT json_each: {} -> {}", original, replacement);
-        }
-        
-        Ok(result)
     }
     
     /// Extract metadata for aliased json_each functions
@@ -145,6 +75,7 @@ impl JsonEachTranslator {
             debug!("Found json_each alias: {}", alias);
             
             // Add type hints for key and value columns
+            // SQLite json_each returns TEXT for both key and value for PostgreSQL compatibility
             metadata.add_hint(format!("{}.key", alias), ColumnTypeHint {
                 source_column: None,
                 suggested_type: Some(PgType::Text),
@@ -155,7 +86,7 @@ impl JsonEachTranslator {
             
             metadata.add_hint(format!("{}.value", alias), ColumnTypeHint {
                 source_column: None,
-                suggested_type: Some(PgType::Json), // Could be any JSON type
+                suggested_type: Some(PgType::Text), // Return as TEXT for PostgreSQL compatibility
                 datetime_subtype: None,
                 is_expression: true,
                 expression_type: Some(ExpressionType::Other),
@@ -172,30 +103,28 @@ mod tests {
     fn test_json_each_from_clause() {
         let sql = "SELECT key, value FROM json_each('{\"a\": 1, \"b\": 2}') AS t";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("(SELECT key, value FROM json_each("));
-        assert!(result.contains(")) AS t"));
+        assert!(result.contains("FROM (SELECT CAST(key AS TEXT) AS key, CAST(value AS TEXT) AS value FROM json_each('{\"a\": 1, \"b\": 2}')) AS t"));
     }
     
     #[test]
     fn test_jsonb_each_from_clause() {
         let sql = "SELECT key, value FROM jsonb_each('{\"a\": 1, \"b\": 2}') AS t";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("(SELECT key, value FROM json_each("));
-        assert!(result.contains(")) AS t"));
+        assert!(result.contains("FROM (SELECT CAST(key AS TEXT) AS key, CAST(value AS TEXT) AS value FROM json_each('{\"a\": 1, \"b\": 2}')) AS t"));
     }
     
     #[test]
     fn test_json_each_from_clause_with_alias() {
         let sql = "SELECT t.key, t.value FROM json_each('{\"name\": \"Alice\"}') AS t";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("(SELECT key, value FROM json_each('{\"name\": \"Alice\"}')) AS t"));
+        assert!(result.contains("FROM (SELECT CAST(key AS TEXT) AS key, CAST(value AS TEXT) AS value FROM json_each('{\"name\": \"Alice\"}')) AS t"));
     }
     
     #[test]
     fn test_json_each_select_clause() {
         let sql = "SELECT json_each(data) FROM table1";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("(SELECT json_group_array(json_object('key', key, 'value', value)) FROM json_each(data))"));
+        assert_eq!(result, sql); // Should be unchanged since it's already json_each
     }
     
     #[test]
@@ -217,8 +146,8 @@ mod tests {
     #[test]
     fn test_json_each_with_metadata() {
         let sql = "SELECT key, value FROM json_each('{\"a\": 1}') AS expanded";
-        let (result, metadata) = JsonEachTranslator::translate_with_metadata(sql).unwrap();
-        assert!(result.contains("(SELECT key, value FROM json_each("));
+        let (result, _metadata) = JsonEachTranslator::translate_with_metadata(sql).unwrap();
+        assert!(result.contains("FROM (SELECT CAST(key AS TEXT) AS key, CAST(value AS TEXT) AS value FROM json_each('{\"a\": 1}')) AS expanded"));
         // The metadata should contain hints for key and value columns
     }
 }

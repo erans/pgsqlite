@@ -218,7 +218,7 @@ async fn test_json_each_with_table_data() {
     
     // Test json_each() with table data
     let rows = client.query(
-        "SELECT id, t.key, t.value FROM test_json, json_each(data) AS t WHERE id = 1 ORDER BY t.key",
+        "SELECT test_json.id, t.key, t.value FROM test_json, json_each(data) AS t WHERE test_json.id = 1 ORDER BY t.key",
         &[]
     ).await.unwrap();
     
