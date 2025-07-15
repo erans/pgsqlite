@@ -848,7 +848,22 @@ impl ExtendedQueryHandler {
         }
         
         // Convert bound values and substitute parameters
-        let final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+        let mut final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+        
+        // Apply JSON operator translation if needed
+        if JsonTranslator::contains_json_operations(&final_query) {
+            debug!("Query needs JSON operator translation: {}", final_query);
+            match JsonTranslator::translate_json_operators(&final_query) {
+                Ok(translated) => {
+                    debug!("Query after JSON operator translation: {}", translated);
+                    final_query = translated;
+                }
+                Err(e) => {
+                    debug!("JSON operator translation failed: {}", e);
+                    // Continue with original query - some operators might not be supported yet
+                }
+            }
+        }
         
         info!("Executing query: {}", final_query);
         debug!("Original query: {}", query);

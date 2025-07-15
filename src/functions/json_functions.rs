@@ -775,6 +775,50 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // json_each_value(json_text, key) - Get a value from json_each with proper boolean conversion
+    conn.create_scalar_function(
+        "json_each_value",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_text: String = ctx.get(0)?;
+            // Key can be either a string or an integer (for arrays)
+            let key = match ctx.get_raw(1) {
+                ValueRef::Text(s) => String::from_utf8_lossy(s).to_string(),
+                ValueRef::Integer(i) => i.to_string(),
+                _ => return Ok(None),
+            };
+            
+            // Parse the JSON and extract the value for the key
+            match serde_json::from_str::<JsonValue>(&json_text) {
+                Ok(json) => {
+                    let value = match &json {
+                        JsonValue::Object(obj) => obj.get(&key),
+                        JsonValue::Array(arr) => {
+                            if let Ok(idx) = key.parse::<usize>() {
+                                arr.get(idx)
+                            } else {
+                                None
+                            }
+                        }
+                        _ => None,
+                    };
+                    
+                    match value {
+                        Some(JsonValue::Bool(true)) => Ok(Some("true".to_string())),
+                        Some(JsonValue::Bool(false)) => Ok(Some("false".to_string())),
+                        Some(JsonValue::String(s)) => Ok(Some(s.clone())),
+                        Some(JsonValue::Number(n)) => Ok(Some(n.to_string())),
+                        Some(JsonValue::Null) => Ok(Some("null".to_string())),
+                        Some(val) => Ok(Some(val.to_string())),
+                        None => Ok(None),
+                    }
+                }
+                Err(_) => Ok(None),
+            }
+        },
+    )?;
+    
     // JSON aggregation functions
     register_json_agg(conn)?;
     register_jsonb_agg(conn)?;

@@ -40,8 +40,8 @@ impl JsonEachTranslator {
         result = json_each_regex.replace_all(&result, |caps: &regex::Captures| {
             let json_expr = caps.get(1).unwrap().as_str();
             let alias = caps.get(2).unwrap().as_str();
-            // Use substr to force TEXT type more reliably - substr always returns TEXT
-            let replacement = format!("FROM (SELECT substr(key, 1) AS key, substr(value, 1) AS value FROM json_each({})) AS {}", json_expr, alias);
+            // Use custom json_each_value function to handle boolean conversion properly
+            let replacement = format!("FROM (SELECT ('' || key) AS key, json_each_value({}, key) AS value FROM json_each({})) AS {}", json_expr, json_expr, alias);
             debug!("JSON each translation: {} -> {}", &caps[0], replacement);
             replacement
         }).to_string();
@@ -68,51 +68,50 @@ impl JsonEachTranslator {
     
     /// Extract metadata for aliased json_each functions
     fn extract_json_each_metadata(sql: &str, metadata: &mut TranslationMetadata) {
-        // Look for aliased json_each functions
+        // If the SQL contains json_each, add aggressive type hints for all possible column references
+        if sql.contains("json_each") {
+            let text_hint = ColumnTypeHint {
+                source_column: None,
+                suggested_type: Some(PgType::Text),
+                datetime_subtype: None,
+                is_expression: true,
+                expression_type: Some(ExpressionType::Other),
+            };
+            
+            // Add aggressive type hints for all possible json_each column references
+            // These are the most common ways json_each columns are accessed
+            metadata.add_hint("key".to_string(), text_hint.clone());
+            metadata.add_hint("value".to_string(), text_hint.clone());
+            
+            // Common aliases used in json_each queries
+            for alias in &["t", "j", "json", "data", "expanded", "item", "row"] {
+                metadata.add_hint(format!("{}.key", alias), text_hint.clone());
+                metadata.add_hint(format!("{}.value", alias), text_hint.clone());
+            }
+            
+            debug!("Added aggressive type hints for json_each columns: key and value as TEXT");
+        }
+        
+        // Also look for specific aliased json_each functions for additional context
         let alias_regex = Regex::new(r"(?i)json_each\s*\([^)]+\)\s+(?:AS\s+)?(\w+)").unwrap();
         
         for captures in alias_regex.captures_iter(sql) {
             let alias = captures[1].to_string();
             debug!("Found json_each alias: {}", alias);
             
-            // Add type hints for both aliased and non-aliased column access patterns
-            // Many queries access columns as just "key" and "value" without the alias prefix
-            
-            // Non-aliased access (e.g., SELECT key, value FROM json_each(...) AS t)
-            metadata.add_hint("key".to_string(), ColumnTypeHint {
+            let text_hint = ColumnTypeHint {
                 source_column: None,
                 suggested_type: Some(PgType::Text),
                 datetime_subtype: None,
                 is_expression: true,
                 expression_type: Some(ExpressionType::Other),
-            });
+            };
             
-            metadata.add_hint("value".to_string(), ColumnTypeHint {
-                source_column: None,
-                suggested_type: Some(PgType::Text),
-                datetime_subtype: None,
-                is_expression: true,
-                expression_type: Some(ExpressionType::Other),
-            });
+            // Add specific hints for this alias
+            metadata.add_hint(format!("{}.key", alias), text_hint.clone());
+            metadata.add_hint(format!("{}.value", alias), text_hint.clone());
             
-            debug!("Added type hints for json_each columns: key and value as TEXT");
-            
-            // Aliased access (e.g., SELECT t.key, t.value FROM json_each(...) AS t)
-            metadata.add_hint(format!("{}.key", alias), ColumnTypeHint {
-                source_column: None,
-                suggested_type: Some(PgType::Text),
-                datetime_subtype: None,
-                is_expression: true,
-                expression_type: Some(ExpressionType::Other),
-            });
-            
-            metadata.add_hint(format!("{}.value", alias), ColumnTypeHint {
-                source_column: None,
-                suggested_type: Some(PgType::Text),
-                datetime_subtype: None,
-                is_expression: true,
-                expression_type: Some(ExpressionType::Other),
-            });
+            debug!("Added specific type hints for json_each alias '{}'", alias);
         }
     }
 }
@@ -125,21 +124,21 @@ mod tests {
     fn test_json_each_from_clause() {
         let sql = "SELECT key, value FROM json_each('{\"a\": 1, \"b\": 2}') AS t";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("FROM (SELECT substr(key, 1) AS key, substr(value, 1) AS value FROM json_each('{\"a\": 1, \"b\": 2}')) AS t"));
+        assert!(result.contains("FROM (SELECT ('' || key) AS key, json_each_value('{\"a\": 1, \"b\": 2}', key) AS value FROM json_each('{\"a\": 1, \"b\": 2}')) AS t"));
     }
     
     #[test]
     fn test_jsonb_each_from_clause() {
         let sql = "SELECT key, value FROM jsonb_each('{\"a\": 1, \"b\": 2}') AS t";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("FROM (SELECT substr(key, 1) AS key, substr(value, 1) AS value FROM json_each('{\"a\": 1, \"b\": 2}')) AS t"));
+        assert!(result.contains("FROM (SELECT ('' || key) AS key, json_each_value('{\"a\": 1, \"b\": 2}', key) AS value FROM json_each('{\"a\": 1, \"b\": 2}')) AS t"));
     }
     
     #[test]
     fn test_json_each_from_clause_with_alias() {
         let sql = "SELECT t.key, t.value FROM json_each('{\"name\": \"Alice\"}') AS t";
         let result = JsonEachTranslator::translate_json_each(sql).unwrap();
-        assert!(result.contains("FROM (SELECT substr(key, 1) AS key, substr(value, 1) AS value FROM json_each('{\"name\": \"Alice\"}')) AS t"));
+        assert!(result.contains("FROM (SELECT ('' || key) AS key, json_each_value('{\"name\": \"Alice\"}', key) AS value FROM json_each('{\"name\": \"Alice\"}')) AS t"));
     }
     
     #[test]
@@ -169,7 +168,7 @@ mod tests {
     fn test_json_each_with_metadata() {
         let sql = "SELECT key, value FROM json_each('{\"a\": 1}') AS expanded";
         let (result, _metadata) = JsonEachTranslator::translate_with_metadata(sql).unwrap();
-        assert!(result.contains("FROM (SELECT substr(key, 1) AS key, substr(value, 1) AS value FROM json_each('{\"a\": 1}')) AS expanded"));
+        assert!(result.contains("FROM (SELECT ('' || key) AS key, json_each_value('{\"a\": 1}', key) AS value FROM json_each('{\"a\": 1}')) AS expanded"));
         // The metadata should contain hints for key and value columns
     }
 }
