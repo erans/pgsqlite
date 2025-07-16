@@ -77,13 +77,26 @@ SELECT * FROM products WHERE specs @> '{"color": "red"}';
 SELECT * FROM orders WHERE '{"status": "pending"}' <@ metadata;
 ```
 
-### Existence Operators (Planned)
+### Existence Operators
 
-The following operators are planned for future implementation:
+The following operators check for key existence in JSON objects:
 
-- `?` - Does key exist
-- `?|` - Do any of the keys exist
-- `?&` - Do all of the keys exist
+| Operator | Description | Example |
+|----------|-------------|---------|
+| `?` | Does key exist | `'{"a": 1, "b": 2}'::jsonb ? 'a'` |
+| `?|` | Do any of the keys exist | `'{"a": 1, "b": 2}'::jsonb ?| ARRAY['a', 'c']` |
+| `?&` | Do all of the keys exist | `'{"a": 1, "b": 2}'::jsonb ?& ARRAY['a', 'b']` |
+
+```sql
+-- Check if key exists
+SELECT * FROM users WHERE profile ? 'email';
+
+-- Check if any of several keys exist
+SELECT * FROM products WHERE specs ?| ARRAY['color', 'size', 'weight'];
+
+-- Check if all required keys exist
+SELECT * FROM orders WHERE metadata ?& ARRAY['customer_id', 'order_date'];
+```
 
 ## JSON Functions
 
@@ -219,6 +232,33 @@ Checks if the first JSON is contained by the second.
 ```sql
 SELECT jsonb_contained('{"a": 1}', '{"a": 1, "b": 2}');  -- Returns 1
 ```
+
+### Record Conversion Functions
+
+#### json_populate_record(base_record, json_object)
+Populates a record from JSON object data. In pgsqlite, this returns a formatted string representation acknowledging the operation.
+
+```sql
+SELECT json_populate_record('null', '{"name": "Alice", "age": 30}');
+-- Returns: json_populate_record: base=null, json={"name": "Alice", "age": 30}
+```
+
+#### json_to_record(json_object)
+Converts a JSON object to a record-like string representation with key:value pairs.
+
+```sql
+SELECT json_to_record('{"id": 1, "name": "Bob", "active": true}');
+-- Returns: (id:1,name:Bob,active:true)
+
+SELECT json_to_record('{"user": "Charlie", "score": 95, "verified": false}');
+-- Returns: (user:Charlie,score:95,verified:false)
+
+-- Handles edge cases
+SELECT json_to_record('{}');  -- Returns: ()
+SELECT json_to_record('[{"invalid": "array"}]');  -- Returns error message
+```
+
+**Note**: These functions provide simplified implementations of PostgreSQL's record conversion capabilities. Full RECORD type support would require significant infrastructure changes in SQLite.
 
 ## Practical Examples
 
