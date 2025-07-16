@@ -218,10 +218,10 @@ RUST_LOG=debug ./target/release/pgsqlite
 
 ```bash
 # Run all test suites (includes comprehensive JSON/array function testing)
-./run_ssl_tests.sh
+./tests/runner/run_ssl_tests.sh
 
 # Run specific test mode
-./run_ssl_tests.sh --mode tcp-ssl --verbose
+./tests/runner/run_ssl_tests.sh --mode tcp-ssl --verbose
 
 # Run unit tests
 cargo test
