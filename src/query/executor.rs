@@ -292,6 +292,16 @@ impl QueryExecutor {
             }
         }
         
+        // Translate row_to_json() functions for PostgreSQL compatibility
+        use crate::translator::RowToJsonTranslator;
+        let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_query);
+        if translated != translated_query {
+            info!("Query after row_to_json translation: {}", translated);
+            translated_query = translated;
+        }
+        debug!("RowToJson translation metadata: {} hints", metadata.column_mappings.len());
+        translation_metadata.merge(metadata);
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);

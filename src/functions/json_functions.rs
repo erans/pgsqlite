@@ -871,6 +871,9 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
     register_json_object_agg(conn)?;
     register_jsonb_object_agg(conn)?;
     
+    // Row conversion functions
+    register_row_to_json(conn)?;
+    
     Ok(())
 }
 
@@ -1137,6 +1140,77 @@ fn register_jsonb_object_agg(conn: &Connection) -> Result<()> {
     )?;
     
     Ok(())
+}
+
+/// row_to_json(record [, pretty_bool]) - Convert row to JSON object
+fn register_row_to_json(conn: &Connection) -> Result<()> {
+    // This function will need to be implemented as a query translator
+    // rather than a simple SQLite function, because PostgreSQL's row_to_json
+    // works with composite types and subqueries.
+    
+    // For now, implement a basic version that handles simple JSON conversion
+    // The real implementation would need to be in the query translator layer
+    
+    // Single parameter version: row_to_json(record)
+    conn.create_scalar_function(
+        "row_to_json",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let input = ctx.get_raw(0);
+            convert_value_to_json(input, false)
+        },
+    )?;
+    
+    // Two parameter version: row_to_json(record, pretty_bool)
+    conn.create_scalar_function(
+        "row_to_json",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let input = ctx.get_raw(0);
+            let pretty: bool = ctx.get(1)?;
+            convert_value_to_json(input, pretty)
+        },
+    )?;
+    
+    Ok(())
+}
+
+/// Convert a SQLite value to JSON format
+fn convert_value_to_json(value: rusqlite::types::ValueRef, pretty: bool) -> Result<Option<String>> {
+    use rusqlite::types::ValueRef;
+    
+    let json_value = match value {
+        ValueRef::Null => JsonValue::Null,
+        ValueRef::Integer(i) => JsonValue::Number(serde_json::Number::from(i)),
+        ValueRef::Real(f) => {
+            if let Some(num) = serde_json::Number::from_f64(f) {
+                JsonValue::Number(num)
+            } else {
+                JsonValue::Null
+            }
+        }
+        ValueRef::Text(s) => {
+            let text = std::str::from_utf8(s).unwrap_or("");
+            // Try to parse as JSON first
+            if let Ok(parsed) = serde_json::from_str::<JsonValue>(text) {
+                parsed
+            } else {
+                JsonValue::String(text.to_string())
+            }
+        }
+        ValueRef::Blob(b) => {
+            // Convert blob to hex string
+            JsonValue::String(format!("\\x{}", hex::encode(b)))
+        }
+    };
+    
+    Ok(Some(if pretty {
+        serde_json::to_string_pretty(&json_value).unwrap_or_else(|_| "null".to_string())
+    } else {
+        serde_json::to_string(&json_value).unwrap_or_else(|_| "null".to_string())
+    }))
 }
 
 /// Parse PostgreSQL array path format '{key1,key2}' into Vec<String>

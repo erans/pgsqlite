@@ -276,6 +276,17 @@ impl ExtendedQueryHandler {
             }
         }
         
+        // Translate row_to_json() functions for PostgreSQL compatibility
+        use crate::translator::RowToJsonTranslator;
+        let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_for_analysis);
+        if translated != translated_for_analysis {
+            info!("row_to_json translation changed query from: {}", translated_for_analysis);
+            info!("row_to_json translation changed query to: {}", translated);
+            translated_for_analysis = translated;
+        }
+        debug!("row_to_json metadata hints: {:?}", metadata);
+        translation_metadata.merge(metadata);
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);

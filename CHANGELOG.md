@@ -38,6 +38,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - json_extract_scalar(), jsonb_contains(), jsonb_contained() operations
   - json_array_elements(), json_strip_nulls() utility functions
   - jsonb_set(), json_extract_path(), json_extract_path_text() path operations
+- **Row to JSON Conversion**: Complete row_to_json() function implementation
+  - RowToJsonTranslator for converting PostgreSQL subquery patterns to json_object() calls
+  - Pattern matching for `SELECT row_to_json(t) FROM (SELECT ...) t` syntax
+  - Column extraction with support for aliases from SELECT clauses
+  - SQLite function registration for simple value conversion cases
+  - Integration with both simple and extended query protocols
+  - TranslationMetadata support for proper JSON type inference
+  - Comprehensive test coverage for all usage scenarios
 
 ### Changed
 - Enhanced InsertTranslator to handle array value conversion from PostgreSQL to JSON format
