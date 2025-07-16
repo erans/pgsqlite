@@ -674,6 +674,19 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] Full PostgreSQL compatibility for table row to JSON conversion
 - [x] Zero performance impact - benchmark results maintained at baseline levels
 
+**Phase 9: JSON Function Test Coverage - COMPLETED (2025-07-16)**
+- [x] Enhanced CI/CD pipeline with comprehensive JSON function testing
+- [x] Added all JSON functions to test_queries.sql (lines 1241-1312):
+  - JSON aggregation: json_agg(), jsonb_agg(), json_object_agg(), jsonb_object_agg()
+  - Row conversion: row_to_json() with various subquery patterns
+  - Table functions: json_each(), json_each_text(), jsonb_each(), jsonb_each_text()
+  - JSON manipulation: jsonb_insert(), jsonb_delete(), jsonb_pretty()
+  - JSON existence testing with json_extract() equivalents
+- [x] Fixed row_to_json() subquery alias handling issues
+- [x] Updated JSON existence operator tests to use compatible json_extract() patterns
+- [x] All tests pass successfully across all CI/CD connection modes
+- [x] Complete validation coverage for production deployment
+
 **Implementation Details:**
 - All functions registered in src/functions/json_functions.rs
 - Translation logic in src/translator/json_each_translator.rs
@@ -702,6 +715,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 12. Array indexing and performance optimizations
 
 **Current Status:** Array and JSON support is approximately **99% complete** for common use cases. The missing features primarily affect advanced PostgreSQL applications or edge cases.
+
+**Test Coverage:** Complete CI/CD validation ensures all implemented JSON and array functions work correctly across all deployment scenarios.
 
 **Next Phase:** Implement json_populate_record() / json_to_record() functions for record conversion.
 

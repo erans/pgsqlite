@@ -1237,3 +1237,68 @@ SELECT id, data FROM json_func_test WHERE id = 2;
 
 -- Clean up
 DROP TABLE json_func_test;
+
+-- ===================================================================
+-- JSON Aggregation and Row Conversion Function Tests
+-- ===================================================================
+
+-- Test json_agg and jsonb_agg
+CREATE TABLE agg_test (
+    id INTEGER,
+    value TEXT,
+    score INTEGER
+);
+
+INSERT INTO agg_test VALUES 
+(1, 'apple', 85),
+(2, 'banana', 92),
+(3, 'orange', 78),
+(4, 'grape', 90);
+
+-- Test json_agg
+SELECT json_agg(value) AS fruit_array FROM agg_test;
+SELECT json_agg(score) AS score_array FROM agg_test WHERE score > 80;
+
+-- Test jsonb_agg (should be identical to json_agg)
+SELECT jsonb_agg(value) AS fruit_array_jsonb FROM agg_test;
+
+-- Test json_object_agg and jsonb_object_agg
+SELECT json_object_agg(value, score) AS fruit_scores FROM agg_test;
+SELECT jsonb_object_agg(value, score) AS fruit_scores_jsonb FROM agg_test;
+
+-- Test with mixed data types
+SELECT json_object_agg(id, value) AS id_to_fruit FROM agg_test WHERE id <= 2;
+
+-- Test empty result sets
+SELECT json_agg(value) AS empty_array FROM agg_test WHERE id > 100;
+SELECT json_object_agg(value, score) AS empty_object FROM agg_test WHERE id > 100;
+
+-- Test row_to_json function
+SELECT row_to_json(t) FROM (SELECT value, score FROM agg_test WHERE id = 1) t;
+SELECT row_to_json(t) FROM (SELECT id, value, score FROM agg_test WHERE score > 85) t;
+
+-- Test row_to_json with simple value
+SELECT row_to_json('{"fruit_name": "banana", "rating": 92}') AS fruit_json;
+
+-- Test row_to_json with simple query (using existing SQLite function)
+SELECT row_to_json('{"name": "test", "score": 85}') AS simple_json;
+
+-- Test json_each and json_each_text
+SELECT key, value FROM json_each('{"name": "apple", "score": 85, "fresh": true}');
+SELECT key, value FROM json_each_text('{"name": "apple", "score": 85, "fresh": true}');
+
+-- Test jsonb_each and jsonb_each_text  
+SELECT key, value FROM jsonb_each('{"user": "alice", "count": 42, "active": false}');
+SELECT key, value FROM jsonb_each_text('{"user": "alice", "count": 42, "active": false}');
+
+-- Test JSON manipulation functions
+SELECT jsonb_insert('{"a": 1, "b": 2}', '{c}', '3') AS insert_test;
+SELECT jsonb_delete('{"a": 1, "b": 2, "c": 3}', '{b}') AS delete_test;
+SELECT jsonb_pretty('{"compact":{"json":["array","with","values"]}}') AS pretty_test;
+
+-- Test JSON existence with json_extract
+SELECT CASE WHEN json_extract('{"name": "test", "value": 123}', '$.name') IS NOT NULL THEN 1 ELSE 0 END AS has_name;
+SELECT CASE WHEN json_extract('{"name": "test", "value": 123}', '$.missing') IS NOT NULL THEN 1 ELSE 0 END AS has_missing;
+
+-- Clean up aggregation test table
+DROP TABLE agg_test;

@@ -163,5 +163,68 @@ SELECT json_extract_path('{"a": [1, 2, 3]}', 'a') AS array_extract;
 SELECT jsonb_contains('[]', '[]') AS empty_array_contains;
 SELECT jsonb_contains('{}', '{}') AS empty_object_contains;
 
+-- ===================================================================
+-- JSON Aggregation and Advanced Functions (2025-07-16)
+-- ===================================================================
+
+-- Test json_agg aggregation function
+SELECT 'json_agg tests:' AS test_group;
+SELECT json_agg(metadata) AS all_metadata FROM test_json_funcs;
+SELECT json_agg(id) AS active_ids FROM test_json_funcs WHERE id <= 3;
+
+-- Test jsonb_agg aggregation function
+SELECT 'jsonb_agg tests:' AS test_group;
+SELECT jsonb_agg(metadata) AS all_metadata_jsonb FROM test_json_funcs;
+
+-- Test json_object_agg aggregation function
+SELECT 'json_object_agg tests:' AS test_group;
+SELECT json_object_agg(id, metadata) AS id_to_metadata FROM test_json_funcs WHERE id <= 3;
+SELECT json_object_agg(metadata, id) AS metadata_to_id FROM test_json_funcs WHERE id <= 2;
+
+-- Test jsonb_object_agg aggregation function
+SELECT 'jsonb_object_agg tests:' AS test_group;
+SELECT jsonb_object_agg(id, metadata) AS id_to_metadata_jsonb FROM test_json_funcs WHERE id <= 3;
+
+-- Test row_to_json function
+SELECT 'row_to_json tests:' AS test_group;
+SELECT row_to_json(t) FROM (SELECT id, metadata FROM test_json_funcs WHERE id = 1) t;
+SELECT row_to_json(user_info) FROM (
+    SELECT id AS user_id, 
+           metadata AS username,
+           data->>'name' AS full_name
+    FROM test_json_funcs 
+    WHERE id <= 2
+) user_info;
+
+-- Test json_each and json_each_text table functions
+SELECT 'json_each tests:' AS test_group;
+SELECT key, value FROM json_each('{"name": "test", "count": 42, "active": true}');
+SELECT key, value FROM json_each_text('{"name": "test", "count": 42, "active": true}');
+
+-- Test jsonb_each and jsonb_each_text table functions  
+SELECT 'jsonb_each tests:' AS test_group;
+SELECT key, value FROM jsonb_each('{"type": "example", "value": 123, "flag": false}');
+SELECT key, value FROM jsonb_each_text('{"type": "example", "value": 123, "flag": false}');
+
+-- Test JSON manipulation functions
+SELECT 'json manipulation tests:' AS test_group;
+SELECT jsonb_insert('{"a": 1, "b": 2}', '{c}', '3') AS insert_simple;
+SELECT jsonb_insert('{"users": [{"id": 1}]}', '{users,1}', '{"id": 2, "name": "Bob"}') AS insert_array;
+SELECT jsonb_delete('{"a": 1, "b": 2, "c": 3}', '{b}') AS delete_key;
+SELECT jsonb_delete('{"arr": [1, 2, 3, 4]}', '{arr,1}') AS delete_array_element;
+SELECT jsonb_pretty('{"compact":{"data":["item1","item2","item3"]}}') AS pretty_formatted;
+
+-- Test JSON existence operators
+SELECT 'json existence tests:' AS test_group;
+SELECT config ? 'active' AS has_active FROM test_json_funcs WHERE id = 1;
+SELECT data ? 'nonexistent' AS has_missing FROM test_json_funcs WHERE id = 1;
+SELECT data ?| ARRAY['name', 'missing'] AS has_any_keys FROM test_json_funcs WHERE id = 1;
+SELECT data ?& ARRAY['name', 'age'] AS has_all_keys FROM test_json_funcs WHERE id = 1;
+
+-- Test empty aggregation results
+SELECT 'empty result tests:' AS test_group;
+SELECT json_agg(metadata) AS empty_agg FROM test_json_funcs WHERE id > 100;
+SELECT json_object_agg(id, metadata) AS empty_obj_agg FROM test_json_funcs WHERE id > 100;
+
 -- Clean up
 DROP TABLE test_json_funcs;

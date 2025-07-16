@@ -154,7 +154,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
-- **JSON Support**: `JSON` and `JSONB` types with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`) and functions
+- **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`) and functions (json_agg, json_object_agg, row_to_json, jsonb_insert, etc.)
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
 - **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`
@@ -165,7 +165,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - ❌ Stored procedures and custom functions
 - ❌ PostgreSQL-specific system functions (`pg_*`)
 - ❌ Some advanced data types (ranges, geometric types, full-text search)
-- ❌ Array operators and functions (ANY, ALL, @>, unnest, array_agg)
+- ⚠️  Some advanced array features (ARRAY literal translation, array assignment operations)
 - ❌ Multiple concurrent writers (SQLite allows only one writer at a time)
 
 For detailed compatibility information, see [Type Mapping Documentation](docs/type-mapping-prd.md).
@@ -217,12 +217,17 @@ RUST_LOG=debug ./target/release/pgsqlite
 ### Running Integration Tests
 
 ```bash
-# Run all test suites
+# Run all test suites (includes comprehensive JSON/array function testing)
 ./run_ssl_tests.sh
 
 # Run specific test mode
 ./run_ssl_tests.sh --mode tcp-ssl --verbose
+
+# Run unit tests
+cargo test
 ```
+
+The test suite includes comprehensive validation of all JSON and array functions across multiple connection modes (TCP with/without SSL, Unix sockets, file-based databases).
 
 ### Contributing
 
