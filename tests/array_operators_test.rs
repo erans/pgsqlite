@@ -60,11 +60,10 @@ async fn test_array_operators() {
     assert_eq!(rows.len(), 3); // Laptop, Phone, Tablet
     
     // Test ALL operator (finding products where all tags are longer than 5 chars)
-    // TODO: Fix ALL operator translation - currently disabled due to syntax issues
-    // let _rows = client.query(
-    //     "SELECT id, name FROM products WHERE 5 < ALL(SELECT length(value) FROM json_each(tags))",
-    //     &[]
-    // ).await.unwrap();
+    let _rows = client.query(
+        "SELECT id, name FROM products WHERE 5 < ALL(SELECT length(value) FROM json_each(tags))",
+        &[]
+    ).await.unwrap();
     // This is a simplified test - in reality we'd need to check string length of each element
     
     // Test @> operator (contains)
@@ -296,6 +295,77 @@ async fn test_array_slice() {
     ).await.unwrap();
     let slice: String = row.get(0);
     assert_eq!(slice, "[20,30,40,50]");
+    
+    server.abort();
+}
+
+#[tokio::test]
+async fn test_unnest_with_ordinality() {
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute(
+                "CREATE TABLE test_arrays (
+                    id INTEGER PRIMARY KEY,
+                    items TEXT
+                )"
+            ).await?;
+            
+            db.execute(
+                r#"INSERT INTO test_arrays (id, items) VALUES 
+                (1, '["apple", "banana", "cherry"]'),
+                (2, '["red", "green", "blue"]')"#
+            ).await?;
+            
+            Ok(())
+        })
+    }).await;
+    
+    let client = &server.client;
+    
+    // Test basic unnest first
+    let rows = client.query(
+        "SELECT value FROM unnest('[\"first\", \"second\", \"third\"]') AS t",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 3);
+    let first_value: String = rows[0].get(0);
+    assert_eq!(first_value, "first");
+    
+    // Now test unnest with ordinality  
+    let rows = client.query(
+        "SELECT value, ordinality FROM unnest('[\"first\", \"second\", \"third\"]') WITH ORDINALITY AS t ORDER BY ordinality",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 3);
+    
+    let first_value: String = rows[0].get(0);
+    let first_ord: i64 = rows[0].get(1);
+    assert_eq!(first_value, "first");
+    assert_eq!(first_ord, 1);
+    
+    let second_value: String = rows[1].get(0);
+    let second_ord: i64 = rows[1].get(1);
+    assert_eq!(second_value, "second");
+    assert_eq!(second_ord, 2);
+    
+    let third_value: String = rows[2].get(0);
+    let third_ord: i64 = rows[2].get(1);
+    assert_eq!(third_ord, 3);
+    assert_eq!(third_value, "third");
+    
+    // Test unnest with ordinality in WHERE clause
+    let rows = client.query(
+        "SELECT value FROM unnest('[\"a\", \"b\", \"c\", \"d\"]') WITH ORDINALITY AS t WHERE ordinality > 2",
+        &[]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 2);
+    let val1: String = rows[0].get(0);
+    let val2: String = rows[1].get(0);
+    assert_eq!(val1, "c");
+    assert_eq!(val2, "d");
     
     server.abort();
 }
