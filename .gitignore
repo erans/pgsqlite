@@ -18,7 +18,13 @@ benchmarks/bench.log
 
 sqlite.db*
 
+# Test files and benchmarks
 test_output.log
 test_db
 test_db.sqlite*
+test_catalog.db*
+test.db
 pgsqlite_test.log
+protocol_benchmark_results.txt
+protocol_profile_results.txt
+simple_protocol_results.txt
