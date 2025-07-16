@@ -154,7 +154,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
-- **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`) and functions (json_agg, json_object_agg, row_to_json, jsonb_insert, etc.)
+- **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`) and functions (json_agg, json_object_agg, row_to_json, json_populate_record, json_to_record, jsonb_insert, etc.)
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
 - **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`

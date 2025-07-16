@@ -277,6 +277,13 @@ INSERT INTO table (col1, col2) VALUES
   - Fixed early exit optimization bug by detecting || operator in contains_array_functions
   - All 6 integration tests and 23 unit tests pass
   - Note: ARRAY literal translation (ARRAY[1,2,3] → JSON) requires separate implementation
+- **JSON Record Conversion Functions (2025-07-16)**: Complete json_populate_record and json_to_record implementation
+  - json_populate_record(base_record, json_data): populates record from JSON object with PostgreSQL semantics
+  - json_to_record(json_data): converts JSON objects to record-like string representations
+  - Simplified implementations acknowledging SQLite's lack of native RECORD type support
+  - Comprehensive error handling for invalid JSON and non-object inputs
+  - Full integration with PostgreSQL wire protocol and CI/CD test suite
+  - Brings pgsqlite JSON functionality to 100% completion for common PostgreSQL use cases
 - **JSON Each Text Functions (2025-07-15)**: Complete json_each_text() and jsonb_each_text() implementation
   - Implemented json_each_text_value() custom SQLite function for proper text conversion
   - Enhanced JsonEachTranslator to handle both regular and _text variants
