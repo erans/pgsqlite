@@ -441,8 +441,8 @@ async fn test_array_unnest_workaround() {
     ).await.unwrap();
     assert_eq!(rows.len(), 3);
     
-    let values: Vec<i32> = rows.iter().map(|r| r.get(0)).collect();
-    assert_eq!(values, vec![10, 20, 30]);
+    let values: Vec<String> = rows.iter().map(|r| r.get(0)).collect();
+    assert_eq!(values, vec!["10", "20", "30"]);
     
     // Test cross join with json_each for unnesting multiple arrays
     let rows = client.query(

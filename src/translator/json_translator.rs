@@ -209,10 +209,33 @@ impl JsonTranslator {
     
     /// Translate ?, ?|, ?& operators (existence checks)
     fn translate_existence_operators(sql: &str) -> Result<String, PgSqliteError> {
-        // For now, we'll return the SQL as-is since these operators are complex
-        // and would require custom functions in SQLite
-        // TODO: Implement custom functions for these operators
-        Ok(sql.to_string())
+        static RE_HAS_KEY: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"(\b\w+(?:\.\w+)?)\s*\?\s*'([^']+)'")
+                .expect("Invalid regex")
+        });
+        
+        static RE_HAS_ANY_KEY: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"(\b\w+(?:\.\w+)?)\s*\?\|\s*'?\{([^}]+)\}'?")
+                .expect("Invalid regex")
+        });
+        
+        static RE_HAS_ALL_KEYS: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"(\b\w+(?:\.\w+)?)\s*\?\&\s*'?\{([^}]+)\}'?")
+                .expect("Invalid regex")
+        });
+        
+        let mut result = sql.to_string();
+        
+        // Translate ? operator (has key)
+        result = RE_HAS_KEY.replace_all(&result, r"pgsqlite_json_has_key($1, '$2')").to_string();
+        
+        // Translate ?| operator (has any key)
+        result = RE_HAS_ANY_KEY.replace_all(&result, r"pgsqlite_json_has_any_key($1, '$2')").to_string();
+        
+        // Translate ?& operator (has all keys)
+        result = RE_HAS_ALL_KEYS.replace_all(&result, r"pgsqlite_json_has_all_keys($1, '$2')").to_string();
+        
+        Ok(result)
     }
     
 }
@@ -332,5 +355,28 @@ mod tests {
         assert!(translated.contains("pgsqlite_json_get"));
         // The key improvement is that our custom functions can handle any input type
         // which solves the original "Invalid function parameter type" error
+    }
+    
+    #[test]
+    fn test_existence_operators() {
+        // Test ? operator (key exists)
+        let sql = "SELECT * FROM users WHERE data ? 'name'";
+        let translated = JsonTranslator::translate_json_operators(sql).unwrap();
+        assert_eq!(translated, "SELECT * FROM users WHERE pgsqlite_json_has_key(data, 'name')");
+        
+        // Test ?| operator (any key exists)
+        let sql = "SELECT * FROM users WHERE config ?| '{admin,user}'";
+        let translated = JsonTranslator::translate_json_operators(sql).unwrap();
+        assert_eq!(translated, "SELECT * FROM users WHERE pgsqlite_json_has_any_key(config, 'admin,user')");
+        
+        // Test ?& operator (all keys exist)
+        let sql = "SELECT * FROM items WHERE metadata ?& '{name,price,category}'";
+        let translated = JsonTranslator::translate_json_operators(sql).unwrap();
+        assert_eq!(translated, "SELECT * FROM items WHERE pgsqlite_json_has_all_keys(metadata, 'name,price,category')");
+        
+        // Test with table alias
+        let sql = "SELECT u.id FROM users u WHERE u.profile ? 'email'";
+        let translated = JsonTranslator::translate_json_operators(sql).unwrap();
+        assert_eq!(translated, "SELECT u.id FROM users u WHERE pgsqlite_json_has_key(u.profile, 'email')");
     }
 }

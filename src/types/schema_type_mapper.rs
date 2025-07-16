@@ -351,6 +351,13 @@ impl SchemaTypeMapper {
             return Some(PgType::Text.to_oid()); // text
         }
         
+        // JSON aggregate functions that return text (for compatibility)
+        if upper.starts_with("JSON_AGG(") || upper.starts_with("JSON_OBJECT_AGG(") ||
+           upper.starts_with("JSONB_AGG(") || upper.starts_with("JSONB_OBJECT_AGG(") ||
+           upper.starts_with("ROW_TO_JSON(") {
+            return Some(PgType::Text.to_oid()); // text
+        }
+        
         // CURRENT_DATE returns text in YYYY-MM-DD format (SQLite built-in)
         if upper == "CURRENT_DATE" {
             return Some(PgType::Text.to_oid()); // text

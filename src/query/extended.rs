@@ -258,6 +258,35 @@ impl ExtendedQueryHandler {
             }
         }
         
+        // Translate json_each()/jsonb_each() functions for PostgreSQL compatibility
+        use crate::translator::JsonEachTranslator;
+        match JsonEachTranslator::translate_with_metadata(&translated_for_analysis) {
+            Ok((translated, metadata)) => {
+                if translated != translated_for_analysis {
+                    info!("JSON each translation changed query from: {}", translated_for_analysis);
+                    info!("JSON each translation changed query to: {}", translated);
+                    translated_for_analysis = translated;
+                }
+                debug!("JSON each metadata hints: {:?}", metadata);
+                translation_metadata.merge(metadata);
+            }
+            Err(e) => {
+                debug!("JSON each translation failed: {:?}", e);
+                // Continue with original query
+            }
+        }
+        
+        // Translate row_to_json() functions for PostgreSQL compatibility
+        use crate::translator::RowToJsonTranslator;
+        let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_for_analysis);
+        if translated != translated_for_analysis {
+            info!("row_to_json translation changed query from: {}", translated_for_analysis);
+            info!("row_to_json translation changed query to: {}", translated);
+            translated_for_analysis = translated;
+        }
+        debug!("row_to_json metadata hints: {:?}", metadata);
+        translation_metadata.merge(metadata);
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);
@@ -830,7 +859,22 @@ impl ExtendedQueryHandler {
         }
         
         // Convert bound values and substitute parameters
-        let final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+        let mut final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+        
+        // Apply JSON operator translation if needed
+        if JsonTranslator::contains_json_operations(&final_query) {
+            debug!("Query needs JSON operator translation: {}", final_query);
+            match JsonTranslator::translate_json_operators(&final_query) {
+                Ok(translated) => {
+                    debug!("Query after JSON operator translation: {}", translated);
+                    final_query = translated;
+                }
+                Err(e) => {
+                    debug!("JSON operator translation failed: {}", e);
+                    // Continue with original query - some operators might not be supported yet
+                }
+            }
+        }
         
         info!("Executing query: {}", final_query);
         debug!("Original query: {}", query);

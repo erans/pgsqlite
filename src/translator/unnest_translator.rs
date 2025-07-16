@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn test_unnest_with_metadata() {
         let sql = "SELECT value FROM unnest('[1,2,3]') AS expanded";
-        let (result, metadata) = UnnestTranslator::translate_with_metadata(sql).unwrap();
+        let (result, _metadata) = UnnestTranslator::translate_with_metadata(sql).unwrap();
         assert!(result.contains("json_each"));
         // The metadata should contain hints for the alias if it's a table alias
     }

@@ -275,6 +275,33 @@ impl QueryExecutor {
             }
         }
         
+        // Translate json_each()/jsonb_each() functions for PostgreSQL compatibility
+        use crate::translator::JsonEachTranslator;
+        match JsonEachTranslator::translate_with_metadata(&translated_query) {
+            Ok((translated, metadata)) => {
+                if translated != translated_query {
+                    info!("Query after json_each translation: {}", translated);
+                    translated_query = translated;
+                }
+                debug!("JsonEach translation metadata: {} hints", metadata.column_mappings.len());
+                translation_metadata.merge(metadata);
+            }
+            Err(e) => {
+                debug!("JsonEach translation failed: {}", e);
+                // Continue with original query
+            }
+        }
+        
+        // Translate row_to_json() functions for PostgreSQL compatibility
+        use crate::translator::RowToJsonTranslator;
+        let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_query);
+        if translated != translated_query {
+            info!("Query after row_to_json translation: {}", translated);
+            translated_query = translated;
+        }
+        debug!("RowToJson translation metadata: {} hints", metadata.column_mappings.len());
+        translation_metadata.merge(metadata);
+        
         // Analyze arithmetic expressions for type metadata
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
