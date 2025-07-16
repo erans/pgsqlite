@@ -43,7 +43,9 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
        query.contains("->") || // JSON operators
        query.contains("@") || // Array/range operators
        query.contains("DECIMAL") || // May need rewriting
-       query.contains("NUMERIC") {
+       query.contains("NUMERIC") ||
+       query.contains("unnest") || // unnest function calls need translation
+       query.contains("UNNEST") {
         return false;
     }
     
@@ -134,6 +136,12 @@ mod tests {
         assert!(!is_ultra_simple_query("SELECT * FROM users JOIN orders"));
         assert!(!is_ultra_simple_query("SELECT (SELECT COUNT(*) FROM orders)"));
         assert!(!is_ultra_simple_query("SELECT * FROM users WHERE name ~ 'test'"));
+        assert!(!is_ultra_simple_query("SELECT value FROM unnest('[1,2,3]') AS t"));
+        assert!(!is_ultra_simple_query("SELECT value FROM UNNEST('[1,2,3]') AS t"));
+        
+        // Test the exact query from the integration test
+        assert!(!is_ultra_simple_query("SELECT value FROM unnest('[\"first\", \"second\", \"third\"]') AS t"));
+        assert!(!is_ultra_simple_query("SELECT value, ordinality FROM unnest('[\"first\", \"second\", \"third\"]') WITH ORDINALITY AS t ORDER BY ordinality"));
     }
     
     #[test]

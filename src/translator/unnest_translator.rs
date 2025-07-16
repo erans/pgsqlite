@@ -15,6 +15,10 @@ static UNNEST_FROM_CLAUSE_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bFROM\s+unnest\s*\(\s*([^)]+)\s*\)(?:\s+(?:AS\s+)?(\w+))?").unwrap()
 });
 
+static UNNEST_WITH_ORDINALITY_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bFROM\s+unnest\s*\(\s*([^)]+)\s*\)\s+WITH\s+ORDINALITY(?:\s+(?:AS\s+)?(\w+))?").unwrap()
+});
+
 /// Translates PostgreSQL unnest() function calls to SQLite json_each() equivalents
 pub struct UnnestTranslator;
 
@@ -22,7 +26,7 @@ impl UnnestTranslator {
     /// Check if SQL contains unnest function calls
     pub fn contains_unnest(sql: &str) -> bool {
         // Fast path: check for unnest before any expensive operations
-        if !sql.contains("unnest") {
+        if !sql.contains("unnest") && !sql.contains("UNNEST") {
             return false;
         }
         
@@ -40,9 +44,11 @@ impl UnnestTranslator {
         let mut result = sql.to_string();
         
         // Handle different patterns:
-        // 1. FROM unnest(array) AS alias
-        // 2. unnest(array) in SELECT clause
+        // 1. FROM unnest(array) WITH ORDINALITY AS alias
+        // 2. FROM unnest(array) AS alias
+        // 3. unnest(array) in SELECT clause
         
+        result = Self::translate_from_clause_with_ordinality(&result)?;
         result = Self::translate_from_clause(&result)?;
         result = Self::translate_select_clause(&result)?;
         
@@ -59,6 +65,7 @@ impl UnnestTranslator {
         let mut metadata = TranslationMetadata::new();
         
         // Translate unnest calls
+        result = Self::translate_from_clause_with_ordinality(&result)?;
         result = Self::translate_from_clause(&result)?;
         result = Self::translate_select_clause(&result)?;
         
@@ -79,7 +86,7 @@ impl UnnestTranslator {
             let alias = captures.get(2).map(|m| m.as_str()).unwrap_or("unnest_table");
             
             // Convert unnest(array) to json_each(array) with proper column selection
-            let replacement = format!("json_each({}) AS {}", array_expr, alias);
+            let replacement = format!("FROM json_each({}) AS {}", array_expr, alias);
             
             replacements.push((captures[0].to_string(), replacement));
         }
@@ -88,6 +95,35 @@ impl UnnestTranslator {
         for (original, replacement) in replacements {
             result = result.replace(&original, &replacement);
             debug!("Translated FROM unnest: {} -> {}", original, replacement);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Translate FROM unnest(array) WITH ORDINALITY AS alias to CTE with ROW_NUMBER
+    fn translate_from_clause_with_ordinality(sql: &str) -> Result<String, PgSqliteError> {
+        let mut result = sql.to_string();
+        
+        // Collect replacements to avoid borrowing issues
+        let mut replacements = Vec::new();
+        for captures in UNNEST_WITH_ORDINALITY_REGEX.captures_iter(&result) {
+            let array_expr = captures[1].trim();
+            let alias = captures.get(2).map(|m| m.as_str()).unwrap_or("unnest_table");
+            
+            // Convert unnest(array) WITH ORDINALITY to a CTE that includes row numbers
+            // PostgreSQL's WITH ORDINALITY returns (value, ordinality) columns
+            let replacement = format!(
+                "FROM (SELECT value, (key + 1) AS ordinality FROM json_each({})) AS {}",
+                array_expr, alias
+            );
+            
+            replacements.push((captures[0].to_string(), replacement));
+        }
+        
+        // Apply replacements
+        for (original, replacement) in replacements {
+            result = result.replace(&original, &replacement);
+            debug!("Translated FROM unnest WITH ORDINALITY: {} -> {}", original, replacement);
         }
         
         Ok(result)
@@ -177,6 +213,9 @@ mod tests {
         assert!(UnnestTranslator::contains_unnest("SELECT unnest(array) FROM table"));
         assert!(UnnestTranslator::contains_unnest("FROM unnest(array) AS t"));
         assert!(!UnnestTranslator::contains_unnest("SELECT name FROM users"));
+        
+        // Test the specific query from the integration test
+        assert!(UnnestTranslator::contains_unnest("SELECT value FROM unnest('[\"first\", \"second\", \"third\"]') AS t"));
     }
     
     #[test]
@@ -185,5 +224,50 @@ mod tests {
         let (result, _metadata) = UnnestTranslator::translate_with_metadata(sql).unwrap();
         assert!(result.contains("json_each"));
         // The metadata should contain hints for the alias if it's a table alias
+    }
+    
+    #[test]
+    fn test_unnest_with_ordinality() {
+        let sql = "SELECT value, ordinality FROM unnest('[1,2,3]') WITH ORDINALITY AS t";
+        let result = UnnestTranslator::translate_unnest(sql).unwrap();
+        assert!(result.contains("json_each"));
+        assert!(result.contains("ordinality"));
+        assert!(result.contains("(key + 1)"));
+        assert!(!result.contains("WITH ORDINALITY"));
+    }
+    
+    #[test]
+    fn test_unnest_with_ordinality_no_alias() {
+        let sql = "SELECT value, ordinality FROM unnest('[1,2,3]') WITH ORDINALITY";
+        let result = UnnestTranslator::translate_unnest(sql).unwrap();
+        assert!(result.contains("json_each"));
+        assert!(result.contains("AS unnest_table"));
+        assert!(result.contains("ordinality"));
+    }
+    
+    #[test]
+    fn test_unnest_with_ordinality_complex() {
+        let sql = "SELECT t.value, t.ordinality FROM unnest(ARRAY['a','b','c']) WITH ORDINALITY AS t WHERE t.ordinality > 1";
+        let result = UnnestTranslator::translate_unnest(sql).unwrap();
+        assert!(result.contains("json_each"));
+        assert!(result.contains("(key + 1) AS ordinality"));
+        assert!(!result.contains("WITH ORDINALITY"));
+    }
+    
+    #[test]
+    fn test_unnest_with_ordinality_uppercase() {
+        let sql = "SELECT value, ordinality FROM UNNEST('[\"first\", \"second\", \"third\"]') WITH ORDINALITY AS t ORDER BY ordinality";
+        let result = UnnestTranslator::translate_unnest(sql).unwrap();
+        assert!(result.contains("json_each"));
+        assert!(result.contains("(key + 1) AS ordinality"));
+        assert!(!result.contains("WITH ORDINALITY"));
+    }
+    
+    #[test]
+    fn test_integration_test_query() {
+        let sql = "SELECT value FROM unnest('[\"first\", \"second\", \"third\"]') AS t";
+        let result = UnnestTranslator::translate_unnest(sql).unwrap();
+        assert!(result.contains("json_each"));
+        assert!(!result.contains("unnest"));
     }
 }
