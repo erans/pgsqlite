@@ -9,14 +9,23 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows Postgr
   - `protocol/` - PostgreSQL wire protocol implementation
   - `session/` - Session state management
   - `query/` - Query execution handlers
-- `tests/` - Test files
+- `tests/` - Test files and infrastructure
+  - `runner/` - Test runner scripts
+    - `run_ssl_tests.sh` - Main integration test runner
+  - `sql/` - SQL test files organized by category
+    - `core/` - Core functionality tests (`test_queries.sql`)
+    - `meta/` - Meta-command tests (`test_meta_commands*.sql`)
+    - `features/` - Feature-specific tests (JSON, arrays, datetime)
+    - `debug/` - Debug and diagnostic tests
+  - `output/` - Test output files (logs, temporary databases)
 - `Cargo.toml` - Rust project configuration
 - `TODO.md` - Comprehensive task list for future development
 
 ## Build Commands
 - `cargo build` - Build the project
-- `cargo test` - Run tests
+- `cargo test` - Run unit tests
 - `cargo run` - Run the project
+- `tests/runner/run_ssl_tests.sh` - Run integration tests (must be executed from project root)
 
 ## Development Workflow
 - After implementing any feature, always run the full test suite with `cargo test` to ensure nothing is broken

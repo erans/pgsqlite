@@ -1,0 +1,13 @@
+# Test output files
+*.log
+test_output.log
+meta_command_output.log
+pgsqlite_test.log
+
+# Test databases
+*.sqlite
+*.db
+
+# Temporary files
+*.tmp
+*.pid

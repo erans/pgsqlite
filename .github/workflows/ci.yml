@@ -32,13 +32,13 @@ jobs:
       run: sudo apt-get install -y bc
     - name: Run integration tests - TCP with SSL
       run: |
-        chmod +x run_ssl_tests.sh
-        ./run_ssl_tests.sh --mode tcp-ssl
+        chmod +x tests/runner/run_ssl_tests.sh
+        ./tests/runner/run_ssl_tests.sh --mode tcp-ssl
     - name: Run integration tests - TCP without SSL
-      run: ./run_ssl_tests.sh --mode tcp-no-ssl
+      run: ./tests/runner/run_ssl_tests.sh --mode tcp-no-ssl
     - name: Run integration tests - Unix socket
-      run: ./run_ssl_tests.sh --mode unix-socket
+      run: ./tests/runner/run_ssl_tests.sh --mode unix-socket
     - name: Run integration tests - File DB with SSL
-      run: ./run_ssl_tests.sh --mode file-ssl
+      run: ./tests/runner/run_ssl_tests.sh --mode file-ssl
     - name: Run integration tests - File DB without SSL
-      run: ./run_ssl_tests.sh --mode file-no-ssl
+      run: ./tests/runner/run_ssl_tests.sh --mode file-no-ssl

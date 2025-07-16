@@ -342,7 +342,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Basic timezone support (UTC, EST, PST, CST, MST, offset formats)
   - [x] In-memory databases now auto-migrate on startup
 - [x] **Phase 6: Comprehensive Test Suite** - COMPLETED (2025-07-08)
-  - [x] Enhanced test_queries.sql with 200+ lines of datetime/timezone test coverage
+  - [x] Enhanced tests/sql/core/test_queries.sql with 200+ lines of datetime/timezone test coverage
   - [x] Added 5 comprehensive test data rows with diverse datetime scenarios
   - [x] Test coverage for all datetime functions: NOW(), CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP
   - [x] Timezone conversion testing across multiple zones (UTC, America/New_York, Europe/London, Asia/Tokyo)
@@ -428,7 +428,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Text protocol converts JSON ["a","b"] to PostgreSQL {a,b}
   - Array type OIDs properly transmitted in RowDescription
 - [x] Integration with CI/CD pipeline
-  - Array tests included in test_queries.sql with PostgreSQL array literal syntax
+  - Array tests included in tests/sql/core/test_queries.sql with PostgreSQL array literal syntax
   - Comprehensive Rust integration tests in array_types_test.rs
   - Tested in all 5 CI modes (TCP with/without SSL, Unix socket, File DB with/without SSL)
   - Fixed JSON validation constraint to handle NULL arrays properly
@@ -680,7 +680,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 **Phase 9: JSON Function Test Coverage - COMPLETED (2025-07-16)**
 - [x] Enhanced CI/CD pipeline with comprehensive JSON function testing
-- [x] Added all JSON functions to test_queries.sql (lines 1241-1312):
+- [x] Added all JSON functions to tests/sql/core/test_queries.sql (lines 1241-1312):
   - JSON aggregation: json_agg(), jsonb_agg(), json_object_agg(), jsonb_object_agg()
   - Row conversion: row_to_json() with various subquery patterns
   - Table functions: json_each(), json_each_text(), jsonb_each(), jsonb_each_text()
@@ -700,7 +700,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - Edge case handling (empty objects, invalid JSON, arrays)
   - Error message validation for invalid inputs
   - Basic functionality tests with various JSON structures
-- [x] Integration with CI/CD test suite (test_queries.sql lines 1304-1306)
+- [x] Integration with CI/CD test suite (tests/sql/core/test_queries.sql lines 1304-1306)
 - [x] All tests pass in both unit and integration environments
 - [x] Full PostgreSQL compatibility semantics within SQLite constraints
 
@@ -1427,13 +1427,13 @@ Benchmark results comparing implementations (1000 operations each):
 
 ### CI/CD Integration Testing - COMPLETED (2025-07-03)
 - [x] Added PostgreSQL client installation to GitHub Actions workflow
-- [x] Created multi-mode test runner script (run_ssl_tests.sh)
+- [x] Created multi-mode test runner script (tests/runner/run_ssl_tests.sh)
   - [x] TCP with SSL mode (in-memory database)
   - [x] TCP without SSL mode (in-memory database)
   - [x] Unix socket mode (in-memory database)
   - [x] File database with SSL mode
   - [x] File database without SSL mode
-- [x] Integrated comprehensive SQL test suite (test_queries.sql) into CI pipeline
+- [x] Integrated comprehensive SQL test suite (tests/sql/core/test_queries.sql) into CI pipeline
 - [x] Proper error handling - any SQL query failure causes build to fail
 - [x] Resource cleanup for all modes (sockets, certificates, databases)
 - [x] Renamed workflow from rust.yml to ci.yml for clarity
