@@ -1300,5 +1300,10 @@ SELECT jsonb_pretty('{"compact":{"json":["array","with","values"]}}') AS pretty_
 SELECT CASE WHEN json_extract('{"name": "test", "value": 123}', '$.name') IS NOT NULL THEN 1 ELSE 0 END AS has_name;
 SELECT CASE WHEN json_extract('{"name": "test", "value": 123}', '$.missing') IS NOT NULL THEN 1 ELSE 0 END AS has_missing;
 
+-- Test JSON record conversion functions
+SELECT json_populate_record('null', '{"name": "Alice", "age": 30}') AS populate_test;
+SELECT json_to_record('{"id": 1, "name": "Bob", "active": true}') AS record_test;
+SELECT json_to_record('{"user": "Charlie", "score": 95, "verified": false}') AS complex_record;
+
 -- Clean up aggregation test table
 DROP TABLE agg_test;

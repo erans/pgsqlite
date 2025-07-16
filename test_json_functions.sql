@@ -226,5 +226,14 @@ SELECT 'empty result tests:' AS test_group;
 SELECT json_agg(metadata) AS empty_agg FROM test_json_funcs WHERE id > 100;
 SELECT json_object_agg(id, metadata) AS empty_obj_agg FROM test_json_funcs WHERE id > 100;
 
+-- Test JSON record conversion functions
+SELECT 'json record conversion tests:' AS test_group;
+SELECT json_populate_record('null', '{"name": "David", "age": 28, "department": "Engineering"}') AS populate_employee;
+SELECT json_populate_record('', '{"product": "Widget", "price": 29.99, "in_stock": true}') AS populate_product;
+SELECT json_to_record('{"order_id": 12345, "customer": "Emma", "total": 199.50}') AS order_record;
+SELECT json_to_record('{"session": "abc123", "user_id": 789, "authenticated": true, "expires": null}') AS session_record;
+SELECT json_to_record('{}') AS empty_record;
+SELECT json_to_record('[{"invalid": "array"}]') AS invalid_record;
+
 -- Clean up
 DROP TABLE test_json_funcs;

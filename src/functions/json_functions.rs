@@ -874,6 +874,10 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
     // Row conversion functions
     register_row_to_json(conn)?;
     
+    // Record conversion functions
+    register_json_populate_record(conn)?;
+    register_json_to_record(conn)?;
+    
     Ok(())
 }
 
@@ -1544,6 +1548,92 @@ fn json_contains(container: &JsonValue, contained: &JsonValue) -> bool {
     }
 }
 
+/// Register json_populate_record function
+fn register_json_populate_record(conn: &Connection) -> Result<()> {
+    // json_populate_record is complex in PostgreSQL as it returns a record type
+    // For pgsqlite, we'll implement a simplified version that works with table-valued functions
+    // The full implementation would require significant changes to support PostgreSQL's RECORD type
+    
+    // For now, we implement a basic version that can extract values from JSON
+    // This is a placeholder implementation - full RECORD type support would need more infrastructure
+    conn.create_scalar_function(
+        "json_populate_record",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // This is a simplified implementation
+            // In a full implementation, this would need to:
+            // 1. Parse the base record structure
+            // 2. Extract matching fields from JSON
+            // 3. Return a properly formatted record
+            
+            let _base_record: String = ctx.get(0).unwrap_or_default();
+            let json_str: String = ctx.get(1)?;
+            
+            // For now, just return the JSON as a validation
+            // A full implementation would require significant infrastructure changes
+            Ok(format!("json_populate_record: base={}, json={}", _base_record, json_str))
+        },
+    )?;
+    
+    Ok(())
+}
+
+/// Register json_to_record function  
+fn register_json_to_record(conn: &Connection) -> Result<()> {
+    // json_to_record is complex in PostgreSQL as it returns a dynamic record type
+    // For pgsqlite, we'll implement a simplified version
+    
+    conn.create_scalar_function(
+        "json_to_record",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let json_str: String = ctx.get(0)?;
+            
+            // Parse JSON and validate it's an object
+            match serde_json::from_str::<JsonValue>(&json_str) {
+                Ok(JsonValue::Object(obj)) => {
+                    // For now, return a representation of the record
+                    // A full implementation would require PostgreSQL RECORD type support
+                    let mut result = String::new();
+                    result.push('(');
+                    
+                    let mut first = true;
+                    for (key, value) in obj.iter() {
+                        if !first {
+                            result.push(',');
+                        }
+                        first = false;
+                        
+                        // Format the value appropriately
+                        match value {
+                            JsonValue::String(s) => result.push_str(&format!("{}:{}", key, s)),
+                            JsonValue::Number(n) => result.push_str(&format!("{}:{}", key, n)),
+                            JsonValue::Bool(b) => result.push_str(&format!("{}:{}", key, b)),
+                            JsonValue::Null => result.push_str(&format!("{}:null", key)),
+                            _ => result.push_str(&format!("{}:{}", key, value.to_string())),
+                        }
+                    }
+                    
+                    result.push(')');
+                    Ok(result)
+                }
+                Ok(_) => {
+                    // Not an object
+                    Ok("json_to_record: input must be a JSON object".to_string())
+                }
+                Err(_) => {
+                    // Invalid JSON
+                    Ok("json_to_record: invalid JSON".to_string())
+                }
+            }
+        },
+    )?;
+    
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2193,5 +2283,116 @@ mod tests {
         ).unwrap();
         
         assert_eq!(result, Some("[]".to_string()));
+    }
+    
+    #[test]
+    fn test_json_populate_record_function() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        // Test basic json_populate_record functionality
+        let base_record = "null";
+        let json_data = r#"{"name": "John", "age": 30}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT json_populate_record(?, ?)",
+            [base_record, json_data],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let result_str = result.unwrap();
+        assert!(result_str.contains("json_populate_record"));
+        assert!(result_str.contains(json_data));
+        
+        // Test with empty base record
+        let empty_base = "";
+        let result: Option<String> = conn.query_row(
+            "SELECT json_populate_record(?, ?)",
+            [empty_base, json_data],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        
+        // Test with invalid JSON
+        let invalid_json = "{not valid json}";
+        let result: Option<String> = conn.query_row(
+            "SELECT json_populate_record(?, ?)",
+            [base_record, invalid_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+    }
+    
+    #[test]
+    fn test_json_to_record_function() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        // Test with simple JSON object
+        let json_data = r#"{"name": "Alice", "age": 25, "active": true}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT json_to_record(?)",
+            [json_data],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let result_str = result.unwrap();
+        assert!(result_str.starts_with('('));
+        assert!(result_str.ends_with(')'));
+        assert!(result_str.contains("name:Alice"));
+        assert!(result_str.contains("age:25"));
+        assert!(result_str.contains("active:true"));
+        
+        // Test with object containing different data types
+        let complex_json = r#"{"id": 123, "title": "Test", "enabled": false, "data": null}"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT json_to_record(?)",
+            [complex_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let result_str = result.unwrap();
+        assert!(result_str.contains("id:123"));
+        assert!(result_str.contains("title:Test"));
+        assert!(result_str.contains("enabled:false"));
+        assert!(result_str.contains("data:null"));
+        
+        // Test with empty object
+        let empty_obj = "{}";
+        let result: Option<String> = conn.query_row(
+            "SELECT json_to_record(?)",
+            [empty_obj],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert_eq!(result, Some("()".to_string()));
+        
+        // Test with array (should return error message)
+        let array_json = r#"[{"name": "test"}]"#;
+        let result: Option<String> = conn.query_row(
+            "SELECT json_to_record(?)",
+            [array_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let result_str = result.unwrap();
+        assert!(result_str.contains("input must be a JSON object"));
+        
+        // Test with invalid JSON
+        let invalid_json = "{not valid json}";
+        let result: Option<String> = conn.query_row(
+            "SELECT json_to_record(?)",
+            [invalid_json],
+            |row| row.get(0)
+        ).unwrap();
+        
+        assert!(result.is_some());
+        let result_str = result.unwrap();
+        assert!(result_str.contains("invalid JSON"));
     }
 }
