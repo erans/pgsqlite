@@ -8,8 +8,8 @@ set -euo pipefail
 # Configuration
 PORT=${PGSQLITE_TEST_PORT:-10543}
 DB_NAME=":memory:"
-SQL_FILE="../sql/core/test_queries.sql"
-LOG_FILE="../output/pgsqlite_test.log"
+SQL_FILE="tests/sql/core/test_queries.sql"
+LOG_FILE="tests/output/pgsqlite_test.log"
 PID_FILE="/tmp/pgsqlite_test.pid"
 SOCKET_DIR="/tmp"
 VERBOSE=${VERBOSE:-0}
@@ -83,7 +83,7 @@ cleanup() {
     fi
     
     # Remove test output files
-    rm -f ../output/test_output.log ../output/meta_command_output.log
+    rm -f tests/output/test_output.log tests/output/meta_command_output.log
 }
 
 # Set up signal handlers
@@ -219,7 +219,7 @@ esac
 # For in-memory databases, we'll use auto-migration via environment variable
 if [[ "$CONNECTION_MODE" == "file-ssl" || "$CONNECTION_MODE" == "file-no-ssl" ]]; then
     log_info "Running migrations for file database..."
-    ../../target/release/pgsqlite --database "$DB_NAME" --migrate
+    ./target/release/pgsqlite --database "$DB_NAME" --migrate
     if [ $? -ne 0 ]; then
         log_error "Migration failed"
         exit 1
@@ -235,9 +235,9 @@ fi
 log_info "Starting pgsqlite server..."
 
 if [ "$VERBOSE" = "1" ]; then
-    ../../target/release/pgsqlite $SERVER_ARGS 2>&1 | tee "$LOG_FILE" &
+    ./target/release/pgsqlite $SERVER_ARGS 2>&1 | tee "$LOG_FILE" &
 else
-    ../../target/release/pgsqlite $SERVER_ARGS > "$LOG_FILE" 2>&1 &
+    ./target/release/pgsqlite $SERVER_ARGS > "$LOG_FILE" 2>&1 &
 fi
 
 SERVER_PID=$!
@@ -287,14 +287,14 @@ if [ "$VERBOSE" = "1" ]; then
         --echo-queries \
         -x \
         --set ON_ERROR_STOP=1 \
-        2>&1 | tee ../output/test_output.log
+        2>&1 | tee tests/output/test_output.log
 else
     psql \
         "$CONNECTION_STRING" \
         -f "$SQL_FILE" \
         --set ON_ERROR_STOP=1 \
         -q \
-        2>&1 | tee ../output/test_output.log
+        2>&1 | tee tests/output/test_output.log
 fi
 
 PSQL_EXIT_CODE=$?
@@ -317,14 +317,14 @@ fi
 
 # Run meta-command tests if the file exists
 # Use working version by default to avoid testing unimplemented features
-META_COMMAND_FILE="${META_COMMAND_FILE:-../sql/meta/test_meta_commands_working.sql}"
-# To use full test suite, set META_COMMAND_FILE=../sql/meta/test_meta_commands.sql
+META_COMMAND_FILE="${META_COMMAND_FILE:-tests/sql/meta/test_meta_commands_working.sql}"
+# To use full test suite, set META_COMMAND_FILE=tests/sql/meta/test_meta_commands.sql
 # Available test files:
-# - ../sql/meta/test_meta_commands_supported.sql: All fully supported meta commands with examples
-# - ../sql/meta/test_meta_commands_working.sql: Commands that work with current implementation
-# - ../sql/meta/test_meta_commands_basic.sql: Very basic commands only
-# - ../sql/meta/test_meta_commands_minimal.sql: Minimal set including \d (NOW WORKS!)
-# - ../sql/meta/test_meta_commands.sql: Full test suite (many unimplemented features)
+# - tests/sql/meta/test_meta_commands_supported.sql: All fully supported meta commands with examples
+# - tests/sql/meta/test_meta_commands_working.sql: Commands that work with current implementation
+# - tests/sql/meta/test_meta_commands_basic.sql: Very basic commands only
+# - tests/sql/meta/test_meta_commands_minimal.sql: Minimal set including \d (NOW WORKS!)
+# - tests/sql/meta/test_meta_commands.sql: Full test suite (many unimplemented features)
 if [ -f "$META_COMMAND_FILE" ]; then
     echo ""
     log_info "Executing meta-command tests from $META_COMMAND_FILE..."
@@ -342,14 +342,14 @@ if [ -f "$META_COMMAND_FILE" ]; then
             --echo-queries \
             -x \
             --set ON_ERROR_STOP=1 \
-            2>&1 | tee ../output/meta_command_output.log
+            2>&1 | tee tests/output/meta_command_output.log
     else
         psql \
             "$CONNECTION_STRING" \
             -f "$META_COMMAND_FILE" \
             --set ON_ERROR_STOP=1 \
             -q \
-            2>&1 | tee ../output/meta_command_output.log
+            2>&1 | tee tests/output/meta_command_output.log
     fi
     
     META_EXIT_CODE=$?
@@ -366,7 +366,7 @@ if [ -f "$META_COMMAND_FILE" ]; then
         log_error "Meta-command tests failed with exit code: $META_EXIT_CODE"
         echo ""
         log_error "Failed meta-command output:"
-        tail -n 50 ../output/meta_command_output.log
+        tail -n 50 tests/output/meta_command_output.log
         echo ""
         log_error "Last 20 lines of server log:"
         tail -n 20 "$LOG_FILE"
@@ -387,7 +387,7 @@ if [ $PSQL_EXIT_CODE -eq 0 ] && ([ ! -f "$META_COMMAND_FILE" ] || [ $META_EXIT_C
         log_info "Test Statistics:"
         echo "- Total queries executed: $(grep -c ';$' "$SQL_FILE")"
         echo "- Server log entries: $(wc -l < "$LOG_FILE")"
-        echo "- Test output lines: $(wc -l < ../output/test_output.log)"
+        echo "- Test output lines: $(wc -l < tests/output/test_output.log)"
     fi
 else
     log_error "Tests failed with exit code: $PSQL_EXIT_CODE"
