@@ -13,6 +13,7 @@ pub mod parameter_cache;
 pub mod enum_cache;
 pub mod translation_cache;
 pub mod query_fingerprint;
+pub mod lazy_schema_loader;
 
 pub use schema::SchemaCache;
 pub use query::{QueryCache, CachedQuery, CacheMetrics};
@@ -25,6 +26,7 @@ pub use parameter_cache::{ParameterTypeCache, CachedParameterInfo, GLOBAL_PARAME
 pub use enum_cache::{EnumCache, global_enum_cache};
 pub use translation_cache::{TranslationCache, global_translation_cache};
 pub use query_fingerprint::QueryFingerprint;
+pub use lazy_schema_loader::LazySchemaLoader;
 
 /// Simple LRU cache with TTL support
 pub struct LruCache<K, V> {
