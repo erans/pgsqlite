@@ -9,6 +9,8 @@ use crate::rewriter::{ContextOptimizer};
 use crate::cache::LazySchemaLoader;
 use crate::PgSqliteError;
 
+pub mod statement_cache_optimizer;
+
 /// Centralized optimization manager that coordinates all query optimization features
 pub struct OptimizationManager {
     pattern_optimizer: Arc<RwLock<QueryPatternOptimizer>>,

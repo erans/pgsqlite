@@ -68,11 +68,20 @@ impl BinaryEncoder {
     
     /// Encode DATE (days since 2000-01-01)
     pub fn encode_date(unix_timestamp: f64) -> Vec<u8> {
-        const PG_EPOCH_OFFSET: i64 = 946684800; // seconds between 1970-01-01 and 2000-01-01
-        const SECS_PER_DAY: i64 = 86400;
-        let unix_secs = unix_timestamp.trunc() as i64;
-        let pg_days = ((unix_secs - PG_EPOCH_OFFSET) / SECS_PER_DAY) as i32;
-        pg_days.to_be_bytes().to_vec()
+        // Check if this looks like days vs seconds by magnitude
+        if unix_timestamp < 100000.0 {
+            // This looks like days since epoch, convert directly
+            let days_since_1970 = unix_timestamp as i32;
+            let days_since_2000 = days_since_1970 - 10957; // 10957 days between 1970-01-01 and 2000-01-01
+            days_since_2000.to_be_bytes().to_vec()
+        } else {
+            // This looks like seconds since epoch, use original logic
+            const PG_EPOCH_OFFSET: i64 = 946684800; // seconds between 1970-01-01 and 2000-01-01
+            const SECS_PER_DAY: i64 = 86400;
+            let unix_secs = unix_timestamp.trunc() as i64;
+            let pg_days = ((unix_secs - PG_EPOCH_OFFSET) / SECS_PER_DAY) as i32;
+            pg_days.to_be_bytes().to_vec()
+        }
     }
     
     /// Encode TIME (microseconds since midnight)
@@ -186,10 +195,15 @@ impl BinaryEncoder {
                 }
             }
             t if t == PgType::Date.to_oid() => {
-                // DATE - stored as Unix timestamp
+                // DATE - stored as INTEGER days since epoch (1970-01-01)
                 match value {
                     rusqlite::types::Value::Real(f) => Some(Self::encode_date(*f)),
-                    rusqlite::types::Value::Integer(i) => Some(Self::encode_date(*i as f64)),
+                    rusqlite::types::Value::Integer(i) => {
+                        // Convert days since 1970-01-01 to PostgreSQL days since 2000-01-01
+                        let days_since_1970 = *i as i32;
+                        let days_since_2000 = days_since_1970 - 10957; // 10957 days between 1970-01-01 and 2000-01-01
+                        Some(days_since_2000.to_be_bytes().to_vec())
+                    },
                     _ => None,
                 }
             }

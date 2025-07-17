@@ -1702,6 +1702,7 @@ impl ExtendedQueryHandler {
         }
     }
     
+    
     // Convert time string to microseconds since midnight
     fn time_to_microseconds(time_str: &str) -> Option<i64> {
         // Try different time formats

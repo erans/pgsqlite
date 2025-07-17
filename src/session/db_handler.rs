@@ -7,6 +7,7 @@ use sqlparser::ast::Statement;
 use crate::cache::{SchemaCache, CachedQuery, StatementPool, global_execution_cache, global_type_converter_table, ExecutionMetadata, ExecutionCache};
 use crate::cache::{global_result_cache, ResultCacheKey, ResultSetCache};
 use crate::cache::schema::TableSchema;
+use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
 use crate::rewriter::DecimalQueryRewriter;
 use crate::types::PgType;
 use crate::query::{QueryTypeDetector, QueryType};
@@ -35,6 +36,7 @@ pub struct DbHandler {
     conn: Arc<Mutex<Connection>>,
     schema_cache: Arc<SchemaCache>,
     string_validator: Arc<StringConstraintValidator>,
+    statement_cache_optimizer: Arc<StatementCacheOptimizer>,
 }
 
 impl DbHandler {
@@ -96,10 +98,15 @@ impl DbHandler {
         
         info!("Test DbHandler initialized with mutex-based implementation");
         
+        // Initialize optimization components
+        let optimization_manager = Arc::new(OptimizationManager::new(true));
+        let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
+        
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
             string_validator: Arc::new(StringConstraintValidator::new()),
+            statement_cache_optimizer,
         })
     }
     
@@ -167,10 +174,15 @@ impl DbHandler {
             
             info!("In-memory database initialized with migrations");
             
+            // Initialize optimization components
+            let optimization_manager = Arc::new(OptimizationManager::new(true));
+            let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
+            
             return Ok(Self {
                 conn: Arc::new(Mutex::new(conn)),
                 schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
                 string_validator: Arc::new(StringConstraintValidator::new()),
+                statement_cache_optimizer,
             });
         }
         
@@ -257,14 +269,28 @@ impl DbHandler {
         let string_validator = Arc::new(StringConstraintValidator::new());
         let _ = StringConstraintValidator::populate_constraints_from_schema(&conn);
         
+        // Initialize optimization components
+        let optimization_manager = Arc::new(OptimizationManager::new(true));
+        let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
+        
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
             string_validator,
+            statement_cache_optimizer,
         })
     }
     
     pub async fn execute(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Try enhanced statement caching optimization first
+        if let Ok(rows_affected) = self.try_execute_with_enhanced_cache(query).await {
+            return Ok(DbResponse {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                rows_affected,
+            });
+        }
+        
         // Ultra-fast path for truly simple queries
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
             let conn = self.conn.lock();
@@ -298,6 +324,8 @@ impl DbHandler {
             crate::query::clear_decimal_cache();
             // Clear statement pool
             StatementPool::global().clear();
+            // Clear enhanced statement cache
+            self.statement_cache_optimizer.clear_cache();
             // Clear result cache
             global_result_cache().clear();
             // Clear ENUM cache
@@ -390,6 +418,17 @@ impl DbHandler {
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
         // Ensure schema cache is populated (especially after CREATE TABLE)
         self.schema_cache.ensure_schema_loaded(&self.conn.lock(), query);
+        
+        // Try enhanced statement caching optimization first
+        match self.try_query_with_enhanced_cache(query).await {
+            Ok(response) => {
+                info!("Enhanced cache succeeded for query: {}", query);
+                return Ok(response);
+            }
+            Err(e) => {
+                info!("Enhanced cache failed for query '{}': {}", query, e);
+            }
+        }
         
         // Ultra-fast path for truly simple queries
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
@@ -677,6 +716,36 @@ impl DbHandler {
         &self.string_validator
     }
     
+    /// Try executing a query using enhanced statement caching
+    async fn try_execute_with_enhanced_cache(&self, query: &str) -> Result<usize, rusqlite::Error> {
+        let conn = self.conn.lock();
+        self.statement_cache_optimizer.execute_with_optimization(&conn, query, [])
+    }
+    
+    /// Try querying using enhanced statement caching
+    async fn try_query_with_enhanced_cache(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        let conn = self.conn.lock();
+        info!("Trying enhanced cache for query: {}", query);
+        let (columns, rows) = self.statement_cache_optimizer.query_with_optimization(&conn, query, [])?;
+        info!("Enhanced cache returned {} columns and {} rows", columns.len(), rows.len());
+        
+        Ok(DbResponse {
+            columns,
+            rows,
+            rows_affected: 0,
+        })
+    }
+    
+    /// Get comprehensive statistics from the enhanced statement cache
+    pub fn get_enhanced_cache_stats(&self) -> crate::optimization::statement_cache_optimizer::StatementCacheStats {
+        self.statement_cache_optimizer.get_comprehensive_stats()
+    }
+    
+    /// Perform periodic maintenance on the enhanced statement cache
+    pub async fn perform_cache_maintenance(&self) {
+        self.statement_cache_optimizer.maintenance();
+    }
+    
     /// Shutdown (no-op for mutex handler)
     pub async fn shutdown(&self) {
         // Nothing to do
@@ -689,6 +758,7 @@ impl Clone for DbHandler {
             conn: self.conn.clone(),
             schema_cache: self.schema_cache.clone(),
             string_validator: self.string_validator.clone(),
+            statement_cache_optimizer: self.statement_cache_optimizer.clone(),
         }
     }
 }

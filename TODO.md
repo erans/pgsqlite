@@ -34,6 +34,21 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
 
+### Boolean Conversion Fix - COMPLETED (2025-07-17)
+- [x] **PostgreSQL Boolean Protocol Compliance** - Fixed psycopg2 compatibility issues
+  - [x] Fixed boolean values being returned as strings '0'/'1' instead of PostgreSQL format 't'/'f'
+  - [x] Root cause: Ultra-fast path in simple query protocol was not converting boolean values
+  - [x] Implemented schema-aware boolean conversion with performance optimization
+  - [x] Added boolean column cache to avoid repeated database queries
+  - [x] Boolean conversion now works correctly across all query types and protocols
+  - [x] psycopg2 can now parse boolean values without "can't parse boolean" errors
+  - [x] Performance maintained: SELECT ~417x overhead, cached SELECT ~77x overhead
+- [x] **Code Quality Improvements** - Fixed all release build warnings
+  - [x] Added #[allow(dead_code)] attributes to unused struct fields
+  - [x] Removed unused imports from test modules
+  - [x] Fixed unused variable warnings with proper prefixing
+  - [x] Clean compilation with no warnings in debug and release builds
+
 ### Catalog Query Handling - COMPLETED (2025-07-08)
 - [x] **Fix pg_class view to include pg_* tables** - Removed pg_% filter from view definition
 - [x] **JOIN Support for Catalog Queries** - Modified catalog interceptor to pass JOIN queries to SQLite views

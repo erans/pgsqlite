@@ -12,6 +12,52 @@ use tracing::{info, debug};
 use std::sync::Arc;
 use rusqlite::params;
 use serde_json;
+use std::collections::HashMap;
+use parking_lot::RwLock;
+use once_cell::sync::Lazy;
+
+/// Cache for boolean column information to avoid repeated database queries
+static BOOLEAN_COLUMNS_CACHE: Lazy<RwLock<HashMap<String, std::collections::HashSet<String>>>> = 
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Get boolean columns for a table, using cache for performance
+fn get_boolean_columns(table_name: &str, db: &DbHandler) -> std::collections::HashSet<String> {
+    // Check cache first
+    {
+        let cache = BOOLEAN_COLUMNS_CACHE.read();
+        if let Some(cached_columns) = cache.get(table_name) {
+            return cached_columns.clone();
+        }
+    }
+    
+    // Cache miss - query the database
+    let mut boolean_columns = std::collections::HashSet::new();
+    
+    if let Ok(conn) = db.get_mut_connection() {
+        if let Ok(mut stmt) = conn.prepare("SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1") {
+            if let Ok(rows) = stmt.query_map([table_name], |row| {
+                let col_name: String = row.get(0)?;
+                let pg_type: String = row.get(1)?;
+                Ok((col_name, pg_type))
+            }) {
+                for row in rows.flatten() {
+                    let (col_name, pg_type) = row;
+                    if pg_type.eq_ignore_ascii_case("boolean") || pg_type.eq_ignore_ascii_case("bool") {
+                        boolean_columns.insert(col_name);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Cache the result
+    {
+        let mut cache = BOOLEAN_COLUMNS_CACHE.write();
+        cache.insert(table_name.to_string(), boolean_columns.clone());
+    }
+    
+    boolean_columns
+}
 
 /// Create a command complete tag with optimized static strings for common cases
 fn create_command_tag(operation: &str, rows_affected: usize) -> String {
@@ -92,6 +138,13 @@ impl QueryExecutor {
                 QueryType::Select => {
                     let response = db.query(query).await?;
                     
+                    // Get boolean columns for proper conversion (cached for performance)
+                    let boolean_columns = if let Some(table_name) = extract_table_name_from_select(query) {
+                        get_boolean_columns(&table_name, db)
+                    } else {
+                        std::collections::HashSet::new()
+                    };
+                    
                     // Send minimal row description with all TEXT types
                     let fields: Vec<FieldDescription> = response.columns.iter()
                         .enumerate()
@@ -109,9 +162,38 @@ impl QueryExecutor {
                     framed.send(BackendMessage::RowDescription(fields)).await
                         .map_err(|e| PgSqliteError::Io(e))?;
                     
-                    // Send data rows
+                    // Send data rows with boolean conversion only for boolean columns
                     for row in response.rows {
-                        framed.send(BackendMessage::DataRow(row)).await
+                        let converted_row: Vec<Option<Vec<u8>>> = row.into_iter()
+                            .enumerate()
+                            .map(|(col_idx, cell)| {
+                                if let Some(data) = cell {
+                                    // Only convert if this column is a boolean type
+                                    if col_idx < response.columns.len() {
+                                        let col_name = &response.columns[col_idx];
+                                        if boolean_columns.contains(col_name) {
+                                            // Check if this looks like a boolean value
+                                            match std::str::from_utf8(&data) {
+                                                Ok(s) => match s.trim() {
+                                                    "0" => Some(b"f".to_vec()),
+                                                    "1" => Some(b"t".to_vec()),
+                                                    _ => Some(data), // Keep original data if not 0/1
+                                                },
+                                                Err(_) => Some(data), // Keep original data if not valid UTF-8
+                                            }
+                                        } else {
+                                            Some(data) // Keep original data for non-boolean columns
+                                        }
+                                    } else {
+                                        Some(data) // Keep original data if column index is out of bounds
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect();
+                        
+                        framed.send(BackendMessage::DataRow(converted_row)).await
                             .map_err(|e| PgSqliteError::Io(e))?;
                     }
                     
@@ -481,7 +563,9 @@ impl QueryExecutor {
         
         // Convert array data before sending rows
         debug!("Converting array data for {} rows", response.rows.len());
+        info!("About to convert array data for {} rows", response.rows.len());
         let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
+        info!("Completed array data conversion");
         
         // Optimized data row sending for better SELECT performance
         if converted_rows.len() > 5 {
@@ -1111,6 +1195,8 @@ impl QueryExecutor {
     ) -> Result<Vec<Vec<Option<Vec<u8>>>>, PgSqliteError> {
         // Extract type OIDs from field descriptions
         let type_oids: Vec<i32> = fields.iter().map(|f| f.type_oid).collect();
+        info!("Type OIDs for conversion: {:?}", type_oids);
+        info!("Boolean type OID: {}", PgType::Bool.to_oid());
         
         // Convert each row
         let mut converted_rows = Vec::with_capacity(rows.len());
@@ -1128,6 +1214,23 @@ impl QueryExecutor {
                         match Self::convert_json_to_pg_array(&data) {
                             Ok(converted_data) => Some(converted_data),
                             Err(_) => Some(data), // Keep original data if conversion fails
+                        }
+                    } else if type_oid == PgType::Bool.to_oid() {
+                        // Convert boolean values from integer 0/1 to PostgreSQL f/t format
+                        info!("Converting boolean data for column {}: {:?}", col_idx, std::str::from_utf8(&data));
+                        match std::str::from_utf8(&data) {
+                            Ok(s) => match s.trim() {
+                                "0" => {
+                                    info!("Converted '0' to 'f'");
+                                    Some(b"f".to_vec())
+                                },
+                                "1" => {
+                                    info!("Converted '1' to 't'");
+                                    Some(b"t".to_vec())
+                                },
+                                _ => Some(data), // Keep original data if not 0/1
+                            },
+                            Err(_) => Some(data), // Keep original data if not valid UTF-8
                         }
                     } else {
                         Some(data)
