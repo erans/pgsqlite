@@ -3,7 +3,7 @@ use regex::Regex;
 
 /// Regular expressions for detecting truly simple queries that need no processing
 static SIMPLE_SELECT_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*SELECT\s+\*?\s*FROM\s+\w+\s*(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*(LIMIT\s+\d+)?\s*;?\s*$").unwrap()
+    Regex::new(r"(?i)^\s*SELECT\s+(\*|[\w\s,]+)\s*FROM\s+\w+\s*(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*(LIMIT\s+\d+)?\s*;?\s*$").unwrap()
 });
 
 static SIMPLE_INSERT_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -129,6 +129,9 @@ mod tests {
         assert!(is_ultra_simple_query("UPDATE users SET name = 'test', age = 25"));
         assert!(is_ultra_simple_query("UPDATE users SET price = 99.99, quantity = 5 WHERE id = 1"));
         assert!(is_ultra_simple_query("DELETE FROM users WHERE id = 1"));
+        
+        // Test the specific query from datetime_conversion_success_test
+        assert!(is_ultra_simple_query("SELECT date_col, time_col FROM dt_test WHERE id = 1"));
         
         // Complex queries that should fail
         assert!(!is_ultra_simple_query("SELECT * FROM users WHERE created_at > NOW()"));

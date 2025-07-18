@@ -4,13 +4,15 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc, Datelike, Timelike};
 
 /// Register datetime-related functions in SQLite
 pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
-    // now() / current_timestamp - Return current timestamp as microseconds since epoch
+    // now() / current_timestamp - Return current timestamp as formatted string
+    // PostgreSQL clients expect NOW() to return formatted timestamp strings
     conn.create_scalar_function(
         "now",
         0,
         FunctionFlags::SQLITE_UTF8,
         |_ctx| {
-            Ok(Utc::now().timestamp_micros())
+            let now = Utc::now();
+            Ok(now.format("%Y-%m-%d %H:%M:%S%.6f").to_string())
         },
     )?;
     
@@ -19,7 +21,8 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
         0,
         FunctionFlags::SQLITE_UTF8,
         |_ctx| {
-            Ok(Utc::now().timestamp_micros())
+            let now = Utc::now();
+            Ok(now.format("%Y-%m-%d %H:%M:%S%.6f").to_string())
         },
     )?;
     

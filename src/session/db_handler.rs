@@ -899,19 +899,19 @@ fn execute_with_cached_metadata(
                         buf.truncate(len);
                         buf
                     },
+                    // Fast timestamp conversion (INTEGER microseconds -> YYYY-MM-DD HH:MM:SS.ffffff)
+                    (rusqlite::types::ValueRef::Integer(micros), 8) => {
+                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                        let mut buf = vec![0u8; 32];
+                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                        buf.truncate(len);
+                        buf
+                    },
                     // Fast time conversion (INTEGER microseconds -> HH:MM:SS.ffffff)
                     (rusqlite::types::ValueRef::Integer(micros), 7) => {
                         use crate::types::datetime_utils::format_microseconds_to_time_buf;
                         let mut buf = vec![0u8; 32];
                         let len = format_microseconds_to_time_buf(micros, &mut buf);
-                        buf.truncate(len);
-                        buf
-                    },
-                    // Fast timestamp conversion (INTEGER microseconds -> YYYY-MM-DD HH:MM:SS.ffffff)
-                    (rusqlite::types::ValueRef::Integer(micros), 8) => {
-                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
-                        let mut buf = vec![0u8; 64];
-                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                         buf.truncate(len);
                         buf
                     },
@@ -974,6 +974,9 @@ fn build_execution_metadata(
     query: &str, 
     schema_cache: &SchemaCache
 ) -> Result<ExecutionMetadata, rusqlite::Error> {
+    // Ensure schema is loaded for tables referenced in this query
+    schema_cache.ensure_schema_loaded(conn, query);
+    
     // Check if query can use fast path
     let fast_path_eligible = is_fast_path_query(query);
     

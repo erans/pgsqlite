@@ -68,14 +68,15 @@ impl BinaryEncoder {
     
     /// Encode DATE (days since 2000-01-01)
     pub fn encode_date(unix_timestamp: f64) -> Vec<u8> {
-        // Check if this looks like days vs seconds by magnitude
+        // For dates stored as INTEGER days since epoch in SQLite, treat as days
+        // For dates stored as REAL Unix timestamps, convert from seconds
         if unix_timestamp < 100000.0 {
-            // This looks like days since epoch, convert directly
+            // This looks like days since epoch (1970-01-01), convert to PostgreSQL days since 2000-01-01
             let days_since_1970 = unix_timestamp as i32;
             let days_since_2000 = days_since_1970 - 10957; // 10957 days between 1970-01-01 and 2000-01-01
             days_since_2000.to_be_bytes().to_vec()
         } else {
-            // This looks like seconds since epoch, use original logic
+            // This looks like seconds since epoch, convert to days since 2000-01-01
             const PG_EPOCH_OFFSET: i64 = 946684800; // seconds between 1970-01-01 and 2000-01-01
             const SECS_PER_DAY: i64 = 86400;
             let unix_secs = unix_timestamp.trunc() as i64;

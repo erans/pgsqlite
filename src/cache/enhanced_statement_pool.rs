@@ -208,10 +208,19 @@ impl EnhancedStatementPool {
         let mut column_types = Vec::with_capacity(columns.len());
 
         for column in columns {
-            column_names.push(column.name().to_string());
+            let column_name = column.name().to_string();
+            column_names.push(column_name.clone());
             
             // Extract column type information from the column
-            let column_type = column.decl_type().map(|s| s.to_string());
+            let mut column_type = column.decl_type().map(|s| s.to_string());
+            
+            // Special handling for PostgreSQL datetime functions
+            // If SQLite returns no type info but we know this is a datetime function,
+            // override with the correct PostgreSQL type
+            if column_type.is_none() && is_datetime_function_result(query, &column_name) {
+                column_type = Some("timestamptz".to_string());
+            }
+            
             column_types.push(column_type);
         }
 
@@ -238,10 +247,19 @@ impl EnhancedStatementPool {
         let mut column_types = Vec::with_capacity(columns.len());
 
         for column in columns {
-            column_names.push(column.name().to_string());
+            let column_name = column.name().to_string();
+            column_names.push(column_name.clone());
             
             // Extract column type information from the column
-            let column_type = column.decl_type().map(|s| s.to_string());
+            let mut column_type = column.decl_type().map(|s| s.to_string());
+            
+            // Special handling for PostgreSQL datetime functions
+            // If SQLite returns no type info but we know this is a datetime function,
+            // override with the correct PostgreSQL type
+            if column_type.is_none() && is_datetime_function_result(query, &column_name) {
+                column_type = Some("timestamptz".to_string());
+            }
+            
             column_types.push(column_type);
         }
 
@@ -429,6 +447,33 @@ impl Default for EnhancedStatementPool {
     fn default() -> Self {
         Self::new(100)
     }
+}
+
+/// Helper function to detect if a column result is from a PostgreSQL datetime function
+fn is_datetime_function_result(query: &str, column_name: &str) -> bool {
+    let query_upper = query.to_uppercase();
+    let column_upper = column_name.to_uppercase();
+    
+    // Check for NOW() function
+    if query_upper.contains("NOW()") && (column_upper == "NOW" || column_upper == "NOW()") {
+        return true;
+    }
+    
+    // Check for CURRENT_TIMESTAMP function
+    if query_upper.contains("CURRENT_TIMESTAMP") && (column_upper == "CURRENT_TIMESTAMP" || column_upper == "CURRENT_TIMESTAMP()") {
+        return true;
+    }
+    
+    // Check for aliased datetime functions like "SELECT NOW() as now"
+    if query_upper.contains("NOW()") && query_upper.contains(&format!("AS {}", column_upper)) {
+        return true;
+    }
+    
+    if query_upper.contains("CURRENT_TIMESTAMP") && query_upper.contains(&format!("AS {}", column_upper)) {
+        return true;
+    }
+    
+    false
 }
 
 #[cfg(test)]
