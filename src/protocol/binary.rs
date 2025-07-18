@@ -86,17 +86,17 @@ impl BinaryEncoder {
     }
     
     /// Encode TIME (microseconds since midnight)
-    pub fn encode_time(seconds_since_midnight: f64) -> Vec<u8> {
-        let micros = (seconds_since_midnight * 1_000_000.0).round() as i64;
+    pub fn encode_time(microseconds_since_midnight: f64) -> Vec<u8> {
+        // The input is already in microseconds, just convert to i64
+        let micros = microseconds_since_midnight.round() as i64;
         micros.to_be_bytes().to_vec()
     }
     
-    /// Encode TIMESTAMP/TIMESTAMPTZ (microseconds since 2000-01-01 00:00:00)
-    pub fn encode_timestamp(unix_timestamp: f64) -> Vec<u8> {
-        const PG_EPOCH_OFFSET: i64 = 946684800; // seconds between 1970-01-01 and 2000-01-01
-        let unix_secs = unix_timestamp.trunc() as i64;
-        let unix_micros = (unix_timestamp.fract() * 1_000_000.0).round() as i64;
-        let pg_micros = (unix_secs - PG_EPOCH_OFFSET) * 1_000_000 + unix_micros;
+    /// Encode TIMESTAMP/TIMESTAMPTZ (microseconds since epoch to PostgreSQL format)
+    pub fn encode_timestamp(unix_microseconds: f64) -> Vec<u8> {
+        const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
+        let unix_micros = unix_microseconds.round() as i64;
+        let pg_micros = unix_micros - PG_EPOCH_OFFSET;
         pg_micros.to_be_bytes().to_vec()
     }
     
@@ -209,7 +209,7 @@ impl BinaryEncoder {
                 }
             }
             t if t == PgType::Time.to_oid() || t == PgType::Timetz.to_oid() => {
-                // TIME/TIMETZ - stored as seconds since midnight
+                // TIME/TIMETZ - stored as microseconds since midnight
                 match value {
                     rusqlite::types::Value::Real(f) => Some(Self::encode_time(*f)),
                     rusqlite::types::Value::Integer(i) => Some(Self::encode_time(*i as f64)),
@@ -217,7 +217,7 @@ impl BinaryEncoder {
                 }
             }
             t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
-                // TIMESTAMP/TIMESTAMPTZ - stored as Unix timestamp
+                // TIMESTAMP/TIMESTAMPTZ - stored as microseconds since Unix epoch
                 match value {
                     rusqlite::types::Value::Real(f) => Some(Self::encode_timestamp(*f)),
                     rusqlite::types::Value::Integer(i) => Some(Self::encode_timestamp(*i as f64)),
@@ -371,8 +371,8 @@ mod tests {
     #[test]
     fn test_time_encoding() {
         // Test TIME encoding
-        // 14:30:45.123456 = 52245.123456 seconds since midnight
-        let encoded = BinaryEncoder::encode_time(52245.123456);
+        // 14:30:45.123456 = 52245123456 microseconds since midnight
+        let encoded = BinaryEncoder::encode_time(52245123456.0);
         // Microseconds: 52245123456
         let expected: i64 = 52245123456;
         assert_eq!(encoded, expected.to_be_bytes().to_vec());
@@ -381,9 +381,9 @@ mod tests {
     #[test]
     fn test_timestamp_encoding() {
         // Test TIMESTAMP encoding
-        // 2024-01-15 14:30:45.123456 UTC = 1705329045.123456 Unix timestamp
-        let encoded = BinaryEncoder::encode_timestamp(1705329045.123456);
-        // Microseconds since 2000-01-01: (1705329045 - 946684800) * 1000000 + 123456
+        // 2024-01-15 14:30:45.123456 UTC = 1705329045123456 microseconds since Unix epoch
+        let encoded = BinaryEncoder::encode_timestamp(1705329045123456.0);
+        // Microseconds since 2000-01-01: 1705329045123456 - 946684800000000
         let expected: i64 = 758644245123456;
         assert_eq!(encoded, expected.to_be_bytes().to_vec());
     }

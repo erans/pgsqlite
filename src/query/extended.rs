@@ -2189,7 +2189,13 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Time.to_oid() => {
                                 // time - microseconds since midnight as int8
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(micros) = Self::time_to_microseconds(&s) {
+                                    // First check if this is already an integer (microseconds since midnight)
+                                    if let Ok(micros) = s.parse::<i64>() {
+                                        // Already in microseconds format
+                                        let mut buf = vec![0u8; 8];
+                                        BigEndian::write_i64(&mut buf, micros);
+                                        Some(buf)
+                                    } else if let Some(micros) = Self::time_to_microseconds(&s) {
                                         let mut buf = vec![0u8; 8];
                                         BigEndian::write_i64(&mut buf, micros);
                                         Some(buf)
