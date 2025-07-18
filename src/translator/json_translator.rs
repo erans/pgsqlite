@@ -153,7 +153,7 @@ impl JsonTranslator {
         let result = RE.replace_all(sql, |caps: &regex::Captures| {
             let json_col = &caps[1];
             let path = &caps[2];
-            format!("pgsqlite_json_path_text({}, '{}')", json_col, path)
+            format!("pgsqlite_json_path_text({json_col}, '{path}')")
         });
         
         Ok(result.to_string())
@@ -169,7 +169,7 @@ impl JsonTranslator {
         let result = RE.replace_all(sql, |caps: &regex::Captures| {
             let json_col = &caps[1];
             let path = &caps[2];
-            format!("pgsqlite_json_path_json({}, '{}')", json_col, path)
+            format!("pgsqlite_json_path_json({json_col}, '{path}')")
         });
         
         Ok(result.to_string())

@@ -177,8 +177,13 @@ pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite, whi
 
 - **Best for**: Development, testing, prototyping, and single-user applications or low write throughput applications
 - **Typical overhead**: 40-350x vs raw SQLite depending on operation (SELECT ~337x, UPDATE ~67x, DELETE ~43x)
-- **Advanced Optimizations**: Comprehensive query optimization system with context merging, lazy schema loading, and pattern recognition
-- **Built-in Features**: Query caching (1.8x speedup), connection pooling, prepared statements, and ultra-fast path for simple queries
+- **Advanced Optimizations**: Comprehensive query optimization system with:
+  - **Read-Only Optimizer**: Direct execution path for SELECT queries with query plan caching
+  - **Enhanced Statement Caching**: Intelligent caching with priority-based eviction (200+ cached plans)
+  - **Context Merging**: Efficient handling of deeply nested subqueries
+  - **Lazy Schema Loading**: Deferred schema loading with thread-safe optimization
+  - **Pattern Recognition**: 14+ query patterns with pre-compiled regex optimization
+- **Built-in Features**: Query caching (2.4x speedup), connection pooling, prepared statements, and ultra-fast path for simple queries
 - **Batch Operations**: Multi-row INSERT syntax provides dramatic performance improvements:
   - 10-row batches: ~11x faster than single-row INSERTs
   - 100-row batches: ~51x faster

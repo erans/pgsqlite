@@ -30,12 +30,7 @@ impl ReturningTranslator {
         returning_columns: &str,
         rowid: i64,
     ) -> String {
-        format!(
-            "SELECT {} FROM {} WHERE rowid = {}",
-            returning_columns,
-            table_name,
-            rowid
-        )
+        format!("SELECT {returning_columns} FROM {table_name} WHERE rowid = {rowid}")
     }
     
     /// Extract table name from INSERT statement
@@ -98,12 +93,7 @@ impl ReturningTranslator {
                 .map(|m| m.as_str())
                 .unwrap_or("1=1");
             
-            Ok(format!(
-                "SELECT rowid, {} FROM {} WHERE {}",
-                returning_columns,
-                table_name,
-                where_clause
-            ))
+            Ok(format!("SELECT rowid, {returning_columns} FROM {table_name} WHERE {where_clause}"))
         } else if upper_sql.starts_with("DELETE") {
             // Extract WHERE clause from DELETE
             let where_re = Regex::new(r"(?i)WHERE\s+(.+?)(?:\s+RETURNING|$)").unwrap();
@@ -112,12 +102,7 @@ impl ReturningTranslator {
                 .map(|m| m.as_str())
                 .unwrap_or("1=1");
             
-            Ok(format!(
-                "SELECT rowid, {} FROM {} WHERE {}",
-                returning_columns,
-                table_name,
-                where_clause
-            ))
+            Ok(format!("SELECT rowid, {returning_columns} FROM {table_name} WHERE {where_clause}"))
         } else {
             Err(PgSqliteError::Protocol("Unsupported operation for RETURNING".to_string()))
         }

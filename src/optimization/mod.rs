@@ -10,12 +10,16 @@ use crate::cache::LazySchemaLoader;
 use crate::PgSqliteError;
 
 pub mod statement_cache_optimizer;
+pub mod read_only_optimizer;
+
+use read_only_optimizer::ReadOnlyOptimizer;
 
 /// Centralized optimization manager that coordinates all query optimization features
 pub struct OptimizationManager {
     pattern_optimizer: Arc<RwLock<QueryPatternOptimizer>>,
     context_optimizer: Arc<RwLock<ContextOptimizer>>,
     lazy_schema_loader: Arc<LazySchemaLoader>,
+    read_only_optimizer: Arc<ReadOnlyOptimizer>,
     optimization_stats: Arc<RwLock<OptimizationStats>>,
     enabled: bool,
 }
@@ -36,6 +40,7 @@ impl OptimizationManager {
             pattern_optimizer: Arc::new(RwLock::new(QueryPatternOptimizer::new())),
             context_optimizer: Arc::new(RwLock::new(ContextOptimizer::new(300))), // 5 min TTL
             lazy_schema_loader: Arc::new(LazySchemaLoader::new(600)), // 10 min TTL
+            read_only_optimizer: Arc::new(ReadOnlyOptimizer::new(200)), // Cache up to 200 query plans
             optimization_stats: Arc::new(RwLock::new(OptimizationStats::default())),
             enabled,
         }
@@ -143,6 +148,25 @@ impl OptimizationManager {
         *self.optimization_stats.write().unwrap() = OptimizationStats::default();
     }
 
+    /// Execute a read-only query using optimizations
+    pub fn execute_read_only_query(
+        &self, 
+        conn: &Connection, 
+        query: &str, 
+        schema_cache: &crate::cache::SchemaCache
+    ) -> Result<Option<crate::session::db_handler::DbResponse>, rusqlite::Error> {
+        if !self.enabled {
+            return Ok(None);
+        }
+
+        self.read_only_optimizer.execute_read_only_query(conn, query, schema_cache)
+    }
+
+    /// Get read-only optimizer statistics
+    pub fn get_read_only_stats(&self) -> read_only_optimizer::ReadOnlyStats {
+        self.read_only_optimizer.get_stats()
+    }
+
     /// Perform periodic maintenance (cleanup caches, etc.)
     pub fn maintenance(&self) {
         if !self.enabled {
@@ -168,6 +192,13 @@ impl OptimizationManager {
                 pattern_optimizer.clear_cache();
                 info!("Cleared pattern cache due to low hit rate: {:.2}", cache_hit_rate);
             }
+        }
+
+        // Clear read-only cache if hit rate is low
+        let read_only_hit_rate = self.read_only_optimizer.get_cache_hit_rate();
+        if read_only_hit_rate < 0.3 {
+            self.read_only_optimizer.clear_cache();
+            info!("Cleared read-only cache due to low hit rate: {:.2}", read_only_hit_rate);
         }
     }
 

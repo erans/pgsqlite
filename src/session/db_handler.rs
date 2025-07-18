@@ -246,7 +246,7 @@ impl DbHandler {
                         let report = drift.format_report();
                         return Err(rusqlite::Error::SqliteFailure(
                             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                            Some(format!("Schema drift detected:\n{}\n\nTo fix this, ensure your SQLite schema matches the pgsqlite metadata.", report))
+                            Some(format!("Schema drift detected:\n{report}\n\nTo fix this, ensure your SQLite schema matches the pgsqlite metadata."))
                         ));
                     }
                 }
@@ -726,6 +726,16 @@ impl DbHandler {
     async fn try_query_with_enhanced_cache(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
         let conn = self.conn.lock();
         info!("Trying enhanced cache for query: {}", query);
+        
+        // First try the read-only optimizer for SELECT queries
+        if query.trim().to_uppercase().starts_with("SELECT") {
+            if let Some(response) = self.statement_cache_optimizer.get_optimization_manager().execute_read_only_query(&conn, query, &self.schema_cache)? {
+                info!("Read-only optimizer succeeded for query: {}", query);
+                return Ok(response);
+            }
+        }
+        
+        // Fall back to statement cache optimizer
         let (columns, rows) = self.statement_cache_optimizer.query_with_optimization(&conn, query, [])?;
         info!("Enhanced cache returned {} columns and {} rows", columns.len(), rows.len());
         
@@ -1569,7 +1579,7 @@ fn convert_enum_error(error: rusqlite::Error, query: &str) -> rusqlite::Error {
                         if let Some(enum_type) = extract_enum_type_from_constraint(constraint_part) {
                             return rusqlite::Error::SqliteFailure(
                                 *sqlite_error,
-                                Some(format!("invalid input value for enum {}: \"{}\"", enum_type, value))
+                                Some(format!("invalid input value for enum {enum_type}: \"{value}\""))
                             );
                         }
                     }
@@ -1618,7 +1628,7 @@ fn extract_enum_type_from_constraint(constraint: &str) -> Option<String> {
         
         // If it ends with the column name pattern, just use it
         if column_part.contains('_') {
-            return Some(column_part.split('_').last()?.to_string());
+            return Some(column_part.split('_').next_back()?.to_string());
         }
         
         return Some(type_name.to_string());
@@ -1660,7 +1670,7 @@ fn json_array_to_pg_text(arr: &[serde_json::Value]) -> String {
             serde_json::Value::String(s) => {
                 // Escape quotes and backslashes
                 let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-                format!("\"{}\"", escaped)
+                format!("\"{escaped}\"")
             }
             serde_json::Value::Array(_) => {
                 // Nested arrays - convert recursively
