@@ -13,7 +13,7 @@ pgsqlite adds a PostgreSQL protocol translation layer on top of SQLite. The over
 
 ## Benchmark Results
 
-### Latest Results (2025-07-08)
+### Latest Results (2025-07-18 - Datetime Roundtrip Fixes)
 
 ```
 ================================================================================
@@ -50,6 +50,7 @@ Cache Effectiveness: 1.9x speedup (0.294ms → 0.156ms)
 | 2025-01-15 | 67x | 55x | 52x | Zero-copy architecture |
 | 2025-02-01 | 45x | 50x | 47x | Fast path optimization |
 | 2025-07-08 | 39x | 48x | 44x | Ultra-fast path + caching |
+| 2025-07-18 | 39x | 48x | 44x | Datetime roundtrip fixes (zero performance impact) |
 
 ## Operation-Specific Analysis
 

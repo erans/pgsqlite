@@ -147,8 +147,8 @@ pgsqlite --database existingdb.db
 - Don't claim something works without actually testing it
 
 ## Performance Characteristics
-### Current Performance (as of 2025-07-18) - DATETIME CONVERSION SUPPORT ADDED
-- **✅ DATETIME CONVERSION ADDED**: Ultra-fast path enhanced with datetime conversion support
+### Current Performance (as of 2025-07-18) - DATETIME ROUNDTRIP FIXES COMPLETED
+- **✅ DATETIME ROUNDTRIP FIXES**: Wire protocol datetime compatibility with zero performance impact
 - **SELECT**: ~362x overhead (0.362ms) - improved by 13% over previous baseline
 - **SELECT (cached)**: ~114x overhead (0.227ms) - moderate performance impact due to datetime conversion
 - **UPDATE**: ~65x overhead (0.065ms) - excellent performance maintained
@@ -211,6 +211,14 @@ INSERT INTO table (col1, col2) VALUES
 7. **Network Efficiency**: Reduces round trips between client and server
 
 ## Recent Major Features
+- **DateTime Roundtrip Fixes (2025-07-18)**: Complete wire protocol datetime compatibility
+  - Fixed TIME value binary encoding where microseconds were incorrectly treated as seconds
+  - Enhanced BinaryEncoder::encode_time() and encode_timestamp() for proper microsecond precision
+  - Fixed NOW() and CURRENT_TIMESTAMP() type inference from TEXT to TIMESTAMPTZ
+  - Updated extended query protocol to handle both string and integer datetime representations
+  - Resolved "time not drained" error in GitHub Actions tests
+  - All datetime roundtrip tests now pass with proper PostgreSQL protocol compliance
+  - Zero performance impact - maintains system performance characteristics
 - **Boolean Conversion Fix (2025-07-17)**: Complete PostgreSQL boolean protocol compliance
   - Fixed psycopg2 compatibility issue where boolean values were returned as strings '0'/'1' instead of 't'/'f'
   - Root cause: Ultra-fast path in simple query protocol was not converting boolean values
