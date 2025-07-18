@@ -442,6 +442,27 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] Updated CLAUDE.md documentation to reflect new behavior
 - [x] Tested with both new and existing database files
 
+#### Bug Fix: DateTime Roundtrip Test Failures - COMPLETED (2025-07-18)
+- [x] **Wire Protocol Binary Format Issues** - Fixed TIME value binary encoding
+  - [x] Root cause: BinaryEncoder::encode_time() was treating microseconds as seconds
+  - [x] Fixed encode_time() to handle microseconds directly instead of converting from seconds
+  - [x] Fixed encode_timestamp() to work with microsecond precision instead of seconds
+  - [x] Updated extended query protocol to detect INTEGER microsecond values
+  - [x] Enhanced binary protocol conversion to handle both string and integer representations
+  - [x] Fixed unit tests to pass correct microsecond values
+  - [x] Resolves "time not drained" error in GitHub Actions tests
+- [x] **NOW() and CURRENT_TIMESTAMP() Type Inference** - Fixed PostgreSQL protocol compliance
+  - [x] Root cause: Functions were typed as TEXT instead of TIMESTAMPTZ in wire protocol
+  - [x] Updated schema_type_mapper.rs to return PgType::Timestamptz for NOW()/CURRENT_TIMESTAMP()
+  - [x] Fixed client deserialization by expecting DateTime<Utc> instead of NaiveDateTime
+  - [x] Updated test_datetime_standalone.rs to handle timezone-aware datetime types
+  - [x] Ensures proper PostgreSQL protocol compliance for datetime functions
+- [x] **All datetime roundtrip tests now pass** - Complete GitHub Actions compatibility
+  - [x] test_datetime_roundtrip passes with proper TIME/TIMESTAMP binary encoding
+  - [x] test_standalone_now_returns_formatted_timestamp passes with correct typing
+  - [x] test_standalone_current_timestamp_returns_formatted passes with correct typing
+  - [x] All existing datetime tests continue to pass with no regression
+
 #### Date/Time Types - Future Work
 - [ ] Handle special values (infinity, -infinity) for all datetime types
 - [ ] Complex interval handling (months/years in addition to microseconds)
