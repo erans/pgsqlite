@@ -40,7 +40,7 @@ impl StatementCacheOptimizer {
             .analyze_query(query)
             .map_err(|e| rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-                Some(format!("Query optimization failed: {}", e))
+                Some(format!("Query optimization failed: {e}"))
             ))?;
 
         // Use enhanced statement pool for intelligent caching
@@ -85,7 +85,7 @@ impl StatementCacheOptimizer {
             .analyze_query(query)
             .map_err(|e| rusqlite::Error::SqliteFailure(
                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
-                Some(format!("Query optimization failed: {}", e))
+                Some(format!("Query optimization failed: {e}"))
             ))?;
 
         // Use enhanced statement pool for SELECT queries that benefit from caching
@@ -283,6 +283,11 @@ impl StatementCacheOptimizer {
     /// Get the underlying statement pool for advanced operations
     pub fn get_statement_pool(&self) -> &Arc<EnhancedStatementPool> {
         &self.statement_pool
+    }
+
+    /// Get the optimization manager for advanced operations
+    pub fn get_optimization_manager(&self) -> &Arc<OptimizationManager> {
+        &self.optimization_manager
     }
 
     /// Perform periodic maintenance
