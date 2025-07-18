@@ -6,6 +6,7 @@ pub mod schema;
 pub mod query;
 pub mod status;
 pub mod statement_pool;
+pub mod enhanced_statement_pool;
 pub mod execution;
 pub mod result_cache;
 pub mod row_description;
@@ -13,11 +14,13 @@ pub mod parameter_cache;
 pub mod enum_cache;
 pub mod translation_cache;
 pub mod query_fingerprint;
+pub mod lazy_schema_loader;
 
 pub use schema::SchemaCache;
 pub use query::{QueryCache, CachedQuery, CacheMetrics};
 pub use status::{CacheStatus, get_cache_status, format_cache_status_as_table, log_cache_status};
 pub use statement_pool::{StatementPool, StatementMetadata, StatementPoolStats};
+pub use enhanced_statement_pool::{EnhancedStatementPool, StatementMetadata as EnhancedStatementMetadata, PoolStats};
 pub use execution::{ExecutionCache, ExecutionMetadata, global_execution_cache, global_type_converter_table};
 pub use result_cache::{ResultSetCache, ResultCacheKey, CachedResultSet, global_result_cache};
 pub use row_description::{RowDescriptionCache, RowDescriptionKey, CachedRowDescription, GLOBAL_ROW_DESCRIPTION_CACHE};
@@ -25,6 +28,7 @@ pub use parameter_cache::{ParameterTypeCache, CachedParameterInfo, GLOBAL_PARAME
 pub use enum_cache::{EnumCache, global_enum_cache};
 pub use translation_cache::{TranslationCache, global_translation_cache};
 pub use query_fingerprint::QueryFingerprint;
+pub use lazy_schema_loader::LazySchemaLoader;
 
 /// Simple LRU cache with TTL support
 pub struct LruCache<K, V> {

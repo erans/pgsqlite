@@ -150,11 +150,12 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 
 ### Notable Features
 
-- **Array Types**: Full support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) stored as JSON
+- **Query Optimization System**: Advanced optimization infrastructure with context merging, lazy schema loading, pattern recognition, and integrated optimization management
+- **Array Types**: Full support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) with ARRAY literal syntax, ALL operator, and unnest() WITH ORDINALITY
+- **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`, `?`, `?|`, `?&`) and functions (json_agg, json_object_agg, row_to_json, json_populate_record, json_to_record, jsonb_insert, jsonb_delete, jsonb_pretty, etc.)
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
-- **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`) and functions (json_agg, json_object_agg, row_to_json, json_populate_record, json_to_record, jsonb_insert, etc.)
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
 - **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`
@@ -165,7 +166,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - ❌ Stored procedures and custom functions
 - ❌ PostgreSQL-specific system functions (`pg_*`)
 - ❌ Some advanced data types (ranges, geometric types, full-text search)
-- ⚠️  Some advanced array features (ARRAY literal translation, array assignment operations)
+- ⚠️  Some advanced array features (array assignment operations, advanced indexing)
 - ❌ Multiple concurrent writers (SQLite allows only one writer at a time)
 
 For detailed compatibility information, see [Type Mapping Documentation](docs/type-mapping-prd.md).
@@ -175,8 +176,9 @@ For detailed compatibility information, see [Type Mapping Documentation](docs/ty
 pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite, which does add overhead:
 
 - **Best for**: Development, testing, prototyping, and single-user applications or low write throughput applications
-- **Typical overhead**: 40-300x vs raw SQLite depending on operation
-- **Optimizations**: Built-in query caching, connection pooling, and prepared statements
+- **Typical overhead**: 40-350x vs raw SQLite depending on operation (SELECT ~337x, UPDATE ~67x, DELETE ~43x)
+- **Advanced Optimizations**: Comprehensive query optimization system with context merging, lazy schema loading, and pattern recognition
+- **Built-in Features**: Query caching (1.8x speedup), connection pooling, prepared statements, and ultra-fast path for simple queries
 - **Batch Operations**: Multi-row INSERT syntax provides dramatic performance improvements:
   - 10-row batches: ~11x faster than single-row INSERTs
   - 100-row batches: ~51x faster

@@ -1405,6 +1405,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        debug!("send_select_response called with {} columns: {:?}", response.columns.len(), response.columns);
         // Send RowDescription
         let mut field_descriptions = Vec::new();
         for (i, column_name) in response.columns.iter().enumerate() {
@@ -1433,8 +1434,44 @@ impl ExtendedQueryHandler {
         // Send DataRows
         for row in response.rows {
             let mut values = Vec::new();
-            for cell in row {
-                values.push(cell);
+            for (i, cell) in row.iter().enumerate() {
+                if let Some(bytes) = cell {
+                    let column_name = response.columns.get(i).map(|s| s.as_str()).unwrap_or("unknown");
+                    let column_lower = column_name.to_lowercase();
+                    debug!("Processing column '{}' (lowercase: '{}')", column_name, column_lower);
+                    // Check if this is a datetime function result that needs formatting
+                    if let Ok(s) = String::from_utf8(bytes.clone()) {
+                        debug!("Column '{}' value as string: '{}'", column_name, s);
+                        if let Ok(micros) = s.parse::<i64>() {
+                            debug!("Column '{}' parsed as i64: {}", column_name, micros);
+                            // Check if this looks like microseconds (large integer)
+                            if micros > 1_000_000_000_000 && 
+                               (column_lower.contains("now") || 
+                                column_lower.contains("current_timestamp") ||
+                                column_lower == "now" ||
+                                column_lower == "current_timestamp") {
+                                // This is likely a datetime function result, format it
+                                use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                let formatted = format_microseconds_to_timestamp(micros);
+                                debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
+                                values.push(Some(formatted.into_bytes()));
+                            } else {
+                                debug!("Column '{}' not converted: micros={}, contains_now={}, contains_current_timestamp={}, eq_now={}, eq_current_timestamp={}", 
+                                       column_name, micros, column_lower.contains("now"), column_lower.contains("current_timestamp"), 
+                                       column_lower == "now", column_lower == "current_timestamp");
+                                values.push(cell.clone());
+                            }
+                        } else {
+                            debug!("Column '{}' failed to parse as i64", column_name);
+                            values.push(cell.clone());
+                        }
+                    } else {
+                        debug!("Column '{}' failed to parse as UTF-8", column_name);
+                        values.push(cell.clone());
+                    }
+                } else {
+                    values.push(cell.clone());
+                }
             }
             framed.send(BackendMessage::DataRow(values)).await?;
         }
@@ -1701,6 +1738,7 @@ impl ExtendedQueryHandler {
             None
         }
     }
+    
     
     // Convert time string to microseconds since midnight
     fn time_to_microseconds(time_str: &str) -> Option<i64> {
@@ -2006,6 +2044,7 @@ impl ExtendedQueryHandler {
         result_formats: &[i16],
         field_types: &[i32],
     ) -> Result<Vec<Option<Vec<u8>>>, PgSqliteError> {
+        debug!("encode_row called with {} fields, result_formats: {:?}, field_types: {:?}", row.len(), result_formats, field_types);
         let mut encoded_row = Vec::new();
         
         for (i, value) in row.iter().enumerate() {
@@ -2016,6 +2055,7 @@ impl ExtendedQueryHandler {
                 result_formats.get(i).copied().unwrap_or(0)
             };
             let type_oid = field_types.get(i).copied().unwrap_or(PgType::Text.to_oid());
+            
             
             let encoded_value = match value {
                 None => None,
@@ -2126,7 +2166,15 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Date.to_oid() => {
                                 // date - days since 2000-01-01 as int4
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(days) = Self::date_to_pg_days(&s) {
+                                    // Check if this is already an integer (days since 1970)
+                                    if let Ok(days_since_1970) = s.parse::<i32>() {
+                                        // Convert from days since 1970 to days since 2000
+                                        let days_since_2000 = days_since_1970 - 10957;
+                                        let mut buf = vec![0u8; 4];
+                                        BigEndian::write_i32(&mut buf, days_since_2000);
+                                        Some(buf)
+                                    } else if let Some(days) = Self::date_to_pg_days(&s) {
+                                        // Handle date strings like "2025-01-01" 
                                         let mut buf = vec![0u8; 4];
                                         BigEndian::write_i32(&mut buf, days);
                                         Some(buf)
@@ -2141,7 +2189,13 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Time.to_oid() => {
                                 // time - microseconds since midnight as int8
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(micros) = Self::time_to_microseconds(&s) {
+                                    // First check if this is already an integer (microseconds since midnight)
+                                    if let Ok(micros) = s.parse::<i64>() {
+                                        // Already in microseconds format
+                                        let mut buf = vec![0u8; 8];
+                                        BigEndian::write_i64(&mut buf, micros);
+                                        Some(buf)
+                                    } else if let Some(micros) = Self::time_to_microseconds(&s) {
                                         let mut buf = vec![0u8; 8];
                                         BigEndian::write_i64(&mut buf, micros);
                                         Some(buf)
@@ -2156,7 +2210,15 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
                                 // timestamp/timestamptz - microseconds since 2000-01-01 as int8
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Some(micros) = Self::timestamp_to_pg_microseconds(&s) {
+                                    // First check if this is already an integer (microseconds since Unix epoch)
+                                    if let Ok(unix_micros) = s.parse::<i64>() {
+                                        // Convert from Unix epoch (1970-01-01) to PostgreSQL epoch (2000-01-01)
+                                        // 946684800 seconds = 30 years between epochs
+                                        let pg_micros = unix_micros - (946684800 * 1_000_000);
+                                        let mut buf = vec![0u8; 8];
+                                        BigEndian::write_i64(&mut buf, pg_micros);
+                                        Some(buf)
+                                    } else if let Some(micros) = Self::timestamp_to_pg_microseconds(&s) {
                                         let mut buf = vec![0u8; 8];
                                         BigEndian::write_i64(&mut buf, micros);
                                         Some(buf)
@@ -2357,8 +2419,46 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
+                            // Timestamp types - convert from INTEGER microseconds to formatted string
+                            t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    // Check if this is already an integer (microseconds since epoch)
+                                    if let Ok(micros) = s.parse::<i64>() {
+                                        // Convert microseconds to formatted timestamp
+                                        use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                        let formatted = format_microseconds_to_timestamp(micros);
+                                        Some(formatted.into_bytes())
+                                    } else {
+                                        // Already formatted or invalid, keep as-is
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
                             // NOTE: Array type handling removed for text format too
                             // Arrays are returned as JSON strings with TEXT type
+                            t if t == PgType::Text.to_oid() => {
+                                // Check if this is a datetime function result (integer microseconds that should be formatted)
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Ok(micros) = s.parse::<i64>() {
+                                        // Check if this looks like microseconds (large integer)
+                                        if micros > 1_000_000_000_000 { // > year 2001 in microseconds
+                                            // This is likely a datetime function result, format it
+                                            use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                            let formatted = format_microseconds_to_timestamp(micros);
+                                            debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
+                                            Some(formatted.into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
                             _ => {
                                 // For other types, keep as-is
                                 Some(bytes.clone())

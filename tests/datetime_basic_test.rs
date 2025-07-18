@@ -10,11 +10,14 @@ async fn test_now_function() {
     let row = client.query_one("SELECT NOW() as now", &[]).await.unwrap();
     let now_str: String = row.get("now");
     
+    // Debug output to see what we actually got
+    println!("NOW() returned: '{}'", now_str);
+    
     // Verify it's a properly formatted timestamp (YYYY-MM-DD HH:MM:SS.ffffff)
-    assert!(now_str.contains('-'), "NOW() should return formatted timestamp with dashes");
-    assert!(now_str.contains(':'), "NOW() should return formatted timestamp with colons");
-    assert!(now_str.contains('.'), "NOW() should return formatted timestamp with microseconds");
-    assert!(now_str.len() > 20, "NOW() should return full timestamp string");
+    assert!(now_str.contains('-'), "NOW() should return formatted timestamp with dashes, got: '{}'", now_str);
+    assert!(now_str.contains(':'), "NOW() should return formatted timestamp with colons, got: '{}'", now_str);
+    assert!(now_str.contains('.'), "NOW() should return formatted timestamp with microseconds, got: '{}'", now_str);
+    assert!(now_str.len() > 20, "NOW() should return full timestamp string, got: '{}'", now_str);
     
     // Verify it's NOT just raw microseconds
     assert!(now_str.parse::<i64>().is_err(), "NOW() should not return raw integer microseconds");

@@ -17,7 +17,7 @@ bytes = "1.9"
 postgres-protocol = "0.6.8"
 
 # SQLite
-rusqlite = { version = "0.36", features = ["bundled", "uuid", "serde_json", "functions", "collation", "vtab"] }
+rusqlite = { version = "0.36", features = ["bundled", "uuid", "serde_json", "functions", "collation", "vtab", "column_decltype"] }
 
 # SQL parsing
 sqlparser = "0.57"
