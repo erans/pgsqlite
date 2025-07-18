@@ -1,6 +1,6 @@
 mod common;
 use common::setup_test_server;
-use chrono::{NaiveDateTime, DateTime, Utc, Timelike};
+use chrono::{DateTime, Utc, Timelike};
 
 #[tokio::test]
 async fn test_standalone_now_returns_formatted_timestamp() {
@@ -9,7 +9,8 @@ async fn test_standalone_now_returns_formatted_timestamp() {
     
     // Test SELECT NOW() - should return a proper timestamp
     let row = client.query_one("SELECT NOW()", &[]).await.unwrap();
-    let now_value: NaiveDateTime = row.get(0);
+    let now_value: DateTime<Utc> = row.get(0);
+    let now_value = now_value.naive_utc();
     
     // Should be a recent timestamp (within the last hour)
     let now = chrono::Utc::now().naive_utc();
@@ -33,7 +34,8 @@ async fn test_standalone_current_timestamp_returns_formatted() {
     
     // Test SELECT CURRENT_TIMESTAMP() - should return a proper timestamp
     let row = client.query_one("SELECT CURRENT_TIMESTAMP()", &[]).await.unwrap();
-    let ts_value: NaiveDateTime = row.get(0);
+    let ts_value: DateTime<Utc> = row.get(0);
+    let ts_value = ts_value.naive_utc();
     
     // Should be a recent timestamp (within the last hour)
     let now = chrono::Utc::now().naive_utc();

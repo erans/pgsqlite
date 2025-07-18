@@ -365,7 +365,7 @@ impl SchemaTypeMapper {
         
         // Timestamp functions that return INTEGER microseconds (stored as timestamp type)
         if upper == "NOW()" || upper == "CURRENT_TIMESTAMP" || upper == "CURRENT_TIMESTAMP()" {
-            return Some(PgType::Text.to_oid()); // text (formatted timestamp string)
+            return Some(PgType::Timestamptz.to_oid()); // timestamptz (formatted timestamp string)
         }
         
         // Other datetime functions
