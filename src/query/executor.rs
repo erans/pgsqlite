@@ -1130,6 +1130,20 @@ impl QueryExecutor {
                 
                 // Datetime conversion is now handled by InsertTranslator and value converters
                 // No need for triggers anymore
+                
+                // Populate PostgreSQL catalog tables with constraint information
+                if let Some(table_name) = extract_table_name_from_create(query) {
+                    let conn = db.get_mut_connection()
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for constraint population: {}", e)))?;
+                    
+                    // Populate pg_constraint, pg_attrdef, and pg_index tables
+                    if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
+                        // Log the error but don't fail the CREATE TABLE operation
+                        debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                    } else {
+                        info!("Successfully populated constraint catalog tables for table: {}", table_name);
+                    }
+                }
             }
         }
         

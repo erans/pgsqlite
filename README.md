@@ -151,6 +151,9 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 ### Notable Features
 
 - **Query Optimization System**: Advanced optimization infrastructure with context merging, lazy schema loading, pattern recognition, and integrated optimization management
+- **PostgreSQL Functions**: Comprehensive function support including:
+  - **String Functions**: `split_part()`, `string_agg()`, `translate()`, `ascii()`, `chr()`, `repeat()`, `reverse()`, `left()`, `right()`, `lpad()`, `rpad()`
+  - **Math Functions**: `trunc()`, `round()`, `ceil()`, `floor()`, `sign()`, `abs()`, `mod()`, `power()`, `sqrt()`, `exp()`, `ln()`, `log()`, trigonometric functions, `random()`
 - **Array Types**: Full support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) with ARRAY literal syntax, ALL operator, and unnest() WITH ORDINALITY
 - **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`, `?`, `?|`, `?&`) and functions (json_agg, json_object_agg, row_to_json, json_populate_record, json_to_record, jsonb_insert, jsonb_delete, jsonb_pretty, etc.)
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
@@ -159,7 +162,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **Generated Columns**: `SERIAL` and `BIGSERIAL` auto-increment columns
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
 - **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`
-- **psql Compatibility**: Use psql's `\d` and `\dt` commands to explore your database
+- **psql Compatibility**: Enhanced psql support with `\d`, `\dt`, and `\d tablename` commands fully working
 
 ### Limitations
 

@@ -63,7 +63,66 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [x] **psql Meta-Commands Support**
   - [x] \d - Lists all relations (tables, views, indexes) - WORKING
   - [x] \dt - Lists only tables - WORKING
-  - [ ] \d tablename - Describe specific table (needs pg_attribute support)
+  - [x] \d tablename - Describe specific table - COMPLETED (2025-07-19)
+
+### PostgreSQL Functions Implementation - COMPLETED (2025-07-19)
+
+#### String Functions - COMPLETED (2025-07-19)
+- [x] **split_part()** - Extract substring based on delimiter
+- [x] **string_agg()** - Aggregate strings with delimiter
+- [x] **translate()** - Character-by-character replacement
+- [x] **ascii()** - Get ASCII code of first character
+- [x] **chr()** - Get character from ASCII code
+- [x] **repeat()** - Repeat string n times
+- [x] **reverse()** - Reverse string
+- [x] **left()** - Extract leftmost n characters
+- [x] **right()** - Extract rightmost n characters
+- [x] **lpad()** - Left-pad string to length
+- [x] **rpad()** - Right-pad string to length
+
+#### Math Functions - COMPLETED (2025-07-19)
+- [x] **trunc()** - Truncate towards zero (with precision support)
+- [x] **round()** - Round with precision support
+- [x] **ceil()/ceiling()** - Round up to nearest integer
+- [x] **floor()** - Round down to nearest integer
+- [x] **sign()** - Return sign of number (-1, 0, 1)
+- [x] **abs()** - Absolute value
+- [x] **mod()** - Modulo operation
+- [x] **power()/pow()** - Exponentiation
+- [x] **sqrt()** - Square root
+- [x] **exp()** - e raised to power
+- [x] **ln()** - Natural logarithm
+- [x] **log()** - Base 10 logarithm (with custom base support)
+- [x] **sin()**, **cos()**, **tan()** - Trigonometric functions
+- [x] **asin()**, **acos()**, **atan()**, **atan2()** - Inverse trigonometric functions
+- [x] **radians()**, **degrees()** - Angle conversion
+- [x] **pi()** - Mathematical constant π
+- [x] **random()** - Random number 0.0 to 1.0 (fixed Rust 2024 compatibility)
+
+### Constraint Tables Population - COMPLETED (2025-07-19)
+- [x] **pg_constraint Table** - Populated with actual constraint data
+  - [x] PRIMARY KEY constraints with correct conkey arrays
+  - [x] UNIQUE constraints from SQLite indexes
+  - [x] NOT NULL constraints with proper column references
+  - [x] CHECK constraints (placeholder for future)
+  - [x] FOREIGN KEY constraints (placeholder for future)
+- [x] **pg_attrdef Table** - Populated with column defaults
+  - [x] Parses SQLite schema for DEFAULT clauses
+  - [x] Stores default expressions in adbin/adsrc columns
+- [x] **pg_index Table** - Populated with index metadata
+  - [x] All indexes including primary keys
+  - [x] Proper indkey arrays with column positions
+  - [x] Unique/primary flags correctly set
+
+### SQL Test Suite Fixes - COMPLETED (2025-07-19)
+- [x] **String Aggregation Tests** - Fixed string_agg delimiter issues
+- [x] **Array Operator Tests** - Uncommented and fixed with NULL handling
+  - [x] Contains operator (@>) 
+  - [x] Contained by operator (<@)
+  - [x] Overlap operator (&&)
+- [x] **ANY/ALL Operator Tests** - Fixed with NULL checks
+- [x] **Array Concatenation Tests** - Fixed using PostgreSQL array literal syntax
+- [x] **Division by Zero Test** - Documented as expected SQLite behavior
 
 ### Type System Enhancements
 
@@ -1069,7 +1128,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 #### PostgreSQL Compatibility - System Catalogs (Partial - 2025-07-03)
 - [x] System catalogs (pg_class, pg_namespace, pg_am) - COMPLETED (2025-07-08)
-  - [ ] Enhanced pg_attribute for \d tablename support
+  - [x] Enhanced pg_attribute for \d tablename support - COMPLETED (2025-07-19)
   - [x] Basic CatalogInterceptor framework - COMPLETED (2025-07-03)
   - [x] Implement pg_class queries for table/relation listing - COMPLETED (2025-07-03)
     - Returns all tables and indexes from SQLite
@@ -1142,7 +1201,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - [x] \dv - List views (works)
     - [x] \ds - List sequences (works)
     - [ ] \df - List functions
-    - [x] \d tablename - Describe specific table (works after pg_get_userbyid fix)
+    - [x] \d tablename - Describe specific table - COMPLETED (2025-07-19)
     - [ ] \l - List databases (needs pg_database)
     - [ ] \dn - List schemas (needs pg_namespace)
     - [ ] \du - List users/roles (needs pg_roles)

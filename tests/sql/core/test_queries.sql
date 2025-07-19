@@ -597,18 +597,18 @@ INSERT INTO test_multidim_arrays (matrix_2d, matrix_3d) VALUES
 -- SELECT array_upper(int_array, 1) AS upper_bound FROM test_arrays;
 -- SELECT array_lower(int_array, 1) AS lower_bound FROM test_arrays;
 
--- Test array operators (Note: these may not be implemented yet)
--- SELECT * FROM test_arrays WHERE int_array @> ARRAY[2,3];  -- contains
--- SELECT * FROM test_arrays WHERE int_array <@ ARRAY[1,2,3,4,5,6];  -- is contained by
--- SELECT * FROM test_arrays WHERE int_array && ARRAY[3,4,5];  -- overlaps
+-- Test array operators (these are implemented and working)
+SELECT * FROM test_arrays WHERE int_array IS NOT NULL AND int_array @> '{2,3}';  -- contains
+SELECT * FROM test_arrays WHERE int_array IS NOT NULL AND int_array <@ '{1,2,3,4,5,6}';  -- is contained by
+SELECT * FROM test_arrays WHERE int_array IS NOT NULL AND int_array && '{3,4,5}';  -- overlaps
 
--- Test ANY/ALL operators (Note: these may not be implemented yet)
--- SELECT * FROM test_arrays WHERE 3 = ANY(int_array);
--- SELECT * FROM test_arrays WHERE 10 > ALL(int_array);
+-- Test ANY/ALL operators (these are implemented and working)
+SELECT * FROM test_arrays WHERE int_array IS NOT NULL AND 3 = ANY(int_array);
+SELECT * FROM test_arrays WHERE int_array IS NOT NULL AND 10 > ALL(int_array);
 
--- Test array concatenation (Note: may not be implemented)
--- SELECT int_array || ARRAY[99] AS concatenated FROM test_arrays WHERE id = 1;
--- SELECT ARRAY[0] || int_array AS prepended FROM test_arrays WHERE id = 1;
+-- Test array concatenation (implemented via || operator translation)
+SELECT int_array || '{99}' AS concatenated FROM test_arrays WHERE id = 1;
+SELECT '{0}' || int_array AS prepended FROM test_arrays WHERE id = 1;
 
 -- Test empty arrays and NULL handling
 SELECT * FROM test_arrays WHERE int_array = '{}';
@@ -1307,3 +1307,296 @@ SELECT json_to_record('{"user": "Charlie", "score": 95, "verified": false}') AS 
 
 -- Clean up aggregation test table
 DROP TABLE agg_test;
+
+-- ============================================
+-- POSTGRESQL MATH FUNCTIONS COMPREHENSIVE TESTS
+-- ============================================
+
+-- Test basic rounding and truncation functions
+SELECT trunc(3.7) AS trunc_positive, trunc(-3.7) AS trunc_negative;
+SELECT trunc(3.789, 2) AS trunc_precision, trunc(1234.56789, 0) AS trunc_to_integer;
+SELECT round(3.7) AS round_up, round(3.4) AS round_down, round(-3.7) AS round_negative;
+SELECT round(3.789, 2) AS round_precision, round(1234.56789, 1) AS round_one_decimal;
+SELECT ceil(3.2) AS ceil_positive, ceil(-3.7) AS ceil_negative, ceiling(4.1) AS ceiling_alias;
+SELECT floor(3.7) AS floor_positive, floor(-3.2) AS floor_negative;
+
+-- Test sign and absolute value functions
+SELECT sign(5.5) AS sign_positive, sign(-3.2) AS sign_negative, sign(0) AS sign_zero;
+SELECT abs(-123.45) AS abs_negative, abs(67.89) AS abs_positive, abs(0) AS abs_zero;
+
+-- Test modulo function
+SELECT mod(10, 3) AS mod_basic, mod(15, 4) AS mod_remainder, mod(-7, 3) AS mod_negative;
+
+-- Test power and square root functions
+SELECT power(2, 3) AS power_basic, pow(5, 2) AS pow_alias, power(2.5, 3.5) AS power_float;
+SELECT sqrt(16) AS sqrt_perfect, sqrt(2) AS sqrt_irrational, sqrt(0.25) AS sqrt_decimal;
+
+-- Test exponential and logarithmic functions
+SELECT exp(1) AS exp_e, exp(0) AS exp_zero, exp(2) AS exp_two;
+SELECT ln(exp(1)) AS ln_e_roundtrip, ln(10) AS ln_ten;
+SELECT log(100) AS log10_hundred, log(1000) AS log10_thousand, log(10, 100) AS log_custom_base;
+
+-- Test trigonometric functions
+SELECT sin(0) AS sin_zero, sin(pi()/2) AS sin_pi_half, sin(pi()) AS sin_pi;
+SELECT cos(0) AS cos_zero, cos(pi()/2) AS cos_pi_half, cos(pi()) AS cos_pi;
+SELECT tan(0) AS tan_zero, tan(pi()/4) AS tan_pi_quarter;
+
+-- Test inverse trigonometric functions
+SELECT asin(0) AS asin_zero, asin(1) AS asin_one, acos(1) AS acos_one, acos(0) AS acos_zero;
+SELECT atan(0) AS atan_zero, atan(1) AS atan_one, atan2(1, 1) AS atan2_45_degrees;
+
+-- Test angle conversion functions
+SELECT radians(180) AS pi_radians, radians(90) AS half_pi_radians;
+SELECT degrees(pi()) AS degrees_180, degrees(pi()/2) AS degrees_90;
+
+-- Test pi constant
+SELECT pi() AS pi_value, 2 * pi() AS two_pi, pi() / 2 AS half_pi;
+
+-- Test random function (should return values between 0 and 1)
+SELECT random() AS random1, random() AS random2, random() AS random3;
+
+-- Create table for math function testing with real data
+CREATE TABLE math_test_data (
+    id SERIAL PRIMARY KEY,
+    value DECIMAL(10,3),
+    angle DECIMAL(8,6)
+);
+
+INSERT INTO math_test_data (value, angle) VALUES 
+(123.456, 0.0),
+(-45.678, 1.570796),  -- π/2
+(0.0, 3.141593),      -- π
+(999.999, 0.785398),  -- π/4
+(-0.001, 6.283185);   -- 2π
+
+-- Test math functions on table data
+SELECT 
+    id,
+    value,
+    trunc(value) AS truncated,
+    round(value, 1) AS rounded,
+    abs(value) AS absolute,
+    sign(value) AS sign_value,
+    sqrt(abs(value)) AS square_root,
+    power(abs(value), 0.5) AS power_half
+FROM math_test_data;
+
+-- Test trigonometric functions on table data
+SELECT 
+    id,
+    angle,
+    sin(angle) AS sine,
+    cos(angle) AS cosine,
+    tan(angle) AS tangent,
+    degrees(angle) AS angle_degrees,
+    radians(degrees(angle)) AS roundtrip_angle
+FROM math_test_data;
+
+-- Test complex math expressions
+SELECT 
+    id,
+    value,
+    sqrt(power(value, 2) + power(value * 0.5, 2)) AS hypotenuse,
+    ln(exp(abs(value))) AS ln_exp_roundtrip,
+    power(10, log(abs(value))) AS power_log_roundtrip
+FROM math_test_data
+WHERE value != 0;
+
+-- Test math functions in aggregations
+SELECT 
+    COUNT(*) AS total_rows,
+    AVG(value) AS avg_value,
+    trunc(AVG(value), 2) AS avg_truncated,
+    SUM(abs(value)) AS sum_absolute,
+    sqrt(SUM(power(value, 2))) AS euclidean_norm,
+    MIN(sin(angle)) AS min_sine,
+    MAX(cos(angle)) AS max_cosine
+FROM math_test_data;
+
+-- Test math functions in WHERE clauses
+SELECT * FROM math_test_data WHERE abs(value) > 50;
+SELECT * FROM math_test_data WHERE sin(angle) > 0.5;
+SELECT * FROM math_test_data WHERE power(value, 2) < 10000;
+
+-- Test math functions in ORDER BY
+SELECT id, value, sqrt(abs(value)) AS sqrt_abs 
+FROM math_test_data 
+ORDER BY sqrt(abs(value)) DESC;
+
+-- Test edge cases and error handling
+-- Note: Division by zero tests intentionally omitted as they cause SQLite errors
+-- These would be: SELECT mod(10, 0) and SELECT 1/0
+
+-- Clean up math test table
+DROP TABLE math_test_data;
+
+-- Test math functions with numeric precision
+CREATE TABLE precision_test (
+    id SERIAL PRIMARY KEY,
+    precise_value NUMERIC(15,8)
+);
+
+INSERT INTO precision_test (precise_value) VALUES 
+(3.14159265),
+(2.71828182),
+(1.41421356),
+(1.73205080);
+
+-- Test precision preservation in math functions
+SELECT 
+    id,
+    precise_value,
+    trunc(precise_value, 6) AS truncated_6,
+    round(precise_value, 4) AS rounded_4,
+    power(precise_value, 2) AS squared,
+    sqrt(precise_value) AS square_root,
+    ln(precise_value) AS natural_log
+FROM precision_test;
+
+-- Clean up precision test table  
+DROP TABLE precision_test;
+
+-- ============================================
+-- POSTGRESQL STRING FUNCTIONS COMPREHENSIVE TESTS
+-- ============================================
+
+-- Test split_part function
+SELECT split_part('apple,banana,cherry', ',', 1) AS first_part;
+SELECT split_part('apple,banana,cherry', ',', 2) AS second_part;
+SELECT split_part('apple,banana,cherry', ',', 3) AS third_part;
+SELECT split_part('apple,banana,cherry', ',', 4) AS beyond_parts;
+SELECT split_part('one|two|three|four', '|', 2) AS pipe_delimiter;
+SELECT split_part('no-delimiter', ',', 1) AS no_delimiter_found;
+
+-- Test string_agg function
+CREATE TABLE string_agg_test (
+    id INTEGER,
+    category TEXT,
+    value TEXT
+);
+
+INSERT INTO string_agg_test VALUES 
+(1, 'fruits', 'apple'),
+(2, 'fruits', 'banana'),
+(3, 'fruits', 'cherry'),
+(4, 'colors', 'red'),
+(5, 'colors', 'blue'),
+(6, 'colors', 'green');
+
+SELECT category, string_agg(value, ', ') AS aggregated 
+FROM string_agg_test 
+GROUP BY category;
+
+SELECT string_agg(value, ' | ') AS all_values FROM string_agg_test;
+
+-- Test translate function
+SELECT translate('Hello World', 'lo', 'xy') AS translated_basic;
+SELECT translate('abcdef', 'ace', 'xyz') AS translate_multiple;
+SELECT translate('Hello123', '123', 'ABC') AS translate_numbers;
+SELECT translate('TEST', 'EST', '') AS translate_remove_chars;
+
+-- Test ascii and chr functions
+SELECT ascii('A') AS ascii_A, ascii('a') AS ascii_a, ascii('0') AS ascii_zero;
+SELECT chr(65) AS chr_A, chr(97) AS chr_a, chr(48) AS chr_zero;
+SELECT chr(ascii('Z')) AS roundtrip_Z;
+
+-- Test repeat function
+SELECT repeat('ha', 3) AS repeat_ha;
+SELECT repeat('*', 5) AS repeat_stars;
+SELECT repeat('test', 0) AS repeat_zero;
+SELECT repeat('X', 1) AS repeat_once;
+
+-- Test reverse function
+SELECT reverse('hello') AS reverse_hello;
+SELECT reverse('12345') AS reverse_numbers;
+SELECT reverse('') AS reverse_empty;
+SELECT reverse('a') AS reverse_single;
+
+-- Test left and right functions
+SELECT left('PostgreSQL', 4) AS left_four;
+SELECT left('Hello World', 5) AS left_hello;
+SELECT right('PostgreSQL', 3) AS right_three;
+SELECT right('Hello World', 5) AS right_world;
+
+-- Test lpad and rpad functions
+SELECT lpad('123', 5, '0') AS lpad_zeros;
+SELECT lpad('test', 8, '*') AS lpad_stars;
+SELECT rpad('123', 5, '0') AS rpad_zeros;
+SELECT rpad('test', 8, '*') AS rpad_stars;
+SELECT lpad('toolong', 4, '0') AS lpad_truncate;
+SELECT rpad('toolong', 4, '0') AS rpad_truncate;
+
+-- Create table for string function testing with real data
+CREATE TABLE string_test_data (
+    id SERIAL PRIMARY KEY,
+    full_name TEXT,
+    email TEXT,
+    phone TEXT,
+    description TEXT
+);
+
+INSERT INTO string_test_data (full_name, email, phone, description) VALUES 
+('John Smith', 'john.smith@example.com', '555-123-4567', 'Senior Developer'),
+('Jane Doe', 'jane.doe@company.org', '555-987-6543', 'Project Manager'),
+('Bob Wilson', 'bob@tech.net', '555-555-5555', 'Database Administrator'),
+('Alice Brown', 'alice.brown@startup.io', '555-111-2222', 'Frontend Specialist');
+
+-- Test string functions on table data
+SELECT 
+    id,
+    full_name,
+    split_part(full_name, ' ', 1) AS first_name,
+    split_part(full_name, ' ', 2) AS last_name,
+    left(full_name, 3) AS name_prefix,
+    reverse(full_name) AS reversed_name,
+    ascii(left(full_name, 1)) AS first_char_ascii
+FROM string_test_data;
+
+-- Test email processing with string functions
+SELECT 
+    id,
+    email,
+    split_part(email, '@', 1) AS username,
+    split_part(email, '@', 2) AS domain,
+    translate(email, '.@', '__') AS safe_filename,
+    lpad(split_part(email, '@', 1), 10, '*') AS padded_username
+FROM string_test_data;
+
+-- Test phone number formatting
+SELECT 
+    id,
+    phone,
+    translate(phone, '-', '') AS no_dashes,
+    left(phone, 3) AS area_code,
+    right(phone, 4) AS last_four,
+    repeat('*', 7) || right(phone, 4) AS masked_phone
+FROM string_test_data;
+
+-- Test string aggregation by category
+SELECT string_agg(full_name, '|') AS all_names FROM string_test_data;
+SELECT string_agg(description, ' ') AS all_roles FROM string_test_data;
+
+-- Test complex string manipulations
+SELECT 
+    id,
+    full_name,
+    description,
+    left(description, 10) || '...' AS truncated_desc,
+    translate(upper(description), ' ', '_') AS identifier,
+    chr(ascii(left(full_name, 1)) + 32) AS lowercase_initial,
+    repeat(left(full_name, 1), 3) AS triple_initial
+FROM string_test_data;
+
+-- Test string functions in WHERE clauses
+SELECT * FROM string_test_data WHERE ascii(left(full_name, 1)) BETWEEN 65 AND 90;
+SELECT * FROM string_test_data WHERE split_part(email, '@', 2) LIKE '%.com';
+SELECT * FROM string_test_data WHERE left(description, 5) = 'Senio';
+
+-- Test string functions in ORDER BY
+SELECT full_name, description 
+FROM string_test_data 
+ORDER BY reverse(full_name);
+
+-- Clean up string test tables
+DROP TABLE string_agg_test;
+DROP TABLE string_test_data;

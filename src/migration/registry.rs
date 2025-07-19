@@ -302,7 +302,7 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 -- pg_attribute view (column information)
                 CREATE VIEW IF NOT EXISTS pg_attribute AS
                 SELECT 
-                    oid_hash(m.name) as attrelid,                   -- table OID
+                    CAST(oid_hash(m.name) AS TEXT) as attrelid,     -- table OID
                     p.cid + 1 as attnum,                             -- column number (1-based)
                     p.name as attname,                               -- column name
                     CASE 
@@ -347,7 +347,8 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 CREATE VIEW IF NOT EXISTS pg_class AS
                 SELECT 
                     -- Generate stable OID from table name using hash function
-                    oid_hash(name) as oid,
+                    -- Cast to TEXT to handle both numeric and string comparisons
+                    CAST(oid_hash(name) AS TEXT) as oid,
                     name as relname,
                     2200 as relnamespace,  -- public schema
                     CASE 
@@ -366,7 +367,7 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                     CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
                     'f' as relisshared,
                     'p' as relpersistence,
-                    oid_hash(name || '_type') as reltype,
+                    CAST(oid_hash(name || '_type') AS TEXT) as reltype,
                     0 as reloftype,
                     0 as relnatts,
                     0 as relchecks,
@@ -391,14 +392,14 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 
                 -- pg_constraint table for constraints
                 CREATE TABLE IF NOT EXISTS pg_constraint (
-                    oid INTEGER PRIMARY KEY,
+                    oid TEXT PRIMARY KEY,
                     conname TEXT NOT NULL,
                     connamespace INTEGER DEFAULT 2200,
                     contype CHAR(1) NOT NULL,  -- 'p' primary, 'u' unique, 'c' check, 'f' foreign
                     condeferrable BOOLEAN DEFAULT 0,
                     condeferred BOOLEAN DEFAULT 0,
                     convalidated BOOLEAN DEFAULT 1,
-                    conrelid INTEGER NOT NULL,  -- table OID
+                    conrelid TEXT NOT NULL,  -- table OID
                     contypid INTEGER DEFAULT 0,
                     conindid INTEGER DEFAULT 0,  -- index OID for unique/primary
                     conparentid INTEGER DEFAULT 0,
@@ -421,8 +422,8 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 
                 -- pg_attrdef table for column defaults
                 CREATE TABLE IF NOT EXISTS pg_attrdef (
-                    oid INTEGER PRIMARY KEY,
-                    adrelid INTEGER NOT NULL,    -- table OID
+                    oid TEXT PRIMARY KEY,
+                    adrelid TEXT NOT NULL,    -- table OID
                     adnum SMALLINT NOT NULL,     -- column number
                     adbin TEXT,                  -- expression tree
                     adsrc TEXT                   -- human-readable default
@@ -430,8 +431,8 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 
                 -- pg_index table for indexes
                 CREATE TABLE IF NOT EXISTS pg_index (
-                    indexrelid INTEGER PRIMARY KEY,  -- index OID
-                    indrelid INTEGER NOT NULL,       -- table OID
+                    indexrelid TEXT PRIMARY KEY,  -- index OID
+                    indrelid TEXT NOT NULL,       -- table OID
                     indnatts SMALLINT NOT NULL,
                     indnkeyatts SMALLINT NOT NULL,
                     indisunique BOOLEAN DEFAULT 0,
@@ -589,19 +590,110 @@ struct ConstraintInfo {
 }
 
 fn parse_table_constraints(table_name: &str, create_sql: &str) -> Option<Vec<ConstraintInfo>> {
-    // Simple parsing - a full implementation would use a proper SQL parser
-    let mut constraints = Vec::new();
-    let sql_upper = create_sql.to_uppercase();
+    use regex::Regex;
     
-    // Look for PRIMARY KEY
-    if sql_upper.contains("PRIMARY KEY") {
-        constraints.push(ConstraintInfo {
-            oid: generate_table_oid(&format!("{}_pkey", table_name)),
-            name: format!("{}_pkey", table_name),
-            contype: "p".to_string(),
-            columns: vec![], // Would need to parse column names
-            definition: "PRIMARY KEY".to_string(),
-        });
+    let mut constraints = Vec::new();
+    
+    // Parse PRIMARY KEY constraints
+    // Look for both inline PRIMARY KEY and table-level PRIMARY KEY
+    if let Ok(pk_regex) = Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bPRIMARY\s+KEY\b") {
+        for cap in pk_regex.captures_iter(create_sql) {
+            if let Some(column_name) = cap.get(1) {
+                constraints.push(ConstraintInfo {
+                    oid: generate_table_oid(&format!("{}_pkey", table_name)),
+                    name: format!("{}_pkey", table_name),
+                    contype: "p".to_string(),
+                    columns: vec![column_name.as_str().to_string()],
+                    definition: "PRIMARY KEY".to_string(),
+                });
+            }
+        }
+    }
+    
+    // Parse table-level PRIMARY KEY constraints
+    if let Ok(table_pk_regex) = Regex::new(r"(?i)PRIMARY\s+KEY\s*\(\s*([^)]+)\s*\)") {
+        for cap in table_pk_regex.captures_iter(create_sql) {
+            if let Some(columns_str) = cap.get(1) {
+                let columns: Vec<String> = columns_str.as_str()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                constraints.push(ConstraintInfo {
+                    oid: generate_table_oid(&format!("{}_pkey", table_name)),
+                    name: format!("{}_pkey", table_name),
+                    contype: "p".to_string(),
+                    columns,
+                    definition: "PRIMARY KEY".to_string(),
+                });
+            }
+        }
+    }
+    
+    // Parse UNIQUE constraints
+    if let Ok(unique_regex) = Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bUNIQUE\b") {
+        for cap in unique_regex.captures_iter(create_sql) {
+            if let Some(column_name) = cap.get(1) {
+                constraints.push(ConstraintInfo {
+                    oid: generate_table_oid(&format!("{}_{}_key", table_name, column_name.as_str())),
+                    name: format!("{}_{}_key", table_name, column_name.as_str()),
+                    contype: "u".to_string(),
+                    columns: vec![column_name.as_str().to_string()],
+                    definition: "UNIQUE".to_string(),
+                });
+            }
+        }
+    }
+    
+    // Parse table-level UNIQUE constraints
+    if let Ok(table_unique_regex) = Regex::new(r"(?i)UNIQUE\s*\(\s*([^)]+)\s*\)") {
+        for cap in table_unique_regex.captures_iter(create_sql) {
+            if let Some(columns_str) = cap.get(1) {
+                let columns: Vec<String> = columns_str.as_str()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .collect();
+                let constraint_name = format!("{}_{}_key", table_name, columns.join("_"));
+                constraints.push(ConstraintInfo {
+                    oid: generate_table_oid(&constraint_name),
+                    name: constraint_name,
+                    contype: "u".to_string(),
+                    columns,
+                    definition: "UNIQUE".to_string(),
+                });
+            }
+        }
+    }
+    
+    // Parse CHECK constraints
+    if let Ok(check_regex) = Regex::new(r"(?i)CHECK\s*\(\s*([^)]+)\s*\)") {
+        for (i, cap) in check_regex.captures_iter(create_sql).enumerate() {
+            if let Some(check_expr) = cap.get(1) {
+                let constraint_name = format!("{}_check{}", table_name, i + 1);
+                constraints.push(ConstraintInfo {
+                    oid: generate_table_oid(&constraint_name),
+                    name: constraint_name,
+                    contype: "c".to_string(),
+                    columns: vec![], // CHECK constraints don't have specific columns
+                    definition: format!("CHECK ({})", check_expr.as_str()),
+                });
+            }
+        }
+    }
+    
+    // Parse NOT NULL constraints (treated as check constraints in PostgreSQL)
+    if let Ok(not_null_regex) = Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bNOT\s+NULL\b") {
+        for cap in not_null_regex.captures_iter(create_sql) {
+            if let Some(column_name) = cap.get(1) {
+                let constraint_name = format!("{}_{}_not_null", table_name, column_name.as_str());
+                constraints.push(ConstraintInfo {
+                    oid: generate_table_oid(&constraint_name),
+                    name: constraint_name,
+                    contype: "c".to_string(),
+                    columns: vec![column_name.as_str().to_string()],
+                    definition: format!("{} IS NOT NULL", column_name.as_str()),
+                });
+            }
+        }
     }
     
     if constraints.is_empty() {
@@ -617,9 +709,85 @@ struct DefaultInfo {
     default_expr: String,
 }
 
-fn parse_column_defaults(_table_name: &str, _create_sql: &str) -> Option<Vec<DefaultInfo>> {
-    // Simple parsing - would need to extract DEFAULT clauses
-    // For now, return None
+fn parse_column_defaults(table_name: &str, create_sql: &str) -> Option<Vec<DefaultInfo>> {
+    use regex::Regex;
+    
+    let mut defaults = Vec::new();
+    
+    // Parse DEFAULT clauses - look for column definitions with DEFAULT
+    if let Ok(default_regex) = Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bDEFAULT\s+([^,\)]+)") {
+        for cap in default_regex.captures_iter(create_sql) {
+            if let (Some(column_name), Some(default_value)) = (cap.get(1), cap.get(2)) {
+                // Get column number by counting columns before this one
+                let column_num = get_column_number(create_sql, column_name.as_str()).unwrap_or(1);
+                
+                defaults.push(DefaultInfo {
+                    oid: generate_table_oid(&format!("{}_{}_default", table_name, column_name.as_str())),
+                    column_num,
+                    default_expr: default_value.as_str().trim().to_string(),
+                });
+            }
+        }
+    }
+    
+    if defaults.is_empty() {
+        None
+    } else {
+        Some(defaults)
+    }
+}
+
+/// Get the column number (1-based) for a given column name in a CREATE TABLE statement
+fn get_column_number(create_sql: &str, target_column: &str) -> Option<i16> {
+    use regex::Regex;
+    
+    // Extract the column definitions from CREATE TABLE
+    if let Ok(table_regex) = Regex::new(r"(?i)CREATE\s+TABLE\s+[^(]+\(\s*(.+)\s*\)") {
+        if let Some(cap) = table_regex.captures(create_sql) {
+            if let Some(columns_part) = cap.get(1) {
+                // Split by comma and look for our target column
+                let columns_str = columns_part.as_str();
+                let mut column_count = 0i16;
+                
+                // Simple column parsing - split by commas but be careful of nested parentheses
+                let mut paren_depth = 0;
+                let mut current_column = String::new();
+                
+                for ch in columns_str.chars() {
+                    match ch {
+                        '(' => {
+                            paren_depth += 1;
+                            current_column.push(ch);
+                        }
+                        ')' => {
+                            paren_depth -= 1;
+                            current_column.push(ch);
+                        }
+                        ',' if paren_depth == 0 => {
+                            // End of column definition
+                            column_count += 1;
+                            if current_column.trim().starts_with(target_column) {
+                                return Some(column_count);
+                            }
+                            current_column.clear();
+                        }
+                        _ => {
+                            current_column.push(ch);
+                        }
+                    }
+                }
+                
+                // Check the last column
+                if !current_column.trim().is_empty() {
+                    column_count += 1;
+                    if current_column.trim().starts_with(target_column) {
+                        return Some(column_count);
+                    }
+                }
+            }
+        }
+    }
+    
     None
 }
 
