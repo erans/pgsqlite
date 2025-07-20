@@ -1,7 +1,8 @@
-use crate::session::pool::SqlitePool;
+use crate::session::pool::{SqlitePool, PoolStats};
 use crate::session::db_handler::DbResponse;
 use crate::config::Config;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,7 +26,12 @@ pub struct ReadOnlyDbHandler {
 impl ReadOnlyDbHandler {
     /// Create a new read-only handler with connection pool
     pub fn new(db_path: &str, config: Arc<Config>) -> Result<Self, ReadOnlyError> {
-        let pool = SqlitePool::new(db_path)?;
+        let pool = SqlitePool::new_with_config(
+            db_path,
+            config.pool_size,
+            Duration::from_secs(config.pool_idle_timeout_seconds),
+            Duration::from_secs(config.pool_health_check_interval_seconds),
+        )?;
         
         Ok(ReadOnlyDbHandler {
             pool,
@@ -39,7 +45,12 @@ impl ReadOnlyDbHandler {
         config: Arc<Config>, 
         pool_size: usize
     ) -> Result<Self, ReadOnlyError> {
-        let pool = SqlitePool::new_with_size(db_path, pool_size)?;
+        let pool = SqlitePool::new_with_config(
+            db_path,
+            pool_size,
+            Duration::from_secs(config.pool_idle_timeout_seconds),
+            Duration::from_secs(config.pool_health_check_interval_seconds),
+        )?;
         
         Ok(ReadOnlyDbHandler {
             pool,
@@ -141,19 +152,12 @@ impl ReadOnlyDbHandler {
 
     /// Get pool statistics for monitoring
     pub fn pool_stats(&self) -> PoolStats {
-        // Implementation would depend on pool metrics
-        PoolStats {
-            active_connections: 0, // Would need pool.active_count()
-            idle_connections: 0,   // Would need pool.idle_count()
-            total_connections: 0,  // Would need pool.total_count()
-        }
+        self.pool.get_stats()
     }
 
     /// Test connection health
     pub async fn health_check(&self) -> Result<(), ReadOnlyError> {
-        let conn = self.pool.acquire().await?;
-        conn.execute("SELECT 1", [])?;
-        Ok(())
+        self.pool.health_check().await.map_err(ReadOnlyError::Sqlite)
     }
 }
 
@@ -171,12 +175,6 @@ fn is_read_only_query(sql: &str) -> bool {
         // Add other read-only pragmas as needed
 }
 
-#[derive(Debug, Clone)]
-pub struct PoolStats {
-    pub active_connections: usize,
-    pub idle_connections: usize,
-    pub total_connections: usize,
-}
 
 #[cfg(test)]
 mod tests {

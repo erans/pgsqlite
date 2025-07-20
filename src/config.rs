@@ -25,6 +25,25 @@ pub struct Config {
     #[arg(long, env = "PGSQLITE_NO_TCP", help = "Disable TCP listener and use only Unix socket")]
     pub no_tcp: bool,
 
+    // Connection pool configuration
+    #[arg(long, env = "PGSQLITE_USE_POOLING", help = "Enable connection pooling with read/write separation")]
+    pub use_pooling: bool,
+
+    #[arg(long, default_value = "8", env = "PGSQLITE_POOL_SIZE", help = "Number of connections in the read-only connection pool")]
+    pub pool_size: usize,
+
+    #[arg(long, default_value = "30", env = "PGSQLITE_POOL_CONNECTION_TIMEOUT_SECONDS", help = "Timeout for getting a connection from the pool")]
+    pub pool_connection_timeout_seconds: u64,
+
+    #[arg(long, default_value = "300", env = "PGSQLITE_POOL_IDLE_TIMEOUT_SECONDS", help = "Timeout for idle connections in the pool")]
+    pub pool_idle_timeout_seconds: u64,
+
+    #[arg(long, default_value = "60", env = "PGSQLITE_POOL_HEALTH_CHECK_INTERVAL_SECONDS", help = "Interval for connection health checks")]
+    pub pool_health_check_interval_seconds: u64,
+
+    #[arg(long, default_value = "3", env = "PGSQLITE_POOL_MAX_RETRIES", help = "Maximum number of retries for failed connections")]
+    pub pool_max_retries: usize,
+
     // Cache configuration
     #[arg(long, default_value = "1000", env = "PGSQLITE_ROW_DESC_CACHE_SIZE", help = "Maximum number of RowDescription entries to cache")]
     pub row_desc_cache_size: usize,

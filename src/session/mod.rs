@@ -8,5 +8,6 @@ pub mod query_router;
 pub use state::{SessionState, PreparedStatement, Portal, GLOBAL_QUERY_CACHE};
 pub use pool::{SqlitePool, PooledConnection};
 pub use db_handler::{DbHandler, DbResponse};
-pub use read_only_handler::{ReadOnlyDbHandler, ReadOnlyError, PoolStats};
+pub use read_only_handler::{ReadOnlyDbHandler, ReadOnlyError};
+pub use pool::PoolStats;
 pub use query_router::{QueryRouter, QueryRoute, QueryType, RouterError, RouterStats};
