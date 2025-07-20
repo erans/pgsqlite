@@ -160,6 +160,13 @@ pgsqlite --database existingdb.db
 - **Enhanced Statement Caching**: 200+ cached query plans with priority-based eviction
 
 ### Key Optimizations Implemented
+- **Phase 5 - Connection Pooling Infrastructure (2025-07-20)**: Read/write separation foundation
+  - **ReadOnlyDbHandler**: Connection pool for SELECT queries using SQLite WAL mode
+  - **QueryRouter**: Intelligent query classification and routing (SELECT vs DML)
+  - **Transaction Affinity**: Ensures transactions stay on single connection for consistency
+  - **Performance Baseline**: 95,961 QPS single-thread, 124,380 QPS with 8 concurrent tasks
+  - **Architecture Ready**: Infrastructure complete, integration with main pipeline pending
+  - **Test Coverage**: 300/300 unit tests passing, extended protocol timeout issues fixed
 - **Phase 4 - Comprehensive Query Optimization System (2025-07-18)**: Complete optimization infrastructure
   - **Read-Only Optimizer**: Direct execution path for SELECT queries with query plan caching
   - **Enhanced Statement Caching**: Intelligent caching with priority-based eviction (200+ cached plans)
@@ -220,6 +227,14 @@ INSERT INTO table (col1, col2) VALUES
 7. **Network Efficiency**: Reduces round trips between client and server
 
 ## Recent Major Features
+- **Connection Pooling Infrastructure (2025-07-20)**: Foundation for read/write separation
+  - **Architecture Components**: ReadOnlyDbHandler with connection pool, QueryRouter for intelligent routing
+  - **SQLite WAL Mode**: Enabled for multi-reader support with single writer
+  - **Query Classification**: Automatic routing of SELECT to pool, DML to single connection
+  - **Transaction Safety**: Transaction affinity ensures consistency across operations
+  - **Performance Baseline**: Established current performance metrics (95K-124K QPS)
+  - **Testing Infrastructure**: Created benchmark_baseline.rs for performance measurement
+  - **Future Ready**: Infrastructure complete, pending integration with main query pipeline
 - **BIT Type Cast Performance Fix (2025-07-20)**: Major prepared statement compatibility improvement
   - **PostgreSQL BIT Type Support**: Fixed prepared statements with BIT type casts returning empty strings
   - **SQL Parser Enhancement**: Fixed SQL parser errors with parameterized BIT types like `::bit(8)`, `::varbit(10)`
