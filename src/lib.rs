@@ -123,7 +123,7 @@ pub async fn handle_test_connection_with_pool(
     let use_pooling = std::env::var("PGSQLITE_USE_POOLING").unwrap_or_default() == "true";
     
     // Create QueryRouter if pooling is enabled
-    let query_router = if use_pooling {
+    let _query_router = if use_pooling {
         // For tests, we'll use in-memory databases
         let read_handler = Arc::new(ReadOnlyDbHandler::new(":memory:", config.clone())
             .map_err(|e| anyhow::anyhow!("Failed to create read-only handler: {}", e))?);
