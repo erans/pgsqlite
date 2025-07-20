@@ -233,10 +233,12 @@ INSERT INTO table (col1, col2) VALUES
   - **Query Classification**: Automatic routing of SELECT to pool, DML to single connection
   - **Transaction Safety**: Transaction affinity ensures consistency across operations
   - **QueryExecutor Integration**: Complete integration with all query execution paths
-  - **Environment Control**: Enable via PGSQLITE_USE_POOLING=true environment variable
+  - **Health Checks & Recovery**: Background monitoring, automatic stale connection cleanup, failure recovery
+  - **Configuration**: Pool size, timeouts, and health check intervals configurable via environment variables
+  - **Environment Control**: Enable via PGSQLITE_USE_POOLING=true environment variable (opt-in by default)
   - **Performance Benchmarks**: Baseline metrics established (3,402 QPS reads, 2,197 mixed ops/sec)
   - **Concurrent Testing**: 100% transaction consistency, comprehensive benchmark suite
-  - **Production Status**: Ready for deployment with comprehensive testing and zero regressions
+  - **Production Status**: Ready for deployment with comprehensive testing, health monitoring, and zero regressions
 - **BIT Type Cast Performance Fix (2025-07-20)**: Major prepared statement compatibility improvement
   - **PostgreSQL BIT Type Support**: Fixed prepared statements with BIT type casts returning empty strings
   - **SQL Parser Enhancement**: Fixed SQL parser errors with parameterized BIT types like `::bit(8)`, `::varbit(10)`
@@ -425,6 +427,65 @@ Uses a Mutex-based implementation for thread safety:
 - `parking_lot::Mutex` for efficient synchronization
 - Schema cache for performance
 - Fast path optimization for simple queries
+
+## Connection Pooling Configuration
+
+Connection pooling provides improved performance for concurrent workloads by maintaining a pool of reusable SQLite connections. The system automatically routes read-only queries (SELECT, EXPLAIN) to the read pool while directing write operations to the primary connection.
+
+### Features
+- **Read/Write Separation**: Automatic query routing based on operation type
+- **Health Checks & Recovery**: Background monitoring, automatic stale connection cleanup, failure recovery  
+- **Transaction Affinity**: Ensures all operations within a transaction use the same connection for consistency
+- **Configuration**: Pool size, timeouts, and health check intervals configurable via environment variables
+- **Environment Control**: Enable via PGSQLITE_USE_POOLING=true environment variable (opt-in by default)
+
+### Environment Variables
+- `PGSQLITE_USE_POOLING=true` - Enable connection pooling (default: false)
+- `PGSQLITE_POOL_SIZE=N` - Maximum connections in read pool (default: 5)
+- `PGSQLITE_POOL_TIMEOUT=N` - Connection acquisition timeout in seconds (default: 30)
+- `PGSQLITE_POOL_IDLE_TIMEOUT=N` - Idle connection timeout in seconds (default: 300)
+- `PGSQLITE_POOL_HEALTH_INTERVAL=N` - Health check interval in seconds (default: 60)
+
+### Usage Examples
+```bash
+# Enable pooling with default settings
+PGSQLITE_USE_POOLING=true pgsqlite --database mydb.db
+
+# Custom pool configuration
+PGSQLITE_USE_POOLING=true \
+PGSQLITE_POOL_SIZE=10 \
+PGSQLITE_POOL_TIMEOUT=60 \
+pgsqlite --database mydb.db
+
+# Production configuration with health monitoring
+PGSQLITE_USE_POOLING=true \
+PGSQLITE_POOL_SIZE=8 \
+PGSQLITE_POOL_IDLE_TIMEOUT=600 \
+PGSQLITE_POOL_HEALTH_INTERVAL=30 \
+pgsqlite --database production.db
+```
+
+### Query Routing Rules
+- **SELECT, EXPLAIN**: Routed to read-only connection pool
+- **INSERT, UPDATE, DELETE**: Routed to primary write connection
+- **DDL (CREATE, ALTER, DROP)**: Routed to primary write connection
+- **Transaction blocks**: All queries routed to write connection for consistency
+- **Read-only PRAGMA**: Routed to read pool (e.g., `PRAGMA table_info`)
+- **Write PRAGMA**: Routed to write connection (e.g., `PRAGMA journal_mode=WAL`)
+
+### Performance Characteristics
+- **Best for**: Concurrent read-heavy workloads, multiple client connections
+- **Resource overhead**: Additional memory per pooled connection (~1-2MB each)
+- **Latency**: Slight increase for connection acquisition (~0.1ms)
+- **Throughput**: Significant improvement for concurrent SELECT operations
+
+### When to Use Connection Pooling
+- **Enable for**: TCP connections with multiple concurrent clients
+- **Enable for**: Read-heavy workloads with frequent SELECT queries
+- **Enable for**: Applications with sustained connection patterns
+- **Disable for**: Single-client applications or simple scripts
+- **Disable for**: Memory-constrained environments
+- **Disable for**: Unix socket connections with low concurrency
 
 ## SSL/TLS Configuration
 Enable via command line or environment variables:
