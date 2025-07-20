@@ -18,6 +18,7 @@ pub enum ReadOnlyError {
 /// Optimized for concurrent SELECT operations
 pub struct ReadOnlyDbHandler {
     pool: SqlitePool,
+    #[allow(dead_code)]
     config: Arc<Config>,
 }
 

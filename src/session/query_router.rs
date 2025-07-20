@@ -46,6 +46,7 @@ pub enum QueryType {
 pub struct QueryRouter {
     write_handler: Arc<DbHandler>,
     read_handler: Arc<ReadOnlyDbHandler>,
+    #[allow(dead_code)]
     config: Arc<Config>,
     /// Track if connection pooling is enabled
     pooling_enabled: bool,
