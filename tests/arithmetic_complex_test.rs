@@ -123,7 +123,7 @@ async fn test_arithmetic_with_functions() {
         );
         
         db_handler.execute("CREATE TABLE measurements (id INTEGER PRIMARY KEY, value REAL)").await.unwrap();
-        db_handler.execute("INSERT INTO measurements VALUES (1, 3.14159)").await.unwrap();
+        db_handler.execute("INSERT INTO measurements VALUES (1, 2.75)").await.unwrap();
         db_handler.execute("INSERT INTO measurements VALUES (2, -2.5)").await.unwrap();
         db_handler.execute("INSERT INTO measurements VALUES (3, 16.0)").await.unwrap();
         
@@ -148,7 +148,7 @@ async fn test_arithmetic_with_functions() {
     let rows = client.query("SELECT ROUND(value * 2, 2) AS rounded_double FROM measurements WHERE id = 1", &[]).await.unwrap();
     assert_eq!(rows.len(), 1);
     let result: f64 = rows[0].get(0);
-    assert!((result - 6.28).abs() < 0.01);
+    assert_eq!(result, 5.5);
     
     // Test ABS function in arithmetic - multiply by 10.0 to ensure float
     let rows = client.query("SELECT ABS(value) * 10.0 AS abs_times_ten FROM measurements WHERE id = 2", &[]).await.unwrap();

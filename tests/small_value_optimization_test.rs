@@ -105,7 +105,7 @@ async fn test_small_value_correctness() {
     ).await.expect("Failed to create table");
 
     client.execute(
-        "INSERT INTO small_value_correct VALUES (true, false, 0, 1, -1, 42, -42, 3.14, '')",
+        "INSERT INTO small_value_correct VALUES (true, false, 0, 1, -1, 42, -42, 3.25, '')",
         &[]
     ).await.expect("Failed to insert");
 
@@ -122,7 +122,7 @@ async fn test_small_value_correctness() {
     assert_eq!(row.get::<_, i32>(4), -1);
     assert_eq!(row.get::<_, i32>(5), 42);
     assert_eq!(row.get::<_, i32>(6), -42);
-    assert_eq!(row.get::<_, f32>(7), 3.14);
+    assert_eq!(row.get::<_, f32>(7), 3.25);
     assert_eq!(row.get::<_, &str>(8), "");
 }
 
@@ -145,7 +145,7 @@ async fn test_small_value_binary_protocol() {
 
     // Insert values using simple protocol to avoid parameter type issues
     client.execute(
-        "INSERT INTO small_value_binary VALUES (1, true, 42, 3.14)",
+        "INSERT INTO small_value_binary VALUES (1, true, 42, 3.25)",
         &[]
     ).await.expect("Failed to insert");
 
@@ -160,5 +160,5 @@ async fn test_small_value_binary_protocol() {
     assert_eq!(row.get::<_, i32>(0), 1);
     assert_eq!(row.get::<_, bool>(1), true);
     assert_eq!(row.get::<_, i32>(2), 42);
-    assert_eq!(row.get::<_, f32>(3), 3.14);
+    assert_eq!(row.get::<_, f32>(3), 3.25);
 }
