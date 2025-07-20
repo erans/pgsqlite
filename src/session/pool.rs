@@ -11,7 +11,10 @@ pub struct SqlitePool {
 
 impl SqlitePool {
     pub fn new(path: &str) -> Result<Self> {
-        let max_connections = 10;
+        Self::new_with_size(path, 5)
+    }
+
+    pub fn new_with_size(path: &str, max_connections: usize) -> Result<Self> {
         let pool = SqlitePool {
             path: path.to_string(),
             connections: Arc::new(Mutex::new(Vec::new())),
@@ -19,28 +22,35 @@ impl SqlitePool {
             _max_connections: max_connections,
         };
         
-        // Pre-create some connections
+        // Pre-create initial connections (half of max)
+        let initial_connections = (max_connections / 2).max(1);
         let mut conns = pool.connections.lock().unwrap();
-        for _ in 0..5.min(max_connections) {
-            let conn = if path == ":memory:" {
-                Connection::open_in_memory()?
-            } else {
-                Connection::open(&pool.path)?
-            };
-            
-            // Set pragmas for better performance
-            conn.execute_batch(
-                "PRAGMA journal_mode=WAL;
-                 PRAGMA synchronous=NORMAL;
-                 PRAGMA cache_size=-64000;
-                 PRAGMA temp_store=MEMORY;"
-            )?;
-            
+        for _ in 0..initial_connections {
+            let conn = pool.create_connection()?;
             conns.push(conn);
         }
         drop(conns);
         
         Ok(pool)
+    }
+
+    fn create_connection(&self) -> Result<Connection> {
+        let conn = if self.path == ":memory:" {
+            Connection::open_in_memory()?
+        } else {
+            Connection::open(&self.path)?
+        };
+        
+        // Set pragmas for better performance
+        conn.execute_batch(
+            "PRAGMA journal_mode=WAL;
+             PRAGMA synchronous=NORMAL;
+             PRAGMA cache_size=-64000;
+             PRAGMA temp_store=MEMORY;
+             PRAGMA mmap_size=268435456;"
+        )?;
+        
+        Ok(conn)
     }
     
     pub async fn acquire(&self) -> Result<PooledConnection> {
@@ -54,25 +64,8 @@ impl SqlitePool {
         let conn = match conn {
             Some(c) => c,
             None => {
-                if self.path == ":memory:" {
-                    let conn = Connection::open_in_memory()?;
-                    conn.execute_batch(
-                        "PRAGMA journal_mode=WAL;
-                         PRAGMA synchronous=NORMAL;
-                         PRAGMA cache_size=-64000;
-                         PRAGMA temp_store=MEMORY;"
-                    )?;
-                    conn
-                } else {
-                    let conn = Connection::open(&self.path)?;
-                    conn.execute_batch(
-                        "PRAGMA journal_mode=WAL;
-                         PRAGMA synchronous=NORMAL;
-                         PRAGMA cache_size=-64000;
-                         PRAGMA temp_store=MEMORY;"
-                    )?;
-                    conn
-                }
+                // Create new connection if pool is empty
+                self.create_connection()?
             }
         };
         
