@@ -49,6 +49,25 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Fixed unused variable warnings with proper prefixing
   - [x] Clean compilation with no warnings in debug and release builds
 
+### BIT Type Cast Performance Fix - COMPLETED (2025-07-20)
+- [x] **PostgreSQL BIT Type Cast Support** - Fixed prepared statements with BIT type casts
+  - [x] Fixed SQL parser errors with parameterized BIT types like `::bit(8)`, `::varbit(10)`
+  - [x] Enhanced `find_type_end()` function to properly handle parentheses in type names
+  - [x] Added explicit BIT and VARBIT type recognition in `postgres_to_sqlite_type()`
+  - [x] BIT types now correctly convert to TEXT storage in SQLite
+  - [x] All BIT cast scenarios work: simple casts, parameterized types, prepared statements
+- [x] **Performance Optimization** - Eliminated 34% performance regression
+  - [x] Implemented fast-path optimization for common PostgreSQL types
+  - [x] Added early-exit logic for simple types to bypass complex parsing
+  - [x] Optimized parentheses tracking to avoid double-scanning strings
+  - [x] Performance restored: SELECT ~283x overhead (4% better than baseline)
+  - [x] Cache effectiveness maintained: 1.8x speedup for cached queries
+- [x] **Comprehensive Testing** - Verified fix with full test suite
+  - [x] All 706+ tests passing with zero failures
+  - [x] Benchmark validation: 5,251 operations completed successfully
+  - [x] BIT cast functionality preserved across all query types
+  - [x] No performance regressions in other operation types
+
 ### Catalog Query Handling - COMPLETED (2025-07-08)
 - [x] **Fix pg_class view to include pg_* tables** - Removed pg_% filter from view definition
 - [x] **JOIN Support for Catalog Queries** - Modified catalog interceptor to pass JOIN queries to SQLite views

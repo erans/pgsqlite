@@ -232,20 +232,37 @@ impl CastTranslator {
     /// Find the end of a type name after ::
     fn find_type_end(after: &str) -> usize {
         let bytes = after.as_bytes();
+        let mut paren_depth = 0;
         
         for i in 0..bytes.len() {
             let ch = bytes[i];
             
-            // Type name ends at these characters
-            if ch == b' ' || ch == b',' || ch == b')' || ch == b';' || ch == b'=' || 
-               ch == b'<' || ch == b'>' || ch == b'+' || ch == b'-' || ch == b'*' || 
-               ch == b'/' || ch == b'|' || ch == b'&' {
-                return i;
+            // Handle parentheses for parameterized types like bit(8), varchar(10)
+            if ch == b'(' {
+                paren_depth += 1;
+                continue;
+            } else if ch == b')' {
+                if paren_depth > 0 {
+                    paren_depth -= 1;
+                    continue;
+                } else {
+                    // Unmatched closing paren - end of type
+                    return i;
+                }
             }
             
-            // Handle chained casts like ::type1::type2
-            if i > 0 && ch == b':' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
-                return i;
+            // If we're not inside parentheses, type name ends at these characters
+            if paren_depth == 0 {
+                if ch == b' ' || ch == b',' || ch == b';' || ch == b'=' || 
+                   ch == b'<' || ch == b'>' || ch == b'+' || ch == b'-' || ch == b'*' || 
+                   ch == b'/' || ch == b'|' || ch == b'&' {
+                    return i;
+                }
+                
+                // Handle chained casts like ::type1::type2
+                if i > 0 && ch == b':' && i + 1 < bytes.len() && bytes[i + 1] == b':' {
+                    return i;
+                }
             }
         }
         
@@ -291,13 +308,36 @@ impl CastTranslator {
     
     /// Convert PostgreSQL type names to SQLite type names
     fn postgres_to_sqlite_type(pg_type: &str) -> &'static str {
-        match pg_type.to_uppercase().as_str() {
+        // Fast path: check for common simple types first (case-insensitive)
+        match pg_type {
+            // Exact matches (common case)
+            "text" | "TEXT" => return "TEXT",
+            "integer" | "INTEGER" => return "INTEGER",
+            "int" | "INT" => return "INTEGER",
+            "bool" | "BOOL" | "boolean" | "BOOLEAN" => return "INTEGER",
+            "real" | "REAL" | "float" | "FLOAT" => return "REAL",
+            "bytea" | "BYTEA" => return "BLOB",
+            "numeric" | "NUMERIC" | "decimal" | "DECIMAL" => return "TEXT",
+            "bit" | "BIT" | "varbit" | "VARBIT" => return "TEXT",
+            _ => {}
+        }
+        
+        // Handle parameterized or complex types
+        let upper_type = pg_type.to_uppercase();
+        let base_type = if let Some(paren_pos) = upper_type.find('(') {
+            &upper_type[..paren_pos]
+        } else {
+            &upper_type
+        };
+        
+        match base_type {
             "INTEGER" | "INT" | "INT4" | "INT8" | "BIGINT" | "SMALLINT" | "INT2" => "INTEGER",
             "REAL" | "FLOAT" | "FLOAT4" | "FLOAT8" | "DOUBLE" | "DOUBLE PRECISION" => "REAL",
             "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING" => "TEXT",
             "BYTEA" => "BLOB",
             "BOOLEAN" | "BOOL" => "INTEGER", // SQLite uses 0/1 for boolean
             "NUMERIC" | "DECIMAL" => "TEXT", // Store as text for precision
+            "BIT" | "VARBIT" | "BIT VARYING" => "TEXT", // BIT types stored as text strings
             _ => "TEXT", // Default to TEXT for unknown types
         }
     }
