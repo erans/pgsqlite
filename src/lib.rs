@@ -168,10 +168,8 @@ pub async fn handle_test_connection_with_pool(
         debug!("Received message: {:?}", message);
         match message {
             FrontendMessage::Query(sql) => {
-                // Execute the query
-                // TODO: When pooling is enabled, use query_router.execute_query() instead
-                // This would require refactoring QueryExecutor to work with the router
-                match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql).await {
+                // Execute the query with optional query routing
+                match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
                     Ok(()) => {
                         // Query executed successfully
                     }

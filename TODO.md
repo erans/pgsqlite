@@ -436,6 +436,17 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - [x] Read-only queries routed to connection pool, writes to single connection
     - [x] Transaction queries always use write connection for consistency
     - [x] PRAGMA statement routing based on read/write nature
+  - [x] **QueryExecutor Integration** - COMPLETED (2025-07-20):
+    - [x] Modified execute_query() to accept optional QueryRouter parameter
+    - [x] Added routing logic to all query execution paths (ultra-fast, SELECT, DML, DDL)
+    - [x] Updated execute_single_statement() with proper parameter threading
+    - [x] Enhanced all helper methods (execute_select, execute_dml, execute_dml_with_returning)
+    - [x] Maintained backwards compatibility for non-pooled scenarios
+    - [x] All 300 unit tests passing with no regressions
+  - [x] **Environment Variable Control**:
+    - [x] PGSQLITE_USE_POOLING=true enables connection pooling
+    - [x] lib.rs and main.rs integration with optional QueryRouter
+    - [x] Graceful fallback to single connection when pooling disabled
   - [x] **Performance Benchmarks**:
     - [x] Created benchmark_baseline.rs to measure current performance
     - [x] Single-thread baseline: 95,961 queries/sec
