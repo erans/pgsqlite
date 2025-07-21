@@ -61,4 +61,21 @@ impl SessionState {
             transaction_status: RwLock::new(TransactionStatus::Idle),
         }
     }
+
+    /// Create a new session with default database and user (for testing)
+    #[cfg(test)]
+    pub fn new_test() -> Self {
+        Self::new("test".to_string(), "test".to_string())
+    }
+
+    /// Check if the session is currently in a transaction
+    pub fn in_transaction(&self) -> bool {
+        // We need to use try_read() since this might be called from async context
+        if let Ok(status) = self.transaction_status.try_read() {
+            matches!(*status, TransactionStatus::InTransaction | TransactionStatus::InFailedTransaction)
+        } else {
+            // If we can't acquire the lock, assume we're in a transaction for safety
+            true
+        }
+    }
 }

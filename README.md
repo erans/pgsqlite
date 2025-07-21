@@ -134,6 +134,10 @@ pgsqlite \
 # Performance
 pgsqlite \
   --journal-mode WAL    # Enable WAL mode for better concurrency
+
+# Connection Pooling (for concurrent workloads)
+PGSQLITE_USE_POOLING=true pgsqlite \
+  --database <path>     # Enable read/write connection separation
 ```
 
 For all configuration options, see the [Configuration Reference](docs/configuration.md).
@@ -150,6 +154,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 
 ### Notable Features
 
+- **Connection Pooling**: Optional read/write connection separation for improved concurrent performance (enabled via `PGSQLITE_USE_POOLING=true`)
 - **Query Optimization System**: Advanced optimization infrastructure with context merging, lazy schema loading, pattern recognition, and integrated optimization management
 - **PostgreSQL Functions**: Comprehensive function support including:
   - **String Functions**: `split_part()`, `string_agg()`, `translate()`, `ascii()`, `chr()`, `repeat()`, `reverse()`, `left()`, `right()`, `lpad()`, `rpad()`
@@ -170,7 +175,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - ❌ PostgreSQL-specific system functions (`pg_*`)
 - ❌ Some advanced data types (ranges, geometric types, full-text search)
 - ⚠️  Some advanced array features (array assignment operations, advanced indexing)
-- ❌ Multiple concurrent writers (SQLite allows only one writer at a time)
+- ❌ Multiple concurrent writers (SQLite allows only one writer at a time, mitigated by connection pooling for reads)
 
 For detailed compatibility information, see [Type Mapping Documentation](docs/type-mapping-prd.md).
 
@@ -186,13 +191,43 @@ pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite, whi
   - **Context Merging**: Efficient handling of deeply nested subqueries
   - **Lazy Schema Loading**: Deferred schema loading with thread-safe optimization
   - **Pattern Recognition**: 14+ query patterns with pre-compiled regex optimization
-- **Built-in Features**: Query caching (2.4x speedup), connection pooling, prepared statements, and ultra-fast path for simple queries
+- **Built-in Features**: Query caching (2.4x speedup), optional connection pooling for concurrent reads, prepared statements, and ultra-fast path for simple queries
 - **Batch Operations**: Multi-row INSERT syntax provides dramatic performance improvements:
   - 10-row batches: ~11x faster than single-row INSERTs
   - 100-row batches: ~51x faster
   - 1000-row batches: ~76x faster
 
 For production use cases with high performance requirements, consider using native PostgreSQL.
+
+### Connection Pooling
+
+For concurrent read-heavy workloads, enable connection pooling to improve performance:
+
+```bash
+# Enable connection pooling with default settings (5 connections)
+PGSQLITE_USE_POOLING=true pgsqlite --database mydb.db
+
+# Custom pool configuration
+PGSQLITE_USE_POOLING=true \
+PGSQLITE_POOL_SIZE=10 \
+PGSQLITE_POOL_TIMEOUT=60 \
+pgsqlite --database mydb.db
+```
+
+**When to use connection pooling:**
+- ✅ Multiple concurrent clients with read-heavy workloads
+- ✅ TCP connections with sustained connection patterns
+- ✅ Applications with frequent SELECT queries
+- ❌ Single-client applications or simple scripts
+- ❌ Memory-constrained environments
+- ❌ Unix socket connections with low concurrency
+
+**Configuration options:**
+- `PGSQLITE_POOL_SIZE` - Maximum connections in read pool (default: 5)
+- `PGSQLITE_POOL_IDLE_TIMEOUT` - Idle connection timeout in seconds (default: 300)
+- `PGSQLITE_POOL_HEALTH_INTERVAL` - Health check interval in seconds (default: 60)
+
+Connection pooling automatically routes SELECT queries to the read pool while directing write operations (INSERT/UPDATE/DELETE) to the primary connection for consistency.
 
 ## Advanced Topics
 

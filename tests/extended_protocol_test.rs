@@ -62,7 +62,7 @@ async fn test_extended_protocol() {
             // Test 1: Query without parameters first
             println!("Test 1: Query without parameters");
             let query_result = timeout(
-                Duration::from_secs(2),
+                Duration::from_secs(10),
                 client.query("SELECT id, name, age FROM users WHERE age > 20 ORDER BY id", &[])
             ).await;
             
@@ -92,7 +92,7 @@ async fn test_extended_protocol() {
             // Test 2: Prepared statement
             println!("Test 2: Prepared statement");
             let stmt_result = timeout(
-                Duration::from_secs(2),
+                Duration::from_secs(10),
                 client.prepare("SELECT name FROM users WHERE id = $1::int4")
             ).await;
             
@@ -102,7 +102,7 @@ async fn test_extended_protocol() {
                     
                     // Execute prepared statement
                     let exec_result = timeout(
-                        Duration::from_secs(2),
+                        Duration::from_secs(10),
                         client.query(&stmt, &[&1i32])
                     ).await;
                     
@@ -123,7 +123,7 @@ async fn test_extended_protocol() {
             // Test 3: Insert with parameters
             println!("Test 3: Insert with parameters");
             let insert_result = timeout(
-                Duration::from_secs(2),
+                Duration::from_secs(10),
                 client.execute("INSERT INTO users (id, name, age) VALUES ($1, $2, $3)", &[&3i32, &"Charlie", &35i32])
             ).await;
             

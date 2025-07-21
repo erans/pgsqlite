@@ -14,8 +14,8 @@ pub struct CreateTableResult {
 }
 
 thread_local! {
-    static ENUM_COLUMNS: RefCell<Vec<(String, String)>> = RefCell::new(Vec::new());
-    static ARRAY_COLUMNS: RefCell<Vec<(String, String, i32)>> = RefCell::new(Vec::new());
+    static ENUM_COLUMNS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+    static ARRAY_COLUMNS: RefCell<Vec<(String, String, i32)>> = const { RefCell::new(Vec::new()) };
 }
 
 pub struct CreateTableTranslator;

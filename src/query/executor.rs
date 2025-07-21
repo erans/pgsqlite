@@ -1,5 +1,5 @@
 use crate::protocol::{BackendMessage, FieldDescription};
-use crate::session::{DbHandler, SessionState};
+use crate::session::{DbHandler, SessionState, QueryRouter};
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::PgType;
@@ -131,6 +131,7 @@ impl QueryExecutor {
         db: &DbHandler,
         session: &Arc<SessionState>,
         query: &str,
+        query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError> 
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -159,14 +160,14 @@ impl QueryExecutor {
                 info!("Query contains {} statements", statements.len());
                 for (i, stmt) in statements.iter().enumerate() {
                     info!("Executing statement {}: {}", i + 1, stmt);
-                    Self::execute_single_statement(framed, db, session, stmt).await?;
+                    Self::execute_single_statement(framed, db, session, stmt, query_router).await?;
                 }
                 return Ok(());
             }
         }
         
         // Single statement execution
-        Self::execute_single_statement(framed, db, session, query_to_execute).await
+        Self::execute_single_statement(framed, db, session, query_to_execute, query_router).await
     }
     
     async fn execute_single_statement<T>(
@@ -174,6 +175,7 @@ impl QueryExecutor {
         db: &DbHandler,
         session: &Arc<SessionState>,
         query: &str,
+        query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError> 
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -184,7 +186,12 @@ impl QueryExecutor {
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
-                    let response = db.query(query).await?;
+                    // Route query through query router if available and appropriate
+                    let response = if let Some(router) = query_router {
+                        router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+                    } else {
+                        db.query(query).await?
+                    };
                     
                     // Get boolean and datetime columns for proper conversion (cached for performance)
                     let (boolean_columns, datetime_columns) = if let Some(table_name) = extract_table_name_from_select(query) {
@@ -297,7 +304,7 @@ impl QueryExecutor {
                 QueryType::Insert | QueryType::Update | QueryType::Delete => {
                     // For ultra-simple queries, bypass all validation and translation
                     debug!("Using ultra-fast path for DML query: {}", query);
-                    return Self::execute_dml(framed, db, query).await;
+                    return Self::execute_dml(framed, db, session, query, query_router).await;
                 }
                 _ => {} // Fall through to normal processing
             }
@@ -487,15 +494,15 @@ impl QueryExecutor {
         use crate::query::{QueryTypeDetector, QueryType};
         
         match QueryTypeDetector::detect_query_type(query_to_execute) {
-            QueryType::Select => Self::execute_select(framed, db, query_to_execute, &translation_metadata).await,
+            QueryType::Select => Self::execute_select(framed, db, session, query_to_execute, &translation_metadata, query_router).await,
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                Self::execute_dml(framed, db, query_to_execute).await
+                Self::execute_dml(framed, db, session, query_to_execute, query_router).await
             }
             QueryType::Create | QueryType::Drop | QueryType::Alter => {
-                Self::execute_ddl(framed, db, query_to_execute).await
+                Self::execute_ddl(framed, db, session, query_to_execute, query_router).await
             }
             QueryType::Begin | QueryType::Commit | QueryType::Rollback => {
-                Self::execute_transaction(framed, db, query_to_execute).await
+                Self::execute_transaction(framed, db, session, query_to_execute, query_router).await
             }
             _ => {
                 // Check if it's a SET command
@@ -503,7 +510,7 @@ impl QueryExecutor {
                     crate::query::SetHandler::handle_set_command(framed, session, query_to_execute).await
                 } else {
                     // Try to execute as-is
-                    Self::execute_generic(framed, db, query_to_execute).await
+                    Self::execute_generic(framed, db, session, query_to_execute, query_router).await
                 }
             }
         }
@@ -512,8 +519,10 @@ impl QueryExecutor {
     async fn execute_select<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
         translation_metadata: &crate::translator::TranslationMetadata,
+        query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -522,7 +531,12 @@ impl QueryExecutor {
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, Arc::new(db.clone())).await {
             catalog_result?
         } else {
-            db.query(query).await?
+            // Route query through query router if available
+            if let Some(router) = query_router {
+                router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.query(query).await?
+            }
         };
         
         // Extract table name from query to look up schema
@@ -680,14 +694,16 @@ impl QueryExecutor {
     async fn execute_dml<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
+        query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
-            return Self::execute_dml_with_returning(framed, db, query).await;
+            return Self::execute_dml_with_returning(framed, db, session, query, query_router).await;
         }
         
         // Validate numeric constraints for INSERT/UPDATE before execution
@@ -737,7 +753,12 @@ impl QueryExecutor {
             return Ok(());
         }
         
-        let response = db.execute(query).await?;
+        // Route query through query router if available
+        let response = if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+        } else {
+            db.execute(query).await?
+        };
         
         // Optimized tag creation with static strings for common cases and buffer pooling for larger counts
         let tag = match QueryTypeDetector::detect_query_type(query) {
@@ -756,7 +777,9 @@ impl QueryExecutor {
     async fn execute_dml_with_returning<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
+        query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -772,7 +795,11 @@ impl QueryExecutor {
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
             
             // Execute the INSERT
-            let response = db.execute(&base_query).await?;
+            let response = if let Some(router) = query_router {
+                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.execute(&base_query).await?
+            };
             
             // Get the last inserted rowid and query for RETURNING data
             let returning_query = format!(
@@ -781,7 +808,11 @@ impl QueryExecutor {
                 table_name
             );
             
-            let returning_response = db.query(&returning_query).await?;
+            let returning_response = if let Some(router) = query_router {
+                router.execute_query(&returning_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.query(&returning_query).await?
+            };
             
             // Send row description
             let fields: Vec<FieldDescription> = returning_response.columns.iter()
@@ -823,14 +854,22 @@ impl QueryExecutor {
                 table_name,
                 where_clause
             );
-            let rowid_response = db.query(&rowid_query).await?;
+            let rowid_response = if let Some(router) = query_router {
+                router.execute_query(&rowid_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.query(&rowid_query).await?
+            };
             let rowids: Vec<String> = rowid_response.rows.iter()
                 .filter_map(|row| row[0].as_ref())
                 .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                 .collect();
             
             // Execute the UPDATE
-            let response = db.execute(&base_query).await?;
+            let response = if let Some(router) = query_router {
+                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.execute(&base_query).await?
+            };
             
             // Now query the updated rows
             if !rowids.is_empty() {
@@ -842,7 +881,11 @@ impl QueryExecutor {
                     rowid_list
                 );
                 
-                let returning_response = db.query(&returning_query).await?;
+                let returning_response = if let Some(router) = query_router {
+                    router.execute_query(&returning_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+                } else {
+                    db.query(&returning_query).await?
+                };
                 
                 // Send row description
                 let fields: Vec<FieldDescription> = returning_response.columns.iter()
@@ -884,10 +927,18 @@ impl QueryExecutor {
             )?;
             
             // Capture the rows that will be affected
-            let captured_rows = db.query(&capture_query).await?;
+            let captured_rows = if let Some(router) = query_router {
+                router.execute_query(&capture_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.query(&capture_query).await?
+            };
             
             // Execute the actual DELETE
-            let response = db.execute(&base_query).await?;
+            let response = if let Some(router) = query_router {
+                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+            } else {
+                db.execute(&base_query).await?
+            };
             
             // Send row description
             let fields: Vec<FieldDescription> = captured_rows.columns.iter()
@@ -928,7 +979,9 @@ impl QueryExecutor {
     async fn execute_ddl<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        _session: &Arc<SessionState>,
         query: &str,
+        _query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -1178,7 +1231,9 @@ impl QueryExecutor {
     async fn execute_transaction<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        _session: &Arc<SessionState>,
         query: &str,
+        _query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -1209,13 +1264,19 @@ impl QueryExecutor {
     async fn execute_generic<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
+        session: &Arc<SessionState>,
         query: &str,
+        query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // Try to execute as a simple statement
-        db.execute(query).await?;
+        if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?;
+        } else {
+            db.execute(query).await?;
+        }
         
         framed.send(BackendMessage::CommandComplete { tag: "OK".to_string() }).await
             .map_err(|e| PgSqliteError::Io(e))?;

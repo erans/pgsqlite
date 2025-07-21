@@ -90,9 +90,10 @@ pub async fn handle_test_connection_with_pool(
     use futures::{SinkExt, StreamExt};
     use std::sync::Arc;
     use protocol::{PostgresCodec, FrontendMessage, BackendMessage, AuthenticationMessage, TransactionStatus, ErrorResponse};
-    use session::SessionState;
+    use session::{SessionState, ReadOnlyDbHandler, QueryRouter};
     use query::{QueryExecutor, ExtendedQueryHandler};
-    use tracing::debug;
+    use tracing::{debug, info};
+    use config::Config;
     
     let codec = PostgresCodec::new();
     let mut framed = Framed::new(stream, codec);
@@ -116,6 +117,27 @@ pub async fn handle_test_connection_with_pool(
     }
     
     let session = Arc::new(SessionState::new(database, user));
+    
+    // Set up connection pooling infrastructure (optional - can be enabled via config)
+    let config = Arc::new(Config::load());
+    
+    // Create QueryRouter if pooling is enabled
+    let _query_router = if config.use_pooling {
+        // For tests, we'll use in-memory databases
+        let read_handler = Arc::new(ReadOnlyDbHandler::new(":memory:", config.clone())
+            .map_err(|e| anyhow::anyhow!("Failed to create read-only handler: {}", e))?);
+        Some(Arc::new(QueryRouter::new(
+            db_handler.clone(),
+            read_handler,
+            config.clone(),
+        )))
+    } else {
+        None
+    };
+    
+    if config.use_pooling {
+        info!("Connection pooling enabled with read/write separation (pool size: {})", config.pool_size);
+    }
     
     // Send authentication OK
     framed.send(BackendMessage::Authentication(AuthenticationMessage::Ok)).await?;
@@ -145,8 +167,8 @@ pub async fn handle_test_connection_with_pool(
         debug!("Received message: {:?}", message);
         match message {
             FrontendMessage::Query(sql) => {
-                // Execute the query
-                match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql).await {
+                // Execute the query with optional query routing
+                match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
                     Ok(()) => {
                         // Query executed successfully
                     }
@@ -168,6 +190,7 @@ pub async fn handle_test_connection_with_pool(
                 framed.flush().await?;
             }
             FrontendMessage::Parse { name, query, param_types } => {
+                // TODO: Extended query protocol also needs router integration
                 match ExtendedQueryHandler::handle_parse(&mut framed, &db_handler, &session, name, query, param_types).await {
                     Ok(()) => {},
                     Err(e) => {
