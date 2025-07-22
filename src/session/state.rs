@@ -19,6 +19,7 @@ pub struct SessionState {
     pub prepared_statements: RwLock<HashMap<String, PreparedStatement>>,
     pub portals: RwLock<HashMap<String, Portal>>,
     pub transaction_status: RwLock<TransactionStatus>,
+    pub portal_manager: Arc<super::PortalManager>,
 }
 
 pub struct PreparedStatement {
@@ -30,6 +31,7 @@ pub struct PreparedStatement {
     pub translation_metadata: Option<crate::translator::TranslationMetadata>, // Type hints from query translation
 }
 
+#[derive(Clone)]
 pub struct Portal {
     pub statement_name: String,
     pub query: String,
@@ -59,6 +61,7 @@ impl SessionState {
             prepared_statements: RwLock::new(HashMap::new()),
             portals: RwLock::new(HashMap::new()),
             transaction_status: RwLock::new(TransactionStatus::Idle),
+            portal_manager: Arc::new(super::PortalManager::new(100)), // Allow up to 100 concurrent portals
         }
     }
 
