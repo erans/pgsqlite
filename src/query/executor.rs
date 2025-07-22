@@ -1,7 +1,7 @@
 use crate::protocol::{BackendMessage, FieldDescription};
 use crate::session::{DbHandler, SessionState, QueryRouter};
 use crate::catalog::CatalogInterceptor;
-use crate::translator::{JsonTranslator, ReturningTranslator};
+use crate::translator::{JsonTranslator, ReturningTranslator, BatchUpdateTranslator, BatchDeleteTranslator};
 use crate::types::PgType;
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::metadata::EnumTriggers;
@@ -340,6 +340,26 @@ impl QueryExecutor {
                 .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
             translated_query = NumericFormatTranslator::translate_query(&translated_query, &conn);
             drop(conn); // Release the connection
+        }
+        
+        // Translate batch UPDATE operations if needed
+        if BatchUpdateTranslator::contains_batch_update(&translated_query) {
+            use std::collections::HashMap;
+            use parking_lot::Mutex;
+            let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
+            let batch_translator = BatchUpdateTranslator::new(decimal_cache);
+            translated_query = batch_translator.translate(&translated_query, &[]);
+            debug!("Query after batch UPDATE translation: {}", translated_query);
+        }
+        
+        // Translate batch DELETE operations if needed
+        if BatchDeleteTranslator::contains_batch_delete(&translated_query) {
+            use std::collections::HashMap;
+            use parking_lot::Mutex;
+            let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
+            let batch_translator = BatchDeleteTranslator::new(decimal_cache);
+            translated_query = batch_translator.translate(&translated_query, &[]);
+            debug!("Query after batch DELETE translation: {}", translated_query);
         }
         
         // Translate INSERT statements with datetime values if needed
