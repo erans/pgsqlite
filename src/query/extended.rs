@@ -693,6 +693,11 @@ impl ExtendedQueryHandler {
         };
         
         drop(statements);
+        
+        // Use portal manager to create portal
+        session.portal_manager.create_portal(portal.clone(), portal_obj.clone())?;
+        
+        // Also maintain backward compatibility with direct portal storage
         session.portals.write().await.insert(portal.clone(), portal_obj);
         
         // Send BindComplete
@@ -1239,6 +1244,7 @@ impl ExtendedQueryHandler {
             session.prepared_statements.write().await.remove(&name);
         } else {
             // Close portal
+            session.portal_manager.close_portal(&name);
             session.portals.write().await.remove(&name);
         }
         
@@ -2761,14 +2767,62 @@ impl ExtendedQueryHandler {
             (portal.result_formats.clone(), field_types)
         };
         
-        // Send data rows (respecting max_rows if specified)
-        let rows_to_send = if max_rows > 0 {
-            response.rows.into_iter().take(max_rows as usize).collect()
+        // Check if we're resuming from a previous Execute
+        let has_portal_state = session.portal_manager.get_execution_state(portal_name).is_some();
+        let (rows_to_send, sent_count, total_rows) = if let Some(state) = session.portal_manager.get_execution_state(portal_name) {
+            if state.cached_result.is_some() {
+                // Resume from cached results
+                let cached = state.cached_result.as_ref().unwrap();
+                let start_idx = state.row_offset;
+                let available_rows = cached.rows.len() - start_idx;
+                
+                let take_count = if max_rows > 0 {
+                    std::cmp::min(max_rows as usize, available_rows)
+                } else {
+                    available_rows
+                };
+                
+                let rows: Vec<_> = cached.rows[start_idx..start_idx + take_count].to_vec();
+                (rows, take_count, cached.rows.len())
+            } else {
+                // First execution - cache the results
+                let all_rows = response.rows.clone();
+                let total = all_rows.len();
+                
+                // Cache the result for future partial fetches
+                let cached_result = crate::session::CachedQueryResult {
+                    rows: all_rows.clone(),
+                    field_descriptions: vec![], // Will be populated if needed
+                    command_tag: format!("SELECT {}", total),
+                };
+                
+                session.portal_manager.update_execution_state(
+                    portal_name,
+                    0,
+                    false,
+                    Some(cached_result),
+                )?;
+                
+                // Take rows for this execution
+                let rows_to_send = if max_rows > 0 {
+                    response.rows.into_iter().take(max_rows as usize).collect()
+                } else {
+                    response.rows
+                };
+                let sent = rows_to_send.len();
+                (rows_to_send, sent, total)
+            }
         } else {
-            response.rows
+            // Portal not managed - use old behavior
+            let total = response.rows.len();
+            let rows_to_send = if max_rows > 0 {
+                response.rows.into_iter().take(max_rows as usize).collect()
+            } else {
+                response.rows
+            };
+            let sent = rows_to_send.len();
+            (rows_to_send, sent, total)
         };
-        
-        let sent_count = rows_to_send.len();
         
         // Debug logging for catalog queries
         if query.contains("pg_catalog") || query.contains("pg_attribute") {
@@ -2799,12 +2853,32 @@ impl ExtendedQueryHandler {
                 .map_err(|e| PgSqliteError::Io(e))?;
         }
         
+        // Update portal execution state
+        if let Some(state) = session.portal_manager.get_execution_state(portal_name) {
+            let new_offset = state.row_offset + sent_count;
+            let is_complete = new_offset >= total_rows;
+            
+            session.portal_manager.update_execution_state(
+                portal_name,
+                new_offset,
+                is_complete,
+                None, // Keep existing cached result
+            )?;
+        }
+        
         // Send appropriate completion message
-        if max_rows > 0 && sent_count == max_rows as usize {
+        if max_rows > 0 && sent_count == max_rows as usize && sent_count < total_rows {
             framed.send(BackendMessage::PortalSuspended).await
                 .map_err(|e| PgSqliteError::Io(e))?;
         } else {
-            let tag = format!("SELECT {}", sent_count);
+            // Either we sent all remaining rows or max_rows was 0 (fetch all)
+            let tag = format!("SELECT {}", if has_portal_state {
+                // For resumed portals, report total rows fetched across all executions
+                let state = session.portal_manager.get_execution_state(portal_name).unwrap();
+                state.row_offset
+            } else {
+                sent_count
+            });
             framed.send(BackendMessage::CommandComplete { tag }).await
                 .map_err(|e| PgSqliteError::Io(e))?;
         }
