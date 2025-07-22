@@ -22,6 +22,20 @@
 
 ### Installation
 
+**Option 1: Download Pre-built Binaries (Recommended)**
+
+Visit the [GitHub Releases page](https://github.com/erans/pgsqlite/releases) to download the latest pre-built binary for your platform:
+
+```bash
+# Example for Linux x64:
+wget https://github.com/erans/pgsqlite/releases/latest/download/pgsqlite-linux-x64.tar.gz
+tar -xzf pgsqlite-linux-x64.tar.gz
+chmod +x pgsqlite
+./pgsqlite
+```
+
+**Option 2: Build from Source**
+
 ```bash
 # Clone and build from source
 git clone https://github.com/erans/pgsqlite
