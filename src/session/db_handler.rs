@@ -282,6 +282,28 @@ impl DbHandler {
     }
     
     pub async fn execute(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Apply batch UPDATE translator first if needed
+        let mut query_to_process = query.to_string();
+        if crate::translator::BatchUpdateTranslator::contains_batch_update(&query_to_process) {
+            use std::collections::HashMap;
+            use parking_lot::Mutex;
+            use std::sync::Arc;
+            let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
+            let batch_translator = crate::translator::BatchUpdateTranslator::new(decimal_cache);
+            query_to_process = batch_translator.translate(&query_to_process, &[]);
+        }
+        
+        // Apply batch DELETE translator if needed
+        if crate::translator::BatchDeleteTranslator::contains_batch_delete(&query_to_process) {
+            use std::collections::HashMap;
+            use parking_lot::Mutex;
+            use std::sync::Arc;
+            let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
+            let batch_translator = crate::translator::BatchDeleteTranslator::new(decimal_cache);
+            query_to_process = batch_translator.translate(&query_to_process, &[]);
+        }
+        let query = &query_to_process;
+        
         // Try enhanced statement caching optimization first
         if let Ok(rows_affected) = self.try_execute_with_enhanced_cache(query).await {
             return Ok(DbResponse {
