@@ -675,11 +675,18 @@ impl InsertTranslator {
     
     /// Parse SELECT clause into individual expressions, handling commas within function calls
     fn parse_select_expressions(select_clause: &str) -> Result<Vec<String>, String> {
+        // First, extract only the expressions part before FROM
+        let expressions_part = if let Some(from_pos) = select_clause.find(" FROM ") {
+            &select_clause[..from_pos]
+        } else {
+            select_clause
+        }.trim();
+        
         let mut expressions = Vec::new();
         let mut current = String::new();
         let mut paren_depth = 0;
         let mut in_quotes = false;
-        let mut chars = select_clause.chars().peekable();
+        let mut chars = expressions_part.chars().peekable();
         
         while let Some(ch) = chars.next() {
             match ch {
@@ -730,6 +737,13 @@ impl InsertTranslator {
         );
         
         let needs_array_conversion = pg_type.ends_with("[]") || pg_type.starts_with("_");
+        
+        // Handle PostgreSQL type cast expressions like "p0::VARCHAR" or "p1::TIMESTAMP"
+        if expr_trimmed.contains("::") {
+            // For cast expressions, we don't convert them - they're column references with type hints
+            // SQLAlchemy uses these for parameter binding, not literal values
+            return Ok(expr_trimmed.to_string());
+        }
         
         if needs_datetime_conversion {
             // Handle PostgreSQL datetime functions
@@ -865,6 +879,10 @@ mod tests {
         // Test complex expressions with nested commas
         let expressions = InsertTranslator::parse_select_expressions("id, COALESCE(date_col, '2024-01-01'), name").unwrap();
         assert_eq!(expressions, vec!["id", "COALESCE(date_col, '2024-01-01')", "name"]);
+        
+        // Test SQLAlchemy pattern with FROM clause
+        let expressions = InsertTranslator::parse_select_expressions("p0::VARCHAR, p1::TEXT, p2::TIMESTAMP WITHOUT TIME ZONE FROM (VALUES (...)) AS imp_sen ORDER BY sen_counter").unwrap();
+        assert_eq!(expressions, vec!["p0::VARCHAR", "p1::TEXT", "p2::TIMESTAMP WITHOUT TIME ZONE"]);
     }
     
     #[test]
@@ -884,5 +902,12 @@ mod tests {
         // Test CURRENT_DATE (should pass through)
         let result = InsertTranslator::convert_select_expression("CURRENT_DATE", "date").unwrap();
         assert_eq!(result, "CURRENT_DATE");
+        
+        // Test PostgreSQL cast expressions (should pass through unchanged)
+        let result = InsertTranslator::convert_select_expression("p0::VARCHAR", "varchar").unwrap();
+        assert_eq!(result, "p0::VARCHAR");
+        
+        let result = InsertTranslator::convert_select_expression("p2::TIMESTAMP WITHOUT TIME ZONE", "timestamp").unwrap();
+        assert_eq!(result, "p2::TIMESTAMP WITHOUT TIME ZONE");
     }
 }
