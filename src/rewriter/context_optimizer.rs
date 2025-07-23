@@ -184,7 +184,7 @@ impl QueryContextExt for QueryContext {
         self.table_aliases.contains_key(table) || 
         self.cte_columns.contains_key(table) ||
         self.derived_table_columns.contains_key(table) ||
-        self.default_table.as_ref().map_or(false, |t| t == table)
+        self.default_table.as_ref().is_some_and(|t| t == table)
     }
     
     fn get_all_tables(&self) -> Vec<String> {

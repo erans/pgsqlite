@@ -27,7 +27,7 @@ async fn test_datetime_roundtrip() {
     for row in &metadata_check {
         let col: String = row.get(0);
         let typ: String = row.get(1);
-        println!("  {} -> {}", col, typ);
+        println!("  {col} -> {typ}");
     }
     
     // Insert using simple_query for translation
@@ -64,9 +64,9 @@ async fn test_datetime_roundtrip() {
         let timestamp_val: chrono::NaiveDateTime = row.get(2);
         
         println!("\nRetrieved values:");
-        println!("  Date: {}", date_val);
-        println!("  Time: {}", time_val);
-        println!("  Timestamp: {}", timestamp_val);
+        println!("  Date: {date_val}");
+        println!("  Time: {time_val}");
+        println!("  Timestamp: {timestamp_val}");
         
         assert_eq!(date_val.to_string(), "2024-01-15");
         assert_eq!(time_val.to_string(), "14:30:00");
@@ -100,7 +100,7 @@ async fn test_simple_query_datetime_conversion() {
     if let Some(msg) = result.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))) {
         if let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
             let date_str = data.get("date_col").unwrap();
-            println!("Simple query result: {}", date_str);
+            println!("Simple query result: {date_str}");
             
             // If conversion works, this should be '2024-01-15', not '19737'
             assert_eq!(date_str, "2024-01-15", "Date should be converted from INTEGER to string");

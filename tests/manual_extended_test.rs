@@ -25,7 +25,7 @@ async fn test_manual_extended_protocol() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect as client
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port)).await.unwrap();
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}")).await.unwrap();
     
     // Send startup message
     let mut startup = BytesMut::new();
@@ -40,7 +40,7 @@ async fn test_manual_extended_protocol() {
     // Read authentication response and other startup messages
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await.unwrap();
-    println!("Received {} bytes in startup response", n);
+    println!("Received {n} bytes in startup response");
     
     // Test 1: Parse a query with parameter
     println!("\nTest 1: Parse query with parameter");
@@ -73,7 +73,7 @@ async fn test_manual_extended_protocol() {
     
     // Read Parse/Describe response
     let n = stream.read(&mut buf).await.unwrap();
-    println!("Received {} bytes for Parse/Describe", n);
+    println!("Received {n} bytes for Parse/Describe");
     
     // Test 2: Bind and Execute
     println!("\nTest 2: Bind and Execute");
@@ -105,7 +105,7 @@ async fn test_manual_extended_protocol() {
     
     // Read Bind/Execute response
     let n = stream.read(&mut buf).await.unwrap();
-    println!("Received {} bytes for Bind/Execute", n);
+    println!("Received {n} bytes for Bind/Execute");
     
     // Parse response to verify we got data
     let mut offset = 0;
@@ -131,7 +131,7 @@ async fn test_manual_extended_protocol() {
             }
             b'C' => {
                 let tag = std::str::from_utf8(&buf[offset..offset+msg_len-5]).unwrap();
-                println!("CommandComplete: {}", tag);
+                println!("CommandComplete: {tag}");
                 assert!(tag.starts_with("SELECT"));
             }
             b'Z' => println!("ReadyForQuery"),

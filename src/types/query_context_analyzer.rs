@@ -44,25 +44,25 @@ impl QueryContextAnalyzer {
         
         // Check for explicit type casts
         for i in 1..=param_count {
-            let param = format!("${}", i);
+            let param = format!("${i}");
             
-            if query_lower.contains(&format!("{}::int4", param)) {
+            if query_lower.contains(&format!("{param}::int4")) {
                 types.push(PgType::Int4.to_oid()); // Explicit cast to int4
-            } else if query_lower.contains(&format!("{}::int8", param)) ||
-                      query_lower.contains(&format!("{}::bigint", param)) {
+            } else if query_lower.contains(&format!("{param}::int8")) ||
+                      query_lower.contains(&format!("{param}::bigint")) {
                 types.push(PgType::Int8.to_oid()); // Explicit cast to int8
-            } else if query_lower.contains(&format!("{}::text", param)) {
+            } else if query_lower.contains(&format!("{param}::text")) {
                 types.push(PgType::Text.to_oid()); // Explicit cast to text
-            } else if query_lower.contains(&format!("{}::bytea", param)) {
+            } else if query_lower.contains(&format!("{param}::bytea")) {
                 types.push(PgType::Bytea.to_oid()); // Explicit cast to bytea
-            } else if query_lower.contains(&format!("{}::bool", param)) ||
-                      query_lower.contains(&format!("{}::boolean", param)) {
+            } else if query_lower.contains(&format!("{param}::bool")) ||
+                      query_lower.contains(&format!("{param}::boolean")) {
                 types.push(PgType::Bool.to_oid()); // Explicit cast to bool
-            } else if query_lower.contains(&format!("{}::float8", param)) ||
-                      query_lower.contains(&format!("{}::double precision", param)) {
+            } else if query_lower.contains(&format!("{param}::float8")) ||
+                      query_lower.contains(&format!("{param}::double precision")) {
                 types.push(PgType::Float8.to_oid()); // Explicit cast to float8
-            } else if query_lower.contains(&format!("{}::numeric", param)) ||
-                      query_lower.contains(&format!("{}::decimal", param)) {
+            } else if query_lower.contains(&format!("{param}::numeric")) ||
+                      query_lower.contains(&format!("{param}::decimal")) {
                 types.push(PgType::Numeric.to_oid()); // Explicit cast to numeric
             } else {
                 types.push(0); // Unknown - will need to be determined from schema

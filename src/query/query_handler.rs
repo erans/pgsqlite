@@ -33,7 +33,6 @@ impl QueryHandler for QueryHandlerImpl {
         match self {
             QueryHandlerImpl::Direct(db) => {
                 db.query(sql).await
-                    .map_err(|e| e.into())
             },
             QueryHandlerImpl::Routed(router) => {
                 // For routed queries, we need the session state to determine transaction status
@@ -49,7 +48,6 @@ impl QueryHandler for QueryHandlerImpl {
         match self {
             QueryHandlerImpl::Direct(db) => {
                 db.execute(sql).await
-                    .map_err(|e| e.into())
             },
             QueryHandlerImpl::Routed(router) => {
                 // For routed queries, we need the session state to determine transaction status
@@ -64,7 +62,6 @@ impl QueryHandler for QueryHandlerImpl {
         match self {
             QueryHandlerImpl::Direct(db) => {
                 db.get_schema_type(table, column).await
-                    .map_err(|e| e.into())
             },
             QueryHandlerImpl::Routed(_) => {
                 // For now, schema queries always go to the write handler

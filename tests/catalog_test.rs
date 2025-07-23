@@ -1,6 +1,5 @@
 use pgsqlite::catalog::CatalogInterceptor;
 use pgsqlite::session::db_handler::DbHandler;
-use tokio;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -70,7 +69,7 @@ async fn test_catalog_with_joins() {
     assert_eq!(response.columns[6], "typrelid");
     
     // Should return all types since we can't filter by parameter
-    assert!(response.rows.len() > 0);
+    assert!(!response.rows.is_empty());
 }
 
 #[tokio::test]
@@ -95,7 +94,7 @@ async fn test_pg_class_queries() {
     let mut found_table = false;
     for row in &response.rows {
         assert_eq!(row.len(), 2, "Should only have 2 columns");
-        if let Some(Some(name_bytes)) = row.get(0) { // relname is at index 0 now
+        if let Some(Some(name_bytes)) = row.first() { // relname is at index 0 now
             let name = String::from_utf8_lossy(name_bytes);
             if name == "test_table" {
                 found_table = true;
@@ -132,7 +131,7 @@ async fn test_pg_attribute_queries() {
     let mut found_name = false;
     
     for row in &response.rows {
-        if let Some(Some(name_bytes)) = row.get(0) { // attname is at index 0 (first selected column)
+        if let Some(Some(name_bytes)) = row.first() { // attname is at index 0 (first selected column)
             let col_name = String::from_utf8_lossy(name_bytes);
             if col_name == "id" {
                 found_id = true;

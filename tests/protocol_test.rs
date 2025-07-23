@@ -72,7 +72,7 @@ fn test_decode_startup_message() {
             assert_eq!(startup.parameters.get("user"), Some(&"postgres".to_string()));
         }
         None => panic!("No message decoded"),
-        Some(other) => panic!("Expected StartupMessage, got {:?}", other),
+        Some(other) => panic!("Expected StartupMessage, got {other:?}"),
     }
 }
 
@@ -102,7 +102,7 @@ fn test_decode_query() {
             assert_eq!(query, "SELECT 1");
         }
         None => panic!("No message decoded"),
-        Some(other) => panic!("Expected Query message, got {:?}", other),
+        Some(other) => panic!("Expected Query message, got {other:?}"),
     }
 }
 

@@ -46,12 +46,12 @@ async fn test_pooled_concurrent_reads() {
                     let db_clone = db_handler.clone();
                     tokio::spawn(async move {
                         if let Err(e) = pgsqlite::handle_test_connection_with_pool(stream, addr, db_clone).await {
-                            eprintln!("Connection error: {}", e);
+                            eprintln!("Connection error: {e}");
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("Accept error: {}", e);
+                    eprintln!("Accept error: {e}");
                     break;
                 }
             }
@@ -67,13 +67,13 @@ async fn test_pooled_concurrent_reads() {
     for _i in 0..4 {
         let task = tokio::spawn(async move {
             let (client, connection) = tokio_postgres::connect(
-                &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+                &format!("host=127.0.0.1 port={port} dbname=test user=test"),
                 NoTls,
             ).await.unwrap();
             
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    eprintln!("connection error: {}", e);
+                    eprintln!("connection error: {e}");
                 }
             });
             
@@ -83,7 +83,7 @@ async fn test_pooled_concurrent_reads() {
             while Instant::now() < end_time {
                 match client.query("SELECT COUNT(*) FROM pooling_test", &[]).await {
                     Ok(_) => query_count += 1,
-                    Err(e) => eprintln!("Query error: {}", e),
+                    Err(e) => eprintln!("Query error: {e}"),
                 }
                 tokio::time::sleep(Duration::from_micros(100)).await;
             }
@@ -102,9 +102,9 @@ async fn test_pooled_concurrent_reads() {
     let qps = total_queries as f64 / duration.as_secs_f64();
     
     println!("📊 Pooled Results:");
-    println!("  Total queries: {}", total_queries);
+    println!("  Total queries: {total_queries}");
     println!("  Duration: {:.2}s", duration.as_secs_f64());
-    println!("  QPS: {:.0}", qps);
+    println!("  QPS: {qps:.0}");
     
     server_handle.abort();
     
@@ -169,13 +169,13 @@ async fn test_pooled_mixed_workload() {
         
         let task = tokio::spawn(async move {
             let (client, connection) = tokio_postgres::connect(
-                &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+                &format!("host=127.0.0.1 port={port} dbname=test user=test"),
                 NoTls,
             ).await.unwrap();
             
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    eprintln!("connection error: {}", e);
+                    eprintln!("connection error: {e}");
                 }
             });
             
@@ -185,14 +185,14 @@ async fn test_pooled_mixed_workload() {
             while Instant::now() < end_time {
                 let result = if is_writer {
                     let new_value = count % 1000;
-                    client.execute(&format!("UPDATE mixed_test SET counter = {} WHERE id = 1", new_value), &[]).await.map(|_| ())
+                    client.execute(&format!("UPDATE mixed_test SET counter = {new_value} WHERE id = 1"), &[]).await.map(|_| ())
                 } else {
                     client.query("SELECT id, counter FROM mixed_test WHERE id <= 10", &[]).await.map(|_| ())
                 };
                 
                 match result {
                     Ok(_) => count += 1,
-                    Err(e) => eprintln!("Operation error: {}", e),
+                    Err(e) => eprintln!("Operation error: {e}"),
                 }
                 
                 tokio::time::sleep(Duration::from_micros(if is_writer { 1000 } else { 100 })).await;
@@ -220,11 +220,11 @@ async fn test_pooled_mixed_workload() {
     let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
     
     println!("📊 Pooled Mixed Workload Results:");
-    println!("  Read operations: {}", total_reads);
-    println!("  Write operations: {}", total_writes);
-    println!("  Total operations: {}", total_ops);
+    println!("  Read operations: {total_reads}");
+    println!("  Write operations: {total_writes}");
+    println!("  Total operations: {total_ops}");
     println!("  Duration: {:.2}s", duration.as_secs_f64());
-    println!("  Operations/sec: {:.0}", ops_per_sec);
+    println!("  Operations/sec: {ops_per_sec:.0}");
     
     server_handle.abort();
     
@@ -251,11 +251,11 @@ async fn test_pooling_effectiveness() {
     unsafe { env::remove_var("PGSQLITE_USE_POOLING"); }
     
     println!("📊 Performance Comparison:");
-    println!("  Baseline (no pooling): {:.0} QPS", baseline_qps);
-    println!("  With pooling: {:.0} QPS", pooled_qps);
+    println!("  Baseline (no pooling): {baseline_qps:.0} QPS");
+    println!("  With pooling: {pooled_qps:.0} QPS");
     
     let improvement = ((pooled_qps - baseline_qps) / baseline_qps) * 100.0;
-    println!("  Performance change: {:.1}%", improvement);
+    println!("  Performance change: {improvement:.1}%");
     
     // We expect some performance difference, but both should work
     assert!(baseline_qps > 1.0, "Baseline should have reasonable performance");
@@ -291,13 +291,13 @@ async fn run_read_benchmark() -> f64 {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     

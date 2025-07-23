@@ -14,7 +14,7 @@ fn test_enum_ddl_handler() {
     assert!(EnumDdlHandler::is_enum_ddl(create_query));
     
     let result = EnumDdlHandler::handle_enum_ddl(&mut conn, create_query);
-    assert!(result.is_ok(), "Failed to create ENUM: {:?}", result);
+    assert!(result.is_ok(), "Failed to create ENUM: {result:?}");
     
     // Verify the type was created
     let enum_type = EnumMetadata::get_enum_type(&conn, "mood").unwrap();
@@ -40,7 +40,7 @@ fn test_enum_ddl_alter_type() {
     assert!(EnumDdlHandler::is_enum_ddl(alter_query));
     
     let result = EnumDdlHandler::handle_enum_ddl(&mut conn, alter_query);
-    assert!(result.is_ok(), "Failed to alter ENUM: {:?}", result);
+    assert!(result.is_ok(), "Failed to alter ENUM: {result:?}");
     
     // Verify the new value was added
     let enum_type = EnumMetadata::get_enum_type(&conn, "status").unwrap().unwrap();
@@ -68,7 +68,7 @@ fn test_enum_ddl_drop_type() {
     assert!(EnumDdlHandler::is_enum_ddl(drop_query));
     
     let result = EnumDdlHandler::handle_enum_ddl(&mut conn, drop_query);
-    assert!(result.is_ok(), "Failed to drop ENUM: {:?}", result);
+    assert!(result.is_ok(), "Failed to drop ENUM: {result:?}");
     
     // Verify it's gone
     assert!(EnumMetadata::get_enum_type(&conn, "temp").unwrap().is_none());
@@ -81,7 +81,7 @@ fn test_enum_ddl_drop_if_exists() {
     
     // Drop non-existent type with IF EXISTS should succeed
     let result = EnumDdlHandler::handle_enum_ddl(&mut conn, "DROP TYPE IF EXISTS nonexistent");
-    assert!(result.is_ok(), "DROP IF EXISTS should succeed: {:?}", result);
+    assert!(result.is_ok(), "DROP IF EXISTS should succeed: {result:?}");
     
     // Drop non-existent type without IF EXISTS should fail
     let result = EnumDdlHandler::handle_enum_ddl(&mut conn, "DROP TYPE nonexistent");

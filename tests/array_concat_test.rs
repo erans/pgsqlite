@@ -101,7 +101,7 @@ async fn test_array_concatenation_edge_cases() {
     for query in test_cases {
         let result = client.query(query, &[]).await;
         // Should not error - either array_cat or string concat
-        assert!(result.is_ok(), "Query failed: {}", query);
+        assert!(result.is_ok(), "Query failed: {query}");
     }
 }
 
@@ -131,7 +131,7 @@ async fn test_array_concatenation_function_calls() {
 
     for query in queries {
         let result = client.query(query, &[]).await;
-        assert!(result.is_ok(), "Array concatenation query failed: {}", query);
+        assert!(result.is_ok(), "Array concatenation query failed: {query}");
     }
 }
 
@@ -168,8 +168,8 @@ async fn test_array_concatenation_naming_patterns() {
     ];
 
     for query in array_queries {
-        let result = client.query(&format!("{} FROM naming_test", query), &[]).await;
-        assert!(result.is_ok(), "Array naming pattern query failed: {}", query);
+        let result = client.query(&format!("{query} FROM naming_test"), &[]).await;
+        assert!(result.is_ok(), "Array naming pattern query failed: {query}");
     }
 
     // This should remain string concatenation  

@@ -134,13 +134,13 @@ async fn test_date_trunc_with_table() {
             // Convert expected values from seconds to microseconds
             // 2023-06-15 14:00:00
             let expected_hour = 1686837600i64 * 1_000_000;
-            assert!((hour_val - expected_hour).abs() < 1_000_000, "hour_trunc: expected {}, got {}", expected_hour, hour_val);
+            assert!((hour_val - expected_hour).abs() < 1_000_000, "hour_trunc: expected {expected_hour}, got {hour_val}");
             // 2023-06-15 00:00:00  
             let expected_day = 1686787200i64 * 1_000_000;
-            assert!((day_val - expected_day).abs() < 1_000_000, "day_trunc: expected {}, got {}", expected_day, day_val);
+            assert!((day_val - expected_day).abs() < 1_000_000, "day_trunc: expected {expected_day}, got {day_val}");
             // 2023-06-01 00:00:00
             let expected_month = 1685577600i64 * 1_000_000;
-            assert!((month_val - expected_month).abs() < 1_000_000, "month_trunc: expected {}, got {}", expected_month, month_val);
+            assert!((month_val - expected_month).abs() < 1_000_000, "month_trunc: expected {expected_month}, got {month_val}");
         }
     }
 }

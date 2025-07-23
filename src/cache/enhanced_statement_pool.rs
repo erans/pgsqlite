@@ -415,7 +415,7 @@ impl EnhancedStatementPool {
         if let Some(_values_pos) = upper_query.find("VALUES") {
             let original_values_pos = query.to_uppercase().find("VALUES").unwrap();
             let prefix = &query[..original_values_pos + 6].trim();
-            Some(format!("{} (?)", prefix))
+            Some(format!("{prefix} (?)"))
         } else {
             None
         }
@@ -465,11 +465,11 @@ fn is_datetime_function_result(query: &str, column_name: &str) -> bool {
     }
     
     // Check for aliased datetime functions like "SELECT NOW() as now"
-    if query_upper.contains("NOW()") && query_upper.contains(&format!("AS {}", column_upper)) {
+    if query_upper.contains("NOW()") && query_upper.contains(&format!("AS {column_upper}")) {
         return true;
     }
     
-    if query_upper.contains("CURRENT_TIMESTAMP") && query_upper.contains(&format!("AS {}", column_upper)) {
+    if query_upper.contains("CURRENT_TIMESTAMP") && query_upper.contains(&format!("AS {column_upper}")) {
         return true;
     }
     

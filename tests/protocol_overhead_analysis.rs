@@ -19,12 +19,12 @@ async fn test_protocol_overhead_breakdown() {
     println!("1. Direct DbHandler execution (no protocol):");
     let start = Instant::now();
     for i in 0..iterations {
-        let query = format!("INSERT INTO protocol_test (name, value) VALUES ('direct{}', {})", i, i);
+        let query = format!("INSERT INTO protocol_test (name, value) VALUES ('direct{i}', {i})");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let direct_time = start.elapsed();
     let direct_avg = direct_time / iterations as u32;
-    println!("  Total: {:?}, Average: {:?}", direct_time, direct_avg);
+    println!("  Total: {direct_time:?}, Average: {direct_avg:?}");
     
     // Test 2: Measure components of INSERT execution
     println!("\n2. Component timing for single INSERT:");
@@ -37,7 +37,7 @@ async fn test_protocol_overhead_breakdown() {
         let _ = pgsqlite::query::fast_path::can_use_fast_path_enhanced(test_query);
     }
     let fast_path_time = start.elapsed() / 100;
-    println!("  Fast path detection: {:?}", fast_path_time);
+    println!("  Fast path detection: {fast_path_time:?}");
     
     // Measure schema cache lookup
     let start = Instant::now();
@@ -45,7 +45,7 @@ async fn test_protocol_overhead_breakdown() {
         let _ = db.get_table_schema("protocol_test").await;
     }
     let schema_time = start.elapsed() / 100;
-    println!("  Schema cache lookup: {:?}", schema_time);
+    println!("  Schema cache lookup: {schema_time:?}");
     
     // Test 3: Batch execution to identify per-query vs per-connection overhead
     println!("\n3. Batch execution analysis:");
@@ -59,7 +59,7 @@ async fn test_protocol_overhead_breakdown() {
         }
     }
     let batch_time = start.elapsed();
-    println!("  1000 INSERTs (100 batches of 10): {:?}", batch_time);
+    println!("  1000 INSERTs (100 batches of 10): {batch_time:?}");
     println!("  Average per INSERT: {:?}", batch_time / 1000);
     
     // Test 4: Transaction overhead
@@ -68,7 +68,7 @@ async fn test_protocol_overhead_breakdown() {
     // Without transaction
     let start = Instant::now();
     for i in 0..100 {
-        let query = format!("INSERT INTO protocol_test (name, value) VALUES ('notxn{}', {})", i, i);
+        let query = format!("INSERT INTO protocol_test (name, value) VALUES ('notxn{i}', {i})");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let no_txn = start.elapsed();
@@ -77,7 +77,7 @@ async fn test_protocol_overhead_breakdown() {
     let start = Instant::now();
     db.begin().await.expect("Failed to begin");
     for i in 0..100 {
-        let query = format!("INSERT INTO protocol_test (name, value) VALUES ('txn{}', {})", i, i);
+        let query = format!("INSERT INTO protocol_test (name, value) VALUES ('txn{i}', {i})");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     db.commit().await.expect("Failed to commit");
@@ -99,9 +99,9 @@ async fn test_protocol_overhead_breakdown() {
     
     // Summary
     println!("\n=== SUMMARY ===");
-    println!("Direct DbHandler INSERT: {:?}", direct_avg);
-    println!("Fast path detection: {:?}", fast_path_time);
-    println!("Schema lookup: {:?}", schema_time);
+    println!("Direct DbHandler INSERT: {direct_avg:?}");
+    println!("Fast path detection: {fast_path_time:?}");
+    println!("Schema lookup: {schema_time:?}");
     println!("Estimated protocol overhead: ~{:?}", Duration::from_micros(200) - direct_avg);
 }
 
@@ -117,7 +117,7 @@ async fn test_connection_handling_overhead() {
         let _db = DbHandler::new(":memory:").expect("Failed to create database");
     }
     let create_time = start.elapsed() / iterations as u32;
-    println!("Database creation overhead: {:?}", create_time);
+    println!("Database creation overhead: {create_time:?}");
     
     // Test mutex contention with concurrent access
     let db = DbHandler::new(":memory:").expect("Failed to create database");
@@ -130,7 +130,7 @@ async fn test_connection_handling_overhead() {
     // Single-threaded baseline
     let start = Instant::now();
     for i in 0..100 {
-        db.execute(&format!("INSERT INTO concurrent_test (value) VALUES ({})", i))
+        db.execute(&format!("INSERT INTO concurrent_test (value) VALUES ({i})"))
             .await
             .expect("Failed to execute");
     }

@@ -42,9 +42,9 @@ async fn test_protocol_handshake() {
     ).await.unwrap().unwrap();
     
     // Should receive authentication OK (R message with auth type 0)
-    println!("Received {} bytes", n);
+    println!("Received {n} bytes");
     println!("Response: {:?}", &response[..n]);
-    assert!(n > 5, "Expected at least 6 bytes, got {}", n);
+    assert!(n > 5, "Expected at least 6 bytes, got {n}");
     assert_eq!(response[0], b'R'); // Authentication response
     
     // Wait for server to finish

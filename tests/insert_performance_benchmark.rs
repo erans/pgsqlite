@@ -23,7 +23,7 @@ async fn test_insert_performance_comparison() {
     }
     let sqlite_time = start.elapsed();
     let sqlite_avg = sqlite_time / iterations as u32;
-    println!("  Total: {:?}, Average: {:?}", sqlite_time, sqlite_avg);
+    println!("  Total: {sqlite_time:?}, Average: {sqlite_avg:?}");
     
     // Test 2: pgsqlite with non-decimal table (fast path)
     println!("\n2. pgsqlite - Non-decimal table (fast path):");
@@ -34,12 +34,12 @@ async fn test_insert_performance_comparison() {
     
     let start = Instant::now();
     for i in 0..iterations {
-        let query = format!("INSERT INTO fast_test (name, value) VALUES ('test{}', {})", i, i);
+        let query = format!("INSERT INTO fast_test (name, value) VALUES ('test{i}', {i})");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let fast_time = start.elapsed();
     let fast_avg = fast_time / iterations as u32;
-    println!("  Total: {:?}, Average: {:?}", fast_time, fast_avg);
+    println!("  Total: {fast_time:?}, Average: {fast_avg:?}");
     println!("  Overhead vs SQLite: {:.1}x", fast_avg.as_secs_f64() / sqlite_avg.as_secs_f64());
     
     // Test 3: pgsqlite with decimal table (slow path)
@@ -50,12 +50,12 @@ async fn test_insert_performance_comparison() {
     
     let start = Instant::now();
     for i in 0..iterations {
-        let query = format!("INSERT INTO decimal_test (price, name) VALUES ({}.99, 'test{}')", i, i);
+        let query = format!("INSERT INTO decimal_test (price, name) VALUES ({i}.99, 'test{i}')");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let decimal_time = start.elapsed();
     let decimal_avg = decimal_time / iterations as u32;
-    println!("  Total: {:?}, Average: {:?}", decimal_time, decimal_avg);
+    println!("  Total: {decimal_time:?}, Average: {decimal_avg:?}");
     println!("  Overhead vs SQLite: {:.1}x", decimal_avg.as_secs_f64() / sqlite_avg.as_secs_f64());
     println!("  Overhead vs fast path: {:.1}x", decimal_avg.as_secs_f64() / fast_avg.as_secs_f64());
     
@@ -66,7 +66,7 @@ async fn test_insert_performance_comparison() {
         db.try_execute_fast_path_with_params(
             "INSERT INTO fast_test (name, value) VALUES ($1, $2)",
             &[
-                rusqlite::types::Value::Text(format!("param{}", i)),
+                rusqlite::types::Value::Text(format!("param{i}")),
                 rusqlite::types::Value::Integer(i as i64),
             ],
         )
@@ -75,7 +75,7 @@ async fn test_insert_performance_comparison() {
     }
     let param_time = start.elapsed();
     let param_avg = param_time / iterations as u32;
-    println!("  Total: {:?}, Average: {:?}", param_time, param_avg);
+    println!("  Total: {param_time:?}, Average: {param_avg:?}");
     println!("  Overhead vs SQLite: {:.1}x", param_avg.as_secs_f64() / sqlite_avg.as_secs_f64());
     
     // Test 5: pgsqlite with statement pool
@@ -85,7 +85,7 @@ async fn test_insert_performance_comparison() {
         db.execute_with_statement_pool_params(
             "INSERT INTO fast_test (name, value) VALUES ($1, $2)",
             &[
-                rusqlite::types::Value::Text(format!("pool{}", i)),
+                rusqlite::types::Value::Text(format!("pool{i}")),
                 rusqlite::types::Value::Integer(i as i64),
             ],
         )
@@ -94,12 +94,12 @@ async fn test_insert_performance_comparison() {
     }
     let pool_time = start.elapsed();
     let pool_avg = pool_time / iterations as u32;
-    println!("  Total: {:?}, Average: {:?}", pool_time, pool_avg);
+    println!("  Total: {pool_time:?}, Average: {pool_avg:?}");
     println!("  Overhead vs SQLite: {:.1}x", pool_avg.as_secs_f64() / sqlite_avg.as_secs_f64());
     
     // Summary
     println!("\n=== SUMMARY ===");
-    println!("SQLite baseline:        {:?} per INSERT", sqlite_avg);
+    println!("SQLite baseline:        {sqlite_avg:?} per INSERT");
     println!("Fast path (no decimal): {:?} per INSERT ({:.1}x overhead)", fast_avg, fast_avg.as_secs_f64() / sqlite_avg.as_secs_f64());
     println!("Slow path (decimal):    {:?} per INSERT ({:.1}x overhead)", decimal_avg, decimal_avg.as_secs_f64() / sqlite_avg.as_secs_f64());
     println!("Parameterized:          {:?} per INSERT ({:.1}x overhead)", param_avg, param_avg.as_secs_f64() / sqlite_avg.as_secs_f64());

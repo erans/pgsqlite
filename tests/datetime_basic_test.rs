@@ -11,13 +11,13 @@ async fn test_now_function() {
     let now_str: String = row.get("now");
     
     // Debug output to see what we actually got
-    println!("NOW() returned: '{}'", now_str);
+    println!("NOW() returned: '{now_str}'");
     
     // Verify it's a properly formatted timestamp (YYYY-MM-DD HH:MM:SS.ffffff)
-    assert!(now_str.contains('-'), "NOW() should return formatted timestamp with dashes, got: '{}'", now_str);
-    assert!(now_str.contains(':'), "NOW() should return formatted timestamp with colons, got: '{}'", now_str);
-    assert!(now_str.contains('.'), "NOW() should return formatted timestamp with microseconds, got: '{}'", now_str);
-    assert!(now_str.len() > 20, "NOW() should return full timestamp string, got: '{}'", now_str);
+    assert!(now_str.contains('-'), "NOW() should return formatted timestamp with dashes, got: '{now_str}'");
+    assert!(now_str.contains(':'), "NOW() should return formatted timestamp with colons, got: '{now_str}'");
+    assert!(now_str.contains('.'), "NOW() should return formatted timestamp with microseconds, got: '{now_str}'");
+    assert!(now_str.len() > 20, "NOW() should return full timestamp string, got: '{now_str}'");
     
     // Verify it's NOT just raw microseconds
     assert!(now_str.parse::<i64>().is_err(), "NOW() should not return raw integer microseconds");
@@ -31,9 +31,9 @@ async fn test_now_function() {
         }
         Err(e) => {
             // If it fails, it might still be returning i64, which means our fix didn't fully work
-            println!("CURRENT_TIMESTAMP still returning raw value? Error: {:?}", e);
+            println!("CURRENT_TIMESTAMP still returning raw value? Error: {e:?}");
             let ts_micros: i64 = row2.get("ts");
-            panic!("CURRENT_TIMESTAMP is still returning raw microseconds: {}", ts_micros);
+            panic!("CURRENT_TIMESTAMP is still returning raw microseconds: {ts_micros}");
         }
     }
 }
@@ -80,10 +80,9 @@ async fn test_date_trunc_function_direct() {
     let test_timestamp_micros = 1686840645123456i64; // 2023-06-15 14:30:45.123456 UTC in microseconds
     
     let row = client.query_one(
-        &format!("SELECT DATE_TRUNC('hour', {}) as hour_trunc,
-                         DATE_TRUNC('day', {}) as day_trunc,
-                         DATE_TRUNC('month', {}) as month_trunc",
-                test_timestamp_micros, test_timestamp_micros, test_timestamp_micros),
+        &format!("SELECT DATE_TRUNC('hour', {test_timestamp_micros}) as hour_trunc,
+                         DATE_TRUNC('day', {test_timestamp_micros}) as day_trunc,
+                         DATE_TRUNC('month', {test_timestamp_micros}) as month_trunc"),
         &[]
     ).await.unwrap();
     
@@ -112,9 +111,8 @@ async fn test_interval_arithmetic_direct() {
     // Our datetime translator converts INTERVAL literals to microseconds
     // So "timestamp + INTERVAL '1 day'" becomes "timestamp + 86400000000" (microseconds)
     let row = client.query_one(
-        &format!("SELECT {} + INTERVAL '1 day' as tomorrow,
-                         {} - INTERVAL '1 hour' as hour_ago",
-                test_timestamp_micros, test_timestamp_micros),
+        &format!("SELECT {test_timestamp_micros} + INTERVAL '1 day' as tomorrow,
+                         {test_timestamp_micros} - INTERVAL '1 hour' as hour_ago"),
         &[]
     ).await.unwrap();
     

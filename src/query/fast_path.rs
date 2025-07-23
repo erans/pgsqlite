@@ -108,7 +108,7 @@ pub fn can_use_fast_path_enhanced(query: &str) -> Option<FastPathQuery> {
             where_clause: Some(WhereClause {
                 column: caps.get(2).unwrap().as_str().to_string(),
                 operator: caps.get(3).unwrap().as_str().to_string(),
-                value: format!("${}", param_index),
+                value: format!("${param_index}"),
                 is_parameter: true,
                 parameter_index: Some(param_index),
             }),
@@ -139,7 +139,7 @@ pub fn can_use_fast_path_enhanced(query: &str) -> Option<FastPathQuery> {
             where_clause: Some(WhereClause {
                 column: caps.get(2).unwrap().as_str().to_string(),
                 operator: caps.get(3).unwrap().as_str().to_string(),
-                value: format!("${}", param_index),
+                value: format!("${param_index}"),
                 is_parameter: true,
                 parameter_index: Some(param_index),
             }),
@@ -170,7 +170,7 @@ pub fn can_use_fast_path_enhanced(query: &str) -> Option<FastPathQuery> {
             where_clause: Some(WhereClause {
                 column: caps.get(2).unwrap().as_str().to_string(),
                 operator: caps.get(3).unwrap().as_str().to_string(),
-                value: format!("${}", param_index),
+                value: format!("${param_index}"),
                 is_parameter: true,
                 parameter_index: Some(param_index),
             }),
@@ -694,7 +694,7 @@ fn execute_fast_select_with_params(
                     if pg_type == "numeric" || pg_type == "decimal" {
                         let formatted = crate::types::numeric_utils::format_numeric_with_scale(
                             f, 
-                            &table_name, 
+                            table_name, 
                             &columns[i], 
                             conn
                         );
@@ -812,7 +812,7 @@ fn execute_fast_select(
                     if pg_type == "numeric" || pg_type == "decimal" {
                         let formatted = crate::types::numeric_utils::format_numeric_with_scale(
                             f, 
-                            &table_name, 
+                            table_name, 
                             &columns[i], 
                             conn
                         );
@@ -929,9 +929,9 @@ mod tests {
         let operators = ["=", ">", "<", ">=", "<=", "!=", "<>"];
         
         for op in operators {
-            let query_str = format!("SELECT * FROM test WHERE col {} 42", op);
+            let query_str = format!("SELECT * FROM test WHERE col {op} 42");
             let query = can_use_fast_path_enhanced(&query_str);
-            assert!(query.is_some(), "Should support operator: {}", op);
+            assert!(query.is_some(), "Should support operator: {op}");
             let q = query.unwrap();
             assert_eq!(q.where_clause.unwrap().operator, op);
         }
@@ -981,9 +981,9 @@ mod tests {
         // Test different parameter operators
         let operators = ["=", ">", "<", ">=", "<=", "!=", "<>"];
         for op in operators {
-            let query_str = format!("SELECT * FROM test WHERE col {} $1", op);
+            let query_str = format!("SELECT * FROM test WHERE col {op} $1");
             let query = can_use_fast_path_enhanced(&query_str);
-            assert!(query.is_some(), "Should support parameterized operator: {}", op);
+            assert!(query.is_some(), "Should support parameterized operator: {op}");
             let q = query.unwrap();
             let where_clause = q.where_clause.unwrap();
             assert_eq!(where_clause.operator, op);

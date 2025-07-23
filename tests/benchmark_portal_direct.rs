@@ -1,7 +1,6 @@
 use pgsqlite::session::{DbHandler, SessionState, Portal, CachedQueryResult};
 use std::sync::Arc;
 use std::time::Instant;
-use tokio;
 
 /// Direct Portal Management Performance Benchmark
 /// Tests portal performance using internal APIs to avoid network protocol issues
@@ -78,7 +77,7 @@ async fn setup_test_data(db_handler: &DbHandler) {
     }
     
     let setup_time = start.elapsed();
-    println!("  ✅ Created {} records in {:?}\n", record_count, setup_time);
+    println!("  ✅ Created {record_count} records in {setup_time:?}\n");
 }
 
 async fn test_traditional_fetch(db_handler: &DbHandler) {
@@ -94,8 +93,8 @@ async fn test_traditional_fetch(db_handler: &DbHandler) {
     let row_count = result.rows.len();
     let estimated_memory = row_count * 150; // ~150 bytes per row estimate
     
-    println!("  ⏱️  Full fetch time: {:?}", fetch_time);
-    println!("  📊 Rows retrieved: {}", row_count);
+    println!("  ⏱️  Full fetch time: {fetch_time:?}");
+    println!("  📊 Rows retrieved: {row_count}");
     println!("  💾 Estimated memory: ~{:.2} MB", estimated_memory as f64 / 1_000_000.0);
     println!("  🚀 Throughput: {:.0} rows/sec", 
         row_count as f64 / fetch_time.as_secs_f64());
@@ -130,7 +129,7 @@ async fn test_portal_chunked_fetch(db_handler: &DbHandler, session: &Arc<Session
     // First chunk - simulate initial query execution
     let first_chunk_start = Instant::now();
     let first_result = db_handler.query(&format!(
-        "SELECT * FROM large_table ORDER BY id LIMIT {}", chunk_size
+        "SELECT * FROM large_table ORDER BY id LIMIT {chunk_size}"
     )).await.expect("Failed to execute first chunk");
     let first_chunk_time = first_chunk_start.elapsed();
     
@@ -141,7 +140,7 @@ async fn test_portal_chunked_fetch(db_handler: &DbHandler, session: &Arc<Session
     let cached_result = CachedQueryResult {
         rows: first_result.rows.clone(),
         field_descriptions: vec![],
-        command_tag: format!("SELECT {}", chunk_size),
+        command_tag: format!("SELECT {chunk_size}"),
     };
     
     session.portal_manager.update_execution_state(
@@ -161,8 +160,7 @@ async fn test_portal_chunked_fetch(db_handler: &DbHandler, session: &Arc<Session
         
         // Simulate fetching next chunk using OFFSET
         let offset_result = db_handler.query(&format!(
-            "SELECT * FROM large_table ORDER BY id LIMIT {} OFFSET {}", 
-            chunk_size, total_rows
+            "SELECT * FROM large_table ORDER BY id LIMIT {chunk_size} OFFSET {total_rows}"
         )).await.expect("Failed to execute chunk");
         
         let chunk_time = chunk_start.elapsed();
@@ -194,9 +192,9 @@ async fn test_portal_chunked_fetch(db_handler: &DbHandler, session: &Arc<Session
     session.portal_manager.close_portal(&portal_name);
     
     println!("\n  📊 Portal Chunked Fetch Results:");
-    println!("  ⏱️  Total time: {:?}", total_time);
-    println!("  📦 Chunks processed: {}", chunk_count);
-    println!("  📊 Total rows: {}", total_rows);
+    println!("  ⏱️  Total time: {total_time:?}");
+    println!("  📦 Chunks processed: {chunk_count}");
+    println!("  📊 Total rows: {total_rows}");
     println!("  💾 Peak memory: ~{:.2} MB (vs full fetch)", peak_memory as f64 / 1_000_000.0);
     println!("  🚀 Throughput: {:.0} rows/sec", 
         total_rows as f64 / total_time.as_secs_f64());
@@ -219,7 +217,7 @@ async fn test_portal_resource_management(session: &Arc<SessionState>) {
     // Create many portals to test resource management
     for i in 0..portal_count {
         let portal = Portal {
-            statement_name: format!("stmt_{}", i),
+            statement_name: format!("stmt_{i}"),
             query: format!("SELECT * FROM large_table WHERE category = '{}'", i % 10),
             translated_query: None,
             bound_values: vec![],
@@ -228,15 +226,15 @@ async fn test_portal_resource_management(session: &Arc<SessionState>) {
             inferred_param_types: None,
         };
         
-        session.portal_manager.create_portal(format!("portal_{}", i), portal)
+        session.portal_manager.create_portal(format!("portal_{i}"), portal)
             .expect("Failed to create portal");
     }
     
     let creation_time = start.elapsed();
     let active_portals = session.portal_manager.portal_count();
     
-    println!("  ⏱️  Portal creation time: {:?}", creation_time);
-    println!("  📊 Active portals: {}", active_portals);
+    println!("  ⏱️  Portal creation time: {creation_time:?}");
+    println!("  📊 Active portals: {active_portals}");
     println!("  🚀 Creation rate: {:.0} portals/sec", 
         portal_count as f64 / creation_time.as_secs_f64());
     
@@ -245,15 +243,15 @@ async fn test_portal_resource_management(session: &Arc<SessionState>) {
     let mut successful_retrievals = 0;
     
     for i in 0..portal_count {
-        if session.portal_manager.get_portal(&format!("portal_{}", i)).is_some() {
+        if session.portal_manager.get_portal(&format!("portal_{i}")).is_some() {
             successful_retrievals += 1;
         }
     }
     
     let retrieval_time = retrieval_start.elapsed();
     
-    println!("  ⏱️  Portal retrieval time: {:?}", retrieval_time);
-    println!("  📊 Successful retrievals: {}", successful_retrievals);
+    println!("  ⏱️  Portal retrieval time: {retrieval_time:?}");
+    println!("  📊 Successful retrievals: {successful_retrievals}");
     println!("  🚀 Retrieval rate: {:.0} lookups/sec", 
         successful_retrievals as f64 / retrieval_time.as_secs_f64());
     
@@ -262,8 +260,8 @@ async fn test_portal_resource_management(session: &Arc<SessionState>) {
     let removed = session.portal_manager.cleanup_stale_portals(std::time::Duration::from_secs(0));
     let cleanup_time = cleanup_start.elapsed();
     
-    println!("  ⏱️  Cleanup time: {:?}", cleanup_time);
-    println!("  📊 Portals cleaned up: {}", removed);
+    println!("  ⏱️  Cleanup time: {cleanup_time:?}");
+    println!("  📊 Portals cleaned up: {removed}");
     println!("  📊 Remaining portals: {}", session.portal_manager.portal_count());
 }
 
@@ -286,7 +284,7 @@ async fn test_concurrent_portals(session: &Arc<SessionState>) {
             
             // Create portal
             let portal = Portal {
-                statement_name: format!("concurrent_stmt_{}", portal_id),
+                statement_name: format!("concurrent_stmt_{portal_id}"),
                 query: format!("SELECT count(*) FROM large_table WHERE id % {} = 0", portal_id + 1),
                 translated_query: None,
                 bound_values: vec![],
@@ -295,7 +293,7 @@ async fn test_concurrent_portals(session: &Arc<SessionState>) {
                 inferred_param_types: None,
             };
             
-            let portal_name = format!("concurrent_portal_{}", portal_id);
+            let portal_name = format!("concurrent_portal_{portal_id}");
             session_clone.portal_manager.create_portal(portal_name.clone(), portal)
                 .expect("Failed to create concurrent portal");
             
@@ -338,11 +336,11 @@ async fn test_concurrent_portals(session: &Arc<SessionState>) {
         .map(|(_, _, time)| *time)
         .sum::<std::time::Duration>() / concurrent_count as u32;
     
-    println!("  ⏱️  Total concurrent time: {:?}", total_time);
-    println!("  ⏱️  Average portal time: {:?}", avg_portal_time);
-    println!("  📊 Concurrent portals: {}", concurrent_count);
-    println!("  📊 Operations per portal: {}", operations_per_portal);
-    println!("  📊 Total operations: {}", total_operations);
+    println!("  ⏱️  Total concurrent time: {total_time:?}");
+    println!("  ⏱️  Average portal time: {avg_portal_time:?}");
+    println!("  📊 Concurrent portals: {concurrent_count}");
+    println!("  📊 Operations per portal: {operations_per_portal}");
+    println!("  📊 Total operations: {total_operations}");
     println!("  🚀 Operations/sec: {:.0}", 
         total_operations as f64 / total_time.as_secs_f64());
     println!("  🚀 Concurrency efficiency: {:.1}x", 

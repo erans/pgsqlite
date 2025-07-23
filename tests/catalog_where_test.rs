@@ -41,14 +41,14 @@ async fn test_pg_class_where_filtering() {
         .map(|row| row.get::<_, &str>(0).to_string())
         .collect();
     
-    println!("All tables in database at test start: {:?}", all_table_names);
+    println!("All tables in database at test start: {all_table_names:?}");
     
     // Check if our test tables are present
     let has_our_tables = all_table_names.contains(&"pgclass_test_table1".to_string()) && 
                         all_table_names.contains(&"pgclass_test_table2".to_string());
     
     if !has_our_tables {
-        println!("WARNING: Test tables not found. Found: {:?}. This test will use generic assertions.", all_table_names);
+        println!("WARNING: Test tables not found. Found: {all_table_names:?}. This test will use generic assertions.");
         // In GitHub Actions, table creation might fail or tables might not be visible
         // We'll continue with generic tests that don't depend on specific table names
     }
@@ -74,7 +74,7 @@ async fn test_pg_class_where_filtering() {
     
     // If we don't have our specific tables, at least verify we have some tables
     if !has_pgclass_test_tables {
-        assert!(rows.len() >= 2, "Should find at least 2 tables, found: {:?}", table_names);
+        assert!(rows.len() >= 2, "Should find at least 2 tables, found: {table_names:?}");
     } else {
         // If we do have our tables, verify them specifically
         assert!(table_names.contains(&"pgclass_test_table1".to_string()), "Should find pgclass_test_table1");
@@ -112,11 +112,11 @@ async fn test_pg_class_where_filtering() {
     if !has_pgclass_test_objects {
         // Just verify we have some tables (relkind='r') in the results
         let table_count = objects.iter().filter(|(_, kind)| kind == "r").count();
-        assert!(table_count >= 2, "Should find at least 2 tables, found {} tables in: {:?}", table_count, objects);
+        assert!(table_count >= 2, "Should find at least 2 tables, found {table_count} tables in: {objects:?}");
     } else {
         // If we do have our objects, verify them specifically
-        assert!(object_names.contains(&"pgclass_test_table1".to_string()), "Should find pgclass_test_table1 in {:?}", object_names);
-        assert!(object_names.contains(&"pgclass_test_table2".to_string()), "Should find pgclass_test_table2 in {:?}", object_names);
+        assert!(object_names.contains(&"pgclass_test_table1".to_string()), "Should find pgclass_test_table1 in {object_names:?}");
+        assert!(object_names.contains(&"pgclass_test_table2".to_string()), "Should find pgclass_test_table2 in {object_names:?}");
     }
     
     // Check if index exists (it might not in some SQLite configurations)
@@ -139,13 +139,13 @@ async fn test_pg_class_where_filtering() {
             .map(|row| row.get::<_, &str>(0).to_string())
             .collect();
         
-        println!("LIKE 'pgclass_test_%' query returned: {:?}", matching_names);
+        println!("LIKE 'pgclass_test_%' query returned: {matching_names:?}");
         
         // In CI, LIKE might not work correctly, so we'll just verify the query executed
         if !matching_names.is_empty() {
             assert!(matching_names.contains(&"pgclass_test_table1".to_string()) || 
                    matching_names.iter().any(|n| n.starts_with("pgclass_test_")), 
-                "Should find pgclass_test_table1 or similar in LIKE results: {:?}", matching_names);
+                "Should find pgclass_test_table1 or similar in LIKE results: {matching_names:?}");
         } else {
             println!("WARNING: LIKE query returned no results in CI environment");
             // Just verify that the LIKE query executed without error
@@ -162,7 +162,7 @@ async fn test_pg_class_where_filtering() {
             };
             
             let rows = client.query(
-                &format!("SELECT relname FROM pg_catalog.pg_class WHERE relname LIKE '{}%'", prefix),
+                &format!("SELECT relname FROM pg_catalog.pg_class WHERE relname LIKE '{prefix}%'"),
                 &[]
             ).await.unwrap();
             
@@ -206,7 +206,7 @@ async fn test_pg_class_where_filtering() {
         if !all_table_names.is_empty() {
             let test_table = &all_table_names[0];
             let rows = client.query(
-                &format!("SELECT relname FROM pg_catalog.pg_class WHERE relkind = 'r' AND relname = '{}'", test_table),
+                &format!("SELECT relname FROM pg_catalog.pg_class WHERE relkind = 'r' AND relname = '{test_table}'"),
                 &[]
             ).await.unwrap();
             
@@ -241,7 +241,7 @@ async fn test_pg_attribute_where_filtering() {
             // Use the CREATE TABLE translator and manually register schema
             match CreateTableTranslator::translate(create_table1) {
                 Ok((translated_sql, type_mappings)) => {
-                    println!("Translated SQL: {}", translated_sql);
+                    println!("Translated SQL: {translated_sql}");
                     println!("Type mappings count: {}", type_mappings.len());
                     
                     // Execute the translated SQL
@@ -258,9 +258,9 @@ async fn test_pg_attribute_where_filtering() {
                                 "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
                                 "pgattr_test_attrs", parts[1], type_mapping.pg_type, type_mapping.sqlite_type
                             );
-                            println!("Executing schema insert: {}", insert_query);
+                            println!("Executing schema insert: {insert_query}");
                             if let Err(e) = db.execute(&insert_query).await {
-                                println!("Schema insert error: {}", e);
+                                println!("Schema insert error: {e}");
                             }
                         }
                     }
@@ -270,7 +270,7 @@ async fn test_pg_attribute_where_filtering() {
                         println!("Schema entries for pgattr_test_attrs: {} rows", result.rows.len());
                         for row in &result.rows {
                             if let (Some(Some(table)), Some(Some(column)), Some(Some(pg_type)), Some(Some(sqlite_type))) = 
-                                (row.get(0), row.get(1), row.get(2), row.get(3)) {
+                                (row.first(), row.get(1), row.get(2), row.get(3)) {
                                 println!("  - {}.{}: {} -> {}", 
                                         String::from_utf8_lossy(table), 
                                         String::from_utf8_lossy(column), 
@@ -281,7 +281,7 @@ async fn test_pg_attribute_where_filtering() {
                     }
                 }
                 Err(e) => {
-                    println!("CREATE TABLE translation failed: {}", e);
+                    println!("CREATE TABLE translation failed: {e}");
                 }
             }
             
@@ -316,7 +316,7 @@ async fn test_pg_attribute_where_filtering() {
             if let Ok(result) = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'pgattr_test_%'").await {
                 println!("Tables visible in sqlite_master: {} tables", result.rows.len());
                 for row in &result.rows {
-                    if let Some(Some(name_bytes)) = row.get(0) {
+                    if let Some(Some(name_bytes)) = row.first() {
                         println!("  - {}", String::from_utf8_lossy(name_bytes));
                     }
                 }
@@ -354,7 +354,7 @@ async fn test_pg_attribute_where_filtering() {
     }
     
     // Only assert if we have results
-    assert!(rows.len() >= 1, "Should find at least 1 column, found {}", rows.len());
+    assert!(!rows.is_empty(), "Should find at least 1 column, found {}", rows.len());
     for row in &rows {
         let attnum: i16 = row.get(1);
         assert!(attnum > 0, "All attnums should be positive");
@@ -371,7 +371,7 @@ async fn test_pg_attribute_where_filtering() {
         .map(|row| (row.get::<_, &str>(0).to_string(), row.get::<_, bool>(1)))
         .collect();
     
-    println!("All columns in database: {:?}", all_col_info);
+    println!("All columns in database: {all_col_info:?}");
     
     // Check if we have any columns at all - if not, this may be a test isolation issue
     if all_col_info.is_empty() {
@@ -399,7 +399,7 @@ async fn test_pg_attribute_where_filtering() {
                          all_col_info.iter().any(|(name, _)| name == "active");
     
     if !has_our_columns {
-        println!("WARNING: Expected columns (id, name, active) not found. Found: {:?}", all_col_info);
+        println!("WARNING: Expected columns (id, name, active) not found. Found: {all_col_info:?}");
         println!("This may be due to test isolation issues where pg_attribute sees tables from other tests.");
         
         // Check if we can access our tables directly
@@ -412,8 +412,7 @@ async fn test_pg_attribute_where_filtering() {
     }
     
     assert!(has_our_columns, 
-        "Should find columns from pgattr_test_attrs table (id, name, active). Found: {:?}", 
-        all_col_info);
+        "Should find columns from pgattr_test_attrs table (id, name, active). Found: {all_col_info:?}");
     
     // Get the columns that might be from our table
     let test_table_columns: Vec<&(String, bool)> = all_col_info.iter()
@@ -424,7 +423,7 @@ async fn test_pg_attribute_where_filtering() {
         .collect();
     
     assert!(!test_table_columns.is_empty(), 
-        "Should find columns from pgattr_test_attrs table. All columns found: {:?}", all_col_info);
+        "Should find columns from pgattr_test_attrs table. All columns found: {all_col_info:?}");
     
     // Debug: Let's check the actual NOT NULL status of our test table columns
     let our_table_not_null: Vec<(&str, bool)> = test_table_columns.iter()
@@ -432,7 +431,7 @@ async fn test_pg_attribute_where_filtering() {
         .map(|(name, notnull)| (name.as_str(), *notnull))
         .collect();
     
-    println!("Test table columns with NOT NULL: {:?}", our_table_not_null);
+    println!("Test table columns with NOT NULL: {our_table_not_null:?}");
     
     // Test 2: Filter by attnotnull = true  
     let rows = client.query(
@@ -445,13 +444,12 @@ async fn test_pg_attribute_where_filtering() {
         .map(|row| row.get::<_, &str>(0).to_string())
         .collect();
     
-    println!("NOT NULL columns found: {:?}", not_null_columns);
+    println!("NOT NULL columns found: {not_null_columns:?}");
     
     // The 'id' column should be NOT NULL because it's PRIMARY KEY
     // In CI environment, we might see columns from other tests too
     assert!(!not_null_columns.is_empty(), 
-        "Should find at least 1 NOT NULL column, found: {:?}. Test table columns: {:?}", 
-        not_null_columns, test_table_columns);
+        "Should find at least 1 NOT NULL column, found: {not_null_columns:?}. Test table columns: {test_table_columns:?}");
     
     // Check if we have the 'id' column from our test table  
     // Note: In CI, 'id' might be from other tables too, so we just check that NOT NULL columns exist
@@ -500,8 +498,8 @@ async fn test_psql_common_patterns() {
     assert!(rows.len() >= 2, "Should find at least 2 tables, found: {} tables: {:?}", rows.len(), table_names);
     
     // Verify our test tables are present
-    assert!(table_names.contains(&"psql_public_table".to_string()), "Should find psql_public_table in {:?}", table_names);
-    assert!(table_names.contains(&"psql_pg_internal".to_string()), "Should find psql_pg_internal in {:?}", table_names);
+    assert!(table_names.contains(&"psql_public_table".to_string()), "Should find psql_public_table in {table_names:?}");
+    assert!(table_names.contains(&"psql_pg_internal".to_string()), "Should find psql_pg_internal in {table_names:?}");
     
     // Test NOT EQUAL pattern
     let rows = client.query(

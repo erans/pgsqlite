@@ -27,7 +27,7 @@ async fn test_numeric_constraint_debug() {
         let column_name: String = row.get(1);
         let precision: i32 = row.get(2);
         let scale: i32 = row.get(3);
-        println!("Constraint: {}.{} NUMERIC({},{})", table_name, column_name, precision, scale);
+        println!("Constraint: {table_name}.{column_name} NUMERIC({precision},{scale})");
     }
     
     // Check if triggers were created
@@ -39,7 +39,7 @@ async fn test_numeric_constraint_debug() {
     println!("Triggers found: {}", triggers.len());
     for row in &triggers {
         let name: String = row.get(0);
-        println!("Trigger: {}", name);
+        println!("Trigger: {name}");
     }
     
     // Try to insert a valid value
@@ -57,7 +57,7 @@ async fn test_numeric_constraint_debug() {
     
     match result {
         Ok(_) => println!("ERROR: Invalid insert succeeded when it should have failed!"),
-        Err(e) => println!("Invalid insert failed as expected: {}", e),
+        Err(e) => println!("Invalid insert failed as expected: {e}"),
     }
     
     // Try to insert a value that exceeds precision
@@ -68,7 +68,7 @@ async fn test_numeric_constraint_debug() {
     
     match result {
         Ok(_) => println!("ERROR: Precision overflow insert succeeded when it should have failed!"),
-        Err(e) => println!("Precision overflow insert failed as expected: {}", e),
+        Err(e) => println!("Precision overflow insert failed as expected: {e}"),
     }
     
     server.abort();

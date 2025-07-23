@@ -31,12 +31,12 @@ impl UuidHandler {
     /// Convert UUID string to bytes (for binary protocol)
     pub fn uuid_to_bytes(value: &str) -> Result<Vec<u8>, PgSqliteError> {
         if !Self::validate_uuid(value) {
-            return Err(PgSqliteError::TypeConversion(format!("Invalid UUID format: {}", value)));
+            return Err(PgSqliteError::TypeConversion(format!("Invalid UUID format: {value}")));
         }
         
         let normalized = value.replace('-', "");
         hex::decode(normalized)
-            .map_err(|e| PgSqliteError::TypeConversion(format!("Failed to decode UUID: {}", e)))
+            .map_err(|e| PgSqliteError::TypeConversion(format!("Failed to decode UUID: {e}")))
     }
     
     /// Convert bytes to UUID string

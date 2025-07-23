@@ -15,7 +15,7 @@ async fn test_standalone_now_returns_formatted_timestamp() {
     // Should be a recent timestamp (within the last hour)
     let now = chrono::Utc::now().naive_utc();
     let diff = (now - now_value).num_seconds().abs();
-    assert!(diff < 3600, "NOW() should return a recent timestamp, but got {} (diff: {} seconds)", now_value, diff);
+    assert!(diff < 3600, "NOW() should return a recent timestamp, but got {now_value} (diff: {diff} seconds)");
     
     // Verify it has microsecond precision
     assert!(now_value.nanosecond() > 0, "NOW() should have sub-second precision");
@@ -24,7 +24,7 @@ async fn test_standalone_now_returns_formatted_timestamp() {
     let row_text = client.query_one("SELECT CAST(NOW() AS TEXT)", &[]).await.unwrap();
     let now_text: String = row_text.get(0);
     assert!(now_text.contains('-') && now_text.contains(':'), 
-           "NOW() cast to text should be formatted as timestamp, got: {}", now_text);
+           "NOW() cast to text should be formatted as timestamp, got: {now_text}");
 }
 
 #[tokio::test]
@@ -40,7 +40,7 @@ async fn test_standalone_current_timestamp_returns_formatted() {
     // Should be a recent timestamp (within the last hour)
     let now = chrono::Utc::now().naive_utc();
     let diff = (now - ts_value).num_seconds().abs();
-    assert!(diff < 3600, "CURRENT_TIMESTAMP() should return a recent timestamp, but got {} (diff: {} seconds)", ts_value, diff);
+    assert!(diff < 3600, "CURRENT_TIMESTAMP() should return a recent timestamp, but got {ts_value} (diff: {diff} seconds)");
     
     // Verify it has microsecond precision
     assert!(ts_value.nanosecond() > 0, "CURRENT_TIMESTAMP() should have sub-second precision");
@@ -64,5 +64,5 @@ async fn test_datetime_functions_with_table_context() {
     // Should be a recent timestamp (within the last hour)
     let now = Utc::now();
     let diff = (now - ts_value).num_seconds().abs();
-    assert!(diff < 3600, "Timestamp from table should be recent, but got {} (diff: {} seconds)", ts_value, diff);
+    assert!(diff < 3600, "Timestamp from table should be recent, but got {ts_value} (diff: {diff} seconds)");
 }

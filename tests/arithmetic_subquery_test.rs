@@ -28,13 +28,13 @@ async fn test_arithmetic_in_subqueries() {
     
     // Connect client
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -98,13 +98,13 @@ async fn test_arithmetic_in_ctes() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -162,13 +162,13 @@ async fn test_recursive_cte_arithmetic() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -229,13 +229,13 @@ async fn test_arithmetic_aliases_in_join_subqueries() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -300,13 +300,13 @@ async fn test_nested_subquery_arithmetic() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     

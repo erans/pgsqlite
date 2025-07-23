@@ -59,7 +59,7 @@ fn setup_test_db() -> Connection {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -79,7 +79,7 @@ fn test_implicit_cast_integer_column_eq_decimal_string() {
     let result = rewrite_query(&conn, sql).unwrap();
     
     // Debug: print the rewritten query
-    println!("Rewritten query: {}", result);
+    println!("Rewritten query: {result}");
     
     // Should wrap the string literal in decimal_from_text
     assert!(result.contains("decimal_eq"));
@@ -123,7 +123,7 @@ fn test_implicit_cast_function_argument() {
     let result = rewrite_query(&conn, sql).unwrap();
     
     // Debug: print the rewritten query
-    println!("Rewritten query: {}", result);
+    println!("Rewritten query: {result}");
     
     // Should wrap integer column in decimal_from_text
     assert!(result.contains("decimal_round"));
@@ -167,7 +167,7 @@ fn test_implicit_cast_update_assignment() {
     let result = rewrite_query(&conn, sql).unwrap();
     
     // Debug: print the rewritten query
-    println!("Rewritten UPDATE query: {}", result);
+    println!("Rewritten UPDATE query: {result}");
     
     // Should handle multiplication and comparison
     assert!(result.contains("decimal_mul"));
@@ -183,7 +183,7 @@ fn test_no_implicit_cast_when_types_match() {
     let result = rewrite_query(&conn, sql).unwrap();
     
     // Debug: print the rewritten query
-    println!("Rewritten query: {}", result);
+    println!("Rewritten query: {result}");
     
     // Both are NUMERIC, so should use decimal_add without extra casts
     assert!(result.contains("decimal_add"));
@@ -201,7 +201,7 @@ fn test_implicit_cast_mixed_arithmetic() {
     let result = rewrite_query(&conn, sql).unwrap();
     
     // Debug: print the rewritten query
-    println!("Rewritten mixed arithmetic query: {}", result);
+    println!("Rewritten mixed arithmetic query: {result}");
     
     // Should handle type promotion throughout the expression
     assert!(result.contains("decimal_mul"));

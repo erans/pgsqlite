@@ -390,7 +390,7 @@ where
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Query execution failed: {}", e),
+                            format!("Query execution failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -426,7 +426,7 @@ where
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Parse failed: {}", e),
+                            format!("Parse failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
@@ -461,7 +461,7 @@ where
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Bind failed: {}", e),
+                            format!("Bind failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
@@ -488,7 +488,7 @@ where
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Execute failed: {}", e),
+                            format!("Execute failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
@@ -508,7 +508,7 @@ where
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Describe failed: {}", e),
+                            format!("Describe failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed
@@ -527,7 +527,7 @@ where
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Close failed: {}", e),
+                            format!("Close failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         framed

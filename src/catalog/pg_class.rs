@@ -55,7 +55,7 @@ impl PgClassHandler {
         ];
         
         // Determine which columns to return based on projection
-        let (columns, column_indices) = Self::get_projected_columns(&select, &all_columns);
+        let (columns, column_indices) = Self::get_projected_columns(select, &all_columns);
         
         // Create column mapping for WHERE evaluation (uses all columns)
         let column_mapping: HashMap<String, usize> = all_columns
@@ -68,11 +68,11 @@ impl PgClassHandler {
         
         // Process each table
         for table_row in &tables_response.rows {
-            if let Some(Some(table_name_bytes)) = table_row.get(0) {
+            if let Some(Some(table_name_bytes)) = table_row.first() {
                 let table_name = String::from_utf8_lossy(table_name_bytes);
                 
                 // Get column count for this table
-                let col_count_query = format!("PRAGMA table_info({})", table_name);
+                let col_count_query = format!("PRAGMA table_info({table_name})");
                 let col_info = db.query(&col_count_query).await?;
                 let relnatts = col_info.rows.len() as i16;
                 
@@ -80,7 +80,7 @@ impl PgClassHandler {
                 let oid = generate_oid_from_name(&table_name);
                 
                 // Check if table has indexes
-                let index_query = format!("PRAGMA index_list({})", table_name);
+                let index_query = format!("PRAGMA index_list({table_name})");
                 let index_info = db.query(&index_query).await?;
                 let relhasindex = !index_info.rows.is_empty();
                 
@@ -182,7 +182,7 @@ impl PgClassHandler {
         
         for index_row in &indexes_response.rows {
             if let (Some(Some(index_name_bytes)), Some(Some(table_name_bytes))) = 
-                (index_row.get(0), index_row.get(1)) {
+                (index_row.first(), index_row.get(1)) {
                 let index_name = String::from_utf8_lossy(index_name_bytes);
                 let table_name = String::from_utf8_lossy(table_name_bytes);
                 

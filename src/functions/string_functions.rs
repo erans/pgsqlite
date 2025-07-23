@@ -89,7 +89,7 @@ pub fn register_string_functions(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let code = ctx.get::<i64>(0)?;
-            if code >= 0 && code <= 1114111 { // Valid Unicode range
+            if (0..=1114111).contains(&code) { // Valid Unicode range
                 if let Some(ch) = char::from_u32(code as u32) {
                     Ok(ch.to_string())
                 } else {

@@ -32,7 +32,7 @@ impl SchemaTypeMapper {
         table_name: &str,
         column_name: &str
     ) -> Result<String, rusqlite::Error> {
-        let query = format!("PRAGMA table_info({})", table_name);
+        let query = format!("PRAGMA table_info({table_name})");
         let mut stmt = conn.prepare(&query)?;
         
         let mut rows = stmt.query_map([], |row| {
@@ -103,7 +103,7 @@ impl SchemaTypeMapper {
         
         // Handle parametric types by removing parameters
         let base_type = if let Some(paren_pos) = upper_type.find('(') {
-            &upper_type[..paren_pos].trim()
+            upper_type[..paren_pos].trim()
         } else {
             upper_type.as_str()
         };
@@ -185,7 +185,7 @@ impl SchemaTypeMapper {
         let oid = Self::pg_type_string_to_oid(pg_type);
         
         // If we got TEXT OID, check if it's actually an ENUM
-        if oid == PgType::Text.to_oid() as i32 {
+        if oid == PgType::Text.to_oid() {
             // Check if this is an ENUM type
             if let Ok(Some(enum_type)) = EnumMetadata::get_enum_type(conn, pg_type) {
                 return enum_type.type_oid;
@@ -257,7 +257,7 @@ impl SchemaTypeMapper {
             }
         }
         
-        if let Ok(_) = s.parse::<f64>() {
+        if s.parse::<f64>().is_ok() {
             return PgType::Float8.to_oid(); // float8
         }
         
@@ -315,7 +315,7 @@ impl SchemaTypeMapper {
                     if let Some(captures) = re.captures(q) {
                         let actual_function = captures[1].to_uppercase();
                         // Recursively call with the actual function name
-                        return Self::get_aggregate_return_type_with_query(&format!("{}()", actual_function), conn, table_name, None);
+                        return Self::get_aggregate_return_type_with_query(&format!("{actual_function}()"), conn, table_name, None);
                     }
                 }
                 

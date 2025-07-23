@@ -32,7 +32,7 @@ async fn test_simple_select() {
     let (client, connection) = timeout(
         Duration::from_secs(5),
         tokio_postgres::connect(
-            &format!("host=localhost port={} dbname=test user=testuser", port),
+            &format!("host=localhost port={port} dbname=test user=testuser"),
             NoTls,
         )
     ).await.unwrap().unwrap();
@@ -40,7 +40,7 @@ async fn test_simple_select() {
     // Spawn connection handler
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -77,7 +77,7 @@ async fn test_create_insert_select() {
     let (client, connection) = timeout(
         Duration::from_secs(5),
         tokio_postgres::connect(
-            &format!("host=localhost port={} dbname=test user=testuser", port),
+            &format!("host=localhost port={port} dbname=test user=testuser"),
             NoTls,
         )
     ).await.unwrap().unwrap();
@@ -123,7 +123,7 @@ async fn test_transactions() {
     let (client, connection) = timeout(
         Duration::from_secs(5),
         tokio_postgres::connect(
-            &format!("host=localhost port={} dbname=test user=testuser", port),
+            &format!("host=localhost port={port} dbname=test user=testuser"),
             NoTls,
         )
     ).await.unwrap().unwrap();

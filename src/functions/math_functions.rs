@@ -269,7 +269,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let value = ctx.get::<f64>(0)?;
-            if value < -1.0 || value > 1.0 {
+            if !(-1.0..=1.0).contains(&value) {
                 return Err(rusqlite::Error::UserFunctionError("asin domain error".into()));
             }
             Ok(value.asin())
@@ -283,7 +283,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
             let value = ctx.get::<f64>(0)?;
-            if value < -1.0 || value > 1.0 {
+            if !(-1.0..=1.0).contains(&value) {
                 return Err(rusqlite::Error::UserFunctionError("acos domain error".into()));
             }
             Ok(value.acos())

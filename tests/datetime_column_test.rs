@@ -33,15 +33,15 @@ async fn test_datetime_on_columns() {
     println!("Lowercase extract returned {} rows", rows.len());
     if !rows.is_empty() {
         // Check what type we're getting
-        let col = rows[0].columns().get(0).unwrap();
+        let col = rows[0].columns().first().unwrap();
         println!("Column type: {:?} (OID: {})", col.type_(), col.type_().oid());
         
         if col.type_().oid() == 23 { // int4
             let year: i32 = rows[0].get(0);
-            println!("Year (as i32): {}", year);
+            println!("Year (as i32): {year}");
         } else {
             let year: f64 = rows[0].get(0);
-            println!("Year (as f64): {}", year);
+            println!("Year (as f64): {year}");
         }
     }
     
@@ -54,20 +54,20 @@ async fn test_datetime_on_columns() {
         Ok(rows) => {
             println!("Uppercase EXTRACT succeeded with {} rows", rows.len());
             if !rows.is_empty() {
-                let col = rows[0].columns().get(0).unwrap();
+                let col = rows[0].columns().first().unwrap();
                 println!("Column type: {:?} (OID: {})", col.type_(), col.type_().oid());
                 
                 if col.type_().oid() == 23 { // int4
                     let year: i32 = rows[0].get(0);
-                    println!("Year (as i32): {}", year);
+                    println!("Year (as i32): {year}");
                 } else {
                     let year: f64 = rows[0].get(0);
-                    println!("Year (as f64): {}", year);
+                    println!("Year (as f64): {year}");
                 }
             }
         }
         Err(e) => {
-            println!("Uppercase EXTRACT failed: {:?}", e);
+            println!("Uppercase EXTRACT failed: {e:?}");
             println!("Error kind: {:?}", e.as_db_error());
         }
     }

@@ -40,7 +40,7 @@ async fn benchmark_batch_operations() {
     
     // Run migration
     let output = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--bin", "pgsqlite", "--", "-d", db_path, "--migrate"])
+        .args(["run", "--release", "--bin", "pgsqlite", "--", "-d", db_path, "--migrate"])
         .output()
         .await
         .expect("Failed to run migration");
@@ -60,12 +60,12 @@ async fn benchmark_batch_operations() {
     // Start pgsqlite server
     let port = 25438;
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
     
     let mut server = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--bin", "pgsqlite", "--", "-d", db_path, "-p", &port.to_string(), "--log-level", "error"])
+        .args(["run", "--release", "--bin", "pgsqlite", "--", "-d", db_path, "-p", &port.to_string(), "--log-level", "error"])
         .spawn()
         .expect("Failed to start server");
     
@@ -73,7 +73,7 @@ async fn benchmark_batch_operations() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     
     // Connect to server
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
         .expect("Failed to connect to server");
     
@@ -83,8 +83,8 @@ async fn benchmark_batch_operations() {
     perform_startup(&mut stream).await;
     
     println!("\n=== UPDATE/DELETE Performance Baseline ===\n");
-    println!("Total rows: {}", TOTAL_ROWS);
-    println!("Operations per test: {}\n", OPERATIONS);
+    println!("Total rows: {TOTAL_ROWS}");
+    println!("Operations per test: {OPERATIONS}\n");
     
     // Benchmark single UPDATE operations
     println!("--- Single UPDATE Operations ---");
@@ -95,7 +95,7 @@ async fn benchmark_batch_operations() {
         read_until_ready(&mut stream).await;
     }
     let single_update_time = start.elapsed();
-    println!("{} single UPDATEs: {:?}", OPERATIONS, single_update_time);
+    println!("{OPERATIONS} single UPDATEs: {single_update_time:?}");
     println!("  Per operation: {:.3}ms", single_update_time.as_secs_f64() * 1000.0 / OPERATIONS as f64);
     println!("  Operations/sec: {:.0}", OPERATIONS as f64 / single_update_time.as_secs_f64());
     
@@ -111,12 +111,12 @@ async fn benchmark_batch_operations() {
     
     let start = Instant::now();
     for i in TOTAL_ROWS..(TOTAL_ROWS + OPERATIONS) {
-        let query = format!("DELETE FROM batch_ops_test WHERE id = {}", i);
+        let query = format!("DELETE FROM batch_ops_test WHERE id = {i}");
         send_query(&mut stream, &query).await;
         read_until_ready(&mut stream).await;
     }
     let single_delete_time = start.elapsed();
-    println!("{} single DELETEs: {:?}", OPERATIONS, single_delete_time);
+    println!("{OPERATIONS} single DELETEs: {single_delete_time:?}");
     println!("  Per operation: {:.3}ms", single_delete_time.as_secs_f64() * 1000.0 / OPERATIONS as f64);
     println!("  Operations/sec: {:.0}", OPERATIONS as f64 / single_delete_time.as_secs_f64());
     
@@ -126,7 +126,7 @@ async fn benchmark_batch_operations() {
     
     for batch_size in batch_sizes {
         let num_batches = OPERATIONS / batch_size;
-        println!("\nBatch size {} ({} batches):", batch_size, num_batches);
+        println!("\nBatch size {batch_size} ({num_batches} batches):");
         
         let start = Instant::now();
         for batch in 0..num_batches {
@@ -144,10 +144,10 @@ async fn benchmark_batch_operations() {
         let batch_update_time = start.elapsed();
         
         let speedup = single_update_time.as_secs_f64() / batch_update_time.as_secs_f64();
-        println!("  Total time: {:?}", batch_update_time);
+        println!("  Total time: {batch_update_time:?}");
         println!("  Per batch: {:.3}ms", batch_update_time.as_secs_f64() * 1000.0 / num_batches as f64);
         println!("  Per row: {:.3}ms", batch_update_time.as_secs_f64() * 1000.0 / OPERATIONS as f64);
-        println!("  Speedup vs single: {:.1}x", speedup);
+        println!("  Speedup vs single: {speedup:.1}x");
     }
     
     // Benchmark DELETE with WHERE IN clause (batch-like)
@@ -161,9 +161,9 @@ async fn benchmark_batch_operations() {
         read_until_ready(&mut stream).await;
     }
     
-    for batch_size in vec![10, 50, 100] {
+    for batch_size in [10, 50, 100] {
         let num_batches = OPERATIONS / batch_size;
-        println!("\nBatch size {} ({} batches):", batch_size, num_batches);
+        println!("\nBatch size {batch_size} ({num_batches} batches):");
         
         // Re-insert data for this test
         for i in 0..OPERATIONS {
@@ -190,10 +190,10 @@ async fn benchmark_batch_operations() {
         let batch_delete_time = start.elapsed();
         
         let speedup = single_delete_time.as_secs_f64() / batch_delete_time.as_secs_f64();
-        println!("  Total time: {:?}", batch_delete_time);
+        println!("  Total time: {batch_delete_time:?}");
         println!("  Per batch: {:.3}ms", batch_delete_time.as_secs_f64() * 1000.0 / num_batches as f64);
         println!("  Per row: {:.3}ms", batch_delete_time.as_secs_f64() * 1000.0 / OPERATIONS as f64);
-        println!("  Speedup vs single: {:.1}x", speedup);
+        println!("  Speedup vs single: {speedup:.1}x");
     }
     
     // Direct SQLite comparison
@@ -209,7 +209,7 @@ async fn benchmark_batch_operations() {
         ).unwrap();
     }
     let sqlite_update_time = start.elapsed();
-    println!("SQLite {} single UPDATEs: {:?}", OPERATIONS, sqlite_update_time);
+    println!("SQLite {OPERATIONS} single UPDATEs: {sqlite_update_time:?}");
     
     // Batch UPDATE with WHERE IN
     let start = Instant::now();
@@ -234,7 +234,7 @@ async fn benchmark_batch_operations() {
     // Kill server
     server.kill().await.unwrap();
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
 }

@@ -134,7 +134,7 @@ fn decimal_from_text(ctx: &Context<'_>) -> Result<Option<Vec<u8>>> {
             if total_digits > 28 {
                 // For very large numbers, return an error instead of panicking
                 return Err(rusqlite::Error::UserFunctionError(
-                    format!("Numeric value has {} significant digits, exceeding the maximum of 28 digits supported for calculations", total_digits).into()
+                    format!("Numeric value has {total_digits} significant digits, exceeding the maximum of 28 digits supported for calculations").into()
                 ));
             }
             
@@ -161,7 +161,7 @@ fn decimal_from_text(ctx: &Context<'_>) -> Result<Option<Vec<u8>>> {
         rusqlite::types::ValueRef::Real(f) => {
             match Decimal::try_from(f) {
                 Ok(decimal) => Ok(Some(decimal.serialize().to_vec())),
-                Err(e) => Err(rusqlite::Error::UserFunctionError(format!("Cannot convert float to decimal: {}", e).into()))
+                Err(e) => Err(rusqlite::Error::UserFunctionError(format!("Cannot convert float to decimal: {e}").into()))
             }
         }
         _ => Err(rusqlite::Error::UserFunctionError("Expected text, integer, or real value".into()))
@@ -224,7 +224,7 @@ fn get_decimal(ctx: &Context<'_>, idx: usize) -> Result<Option<Decimal>> {
             // Try conversion and provide detailed error information
             Decimal::try_from(f)
                 .map(Some)
-                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Invalid function parameter type Real at index 0: Cannot convert float {} to decimal: {}", f, e).into()))
+                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Invalid function parameter type Real at index 0: Cannot convert float {f} to decimal: {e}").into()))
         }
     }
 }
@@ -365,7 +365,7 @@ fn numeric_format(ctx: &Context<'_>) -> Result<Option<String>> {
                         padded
                     };
                     
-                    Ok(Some(format!("{}.{}", integer_part, formatted_decimal)))
+                    Ok(Some(format!("{integer_part}.{formatted_decimal}")))
                 } else {
                     // No decimal point, add one with zeros
                     Ok(Some(format!("{}.{}", value, "0".repeat(scale as usize))))

@@ -127,19 +127,19 @@ impl ExtendedFastPath {
                     // INT8, INT4, INT2
                     text.parse::<i64>()
                         .map(rusqlite::types::Value::Integer)
-                        .map_err(|_| PgSqliteError::Protocol(format!("Invalid integer: {}", text)))
+                        .map_err(|_| PgSqliteError::Protocol(format!("Invalid integer: {text}")))
                 }
                 t if t == PgType::Float4.to_oid() || t == PgType::Float8.to_oid() => {
                     // FLOAT4, FLOAT8
                     text.parse::<f64>()
                         .map(rusqlite::types::Value::Real)
-                        .map_err(|_| PgSqliteError::Protocol(format!("Invalid float: {}", text)))
+                        .map_err(|_| PgSqliteError::Protocol(format!("Invalid float: {text}")))
                 }
                 t if t == PgType::Numeric.to_oid() => {
                     // NUMERIC - validate and store as text
                     match DecimalHandler::validate_numeric_string(text) {
                         Ok(_) => Ok(rusqlite::types::Value::Text(text.to_string())),
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid NUMERIC: {}", e))),
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid NUMERIC: {e}"))),
                     }
                 }
                 t if t == PgType::Date.to_oid() => {
@@ -147,10 +147,10 @@ impl ExtendedFastPath {
                     match crate::types::ValueConverter::convert_date_to_unix(text) {
                         Ok(days_str) => {
                             let days = days_str.parse::<i64>()
-                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid date days: {}", days_str)))?;
+                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid date days: {days_str}")))?;
                             Ok(rusqlite::types::Value::Integer(days))
                         }
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid date: {}", e)))
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid date: {e}")))
                     }
                 }
                 t if t == PgType::Time.to_oid() => {
@@ -158,10 +158,10 @@ impl ExtendedFastPath {
                     match crate::types::ValueConverter::convert_time_to_seconds(text) {
                         Ok(micros_str) => {
                             let micros = micros_str.parse::<i64>()
-                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid time microseconds: {}", micros_str)))?;
+                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid time microseconds: {micros_str}")))?;
                             Ok(rusqlite::types::Value::Integer(micros))
                         }
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid time: {}", e)))
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid time: {e}")))
                     }
                 }
                 t if t == PgType::Timestamp.to_oid() => {
@@ -169,10 +169,10 @@ impl ExtendedFastPath {
                     match crate::types::ValueConverter::convert_timestamp_to_unix(text) {
                         Ok(micros_str) => {
                             let micros = micros_str.parse::<i64>()
-                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid timestamp microseconds: {}", micros_str)))?;
+                                .map_err(|_| PgSqliteError::Protocol(format!("Invalid timestamp microseconds: {micros_str}")))?;
                             Ok(rusqlite::types::Value::Integer(micros))
                         }
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid timestamp: {}", e)))
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid timestamp: {e}")))
                     }
                 }
                 t if t == PgType::Timestamptz.to_oid() || t == PgType::Timetz.to_oid() || t == PgType::Interval.to_oid() => {
@@ -244,7 +244,7 @@ impl ExtendedFastPath {
                     // NUMERIC
                     match DecimalHandler::decode_numeric(bytes) {
                         Ok(decimal) => Ok(rusqlite::types::Value::Text(decimal.to_string())),
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid binary NUMERIC: {}", e))),
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid binary NUMERIC: {e}"))),
                     }
                 }
                 t if t == PgType::Money.to_oid() => {
@@ -260,7 +260,7 @@ impl ExtendedFastPath {
                         ]);
                         // Convert microdollars to dollar string format
                         let dollars = microdollars as f64 / 100.0;
-                        let text = format!("${:.2}", dollars);
+                        let text = format!("${dollars:.2}");
                         Ok(rusqlite::types::Value::Text(text))
                     } else {
                         Err(PgSqliteError::Protocol(format!("Invalid MONEY format, {} bytes", bytes.len())))
@@ -280,11 +280,11 @@ impl ExtendedFastPath {
                      t == PgType::Cidr.to_oid() || t == PgType::Int4range.to_oid() || t == PgType::Int8range.to_oid() ||
                      t == PgType::Numrange.to_oid() || t == PgType::Bit.to_oid() || t == PgType::Varbit.to_oid() => {
                     // Other special types - for now, error out so we can implement them properly
-                    Err(PgSqliteError::Protocol(format!("Binary format not implemented for type {}", param_type)))
+                    Err(PgSqliteError::Protocol(format!("Binary format not implemented for type {param_type}")))
                 }
                 _ => {
                     // Store as BLOB for unsupported binary types
-                    eprintln!("DEBUG: Unknown binary type OID {}, storing as blob. Bytes: {:?}", param_type, bytes);
+                    eprintln!("DEBUG: Unknown binary type OID {param_type}, storing as blob. Bytes: {bytes:?}");
                     if bytes == b"test" {
                         eprintln!("DEBUG: This is 'test' being stored as blob!");
                     }
@@ -368,7 +368,7 @@ impl ExtendedFastPath {
                 .collect();
             
             framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         // TODO: Handle result_formats for binary encoding
@@ -378,13 +378,13 @@ impl ExtendedFastPath {
         // Send data rows
         for row in response.rows {
             framed.send(BackendMessage::DataRow(row)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         // Send CommandComplete
         let tag = format!("SELECT {}", response.rows_affected);
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -415,7 +415,7 @@ impl ExtendedFastPath {
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }

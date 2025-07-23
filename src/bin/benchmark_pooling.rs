@@ -18,7 +18,7 @@ async fn main() {
     // Initialize test data
     db_handler.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
     for i in 1..=100 {
-        db_handler.execute(&format!("INSERT INTO users (id, name) VALUES ({}, 'User{}')", i, i)).await.unwrap();
+        db_handler.execute(&format!("INSERT INTO users (id, name) VALUES ({i}, 'User{i}')")).await.unwrap();
     }
     
     // Benchmark without pooling (current implementation)

@@ -124,7 +124,7 @@ fn benchmark_cache_effectiveness() {
     println!("Total queries: {}", final_metrics.total_queries);
     println!("Cache hits: {}", final_metrics.cache_hits);
     println!("Cache misses: {}", final_metrics.cache_misses);
-    println!("Overall hit rate: {:.1}%", overall_hit_rate);
+    println!("Overall hit rate: {overall_hit_rate:.1}%");
     println!("Evictions: {}", final_metrics.evictions);
     
     // Test query normalization effectiveness
@@ -133,12 +133,10 @@ fn benchmark_cache_effectiveness() {
     // Clear cache for normalization test
     GLOBAL_QUERY_CACHE.clear();
     
-    let normalized_queries = vec![
-        "SELECT * FROM users WHERE id = 1",
+    let normalized_queries = ["SELECT * FROM users WHERE id = 1",
         "select * from users where id = 1",
         "SELECT  *  FROM  users  WHERE  id = 1",
-        "SeLeCt * FrOm users WhErE id = 1",
-    ];
+        "SeLeCt * FrOm users WhErE id = 1"];
     
     let mut normalization_times = Vec::new();
     for (i, query) in normalized_queries.iter().enumerate() {
@@ -165,7 +163,7 @@ fn benchmark_cache_effectiveness() {
     println!("\nNormalization effectiveness:");
     println!("First query: {:.3}ms", first_time.as_secs_f64() * 1000.0);
     println!("Avg normalized: {:.3}ms", avg_normalized_time.as_secs_f64() * 1000.0);
-    println!("Speedup: {:.1}x", normalization_speedup);
+    println!("Speedup: {normalization_speedup:.1}x");
 }
 
 /// Benchmark to compare performance with and without cache

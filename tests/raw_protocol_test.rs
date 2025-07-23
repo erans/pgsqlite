@@ -13,7 +13,7 @@ async fn test_raw_protocol() {
     // Start test server
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    println!("Test server listening on port {}", port);
+    println!("Test server listening on port {port}");
     
     let server_handle = tokio::spawn(async move {
         // Create database handler
@@ -29,7 +29,7 @@ async fn test_raw_protocol() {
         
         // Accept connection
         let (stream, addr) = listener.accept().await.unwrap();
-        println!("Accepted connection from {}", addr);
+        println!("Accepted connection from {addr}");
         
         // Handle connection
         pgsqlite::handle_test_connection_with_pool(stream, addr, db_handler).await.unwrap();
@@ -39,7 +39,7 @@ async fn test_raw_protocol() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     
     // Connect directly using TCP
-    println!("Connecting to test server on port {}", port);
+    println!("Connecting to test server on port {port}");
     let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     
     // Send startup message
@@ -59,7 +59,7 @@ async fn test_raw_protocol() {
     
     while !ready {
         let n = timeout(Duration::from_secs(1), client.read(&mut response)).await.unwrap().unwrap();
-        println!("Received {} bytes", n);
+        println!("Received {n} bytes");
         
         let mut offset = 0;
         while offset < n {
@@ -91,7 +91,7 @@ async fn test_raw_protocol() {
     query_msg.put_u8(0); // Null terminator
     
     client.write_all(&query_msg).await.unwrap();
-    println!("Sent query: {}", query);
+    println!("Sent query: {query}");
     
     // Read query response
     let mut got_complete = false;
@@ -99,7 +99,7 @@ async fn test_raw_protocol() {
     
     while !got_complete {
         let n = timeout(Duration::from_secs(2), client.read(&mut response)).await.unwrap().unwrap();
-        println!("Received {} bytes for query response", n);
+        println!("Received {n} bytes for query response");
         
         let mut offset = 0;
         while offset < n {

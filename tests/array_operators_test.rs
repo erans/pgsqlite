@@ -87,7 +87,7 @@ async fn test_array_operators() {
          WHERE p.tags && c.subcategories",
         &[]
     ).await.unwrap();
-    assert!(rows.len() > 0); // Should find overlapping tags
+    assert!(!rows.is_empty()); // Should find overlapping tags
     
     // Test || operator (concatenation)
     let row = client.query_one(

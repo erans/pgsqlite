@@ -95,7 +95,7 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
                     ValueRef::Text(s) => Ok(serde_json::to_string(&s).unwrap()),
                     ValueRef::Blob(b) => {
                         // Convert blob to hex string for JSON
-                        let hex = b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>();
+                        let hex = b.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
                         Ok(serde_json::to_string(&hex).unwrap())
                     },
                 }
@@ -120,7 +120,7 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
                     ValueRef::Text(s) => Ok(serde_json::to_string(&s).unwrap()),
                     ValueRef::Blob(b) => {
                         // Convert blob to hex string for JSON
-                        let hex = b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>();
+                        let hex = b.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
                         Ok(serde_json::to_string(&hex).unwrap())
                     },
                 }
@@ -143,12 +143,12 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
                 ValueRef::Text(s) => serde_json::to_string(&s).unwrap(),
                 ValueRef::Blob(b) => {
                     // Convert blob to hex string for JSON  
-                    let hex = b.iter().map(|byte| format!("{:02x}", byte)).collect::<String>();
+                    let hex = b.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
                     serde_json::to_string(&hex).unwrap()
                 },
             };
             
-            Ok(format!("{{\"{}\": {}}}", key, value))
+            Ok(format!("{{\"{key}\": {value}}}"))
         },
     )?;
     
@@ -1531,7 +1531,7 @@ fn json_contains(container: &JsonValue, contained: &JsonValue) -> bool {
         (JsonValue::Object(cont_map), JsonValue::Object(item_map)) => {
             // All keys in item must exist in container with same values
             item_map.iter().all(|(key, value)| {
-                cont_map.get(key).map_or(false, |v| json_contains(v, value))
+                cont_map.get(key).is_some_and(|v| json_contains(v, value))
             })
         }
         (JsonValue::Array(cont_arr), JsonValue::Array(item_arr)) => {
@@ -1572,7 +1572,7 @@ fn register_json_populate_record(conn: &Connection) -> Result<()> {
             
             // For now, just return the JSON as a validation
             // A full implementation would require significant infrastructure changes
-            Ok(format!("json_populate_record: base={}, json={}", _base_record, json_str))
+            Ok(format!("json_populate_record: base={_base_record}, json={json_str}"))
         },
     )?;
     
@@ -1608,11 +1608,11 @@ fn register_json_to_record(conn: &Connection) -> Result<()> {
                         
                         // Format the value appropriately
                         match value {
-                            JsonValue::String(s) => result.push_str(&format!("{}:{}", key, s)),
-                            JsonValue::Number(n) => result.push_str(&format!("{}:{}", key, n)),
-                            JsonValue::Bool(b) => result.push_str(&format!("{}:{}", key, b)),
-                            JsonValue::Null => result.push_str(&format!("{}:null", key)),
-                            _ => result.push_str(&format!("{}:{}", key, value.to_string())),
+                            JsonValue::String(s) => result.push_str(&format!("{key}:{s}")),
+                            JsonValue::Number(n) => result.push_str(&format!("{key}:{n}")),
+                            JsonValue::Bool(b) => result.push_str(&format!("{key}:{b}")),
+                            JsonValue::Null => result.push_str(&format!("{key}:null")),
+                            _ => result.push_str(&format!("{key}:{value}")),
                         }
                     }
                     

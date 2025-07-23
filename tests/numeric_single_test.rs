@@ -31,7 +31,7 @@ async fn test_single_numeric_constraint() {
     match &result {
         Ok(_) => panic!("✗ ERROR: Value 99999999.999 was accepted but should have been rejected (too many decimal places)"),
         Err(e) => {
-            println!("✓ Value 99999999.999 correctly rejected: {}", e);
+            println!("✓ Value 99999999.999 correctly rejected: {e}");
             println!("  Error code: {:?}", e.code());
         }
     }
@@ -45,7 +45,7 @@ async fn test_single_numeric_constraint() {
     match &result2 {
         Ok(_) => println!("✗ ERROR: Value 999999999.99 was accepted but should have been rejected (too many total digits)"),
         Err(e) => {
-            println!("✓ Value 999999999.99 correctly rejected: {}", e);
+            println!("✓ Value 999999999.99 correctly rejected: {e}");
             println!("  Error code: {:?}", e.code());
         }
     }
@@ -56,7 +56,7 @@ async fn test_single_numeric_constraint() {
     for row in rows {
         let id: i32 = row.get(0);
         let price: String = row.get(1);
-        println!("  id={}, price={}", id, price);
+        println!("  id={id}, price={price}");
     }
     
     // Check trigger
@@ -69,7 +69,7 @@ async fn test_single_numeric_constraint() {
         println!("\nTrigger SQL:");
         for row in triggers {
             let sql: String = row.get(0);
-            println!("{}", sql);
+            println!("{sql}");
         }
     } else {
         println!("\nNo numeric triggers found!");

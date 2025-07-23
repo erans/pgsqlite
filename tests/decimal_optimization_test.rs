@@ -60,7 +60,7 @@ fn setup_test_db() -> Connection {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -101,7 +101,7 @@ fn test_rewrite_queries_with_decimal_tables() {
     // Query on table with decimal columns - should be rewritten
     let sql = "SELECT * FROM products WHERE price > 100";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Decimal table query rewritten to: {}", result);
+    println!("Decimal table query rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
     
     // Arithmetic on decimal columns
@@ -120,7 +120,7 @@ fn test_mixed_table_queries() {
                JOIN products p ON u.id = p.id 
                WHERE p.price > 50";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Mixed table query rewritten to: {}", result);
+    println!("Mixed table query rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
     
     // But operations on non-decimal columns should not be wrapped

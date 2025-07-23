@@ -75,7 +75,7 @@ impl SetHandler {
             
             framed.send(BackendMessage::CommandComplete { 
                 tag: "SET".to_string() 
-            }).await.map_err(|e| PgSqliteError::Io(e))?;
+            }).await.map_err(PgSqliteError::Io)?;
             
             return Ok(());
         }
@@ -92,7 +92,7 @@ impl SetHandler {
             
             framed.send(BackendMessage::CommandComplete { 
                 tag: "SET".to_string() 
-            }).await.map_err(|e| PgSqliteError::Io(e))?;
+            }).await.map_err(PgSqliteError::Io)?;
             
             return Ok(());
         }
@@ -121,22 +121,22 @@ impl SetHandler {
                 };
                 
                 framed.send(BackendMessage::RowDescription(vec![field])).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             
             // Send data row
             let row = vec![Some(value.as_bytes().to_vec())];
             framed.send(BackendMessage::DataRow(row)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             framed.send(BackendMessage::CommandComplete { 
                 tag: "SHOW".to_string() 
-            }).await.map_err(|e| PgSqliteError::Io(e))?;
+            }).await.map_err(PgSqliteError::Io)?;
             
             return Ok(());
         }
         
-        Err(PgSqliteError::Protocol(format!("Unrecognized SET command: {}", query)))
+        Err(PgSqliteError::Protocol(format!("Unrecognized SET command: {query}")))
     }
     
     /// Set the session timezone

@@ -133,7 +133,7 @@ impl PortalManager {
             }
             Ok(())
         } else {
-            Err(PgSqliteError::Protocol(format!("Unknown portal: {}", name)))
+            Err(PgSqliteError::Protocol(format!("Unknown portal: {name}")))
         }
     }
 
@@ -204,7 +204,7 @@ impl PortalExecutor {
         // Get current execution state
         let state = portal_manager
             .get_execution_state(portal_name)
-            .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {}", portal_name)))?;
+            .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {portal_name}")))?;
         
         // If we have cached results, return from cache
         if let Some(cached_result) = &state.cached_result {
@@ -289,8 +289,8 @@ mod tests {
         // Create portals up to limit
         for i in 0..4 {
             let portal = super::super::Portal {
-                statement_name: format!("stmt_{}", i),
-                query: format!("SELECT {}", i),
+                statement_name: format!("stmt_{i}"),
+                query: format!("SELECT {i}"),
                 translated_query: None,
                 bound_values: vec![],
                 param_formats: vec![],
@@ -298,7 +298,7 @@ mod tests {
                 inferred_param_types: None,
             };
             
-            manager.create_portal(format!("portal_{}", i), portal).unwrap();
+            manager.create_portal(format!("portal_{i}"), portal).unwrap();
             
             // Sleep briefly to ensure different timestamps
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -317,8 +317,8 @@ mod tests {
         // Create some portals
         for i in 0..3 {
             let portal = super::super::Portal {
-                statement_name: format!("stmt_{}", i),
-                query: format!("SELECT {}", i),
+                statement_name: format!("stmt_{i}"),
+                query: format!("SELECT {i}"),
                 translated_query: None,
                 bound_values: vec![],
                 param_formats: vec![],
@@ -326,7 +326,7 @@ mod tests {
                 inferred_param_types: None,
             };
             
-            manager.create_portal(format!("portal_{}", i), portal).unwrap();
+            manager.create_portal(format!("portal_{i}"), portal).unwrap();
         }
         
         // Access one portal to update its timestamp

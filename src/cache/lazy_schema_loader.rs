@@ -131,7 +131,7 @@ impl LazySchemaLoader {
         }
 
         // Get column information from PRAGMA table_info
-        let pragma_sql = format!("PRAGMA table_info({})", table_name);
+        let pragma_sql = format!("PRAGMA table_info({table_name})");
         let mut stmt = conn.prepare(&pragma_sql)?;
         let mut columns = Vec::new();
         
@@ -354,7 +354,7 @@ mod tests {
         
         // Should have cache hit rate of 0.5 (2 hits out of 4 total requests)
         let hit_rate = loader.get_cache_hit_rate();
-        assert!(hit_rate >= 0.4, "Expected hit rate >= 0.4, got {}", hit_rate);
+        assert!(hit_rate >= 0.4, "Expected hit rate >= 0.4, got {hit_rate}");
         
         // Test preloading functionality
         let tables = vec!["table1".to_string(), "table2".to_string()];

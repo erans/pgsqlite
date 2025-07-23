@@ -13,7 +13,7 @@ async fn test_datetime_query_debug() {
     ).await {
         Ok(_) => println!("Table created successfully"),
         Err(e) => {
-            println!("Failed to create table: {:?}", e);
+            println!("Failed to create table: {e:?}");
             return;
         }
     }
@@ -25,7 +25,7 @@ async fn test_datetime_query_debug() {
     ).await {
         Ok(_) => println!("Data inserted successfully"),
         Err(e) => {
-            println!("Failed to insert data: {:?}", e);
+            println!("Failed to insert data: {e:?}");
             return;
         }
     }
@@ -33,26 +33,26 @@ async fn test_datetime_query_debug() {
     println!("\nTesting simple SELECT...");
     match client.query("SELECT * FROM test_events", &[]).await {
         Ok(rows) => println!("Simple SELECT succeeded: {} rows", rows.len()),
-        Err(e) => println!("Simple SELECT failed: {:?}", e),
+        Err(e) => println!("Simple SELECT failed: {e:?}"),
     }
     
     println!("\nTesting EXTRACT with direct value...");
     match client.query("SELECT EXTRACT(YEAR FROM 1686840645.0)", &[]).await {
         Ok(rows) => println!("EXTRACT with literal succeeded: {} rows", rows.len()),
-        Err(e) => println!("EXTRACT with literal failed: {:?}", e),
+        Err(e) => println!("EXTRACT with literal failed: {e:?}"),
     }
     
     println!("\nTesting lowercase extract with column...");
     match client.query("SELECT extract('year', ts) FROM test_events WHERE id = 1", &[]).await {
         Ok(rows) => println!("Lowercase extract succeeded: {} rows", rows.len()),
-        Err(e) => println!("Lowercase extract failed: {:?}", e),
+        Err(e) => println!("Lowercase extract failed: {e:?}"),
     }
     
     println!("\nTesting EXTRACT with column...");
     match client.query("SELECT EXTRACT(YEAR FROM ts) FROM test_events WHERE id = 1", &[]).await {
         Ok(rows) => println!("EXTRACT with column succeeded: {} rows", rows.len()),
         Err(e) => {
-            println!("EXTRACT with column failed: {:?}", e);
+            println!("EXTRACT with column failed: {e:?}");
             println!("Error details: {:?}", e.as_db_error());
             
             // Try a simpler version
@@ -62,10 +62,10 @@ async fn test_datetime_query_debug() {
                     println!("Got ts value: {} rows", rows.len());
                     if !rows.is_empty() {
                         let ts: f32 = rows[0].get(0);
-                        println!("ts = {}", ts);
+                        println!("ts = {ts}");
                     }
                 }
-                Err(e) => println!("Even simple query failed: {:?}", e),
+                Err(e) => println!("Even simple query failed: {e:?}"),
             }
         }
     }

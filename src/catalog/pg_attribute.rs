@@ -113,7 +113,7 @@ impl PgAttributeHandler {
             debug!("Found {} user tables in sqlite_master", tables_response.rows.len());
             
             for table_row in &tables_response.rows {
-                if let Some(Some(table_name_bytes)) = table_row.get(0) {
+                if let Some(Some(table_name_bytes)) = table_row.first() {
                     let table_name = String::from_utf8_lossy(table_name_bytes);
                     debug!("Found table in sqlite_master: {}", table_name);
                     add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices).await?;
@@ -124,7 +124,7 @@ impl PgAttributeHandler {
             let all_tables_response = db.query("SELECT name, type FROM sqlite_master").await?;
             debug!("Total objects in sqlite_master: {}", all_tables_response.rows.len());
             for table_row in &all_tables_response.rows {
-                if let (Some(Some(name_bytes)), Some(Some(type_bytes))) = (table_row.get(0), table_row.get(1)) {
+                if let (Some(Some(name_bytes)), Some(Some(type_bytes))) = (table_row.first(), table_row.get(1)) {
                     let name = String::from_utf8_lossy(name_bytes);
                     let obj_type = String::from_utf8_lossy(type_bytes);
                     debug!("sqlite_master object: {} (type: {})", name, obj_type);
@@ -156,15 +156,14 @@ async fn add_table_attributes(
     debug!("Getting column info for table: {}", table_name);
     
     // Get column information from PRAGMA
-    let col_info_query = format!("PRAGMA table_info({})", table_name);
+    let col_info_query = format!("PRAGMA table_info({table_name})");
     let col_info = db.query(&col_info_query).await?;
     
     debug!("PRAGMA table_info returned {} columns for table {}", col_info.rows.len(), table_name);
     
     // Also check if we have type info in __pgsqlite_schema
     let schema_query = format!(
-        "SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = '{}'",
-        table_name
+        "SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = '{table_name}'"
     );
     let schema_info = db.query(&schema_query).await.ok();
     
@@ -172,7 +171,7 @@ async fn add_table_attributes(
     let mut type_map = std::collections::HashMap::new();
     if let Some(schema) = schema_info {
         for row in &schema.rows {
-            if let (Some(Some(col_bytes)), Some(Some(type_bytes))) = (row.get(0), row.get(1)) {
+            if let (Some(Some(col_bytes)), Some(Some(type_bytes))) = (row.first(), row.get(1)) {
                 let col_name = String::from_utf8_lossy(col_bytes);
                 let pg_type = String::from_utf8_lossy(type_bytes);
                 type_map.insert(col_name.to_string(), pg_type.to_string());
@@ -224,20 +223,19 @@ async fn add_table_attributes(
                 let (oid, attlen, atttypmod) = parse_pg_type(pg_type_str);
                 
                 // If it's TEXT (default for unknown types), check if it's an ENUM
-                if oid == PgType::Text.to_oid() as i32 && !matches!(base_type, "TEXT" | "VARCHAR" | "CHAR") {
+                if oid == PgType::Text.to_oid() && !matches!(base_type, "TEXT" | "VARCHAR" | "CHAR") {
                     // Query the ENUM metadata to see if this is an ENUM type
                     let enum_query = format!(
-                        "SELECT type_oid FROM __pgsqlite_enum_types WHERE UPPER(type_name) = '{}'",
-                        base_type
+                        "SELECT type_oid FROM __pgsqlite_enum_types WHERE UPPER(type_name) = '{base_type}'"
                     );
                     
                     // Check if the enum types table exists first
                     let check_table = db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='__pgsqlite_enum_types' LIMIT 1").await;
                     
-                    if check_table.is_ok() && check_table.unwrap().rows.len() > 0 {
+                    if check_table.is_ok() && !check_table.unwrap().rows.is_empty() {
                         if let Ok(enum_result) = db.query(&enum_query).await {
                             if let Some(row) = enum_result.rows.first() {
-                                if let Some(Some(oid_bytes)) = row.get(0) {
+                                if let Some(Some(oid_bytes)) = row.first() {
                                     if let Ok(enum_oid) = String::from_utf8_lossy(oid_bytes).parse::<i32>() {
                                         // This is an ENUM type
                                         (enum_oid, -1, -1)
@@ -290,8 +288,8 @@ async fn add_table_attributes(
             
             // Evaluate WHERE clause if present
             let include_row = if let Some(selection) = &select.selection {
-                let result = WhereEvaluator::evaluate(selection, &row_data, column_mapping);
-                result
+                
+                WhereEvaluator::evaluate(selection, &row_data, column_mapping)
             } else {
                 true
             };
@@ -355,17 +353,14 @@ fn extract_table_filter(select: &Select) -> Option<String> {
                 
                 if is_attrelid {
                     // Extract table name from right side
-                    match right.as_ref() {
-                        Expr::Cast { expr, .. } => {
-                            if let Expr::Value(sqlparser::ast::ValueWithSpan { 
-                                value: SqlValue::SingleQuotedString(s), .. 
-                            }) = expr.as_ref() {
-                                // Remove schema prefix if present
-                                let table_name = s.split('.').last().unwrap_or(s);
-                                return Some(table_name.to_string());
-                            }
+                    if let Expr::Cast { expr, .. } = right.as_ref() {
+                        if let Expr::Value(sqlparser::ast::ValueWithSpan { 
+                            value: SqlValue::SingleQuotedString(s), .. 
+                        }) = expr.as_ref() {
+                            // Remove schema prefix if present
+                            let table_name = s.split('.').next_back().unwrap_or(s);
+                            return Some(table_name.to_string());
                         }
-                        _ => {}
                     }
                 }
             }
@@ -449,7 +444,7 @@ fn parse_pg_type(pg_type_str: &str) -> (i32, i16, i32) {
         _ => -1,
     };
     
-    (oid as i32, attlen, atttypmod)
+    (oid, attlen, atttypmod)
 }
 
 fn map_sqlite_to_pg_type(sqlite_type: &str) -> (i32, i16, i32) {
@@ -495,7 +490,7 @@ fn map_sqlite_to_pg_type(sqlite_type: &str) -> (i32, i16, i32) {
         (PgType::Text.to_oid(), -1)
     };
     
-    (oid as i32, attlen, -1) // atttypmod = -1 for no modifier
+    (oid, attlen, -1) // atttypmod = -1 for no modifier
 }
 
 fn generate_oid_from_name(name: &str) -> u32 {

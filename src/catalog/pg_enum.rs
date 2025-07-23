@@ -57,7 +57,7 @@ impl PgEnumHandler {
         
         // Get connection for metadata queries
         let conn = db.get_mut_connection()
-            .map_err(|e| format!("Failed to get connection: {}", e))?;
+            .map_err(|e| format!("Failed to get connection: {e}"))?;
         
         let mut rows = Vec::new();
         

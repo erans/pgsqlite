@@ -105,17 +105,17 @@ async fn test_numeric_binary_format() {
     // Note: tokio-postgres doesn't have built-in rust_decimal support,
     // so we'll use string literals in SQL instead of binary parameters
     client.execute(
-        &format!("INSERT INTO numeric_test (id, amount) VALUES (1, '{}')", decimal1),
+        &format!("INSERT INTO numeric_test (id, amount) VALUES (1, '{decimal1}')"),
         &[]
     ).await.unwrap();
     
     client.execute(
-        &format!("INSERT INTO numeric_test (id, amount) VALUES (2, '{}')", decimal2),
+        &format!("INSERT INTO numeric_test (id, amount) VALUES (2, '{decimal2}')"),
         &[]
     ).await.unwrap();
     
     client.execute(
-        &format!("INSERT INTO numeric_test (id, amount) VALUES (3, '{}')", decimal3),
+        &format!("INSERT INTO numeric_test (id, amount) VALUES (3, '{decimal3}')"),
         &[]
     ).await.unwrap();
     
@@ -165,7 +165,7 @@ async fn test_numeric_arithmetic() {
         let id: i32 = row.get(0);
         let price: String = row.get(1);
         let quantity: i32 = row.get(2);
-        println!("Row {}: price='{}', quantity={}", id, price, quantity);
+        println!("Row {id}: price='{price}', quantity={quantity}");
     }
     
     // Test simpler SUM operation first
@@ -175,9 +175,9 @@ async fn test_numeric_arithmetic() {
     ).await.unwrap();
     
     let total_price: String = row.get(0);
-    println!("Total price: {}", total_price);
+    println!("Total price: {total_price}");
     // 10.5 + 25.99 + 100 = 136.49
-    assert!(total_price.starts_with("136"), "Expected total price to start with 136, got: {}", total_price);
+    assert!(total_price.starts_with("136"), "Expected total price to start with 136, got: {total_price}");
     
     // For now, skip the multiplication test as it seems to have a binary format issue
     // This is a known limitation that would need to be addressed in the decimal handling

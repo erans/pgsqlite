@@ -112,7 +112,7 @@ impl ExtendedQueryHandler {
             
             // Send ParseComplete
             framed.send(BackendMessage::ParseComplete).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             return Ok(());
         }
@@ -217,7 +217,7 @@ impl ExtendedQueryHandler {
         // Pre-translate the query first so we can analyze the translated version
         let mut translated_for_analysis = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
             let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
             let translated = crate::translator::CastTranslator::translate_query(&cleaned_query, Some(&conn));
             drop(conn);
             translated
@@ -228,7 +228,7 @@ impl ExtendedQueryHandler {
         // Translate NUMERIC to TEXT casts with proper formatting
         if crate::translator::NumericFormatTranslator::needs_translation(&translated_for_analysis) {
             let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
             translated_for_analysis = crate::translator::NumericFormatTranslator::translate_query(&translated_for_analysis, &conn);
             drop(conn);
         }
@@ -316,7 +316,7 @@ impl ExtendedQueryHandler {
                     // Replace parameters with dummy values using proper parser
                     let dummy_values = vec!["NULL".to_string(); param_count];
                     test_query = ParameterParser::substitute_parameters(&test_query, &dummy_values)
-                        .unwrap_or_else(|_| test_query); // Fall back to original if substitution fails
+                        .unwrap_or(test_query); // Fall back to original if substitution fails
                 }
                 
                 // First, analyze the original query for type casts in the SELECT clause
@@ -329,7 +329,7 @@ impl ExtendedQueryHandler {
                 test_query = cast_regex.replace_all(&test_query, "").to_string();
                 
                 // Add LIMIT 1 to avoid processing too much data
-                test_query = format!("{} LIMIT 1", test_query);
+                test_query = format!("{test_query} LIMIT 1");
                 let test_response = db.query(&test_query).await;
                 
                 match test_response {
@@ -523,7 +523,7 @@ impl ExtendedQueryHandler {
             // Count parameters in the query
             let mut max_param = 0;
             for i in 1..=99 {
-                if cleaned_query.contains(&format!("${}", i)) {
+                if cleaned_query.contains(&format!("${i}")) {
                     max_param = i;
                 } else if max_param > 0 {
                     break;
@@ -558,7 +558,7 @@ impl ExtendedQueryHandler {
         
         // Send ParseComplete
         framed.send(BackendMessage::ParseComplete).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -572,7 +572,7 @@ impl ExtendedQueryHandler {
         let alias_upper = alias.to_uppercase();
         
         // Find "AS <alias>" in the query
-        let as_pattern = format!(" AS {}", alias_upper);
+        let as_pattern = format!(" AS {alias_upper}");
         if let Some(as_pos) = query_upper.find(&as_pattern) {
             // Work backwards to find the start of the expression
             let before_as = &query[..as_pos];
@@ -608,7 +608,7 @@ impl ExtendedQueryHandler {
         // Get the prepared statement
         let statements = session.prepared_statements.read().await;
         let stmt = statements.get(&statement)
-            .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {}", statement)))?;
+            .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {statement}")))?;
             
         info!("Statement has param_types: {:?}", stmt.param_types);
         info!("Received param formats: {:?}", formats);
@@ -656,7 +656,7 @@ impl ExtendedQueryHandler {
                       i + 1, v.len(), expected_type, format, 
                       if format == 1 { "binary" } else { "text" });
                 // Log first few bytes as hex for debugging
-                let hex_preview = v.iter().take(20).map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ");
+                let hex_preview = v.iter().take(20).map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ");
                 info!("    First bytes (hex): {}", hex_preview);
                 if format == 0 {
                     // Try to show as string if text format
@@ -702,7 +702,7 @@ impl ExtendedQueryHandler {
         
         // Send BindComplete
         framed.send(BackendMessage::BindComplete).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -723,7 +723,7 @@ impl ExtendedQueryHandler {
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(&portal)
-                .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {}", portal)))?;
+                .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {portal}")))?;
             
             (portal_obj.query.clone(),
              portal_obj.translated_query.clone(),
@@ -826,7 +826,7 @@ impl ExtendedQueryHandler {
                 let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
                 
                 let conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                 
                 let validation_result = NumericValidator::validate_insert(&conn, &validation_query, &table_name);
                 drop(conn); // Release connection before any await
@@ -842,7 +842,7 @@ impl ExtendedQueryHandler {
                 let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
                 
                 let conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                 
                 let validation_result = NumericValidator::validate_update(&conn, &validation_query, &table_name);
                 drop(conn); // Release connection before any await
@@ -859,7 +859,7 @@ impl ExtendedQueryHandler {
         if let Some(e) = validation_error {
             let error_response = e.to_error_response();
             framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             return Ok(());
         }
         
@@ -947,11 +947,11 @@ impl ExtendedQueryHandler {
             // Describe statement
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&name)
-                .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {}", name)))?;
+                .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {name}")))?;
             
             // Send ParameterDescription first
             framed.send(BackendMessage::ParameterDescription(stmt.param_types.clone())).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             // Check if this is a catalog query that needs special handling
             let query = &stmt.query;
@@ -963,7 +963,7 @@ impl ExtendedQueryHandler {
             if !stmt.field_descriptions.is_empty() {
                 info!("Sending RowDescription with {} fields in Describe", stmt.field_descriptions.len());
                 framed.send(BackendMessage::RowDescription(stmt.field_descriptions.clone())).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             } else if is_catalog_query && query_starts_with_ignore_case(query, "SELECT") {
                 // For catalog SELECT queries, we need to provide field descriptions
                 // even though we skipped them during Parse
@@ -1157,23 +1157,23 @@ impl ExtendedQueryHandler {
                     drop(statements_mut);
                     
                     framed.send(BackendMessage::RowDescription(field_descriptions)).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+                        .map_err(PgSqliteError::Io)?;
                 } else {
                     // Fallback to NoData if we couldn't parse the query
                     info!("Could not determine catalog fields, sending NoData in Describe");
                     framed.send(BackendMessage::NoData).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+                        .map_err(PgSqliteError::Io)?;
                 }
             } else {
                 info!("Sending NoData in Describe");
                 framed.send(BackendMessage::NoData).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
         } else {
             // Describe portal
             let portals = session.portals.read().await;
             let portal = portals.get(&name)
-                .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {}", name)))?;
+                .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {name}")))?;
             
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name)
@@ -1218,10 +1218,10 @@ impl ExtendedQueryHandler {
                 }
                 info!("Describe portal: sending updated fields: {:?}", fields);
                 framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             } else {
                 framed.send(BackendMessage::NoData).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
         }
         
@@ -1250,7 +1250,7 @@ impl ExtendedQueryHandler {
         
         // Send CloseComplete
         framed.send(BackendMessage::CloseComplete).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -1313,7 +1313,7 @@ impl ExtendedQueryHandler {
         }
         
         // Try statement pool execution for parameterized queries
-        if let Ok(response) = Self::try_statement_pool_execution(db, query, &rusqlite_params, &fast_query).await {
+        if let Ok(response) = Self::try_statement_pool_execution(db, query, &rusqlite_params, fast_query).await {
             if response.columns.is_empty() {
                 // DML operation
                 let tag = match fast_query.operation {
@@ -1345,12 +1345,12 @@ impl ExtendedQueryHandler {
             crate::query::FastPathOperation::Select => {
                 db.query_with_statement_pool_params(query, params)
                     .await
-                    .map_err(|e| PgSqliteError::Sqlite(e))
+                    .map_err(PgSqliteError::Sqlite)
             }
             _ => {
                 db.execute_with_statement_pool_params(query, params)
                     .await
-                    .map_err(|e| PgSqliteError::Sqlite(e))
+                    .map_err(PgSqliteError::Sqlite)
             }
         }
     }
@@ -1377,21 +1377,21 @@ impl ExtendedQueryHandler {
                     // DATE - convert to days since epoch
                     match crate::types::ValueConverter::convert_date_to_unix(text) {
                         Ok(days_str) => Ok(rusqlite::types::Value::Integer(days_str.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid date days".to_string()))?)),
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid date: {}", e)))
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid date: {e}")))
                     }
                 }
                 t if t == PgType::Time.to_oid() => {
                     // TIME - convert to microseconds since midnight
                     match crate::types::ValueConverter::convert_time_to_seconds(text) {
                         Ok(micros_str) => Ok(rusqlite::types::Value::Integer(micros_str.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid time microseconds".to_string()))?)),
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid time: {}", e)))
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid time: {e}")))
                     }
                 }
                 t if t == PgType::Timestamp.to_oid() => {
                     // TIMESTAMP - convert to microseconds since epoch
                     match crate::types::ValueConverter::convert_timestamp_to_unix(text) {
                         Ok(micros_str) => Ok(rusqlite::types::Value::Integer(micros_str.parse::<i64>().map_err(|_| PgSqliteError::Protocol("Invalid timestamp microseconds".to_string()))?)),
-                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid timestamp: {}", e)))
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid timestamp: {e}")))
                     }
                 }
                 _ => Ok(rusqlite::types::Value::Text(text.to_string())), // Default to TEXT
@@ -1533,7 +1533,7 @@ impl ExtendedQueryHandler {
                                         bytes[4], bytes[5], bytes[6], bytes[7]
                                     ]);
                                     let dollars = cents as f64 / 100.0;
-                                    let formatted = format!("'${:.2}'", dollars);
+                                    let formatted = format!("'${dollars:.2}'");
                                     info!("Decoded binary money parameter {}: {} cents -> {}", i + 1, cents, formatted);
                                     formatted
                                 } else {
@@ -1550,7 +1550,7 @@ impl ExtendedQueryHandler {
                                     }
                                     Err(e) => {
                                         debug!("Failed to decode binary NUMERIC parameter: {}", e);
-                                        return Err(PgSqliteError::InvalidParameter(format!("Invalid binary NUMERIC: {}", e)));
+                                        return Err(PgSqliteError::InvalidParameter(format!("Invalid binary NUMERIC: {e}")));
                                     }
                                 }
                             }
@@ -1601,7 +1601,7 @@ impl ExtendedQueryHandler {
                                             }
                                             Err(e) => {
                                                 debug!("Invalid NUMERIC parameter: {}", e);
-                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid NUMERIC value: {}", e)));
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid NUMERIC value: {e}")));
                                             }
                                         }
                                     }
@@ -1611,7 +1611,7 @@ impl ExtendedQueryHandler {
                                             Ok(unix_timestamp) => unix_timestamp,
                                             Err(e) => {
                                                 debug!("Invalid TIMESTAMP parameter: {}", e);
-                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {}", e)));
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {e}")));
                                             }
                                         }
                                     }
@@ -1621,7 +1621,7 @@ impl ExtendedQueryHandler {
                                             Ok(unix_timestamp) => unix_timestamp,
                                             Err(e) => {
                                                 debug!("Invalid DATE parameter: {}", e);
-                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid DATE value: {}", e)));
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid DATE value: {e}")));
                                             }
                                         }
                                     }
@@ -1631,7 +1631,7 @@ impl ExtendedQueryHandler {
                                             Ok(seconds) => seconds,
                                             Err(e) => {
                                                 debug!("Invalid TIME parameter: {}", e);
-                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIME value: {}", e)));
+                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIME value: {e}")));
                                             }
                                         }
                                     }
@@ -1659,7 +1659,7 @@ impl ExtendedQueryHandler {
         
         // Use the proper parameter parser that respects string literals
         let result = ParameterParser::substitute_parameters(query, &string_values)
-            .map_err(|e| PgSqliteError::InvalidParameter(format!("Parameter substitution error: {}", e)))?;
+            .map_err(|e| PgSqliteError::InvalidParameter(format!("Parameter substitution error: {e}")))?;
         
         // Remove PostgreSQL-style casts (::type) as SQLite doesn't support them
         // Be careful not to match IPv6 addresses like ::1
@@ -1876,7 +1876,7 @@ impl ExtendedQueryHandler {
         for ch in cleaned.chars() {
             match ch {
                 '0' => {
-                    current_byte = (current_byte << 1) | 0;
+                    current_byte <<= 1;
                     bit_pos += 1;
                 }
                 '1' => {
@@ -2379,7 +2379,7 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Jsonb.to_oid() => {
                                 // jsonb - version byte (1) + UTF-8 encoded JSON text
                                 let mut result = vec![1u8]; // Version 1
-                                result.extend_from_slice(&bytes);
+                                result.extend_from_slice(bytes);
                                 Some(result)
                             }
                             // Bytea - already binary
@@ -2501,7 +2501,7 @@ impl ExtendedQueryHandler {
             // is in the correct format for binary encoding
             let portals = session.portals.read().await;
             let portal = portals.get(portal_name).unwrap();
-            let has_binary_format = portal.result_formats.iter().any(|&f| f == 1);
+            let has_binary_format = portal.result_formats.contains(&1);
             drop(portals);
             
             if has_binary_format && query.contains("pg_attribute") {
@@ -2543,7 +2543,7 @@ impl ExtendedQueryHandler {
         
         if send_row_desc {
             // Extract table name from query to look up schema
-            let table_name = extract_table_name_from_select(&query);
+            let table_name = extract_table_name_from_select(query);
             
             // Create cache key
             let cache_key = RowDescriptionKey {
@@ -2725,7 +2725,7 @@ impl ExtendedQueryHandler {
             
             info!("Sending RowDescription with {} fields during Execute with inferred types", fields.len());
             framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         // Get result formats and field types from the portal and statement
@@ -2793,7 +2793,7 @@ impl ExtendedQueryHandler {
                 let cached_result = crate::session::CachedQueryResult {
                     rows: all_rows.clone(),
                     field_descriptions: vec![], // Will be populated if needed
-                    command_tag: format!("SELECT {}", total),
+                    command_tag: format!("SELECT {total}"),
                 };
                 
                 session.portal_manager.update_execution_state(
@@ -2834,7 +2834,7 @@ impl ExtendedQueryHandler {
                 for (i, col) in rows_to_send[0].iter().enumerate() {
                     if let Some(data) = col {
                         let preview = if data.len() <= 10 {
-                            format!("{:?}", data)
+                            format!("{data:?}")
                         } else {
                             format!("{:?}... ({} bytes)", &data[..10], data.len())
                         };
@@ -2850,7 +2850,7 @@ impl ExtendedQueryHandler {
             // Convert row data based on result formats
             let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
             framed.send(BackendMessage::DataRow(encoded_row)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         // Update portal execution state
@@ -2869,7 +2869,7 @@ impl ExtendedQueryHandler {
         // Send appropriate completion message
         if max_rows > 0 && sent_count == max_rows as usize && sent_count < total_rows {
             framed.send(BackendMessage::PortalSuspended).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else {
             // Either we sent all remaining rows or max_rows was 0 (fetch all)
             let tag = format!("SELECT {}", if has_portal_state {
@@ -2880,7 +2880,7 @@ impl ExtendedQueryHandler {
                 sent_count
             });
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         Ok(())
@@ -2922,7 +2922,7 @@ impl ExtendedQueryHandler {
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -2949,9 +2949,7 @@ impl ExtendedQueryHandler {
             
             // Get the last inserted rowid and query for RETURNING data
             let returning_query = format!(
-                "SELECT {} FROM {} WHERE rowid = last_insert_rowid()",
-                returning_clause,
-                table_name
+                "SELECT {returning_clause} FROM {table_name} WHERE rowid = last_insert_rowid()"
             );
             
             let returning_response = db.query(&returning_query).await?;
@@ -2983,18 +2981,18 @@ impl ExtendedQueryHandler {
                 .collect();
             
             framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             // Send data rows
             for row in returning_response.rows {
                 framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             
             // Send command complete
             let tag = format!("INSERT 0 {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else if query_starts_with_ignore_case(&base_query, "UPDATE") {
             // For UPDATE, we need a different approach
             let table_name = ReturningTranslator::extract_table_from_update(&base_query)
@@ -3003,9 +3001,7 @@ impl ExtendedQueryHandler {
             // First, get the rowids of rows that will be updated
             let where_clause = ReturningTranslator::extract_where_clause(&base_query);
             let rowid_query = format!(
-                "SELECT rowid FROM {} {}",
-                table_name,
-                where_clause
+                "SELECT rowid FROM {table_name} {where_clause}"
             );
             let rowid_response = db.query(&rowid_query).await?;
             let rowids: Vec<String> = rowid_response.rows.iter()
@@ -3020,10 +3016,7 @@ impl ExtendedQueryHandler {
             if !rowids.is_empty() {
                 let rowid_list = rowids.join(",");
                 let returning_query = format!(
-                    "SELECT {} FROM {} WHERE rowid IN ({})",
-                    returning_clause,
-                    table_name,
-                    rowid_list
+                    "SELECT {returning_clause} FROM {table_name} WHERE rowid IN ({rowid_list})"
                 );
                 
                 let returning_response = db.query(&returning_query).await?;
@@ -3055,19 +3048,19 @@ impl ExtendedQueryHandler {
                     .collect();
                 
                 framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
                 
                 // Send data rows
                 for row in returning_response.rows {
                     framed.send(BackendMessage::DataRow(row)).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+                        .map_err(PgSqliteError::Io)?;
                 }
             }
             
             // Send command complete
             let tag = format!("UPDATE {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else if query_starts_with_ignore_case(&base_query, "DELETE") {
             // For DELETE, capture rows before deletion
             let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
@@ -3101,7 +3094,7 @@ impl ExtendedQueryHandler {
                 .collect();
             
             framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             // Send captured rows (skip rowid column)
             for row in captured_rows.rows {
@@ -3109,13 +3102,13 @@ impl ExtendedQueryHandler {
                     .skip(1) // Skip rowid
                     .collect();
                 framed.send(BackendMessage::DataRow(data_row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             
             // Send command complete
             let tag = format!("DELETE {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         Ok(())
@@ -3136,7 +3129,7 @@ impl ExtendedQueryHandler {
             // Handle the ENUM DDL
             {
                 let mut conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                 
                 EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
             } // Mutex guard is dropped here
@@ -3161,10 +3154,10 @@ impl ExtendedQueryHandler {
             // Use translator with connection for ENUM support
             let (sqlite_sql, type_mappings, enum_columns, array_columns) = {
                 let conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                 
                 let result = crate::translator::CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
-                    .map_err(|e| PgSqliteError::Protocol(e))?;
+                    .map_err(PgSqliteError::Protocol)?;
                 
                 (result.sql, result.type_mappings, result.enum_columns, result.array_columns)
             }; // Drop connection guard here
@@ -3238,16 +3231,16 @@ impl ExtendedQueryHandler {
                     // Create triggers for ENUM columns
                     if !enum_columns.is_empty() {
                         let conn = db.get_mut_connection()
-                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {}", e)))?;
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {e}")))?;
                         
                         for (column_name, enum_type) in &enum_columns {
                             // Record enum usage
                             crate::metadata::EnumTriggers::record_enum_usage(&conn, &table_name, column_name, enum_type)
-                                .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {}", e)))?;
+                                .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {e}")))?;
                             
                             // Create validation triggers
                             crate::metadata::EnumTriggers::create_enum_validation_triggers(&conn, &table_name, column_name, enum_type)
-                                .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
+                                .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {e}")))?;
                             
                             info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
                         }
@@ -3256,7 +3249,7 @@ impl ExtendedQueryHandler {
                     // Store array column metadata
                     if !array_columns.is_empty() {
                         let conn = db.get_mut_connection()
-                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {}", e)))?;
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {e}")))?;
                         
                         // Create array metadata table if it doesn't exist (should exist from migration v8)
                         conn.execute(
@@ -3268,7 +3261,7 @@ impl ExtendedQueryHandler {
                                 PRIMARY KEY (table_name, column_name)
                             )", 
                             []
-                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {}", e)))?;
+                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {e}")))?;
                         
                         // Insert array column metadata
                         for (column_name, element_type, dimensions) in &array_columns {
@@ -3276,7 +3269,7 @@ impl ExtendedQueryHandler {
                                 "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
                                  VALUES (?1, ?2, ?3, ?4)",
                                 rusqlite::params![table_name, column_name, element_type, dimensions]
-                            ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {}", e)))?;
+                            ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {e}")))?;
                             
                             info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
                                   table_name, column_name, element_type, dimensions);
@@ -3287,7 +3280,7 @@ impl ExtendedQueryHandler {
             
             // Send CommandComplete and return
             framed.send(BackendMessage::CommandComplete { tag: "CREATE TABLE".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             return Ok(());
         } else if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {
@@ -3309,7 +3302,7 @@ impl ExtendedQueryHandler {
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -3325,15 +3318,15 @@ impl ExtendedQueryHandler {
         if query_starts_with_ignore_case(query, "BEGIN") {
             db.execute("BEGIN").await?;
             framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else if query_starts_with_ignore_case(query, "COMMIT") {
             db.execute("COMMIT").await?;
             framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else if query_starts_with_ignore_case(query, "ROLLBACK") {
             db.execute("ROLLBACK").await?;
             framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         Ok(())
@@ -3350,7 +3343,7 @@ impl ExtendedQueryHandler {
         db.execute(query).await?;
         
         framed.send(BackendMessage::CommandComplete { tag: "OK".to_string() }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -3365,7 +3358,7 @@ impl ExtendedQueryHandler {
         
         // Get cached table schema
         let table_schema = db.get_table_schema(&table_name).await
-            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get table schema: {}", e)))?;
+            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get table schema: {e}")))?;
         
         // If no explicit columns, use all columns from the table
         let columns = if columns.is_empty() {
@@ -3466,13 +3459,13 @@ impl ExtendedQueryHandler {
         
         // Count parameters and try to determine their types
         for i in 1..=99 {
-            let param = format!("${}", i);
+            let param = format!("${i}");
             if !query.contains(&param) {
                 break;
             }
             
             // Check for explicit cast first (e.g., $1::int4)
-            let cast_pattern = format!(r"\${}::\s*(\w+)", i);
+            let cast_pattern = format!(r"\${i}::\s*(\w+)");
             let cast_regex = regex::Regex::new(&cast_pattern).unwrap();
             let mut found_type = false;
             
@@ -3536,7 +3529,7 @@ impl ExtendedQueryHandler {
                             break;
                         } else {
                             // Try SQLite schema
-                            let schema_query = format!("PRAGMA table_info({})", table_name);
+                            let schema_query = format!("PRAGMA table_info({table_name})");
                             if let Ok(response) = db.query(&schema_query).await {
                                 for row in &response.rows {
                                     if let (Some(Some(name_bytes)), Some(Some(type_bytes))) = (row.get(1), row.get(2)) {
@@ -3707,17 +3700,17 @@ impl ExtendedQueryHandler {
                 }
                 
                 // Check for integer
-                if let Ok(_) = trimmed.parse::<i32>() {
+                if trimmed.parse::<i32>().is_ok() {
                     return PgType::Int4.to_oid();
                 }
                 
                 // Check for bigint
-                if let Ok(_) = trimmed.parse::<i64>() {
+                if trimmed.parse::<i64>().is_ok() {
                     return PgType::Int8.to_oid();
                 }
                 
                 // Check for float
-                if let Ok(_) = trimmed.parse::<f64>() {
+                if trimmed.parse::<f64>().is_ok() {
                     return PgType::Float8.to_oid();
                 }
                 

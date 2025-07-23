@@ -30,7 +30,7 @@ struct NumRangeString(String);
 
 impl<'a> FromSql<'a> for NumRangeString {
     fn from_sql(_ty: &Type, raw: &'a [u8]) -> Result<Self, Box<dyn std::error::Error + Sync + Send>> {
-        if raw.len() >= 1 {
+        if !raw.is_empty() {
             // PostgreSQL NUMRANGE binary format starts with a 1-byte flags field
             let flags = raw[0];
             
@@ -70,7 +70,7 @@ impl<'a> FromSql<'a> for NumRangeString {
                 
                 // Parse PostgreSQL numeric binary format using existing handler
                 let decimal = DecimalHandler::decode_numeric(lower_data)
-                    .map_err(|e| format!("Failed to decode lower bound: {}", e))?;
+                    .map_err(|e| format!("Failed to decode lower bound: {e}"))?;
                 Self::normalize_decimal_string(&decimal.to_string())
             };
             
@@ -93,11 +93,11 @@ impl<'a> FromSql<'a> for NumRangeString {
                 
                 // Parse PostgreSQL numeric binary format using existing handler
                 let decimal = DecimalHandler::decode_numeric(upper_data)
-                    .map_err(|e| format!("Failed to decode upper bound: {}", e))?;
+                    .map_err(|e| format!("Failed to decode upper bound: {e}"))?;
                 Self::normalize_decimal_string(&decimal.to_string())
             };
             
-            Ok(NumRangeString(format!("{}{},{}{}", lower_bracket, lower_str, upper_str, upper_bracket)))
+            Ok(NumRangeString(format!("{lower_bracket}{lower_str},{upper_str}{upper_bracket}")))
         } else {
             // Text format fallback
             let s = std::str::from_utf8(raw)?;
@@ -142,13 +142,11 @@ async fn test_money_binary_protocol() {
     
     // Test inserting MONEY values using binary protocol
     // Note: MONEY values should be inserted as text strings with currency symbol
-    let test_values = vec![
-        ("$1234.56", "$1234.56"),
+    let test_values = [("$1234.56", "$1234.56"),
         ("$-999.99", "$-999.99"),
         ("$0.00", "$0.00"),
         ("$99999.99", "$99999.99"),
-        ("$1.23", "$1.23"),
-    ];
+        ("$1.23", "$1.23")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -165,7 +163,7 @@ async fn test_money_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, expected, "Failed for MONEY value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for MONEY value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -212,13 +210,11 @@ async fn test_int4range_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting INT4RANGE values using binary protocol
-    let test_values = vec![
-        ("[1,10)", "[1,10)"),
+    let test_values = [("[1,10)", "[1,10)"),
         ("[0,100]", "[0,100]"),
         ("(-50,50)", "(-50,50)"),
         ("empty", "empty"),
-        ("[42,42]", "[42,42]"),
-    ];
+        ("[42,42]", "[42,42]")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -235,7 +231,7 @@ async fn test_int4range_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, expected, "Failed for INT4RANGE value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for INT4RANGE value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -282,13 +278,11 @@ async fn test_int8range_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting INT8RANGE values using binary protocol
-    let test_values = vec![
-        ("[1000000,2000000)", "[1000000,2000000)"),
+    let test_values = [("[1000000,2000000)", "[1000000,2000000)"),
         ("[9223372036854775800,9223372036854775807]", "[9223372036854775800,9223372036854775807]"),
         ("(-9223372036854775808,-9223372036854775800)", "(-9223372036854775808,-9223372036854775800)"),
         ("empty", "empty"),
-        ("[0,0]", "[0,0]"),
-    ];
+        ("[0,0]", "[0,0]")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -305,7 +299,7 @@ async fn test_int8range_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, expected, "Failed for INT8RANGE value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for INT8RANGE value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -352,13 +346,11 @@ async fn test_numrange_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting NUMRANGE values using binary protocol
-    let test_values = vec![
-        ("[1.5,10.5)", "[1.5,10.5)"),
+    let test_values = [("[1.5,10.5)", "[1.5,10.5)"),
         ("[0,100.999]", "[0,100.999]"),
         ("(-50.5,50.5)", "(-50.5,50.5)"),
         ("empty", "empty"),
-        ("[3.14159,3.14159]", "[3.14159,3.14159]"),
-    ];
+        ("[3.14159,3.14159]", "[3.14159,3.14159]")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -375,7 +367,7 @@ async fn test_numrange_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: NumRangeString = row.get(0);
-        assert_eq!(&retrieved.0, expected, "Failed for NUMRANGE value: {}", expected);
+        assert_eq!(&retrieved.0, expected, "Failed for NUMRANGE value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -422,13 +414,11 @@ async fn test_cidr_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting CIDR values using binary protocol
-    let test_values = vec![
-        ("192.168.1.0/24", "192.168.1.0/24"),
+    let test_values = [("192.168.1.0/24", "192.168.1.0/24"),
         ("10.0.0.0/8", "10.0.0.0/8"),
         ("172.16.0.0/16", "172.16.0.0/16"),
         ("2001:db8::/32", "2001:db8::/32"),
-        ("fe80::/10", "fe80::/10"),
-    ];
+        ("fe80::/10", "fe80::/10")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -445,7 +435,7 @@ async fn test_cidr_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, expected, "Failed for CIDR value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for CIDR value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -492,13 +482,11 @@ async fn test_inet_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting INET values using binary protocol
-    let test_values = vec![
-        ("192.168.1.1", "192.168.1.1"),
+    let test_values = [("192.168.1.1", "192.168.1.1"),
         ("10.0.0.1/8", "10.0.0.1/8"),
         ("::1", "::1"),
         ("2001:db8::1", "2001:db8::1"),
-        ("fe80::1/64", "fe80::1/64"),
-    ];
+        ("fe80::1/64", "fe80::1/64")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -515,7 +503,7 @@ async fn test_inet_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, expected, "Failed for INET value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for INET value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -562,13 +550,11 @@ async fn test_macaddr_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting MACADDR values using binary protocol
-    let test_values = vec![
-        ("08:00:2b:01:02:03", "08:00:2b:01:02:03"),
+    let test_values = [("08:00:2b:01:02:03", "08:00:2b:01:02:03"),
         ("aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:ff"),
         ("00:00:00:00:00:00", "00:00:00:00:00:00"),
         ("ff:ff:ff:ff:ff:ff", "ff:ff:ff:ff:ff:ff"),
-        ("12:34:56:78:9a:bc", "12:34:56:78:9a:bc"),
-    ];
+        ("12:34:56:78:9a:bc", "12:34:56:78:9a:bc")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -585,7 +571,7 @@ async fn test_macaddr_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, expected, "Failed for MACADDR value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for MACADDR value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -632,13 +618,11 @@ async fn test_macaddr8_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting MACADDR8 values using binary protocol
-    let test_values = vec![
-        ("08:00:2b:01:02:03:04:05", "08:00:2b:01:02:03:04:05"),
+    let test_values = [("08:00:2b:01:02:03:04:05", "08:00:2b:01:02:03:04:05"),
         ("aa:bb:cc:dd:ee:ff:00:11", "aa:bb:cc:dd:ee:ff:00:11"),
         ("00:00:00:00:00:00:00:00", "00:00:00:00:00:00:00:00"),
         ("ff:ff:ff:ff:ff:ff:ff:ff", "ff:ff:ff:ff:ff:ff:ff:ff"),
-        ("12:34:56:78:9a:bc:de:f0", "12:34:56:78:9a:bc:de:f0"),
-    ];
+        ("12:34:56:78:9a:bc:de:f0", "12:34:56:78:9a:bc:de:f0")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -655,7 +639,7 @@ async fn test_macaddr8_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: MacAddr8String = row.get(0);
-        assert_eq!(&retrieved.0, expected, "Failed for MACADDR8 value: {}", expected);
+        assert_eq!(&retrieved.0, expected, "Failed for MACADDR8 value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -702,13 +686,11 @@ async fn test_bit_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting BIT values using binary protocol
-    let test_values = vec![
-        ("10101010", "10101010"),
+    let test_values = [("10101010", "10101010"),
         ("11111111", "11111111"),
         ("00000000", "00000000"),
         ("01010101", "01010101"),
-        ("11001100", "11001100"),
-    ];
+        ("11001100", "11001100")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -733,7 +715,7 @@ async fn test_bit_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row2.get(0);
-        assert_eq!(&retrieved, expected, "Failed for BIT value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for BIT value: {expected}");
     }
     
     // Test with prepared statement for binary encoding
@@ -780,13 +762,11 @@ async fn test_bit_varying_binary_protocol() {
     ).await.unwrap();
     
     // Test inserting BIT VARYING values using binary protocol
-    let test_values = vec![
-        ("1010", "1010"),
+    let test_values = [("1010", "1010"),
         ("111111110000", "111111110000"),
         ("1", "1"),
         ("00000000111111110000000011111111", "00000000111111110000000011111111"),
-        ("10011", "10011"),
-    ];
+        ("10011", "10011")];
     
     for (i, (value, _expected)) in test_values.iter().enumerate() {
         client.execute(
@@ -811,7 +791,7 @@ async fn test_bit_varying_binary_protocol() {
         ).await.unwrap();
         
         let retrieved: String = row2.get(0);
-        assert_eq!(&retrieved, expected, "Failed for BIT VARYING value: {}", expected);
+        assert_eq!(&retrieved, expected, "Failed for BIT VARYING value: {expected}");
     }
     
     // Test with prepared statement for binary encoding

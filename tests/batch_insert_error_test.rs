@@ -28,7 +28,7 @@ async fn test_batch_insert_column_count_error() {
     let err = result.unwrap_err();
     // SQLite catches this error before our translator, so we get SQLite's error message
     assert!(err.to_string().contains("all VALUES must have the same number of terms"), 
-        "Should get SQLite's column count error: {}", err);
+        "Should get SQLite's column count error: {err}");
     
     server.abort();
 }
@@ -58,9 +58,9 @@ async fn test_batch_insert_date_format_error() {
     assert!(result.is_err(), "Should fail with invalid date format");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Invalid date value '01/15/2025'"), 
-        "Error should show invalid date: {}", err);
+        "Error should show invalid date: {err}");
     assert!(err.to_string().contains("Expected format: YYYY-MM-DD"), 
-        "Error should show expected format: {}", err);
+        "Error should show expected format: {err}");
     
     server.abort();
 }
@@ -90,9 +90,9 @@ async fn test_batch_insert_time_format_error() {
     assert!(result.is_err(), "Should fail with invalid time format");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Invalid time value '2:30 PM'"), 
-        "Error should show invalid time: {}", err);
+        "Error should show invalid time: {err}");
     assert!(err.to_string().contains("Expected format: HH:MM:SS"), 
-        "Error should show expected format: {}", err);
+        "Error should show expected format: {err}");
     
     server.abort();
 }
@@ -122,9 +122,9 @@ async fn test_batch_insert_timestamp_format_error() {
     assert!(result.is_err(), "Should fail with invalid timestamp format");
     let err = result.unwrap_err();
     assert!(err.to_string().contains("Invalid timestamp value '2025-01-02T15:45:00Z'"), 
-        "Error should show invalid timestamp: {}", err);
+        "Error should show invalid timestamp: {err}");
     assert!(err.to_string().contains("Expected format: YYYY-MM-DD HH:MM:SS"), 
-        "Error should show expected format: {}", err);
+        "Error should show expected format: {err}");
     
     server.abort();
 }

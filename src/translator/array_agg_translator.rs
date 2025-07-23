@@ -96,7 +96,7 @@ impl ArrayAggTranslator {
             
             // Since we can't determine the table context here, we'll use a simpler approach
             // that relies on the outer query context
-            let simple_replacement = format!("array_agg_distinct({})", expr);
+            let simple_replacement = format!("array_agg_distinct({expr})");
             
             replacements.push((captures[0].to_string(), simple_replacement));
         }
@@ -122,7 +122,7 @@ impl ArrayAggTranslator {
             
             // For now, we'll just use the regular array_agg and rely on the outer query's ORDER BY
             // This is a limitation that matches what's documented in the TODO
-            let replacement = format!("array_agg({})", expr);
+            let replacement = format!("array_agg({expr})");
             
             replacements.push((captures[0].to_string(), replacement));
         }
@@ -144,7 +144,7 @@ impl ArrayAggTranslator {
         let mut replacements = Vec::new();
         for captures in ARRAY_AGG_DISTINCT_REGEX.captures_iter(&result) {
             let expr = captures[1].trim();
-            let replacement = format!("array_agg_distinct({})", expr);
+            let replacement = format!("array_agg_distinct({expr})");
             replacements.push((captures[0].to_string(), replacement));
         }
         

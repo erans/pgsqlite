@@ -122,11 +122,7 @@ impl QueryTypeDetector {
             true
         } else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ALTER") {
             true
-        } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("TRUNCATE") {
-            true
-        } else {
-            false
-        }
+        } else { trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("TRUNCATE") }
     }
     
     /// Check if query is DML with optimized comparison

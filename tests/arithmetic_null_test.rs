@@ -27,13 +27,13 @@ async fn test_null_arithmetic_propagation() {
     
     // Connect client
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -86,13 +86,13 @@ async fn test_null_with_constants() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -134,13 +134,13 @@ async fn test_null_in_complex_expressions() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -188,13 +188,13 @@ async fn test_coalesce_with_arithmetic() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -241,13 +241,13 @@ async fn test_null_handling_extended_protocol() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -258,7 +258,7 @@ async fn test_null_handling_extended_protocol() {
     let result: Option<f64> = rows[0].get(0);
     assert!(result.is_some());
     let val = result.unwrap();
-    assert!((val - 60.0).abs() < 0.01, "Expected 60.0, got {}", val);
+    assert!((val - 60.0).abs() < 0.01, "Expected 60.0, got {val}");
     
     // Test with NULL base value
     let rows = client.query("SELECT base_val + 10.0 AS total FROM param_null WHERE id = 2", &[]).await.unwrap();

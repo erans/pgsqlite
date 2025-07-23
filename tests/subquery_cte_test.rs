@@ -83,7 +83,7 @@ fn parse_query(sql: &str) -> Query {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -101,13 +101,13 @@ fn test_simple_join_aggregate() {
     // First test simple aggregate with alias
     let sql = "SELECT AVG(o.total) FROM orders o";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Simple alias aggregate rewritten to: {}", result);
+    println!("Simple alias aggregate rewritten to: {result}");
     assert!(result.contains("decimal_from_text"));
     
     // Then test join aggregate
     let sql2 = "SELECT c.name, AVG(o.total) FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name";
     let result2 = rewrite_query(&conn, sql2).unwrap();
-    println!("Join aggregate rewritten to: {}", result2);
+    println!("Join aggregate rewritten to: {result2}");
     assert!(result2.contains("decimal_from_text"));
 }
 
@@ -119,7 +119,7 @@ fn test_simple_subquery_in_select() {
                FROM customers c";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Subquery in SELECT rewritten to: {}", result);
+    println!("Subquery in SELECT rewritten to: {result}");
     assert!(result.contains("decimal_from_text"));
     assert!(result.contains("SUM"));
 }
@@ -133,7 +133,7 @@ fn test_subquery_with_arithmetic() {
                FROM customers c";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Subquery with arithmetic rewritten to: {}", result);
+    println!("Subquery with arithmetic rewritten to: {result}");
     assert!(result.contains("decimal_add"));
 }
 
@@ -147,7 +147,7 @@ fn test_derived_table_subquery() {
                      JOIN orders o ON c.id = o.customer_id 
                      GROUP BY c.id, c.name";
     let inner_result = rewrite_query(&conn, inner_sql).unwrap();
-    println!("Inner query rewritten to: {}", inner_result);
+    println!("Inner query rewritten to: {inner_result}");
     assert!(inner_result.contains("decimal_from_text"), "Inner query should wrap AVG argument");
     
     let sql = "SELECT customer_name, avg_order 
@@ -160,7 +160,7 @@ fn test_derived_table_subquery() {
                WHERE avg_order > 100";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Derived table query rewritten to: {}", result);
+    println!("Derived table query rewritten to: {result}");
     assert!(result.contains("AVG"));
     assert!(result.contains("decimal_from_text"));
     // The WHERE clause on avg_order should use decimal comparison
@@ -182,7 +182,7 @@ fn test_cte_basic() {
                WHERE ot.total_amount > 1000";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("CTE query rewritten to: {}", result);
+    println!("CTE query rewritten to: {result}");
     assert!(result.contains("WITH"));
     assert!(result.contains("SUM"));
     assert!(result.contains("decimal_from_text"));
@@ -209,7 +209,7 @@ fn test_cte_with_arithmetic_operations() {
                JOIN customer_metrics cm ON c.id = cm.customer_id";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("CTE with arithmetic rewritten to: {}", result);
+    println!("CTE with arithmetic rewritten to: {result}");
     assert!(result.contains("decimal_add"));
     assert!(result.contains("decimal_div"));
 }
@@ -237,7 +237,7 @@ fn test_multiple_ctes() {
                JOIN customer_discounts cd ON c.id = cd.id";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Multiple CTEs rewritten to: {}", result);
+    println!("Multiple CTEs rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     assert!(result.contains("decimal_gt"));
 }
@@ -263,7 +263,7 @@ fn test_nested_ctes() {
                FROM order_hierarchy";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Recursive CTE rewritten to: {}", result);
+    println!("Recursive CTE rewritten to: {result}");
     
     // Recursive CTEs should still have decimal operations rewritten
     assert!(result.contains("decimal_add"));
@@ -281,7 +281,7 @@ fn test_subquery_in_where_clause() {
                )";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Subquery in WHERE rewritten to: {}", result);
+    println!("Subquery in WHERE rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
     assert!(result.contains("AVG"));
 }
@@ -297,7 +297,7 @@ fn test_correlated_subquery() {
                FROM customers c";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Correlated subquery rewritten to: {}", result);
+    println!("Correlated subquery rewritten to: {result}");
     assert!(result.contains("decimal_lt"));
     assert!(result.contains("MAX"));
 }
@@ -316,7 +316,7 @@ fn test_exists_subquery() {
                )";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("EXISTS subquery rewritten to: {}", result);
+    println!("EXISTS subquery rewritten to: {result}");
     assert!(result.contains("EXISTS"));
     assert!(result.contains("decimal_gt"));
 }
@@ -334,7 +334,7 @@ fn test_in_subquery() {
                )";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("IN subquery rewritten to: {}", result);
+    println!("IN subquery rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
 }
 
@@ -408,7 +408,7 @@ fn test_nested_subqueries() {
                )";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Nested subqueries rewritten to: {}", result);
+    println!("Nested subqueries rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
     assert!(result.contains("AVG"));
     assert!(result.contains("MAX"));
@@ -423,7 +423,7 @@ fn test_union_with_decimal_operations() {
                SELECT 'Total Orders', SUM(total) FROM orders";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("UNION query rewritten to: {}", result);
+    println!("UNION query rewritten to: {result}");
     assert!(result.contains("UNION"));
     // Note: Aggregate function rewriting may not be implemented yet
     // assert!(result.contains("decimal_from_text"));
@@ -444,7 +444,7 @@ fn test_cte_column_aliases() {
                WHERE os.total_amount > 1000";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("CTE with column aliases rewritten to: {}", result);
+    println!("CTE with column aliases rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
 }
 
@@ -460,7 +460,7 @@ fn test_lateral_join_simulation() {
                FROM customers c";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Lateral join pattern rewritten to: {}", result);
+    println!("Lateral join pattern rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     assert!(result.contains("decimal_sub"));
     assert!(result.contains("decimal_div"));
@@ -483,7 +483,7 @@ fn test_window_function_in_cte() {
                WHERE rn = 1";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Window function in CTE rewritten to: {}", result);
+    println!("Window function in CTE rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
 }
 
@@ -506,7 +506,7 @@ fn test_materialized_cte_hint() {
                WHERE total_amount > 5000";
     let result = rewrite_query(&conn, sql).unwrap();
     
-    println!("Materialized CTE rewritten to: {}", result);
+    println!("Materialized CTE rewritten to: {result}");
     assert!(result.contains("decimal_add"));
     assert!(result.contains("decimal_gt"));
 }

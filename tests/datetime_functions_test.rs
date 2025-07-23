@@ -44,12 +44,11 @@ async fn test_extract_function() {
     // 2023-06-15 14:30:45 = 1686839445 seconds = 1686839445000000 microseconds
     let timestamp_micros = 1686839445000000i64;
     let rows = client.query(
-        &format!("SELECT extract('year', {}) as year, 
-                         extract('month', {}) as month,
-                         extract('day', {}) as day,
-                         extract('hour', {}) as hour,
-                         extract('minute', {}) as minute",
-                timestamp_micros, timestamp_micros, timestamp_micros, timestamp_micros, timestamp_micros),
+        &format!("SELECT extract('year', {timestamp_micros}) as year, 
+                         extract('month', {timestamp_micros}) as month,
+                         extract('day', {timestamp_micros}) as day,
+                         extract('hour', {timestamp_micros}) as hour,
+                         extract('minute', {timestamp_micros}) as minute"),
         &[]
     ).await.unwrap();
     
@@ -79,10 +78,9 @@ async fn test_date_trunc_function() {
     // 2023-06-15 14:30:45.123456 = 1686840645.123456 seconds = 1686840645123456 microseconds
     let timestamp_micros = 1686840645123456i64;
     let rows = client.query(
-        &format!("SELECT date_trunc('hour', {}) as hour_trunc,
-                         date_trunc('day', {}) as day_trunc,
-                         date_trunc('month', {}) as month_trunc",
-                timestamp_micros, timestamp_micros, timestamp_micros),
+        &format!("SELECT date_trunc('hour', {timestamp_micros}) as hour_trunc,
+                         date_trunc('day', {timestamp_micros}) as day_trunc,
+                         date_trunc('month', {timestamp_micros}) as month_trunc"),
         &[]
     ).await.unwrap();
     
@@ -112,9 +110,8 @@ async fn test_interval_arithmetic() {
     // 2023-06-15 14:30:45 = 1686840645 seconds = 1686840645000000 microseconds
     let timestamp_micros = 1686840645000000i64;
     let rows = client.query(
-        &format!("SELECT {} + INTERVAL '1 day' as tomorrow,
-                         {} - INTERVAL '1 hour' as hour_ago",
-                timestamp_micros, timestamp_micros),
+        &format!("SELECT {timestamp_micros} + INTERVAL '1 day' as tomorrow,
+                         {timestamp_micros} - INTERVAL '1 hour' as hour_ago"),
         &[]
     ).await.unwrap();
     
@@ -132,7 +129,7 @@ async fn test_interval_arithmetic() {
     let expected_hour_ago = base_timestamp_micros - 3600000000i64;  // -1 hour = 3600 seconds = 3600000000 microseconds
     
     assert_eq!(tomorrow, expected_tomorrow, 
-               "Tomorrow calculation incorrect: got {}, expected {}", tomorrow, expected_tomorrow);
+               "Tomorrow calculation incorrect: got {tomorrow}, expected {expected_tomorrow}");
     assert_eq!(hour_ago, expected_hour_ago,
-               "Hour ago calculation incorrect: got {}, expected {}", hour_ago, expected_hour_ago);
+               "Hour ago calculation incorrect: got {hour_ago}, expected {expected_hour_ago}");
 }

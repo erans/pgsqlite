@@ -30,7 +30,7 @@ async fn test_datetime_types_stored_as_integer() {
     // First, let's see what the actual CREATE TABLE statement looks like
     if !rows.is_empty() {
         let sql: String = rows[0].get(0);
-        println!("Actual CREATE TABLE SQL: {}", sql);
+        println!("Actual CREATE TABLE SQL: {sql}");
     }
     
     // Now check the actual column types using PRAGMA
@@ -44,12 +44,12 @@ async fn test_datetime_types_stored_as_integer() {
         let cid: i32 = row.get(0);
         let name: String = row.get(1);
         let sqlite_type: String = row.get(2);
-        println!("  Column {}: {} -> {}", cid, name, sqlite_type);
+        println!("  Column {cid}: {name} -> {sqlite_type}");
         
         // All datetime columns should be stored as INTEGER
         if name != "id" {
             assert_eq!(sqlite_type, "INTEGER", 
-                "Column {} should be stored as INTEGER, but got {}", name, sqlite_type);
+                "Column {name} should be stored as INTEGER, but got {sqlite_type}");
         }
     }
     
@@ -89,10 +89,10 @@ async fn test_datetime_type_aliases_stored_as_integer() {
     for row in &pragma_rows {
         let name: String = row.get(0);
         let sqlite_type: String = row.get(1);
-        println!("  Column {} -> {}", name, sqlite_type);
+        println!("  Column {name} -> {sqlite_type}");
         
         assert_eq!(sqlite_type, "INTEGER", 
-            "Column {} should be stored as INTEGER, but got {}", name, sqlite_type);
+            "Column {name} should be stored as INTEGER, but got {sqlite_type}");
     }
     
     server.abort();
@@ -132,21 +132,21 @@ async fn test_pgsqlite_schema_metadata() {
         let column_name: String = row.get(0);
         let pg_type: String = row.get(1);
         let sqlite_type: String = row.get(2);
-        println!("  {} -> pg_type: {}, sqlite_type: {}", column_name, pg_type, sqlite_type);
+        println!("  {column_name} -> pg_type: {pg_type}, sqlite_type: {sqlite_type}");
         
         // All datetime types should be stored as INTEGER in SQLite
         assert_eq!(sqlite_type, "INTEGER", 
-            "Column {} should have sqlite_type INTEGER, but got {}", column_name, sqlite_type);
+            "Column {column_name} should have sqlite_type INTEGER, but got {sqlite_type}");
         
         // Verify the PostgreSQL type is preserved correctly
         match column_name.as_str() {
-            "date_col" => assert!(pg_type.eq_ignore_ascii_case("date"), "Expected date, got {}", pg_type),
-            "time_col" => assert!(pg_type.eq_ignore_ascii_case("time"), "Expected time, got {}", pg_type),
-            "timestamp_col" => assert!(pg_type.eq_ignore_ascii_case("timestamp"), "Expected timestamp, got {}", pg_type),
-            "timestamptz_col" => assert!(pg_type.eq_ignore_ascii_case("timestamptz"), "Expected timestamptz, got {}", pg_type),
-            "timetz_col" => assert!(pg_type.eq_ignore_ascii_case("timetz"), "Expected timetz, got {}", pg_type),
-            "interval_col" => assert!(pg_type.eq_ignore_ascii_case("interval"), "Expected interval, got {}", pg_type),
-            _ => panic!("Unexpected column: {}", column_name),
+            "date_col" => assert!(pg_type.eq_ignore_ascii_case("date"), "Expected date, got {pg_type}"),
+            "time_col" => assert!(pg_type.eq_ignore_ascii_case("time"), "Expected time, got {pg_type}"),
+            "timestamp_col" => assert!(pg_type.eq_ignore_ascii_case("timestamp"), "Expected timestamp, got {pg_type}"),
+            "timestamptz_col" => assert!(pg_type.eq_ignore_ascii_case("timestamptz"), "Expected timestamptz, got {pg_type}"),
+            "timetz_col" => assert!(pg_type.eq_ignore_ascii_case("timetz"), "Expected timetz, got {pg_type}"),
+            "interval_col" => assert!(pg_type.eq_ignore_ascii_case("interval"), "Expected interval, got {pg_type}"),
+            _ => panic!("Unexpected column: {column_name}"),
         }
     }
     
@@ -226,7 +226,7 @@ async fn test_datetime_value_storage_and_retrieval() {
                 5 => "interval",
                 _ => unreachable!()
             };
-            println!("  {} column: {} (should be 'integer' for full compliance)", col_name, col_type);
+            println!("  {col_name} column: {col_type} (should be 'integer' for full compliance)");
             // Skip assertion - this is a known limitation
             // assert_eq!(col_type, "integer", 
             //     "{} column should have SQLite type 'integer', but got '{}'", col_name, col_type);
@@ -284,10 +284,10 @@ async fn test_create_table_with_constraints_and_defaults() {
     for row in &pragma_rows {
         let name: String = row.get(0);
         let sqlite_type: String = row.get(1);
-        println!("  Column {} -> {}", name, sqlite_type);
+        println!("  Column {name} -> {sqlite_type}");
         
         assert_eq!(sqlite_type, "INTEGER", 
-            "Column {} should be stored as INTEGER despite constraints, but got {}", name, sqlite_type);
+            "Column {name} should be stored as INTEGER despite constraints, but got {sqlite_type}");
     }
     
     server.abort();
@@ -319,7 +319,7 @@ async fn test_datetime_edge_cases() {
     ).await;
     
     if let Err(e) = domain_result {
-        println!("CREATE DOMAIN not supported: {}", e);
+        println!("CREATE DOMAIN not supported: {e}");
     }
     
     // Test 3: Complex type combinations
@@ -355,7 +355,7 @@ async fn test_datetime_edge_cases() {
         let name: String = row.get(0);
         let sqlite_type: String = row.get(1);
         assert_eq!(sqlite_type, "INTEGER", 
-            "Long column name {} should still use INTEGER storage", name);
+            "Long column name {name} should still use INTEGER storage");
     }
     
     // Test 5: Quoted identifiers with datetime types
@@ -380,9 +380,9 @@ async fn test_datetime_edge_cases() {
     for row in &quoted_rows {
         let name: String = row.get(0);
         let sqlite_type: String = row.get(1);
-        println!("  '{}' -> {}", name, sqlite_type);
+        println!("  '{name}' -> {sqlite_type}");
         assert_eq!(sqlite_type, "INTEGER", 
-            "Quoted column {} should use INTEGER storage", name);
+            "Quoted column {name} should use INTEGER storage");
     }
     
     server.abort();
@@ -425,9 +425,9 @@ async fn test_datetime_storage_known_limitations() {
         let timestamp_type: &str = row.get(2);
         
         println!("Text literal insertion storage types:");
-        println!("  date: {} (should be INTEGER for full compliance)", date_type);
-        println!("  time: {} (should be INTEGER for full compliance)", time_type); 
-        println!("  timestamp: {} (should be INTEGER for full compliance)", timestamp_type);
+        println!("  date: {date_type} (should be INTEGER for full compliance)");
+        println!("  time: {time_type} (should be INTEGER for full compliance)"); 
+        println!("  timestamp: {timestamp_type} (should be INTEGER for full compliance)");
         
         // Document current behavior - text literals are stored as TEXT
         // This is a known limitation that needs to be addressed

@@ -11,7 +11,7 @@ async fn test_extended_protocol() {
     // Start test server
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    println!("Test server listening on port {}", port);
+    println!("Test server listening on port {port}");
     
     let server_handle = tokio::spawn(async move {
         // Create database handler
@@ -28,7 +28,7 @@ async fn test_extended_protocol() {
         
         // Accept connection
         let (stream, addr) = listener.accept().await.unwrap();
-        println!("Accepted connection from {}", addr);
+        println!("Accepted connection from {addr}");
         
         // Handle connection
         pgsqlite::handle_test_connection_with_pool(stream, addr, db_handler).await.unwrap();
@@ -38,12 +38,12 @@ async fn test_extended_protocol() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     
     // Connect with tokio-postgres
-    println!("Connecting to test server on port {}", port);
+    println!("Connecting to test server on port {port}");
     
     let connect_result = timeout(
         Duration::from_secs(5),
         tokio_postgres::connect(
-            &format!("host=localhost port={} dbname=test user=testuser", port),
+            &format!("host=localhost port={port} dbname=test user=testuser"),
             tokio_postgres::NoTls,
         )
     ).await;
@@ -55,7 +55,7 @@ async fn test_extended_protocol() {
             // Spawn connection handler
             tokio::spawn(async move {
                 if let Err(e) = connection.await {
-                    eprintln!("Connection error: {}", e);
+                    eprintln!("Connection error: {e}");
                 }
             });
             
@@ -85,7 +85,7 @@ async fn test_extended_protocol() {
                     assert_eq!(name2, "Bob");
                     assert_eq!(age2, 25);
                 }
-                Ok(Err(e)) => panic!("Query failed: {}", e),
+                Ok(Err(e)) => panic!("Query failed: {e}"),
                 Err(_) => panic!("Query timed out"),
             }
             
@@ -112,11 +112,11 @@ async fn test_extended_protocol() {
                             assert_eq!(rows.len(), 1);
                             assert_eq!(rows[0].get::<_, &str>(0), "Alice");
                         }
-                        Ok(Err(e)) => panic!("Prepared statement execution failed: {}", e),
+                        Ok(Err(e)) => panic!("Prepared statement execution failed: {e}"),
                         Err(_) => panic!("Prepared statement execution timed out"),
                     }
                 }
-                Ok(Err(e)) => panic!("Statement preparation failed: {}", e),
+                Ok(Err(e)) => panic!("Statement preparation failed: {e}"),
                 Err(_) => panic!("Statement preparation timed out"),
             }
             
@@ -129,7 +129,7 @@ async fn test_extended_protocol() {
             
             match insert_result {
                 Ok(Ok(count)) => {
-                    println!("Insert successful, affected {} rows", count);
+                    println!("Insert successful, affected {count} rows");
                     assert_eq!(count, 1);
                     
                     // Verify insert
@@ -137,11 +137,11 @@ async fn test_extended_protocol() {
                     assert_eq!(verify.get::<_, &str>(0), "Charlie");
                     assert_eq!(verify.get::<_, i32>(1), 35);
                 }
-                Ok(Err(e)) => panic!("Insert failed: {}", e),
+                Ok(Err(e)) => panic!("Insert failed: {e}"),
                 Err(_) => panic!("Insert timed out"),
             }
         }
-        Ok(Err(e)) => panic!("Connection failed: {}", e),
+        Ok(Err(e)) => panic!("Connection failed: {e}"),
         Err(_) => panic!("Connection timed out"),
     }
     

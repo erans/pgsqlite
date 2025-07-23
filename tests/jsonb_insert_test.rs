@@ -21,13 +21,13 @@ async fn test_jsonb_insert_object_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -44,7 +44,7 @@ async fn test_jsonb_insert_object_integration() {
         .expect("Expected to find a row");
     
     // Parse the result to verify the insertion
-    let json_value: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(result).unwrap();
     assert_eq!(json_value["name"], "John");
     assert_eq!(json_value["age"], 30);
     assert_eq!(json_value["email"], "john@example.com");
@@ -72,13 +72,13 @@ async fn test_jsonb_insert_nested_object_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -95,7 +95,7 @@ async fn test_jsonb_insert_nested_object_integration() {
         .expect("Expected to find a row");
     
     // Parse the result to verify the insertion
-    let json_value: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(result).unwrap();
     assert_eq!(json_value["user"]["name"], "Alice");
     assert_eq!(json_value["user"]["email"], "alice@example.com");
     assert_eq!(json_value["active"], true);
@@ -123,13 +123,13 @@ async fn test_jsonb_insert_array_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -146,7 +146,7 @@ async fn test_jsonb_insert_array_integration() {
         .expect("Expected to find a row");
     
     // Parse the result to verify the insertion
-    let json_value: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(result).unwrap();
     let array = json_value.as_array().unwrap();
     assert_eq!(array.len(), 4);
     assert_eq!(array[0], "apple");
@@ -177,13 +177,13 @@ async fn test_jsonb_insert_array_after_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -200,7 +200,7 @@ async fn test_jsonb_insert_array_after_integration() {
         .expect("Expected to find a row");
     
     // Parse the result to verify the insertion
-    let json_value: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(result).unwrap();
     let array = json_value.as_array().unwrap();
     assert_eq!(array.len(), 4);
     assert_eq!(array[0], "apple");
@@ -231,13 +231,13 @@ async fn test_jsonb_insert_existing_key_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -254,7 +254,7 @@ async fn test_jsonb_insert_existing_key_integration() {
         .expect("Expected to find a row");
     
     // Parse the result to verify no change
-    let json_value: serde_json::Value = serde_json::from_str(&result).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(result).unwrap();
     assert_eq!(json_value["name"], "John"); // Should still be John
     assert_eq!(json_value["age"], 30);
     
@@ -281,13 +281,13 @@ async fn test_jsonb_insert_with_table_data_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -321,7 +321,7 @@ async fn test_jsonb_insert_with_table_data_integration() {
     assert_eq!(id, "1");
     
     // Parse the result to verify the insertion
-    let json_value: serde_json::Value = serde_json::from_str(&updated_data).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(updated_data).unwrap();
     assert_eq!(json_value["name"], "Alice");
     assert_eq!(json_value["age"], 25);
     assert_eq!(json_value["email"], "user@example.com");
@@ -341,7 +341,7 @@ async fn test_jsonb_insert_with_table_data_integration() {
     assert_eq!(id, "2");
     
     // Parse the result to verify the array insertion
-    let json_value: serde_json::Value = serde_json::from_str(&updated_data).unwrap();
+    let json_value: serde_json::Value = serde_json::from_str(updated_data).unwrap();
     assert_eq!(json_value["name"], "Bob");
     let skills = json_value["skills"].as_array().unwrap();
     assert_eq!(skills.len(), 3);
