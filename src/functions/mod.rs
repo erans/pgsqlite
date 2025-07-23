@@ -10,6 +10,7 @@ pub mod array_functions;
 pub mod unnest_vtab;
 pub mod string_functions;
 pub mod math_functions;
+pub mod fts_functions;
 
 use rusqlite::{Connection, Result};
 
@@ -26,5 +27,6 @@ pub fn register_all_functions(conn: &Connection) -> Result<()> {
     unnest_vtab::register_unnest_vtab(conn)?;
     string_functions::register_string_functions(conn)?;
     math_functions::register_math_functions(conn)?;
+    fts_functions::register_fts_functions(conn)?;
     Ok(())
 }

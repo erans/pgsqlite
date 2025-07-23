@@ -26,7 +26,7 @@ async fn test_invalid_enum_value_error() {
     let error = result.unwrap_err();
     let error_str = error.to_string();
     assert!(error_str.contains("invalid input value for enum mood: \"angry\""),
-            "Expected PostgreSQL-compatible error message, got: {}", error_str);
+            "Expected PostgreSQL-compatible error message, got: {error_str}");
 }
 
 #[tokio::test]
@@ -41,7 +41,7 @@ async fn test_type_does_not_exist_error() {
     let error = result.unwrap_err();
     let error_str = error.to_string();
     assert!(error_str.contains("Type 'nonexistent_type' does not exist"),
-            "Expected PostgreSQL-compatible error message, got: {}", error_str);
+            "Expected PostgreSQL-compatible error message, got: {error_str}");
 }
 
 #[tokio::test]
@@ -66,7 +66,7 @@ async fn test_cannot_drop_type_with_dependencies() {
     let error = result.unwrap_err();
     let error_str = error.to_string();
     assert!(error_str.contains("cannot drop type status because other objects depend on it"),
-            "Expected PostgreSQL-compatible error message, got: {}", error_str);
+            "Expected PostgreSQL-compatible error message, got: {error_str}");
     
     // Verify CASCADE works
     client.execute("DROP TYPE status CASCADE", &[])
@@ -86,7 +86,7 @@ async fn test_alter_type_that_does_not_exist() {
     let error = result.unwrap_err();
     let error_str = error.to_string();
     assert!(error_str.contains("Type 'nonexistent' does not exist"),
-            "Expected PostgreSQL-compatible error message, got: {}", error_str);
+            "Expected PostgreSQL-compatible error message, got: {error_str}");
 }
 
 #[tokio::test] 

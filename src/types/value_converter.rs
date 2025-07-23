@@ -57,7 +57,7 @@ impl ValueConverter {
         if money_regex.is_match(trimmed) {
             Ok(trimmed.to_string())
         } else {
-            Err(format!("Invalid money format: {}", value))
+            Err(format!("Invalid money format: {value}"))
         }
     }
     
@@ -68,7 +68,7 @@ impl ValueConverter {
         if range_regex.is_match(value.trim()) {
             Ok(value.trim().to_string())
         } else {
-            Err(format!("Invalid range format: {}", value))
+            Err(format!("Invalid range format: {value}"))
         }
     }
     
@@ -79,7 +79,7 @@ impl ValueConverter {
         // Split on '/'
         let parts: Vec<&str> = trimmed.split('/').collect();
         if parts.len() != 2 {
-            return Err(format!("Invalid CIDR format: {}", value));
+            return Err(format!("Invalid CIDR format: {value}"));
         }
         
         let ip_part = parts[0];
@@ -87,22 +87,22 @@ impl ValueConverter {
         
         // Validate IP address
         if !Self::is_valid_ip(ip_part) {
-            return Err(format!("Invalid IP address in CIDR: {}", ip_part));
+            return Err(format!("Invalid IP address in CIDR: {ip_part}"));
         }
         
         // Validate prefix length
         let prefix: u8 = prefix_part.parse()
-            .map_err(|_| format!("Invalid prefix length: {}", prefix_part))?;
+            .map_err(|_| format!("Invalid prefix length: {prefix_part}"))?;
         
         if ip_part.contains(':') {
             // IPv6
             if prefix > 128 {
-                return Err(format!("IPv6 prefix length cannot exceed 128: {}", prefix));
+                return Err(format!("IPv6 prefix length cannot exceed 128: {prefix}"));
             }
         } else {
             // IPv4
             if prefix > 32 {
-                return Err(format!("IPv4 prefix length cannot exceed 32: {}", prefix));
+                return Err(format!("IPv4 prefix length cannot exceed 32: {prefix}"));
             }
         }
         
@@ -119,7 +119,7 @@ impl ValueConverter {
         } else if Self::is_valid_ip(trimmed) {
             Ok(trimmed.to_string())
         } else {
-            Err(format!("Invalid INET format: {}", value))
+            Err(format!("Invalid INET format: {value}"))
         }
     }
     
@@ -133,17 +133,17 @@ impl ValueConverter {
         } else if trimmed.contains('-') {
             trimmed.replace('-', ":")
         } else {
-            return Err(format!("Invalid MAC address format: {}", value));
+            return Err(format!("Invalid MAC address format: {value}"));
         };
         
         let parts: Vec<&str> = normalized.split(':').collect();
         if parts.len() != 6 {
-            return Err(format!("MAC address must have 6 parts: {}", value));
+            return Err(format!("MAC address must have 6 parts: {value}"));
         }
         
         for part in &parts {
             if part.len() != 2 || !part.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(format!("Invalid MAC address part: {}", part));
+                return Err(format!("Invalid MAC address part: {part}"));
             }
         }
         
@@ -160,17 +160,17 @@ impl ValueConverter {
         } else if trimmed.contains('-') {
             trimmed.replace('-', ":")
         } else {
-            return Err(format!("Invalid MAC address format: {}", value));
+            return Err(format!("Invalid MAC address format: {value}"));
         };
         
         let parts: Vec<&str> = normalized.split(':').collect();
         if parts.len() != 8 {
-            return Err(format!("MAC address must have 8 parts: {}", value));
+            return Err(format!("MAC address must have 8 parts: {value}"));
         }
         
         for part in &parts {
             if part.len() != 2 || !part.chars().all(|c| c.is_ascii_hexdigit()) {
-                return Err(format!("Invalid MAC address part: {}", part));
+                return Err(format!("Invalid MAC address part: {part}"));
             }
         }
         
@@ -192,7 +192,7 @@ impl ValueConverter {
         if bit_string.chars().all(|c| c == '0' || c == '1') {
             Ok(bit_string.to_string())
         } else {
-            Err(format!("Invalid bit string: {}", value))
+            Err(format!("Invalid bit string: {value}"))
         }
     }
     
@@ -207,13 +207,13 @@ impl ValueConverter {
     pub fn convert_date_to_unix(value: &str) -> Result<String, String> {
         datetime_utils::parse_date_to_days(value.trim())
             .map(|days| days.to_string())
-            .ok_or_else(|| format!("Invalid date format: {}", value))
+            .ok_or_else(|| format!("Invalid date format: {value}"))
     }
     
     /// Convert epoch days (INTEGER) to PostgreSQL DATE
     fn convert_unix_to_date(value: &str) -> Result<String, String> {
         let days = value.parse::<i64>()
-            .map_err(|e| format!("Invalid days value: {} ({})", value, e))?;
+            .map_err(|e| format!("Invalid days value: {value} ({e})"))?;
         Ok(datetime_utils::format_days_to_date(days))
     }
     
@@ -221,13 +221,13 @@ impl ValueConverter {
     pub fn convert_time_to_seconds(value: &str) -> Result<String, String> {
         datetime_utils::parse_time_to_microseconds(value.trim())
             .map(|micros| micros.to_string())
-            .ok_or_else(|| format!("Invalid time format: {}", value))
+            .ok_or_else(|| format!("Invalid time format: {value}"))
     }
     
     /// Convert microseconds since midnight (INTEGER) to PostgreSQL TIME
     fn convert_seconds_to_time(value: &str) -> Result<String, String> {
         let micros = value.parse::<i64>()
-            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+            .map_err(|e| format!("Invalid microseconds value: {value} ({e})"))?;
         Ok(datetime_utils::format_microseconds_to_time(micros))
     }
     
@@ -241,7 +241,7 @@ impl ValueConverter {
             
             // Parse time to microseconds
             let time_micros = datetime_utils::parse_time_to_microseconds(time_str)
-                .ok_or_else(|| format!("Invalid time format: {}", time_str))?;
+                .ok_or_else(|| format!("Invalid time format: {time_str}"))?;
             
             // Parse offset (±HH:MM or ±HHMM)
             let offset_seconds = Self::parse_timezone_offset(offset_str)?;
@@ -251,34 +251,34 @@ impl ValueConverter {
             
             Ok(utc_micros.to_string())
         } else {
-            Err(format!("Invalid TIMETZ format: {}", value))
+            Err(format!("Invalid TIMETZ format: {value}"))
         }
     }
     
     /// Convert microseconds since midnight UTC (INTEGER) to PostgreSQL TIMETZ
     fn convert_seconds_to_timetz(value: &str) -> Result<String, String> {
         let micros = value.parse::<i64>()
-            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+            .map_err(|e| format!("Invalid microseconds value: {value} ({e})"))?;
         
         // Normalize to 0-86400000000 range (microseconds in a day)
         let normalized_micros = micros.rem_euclid(86_400_000_000);
         
         // Format as time with UTC offset
         let time_str = datetime_utils::format_microseconds_to_time(normalized_micros);
-        Ok(format!("{}+00:00", time_str))
+        Ok(format!("{time_str}+00:00"))
     }
     
     /// Convert PostgreSQL TIMESTAMP to microseconds since epoch (stored as INTEGER)
     pub fn convert_timestamp_to_unix(value: &str) -> Result<String, String> {
         datetime_utils::parse_timestamp_to_microseconds(value.trim())
             .map(|micros| micros.to_string())
-            .ok_or_else(|| format!("Invalid timestamp format: {}", value))
+            .ok_or_else(|| format!("Invalid timestamp format: {value}"))
     }
     
     /// Convert microseconds since epoch (INTEGER) to PostgreSQL TIMESTAMP
     fn convert_unix_to_timestamp(value: &str) -> Result<String, String> {
         let micros = value.parse::<i64>()
-            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+            .map_err(|e| format!("Invalid microseconds value: {value} ({e})"))?;
         Ok(datetime_utils::format_microseconds_to_timestamp(micros))
     }
     
@@ -299,7 +299,7 @@ impl ValueConverter {
         
         // Parse timestamp to microseconds
         let micros = datetime_utils::parse_timestamp_to_microseconds(&datetime_str)
-            .ok_or_else(|| format!("Invalid timestamp format: {}", datetime_str))?;
+            .ok_or_else(|| format!("Invalid timestamp format: {datetime_str}"))?;
         
         // Convert to UTC by subtracting the offset (in microseconds)
         let utc_micros = micros - (offset_seconds as i64 * 1_000_000);
@@ -310,14 +310,14 @@ impl ValueConverter {
     /// Convert microseconds since epoch (INTEGER) to PostgreSQL TIMESTAMPTZ (with session timezone)
     fn convert_unix_to_timestamptz(value: &str, _timezone: &str) -> Result<String, String> {
         let micros = value.parse::<i64>()
-            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+            .map_err(|e| format!("Invalid microseconds value: {value} ({e})"))?;
         
         // Format timestamp
         let timestamp_str = datetime_utils::format_microseconds_to_timestamp(micros);
         
         // For now, always use UTC
         // TODO: Apply session timezone offset
-        Ok(format!("{}+00:00", timestamp_str))
+        Ok(format!("{timestamp_str}+00:00"))
     }
     
     /// Convert PostgreSQL INTERVAL to microseconds (stored as INTEGER)
@@ -349,28 +349,28 @@ impl ValueConverter {
             let fraction = caps.get(5).map(|m| {
                 let fraction_str = m.as_str();
                 // Parse the fractional part and convert to microseconds
-                let micros_from_fraction = if fraction_str.len() <= 6 {
+                
+                if fraction_str.len() <= 6 {
                     // Pad with zeros if needed
-                    let padded = format!("{:0<6}", fraction_str);
+                    let padded = format!("{fraction_str:0<6}");
                     padded.parse::<i64>().unwrap_or(0)
                 } else {
                     // Truncate to 6 digits
                     fraction_str[..6].parse::<i64>().unwrap_or(0)
-                };
-                micros_from_fraction
+                }
             }).unwrap_or(0);
             
             let total_micros = (days * 86400 + hours * 3600 + minutes * 60 + seconds) * 1_000_000 + fraction;
             return Ok(total_micros.to_string());
         }
         
-        Err(format!("Unsupported interval format: {}", value))
+        Err(format!("Unsupported interval format: {value}"))
     }
     
     /// Convert microseconds to PostgreSQL INTERVAL
     fn convert_seconds_to_interval(value: &str) -> Result<String, String> {
         let total_micros = value.parse::<i64>()
-            .map_err(|e| format!("Invalid microseconds value: {} ({})", value, e))?;
+            .map_err(|e| format!("Invalid microseconds value: {value} ({e})"))?;
         
         let days = total_micros / (86400 * 1_000_000);
         let remaining_micros = total_micros % (86400 * 1_000_000);
@@ -385,9 +385,9 @@ impl ValueConverter {
         }
         
         if microseconds > 0 {
-            parts.push(format!("{:02}:{:02}:{:02}.{:06}", hours, minutes, seconds, microseconds));
+            parts.push(format!("{hours:02}:{minutes:02}:{seconds:02}.{microseconds:06}"));
         } else {
-            parts.push(format!("{:02}:{:02}:{:02}", hours, minutes, seconds));
+            parts.push(format!("{hours:02}:{minutes:02}:{seconds:02}"));
         }
         
         Ok(parts.join(" "))
@@ -404,7 +404,7 @@ impl ValueConverter {
                 .map_err(|e| format!("Invalid minutes in offset: {} ({})", &caps[3], e))?;
             Ok(sign * (hours * 3600 + minutes * 60))
         } else {
-            Err(format!("Invalid timezone offset format: {}", offset))
+            Err(format!("Invalid timezone offset format: {offset}"))
         }
     }
 }

@@ -29,13 +29,13 @@ async fn test_prepared_at_time_zone_with_alias() {
         if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
             if let Some(utc_str) = row.get(0) {
                 utc_time = utc_str.parse::<f64>().unwrap();
-                println!("Got UTC time as string: {} -> {}", utc_str, utc_time);
+                println!("Got UTC time as string: {utc_str} -> {utc_time}");
                 break;
             }
         }
     }
     
-    assert!((utc_time - timestamp).abs() < 1.0, "UTC time should match original timestamp, got {} expected {}", utc_time, timestamp);
+    assert!((utc_time - timestamp).abs() < 1.0, "UTC time should match original timestamp, got {utc_time} expected {timestamp}");
     
     // Test 2: Basic query to ensure the test framework works
     println!("\nTest 2: Basic query test");
@@ -47,13 +47,13 @@ async fn test_prepared_at_time_zone_with_alias() {
         if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
             if let Some(time_str) = row.get(0) {
                 retrieved_time = time_str.parse::<f64>().unwrap();
-                println!("Got retrieved time as string: {} -> {}", time_str, retrieved_time);
+                println!("Got retrieved time as string: {time_str} -> {retrieved_time}");
                 break;
             }
         }
     }
     
-    assert!((retrieved_time - timestamp).abs() < 1.0, "Retrieved time should match original timestamp, got {} expected {}", retrieved_time, timestamp);
+    assert!((retrieved_time - timestamp).abs() < 1.0, "Retrieved time should match original timestamp, got {retrieved_time} expected {timestamp}");
 }
 
 #[tokio::test]

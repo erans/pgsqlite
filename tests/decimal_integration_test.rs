@@ -1,5 +1,4 @@
 use pgsqlite::session::DbHandler;
-use tokio;
 
 async fn setup_test_db() -> DbHandler {
     let db_handler = DbHandler::new(":memory:").unwrap();
@@ -147,7 +146,7 @@ async fn test_complex_decimal_queries() {
     ).await.unwrap();
     
     // The query should execute without errors
-    assert!(result.rows.len() > 0);
+    assert!(!result.rows.is_empty());
 }
 
 #[tokio::test]

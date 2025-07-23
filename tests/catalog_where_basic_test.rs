@@ -24,7 +24,7 @@ async fn test_catalog_where_basic() {
     for row in &all_rows {
         let name: &str = row.get(0);
         let kind: &str = row.get(1);
-        println!("  {} ({})", name, kind);
+        println!("  {name} ({kind})");
     }
     
     // Test 1: Basic WHERE with equals on pg_class

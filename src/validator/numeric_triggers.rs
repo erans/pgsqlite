@@ -14,7 +14,7 @@ impl NumericTriggers {
         scale: i32,
     ) -> Result<()> {
         // Create INSERT trigger with proper validation
-        let insert_trigger_name = format!("__pgsqlite_numeric_insert_{}_{}", table_name, column_name);
+        let insert_trigger_name = format!("__pgsqlite_numeric_insert_{table_name}_{column_name}");
         
         // For NUMERIC(p,s):
         // - p is total number of significant digits
@@ -65,14 +65,14 @@ impl NumericTriggers {
             scale = scale,
             // For NUMERIC(p,s), the maximum value is 10^(p-s) - 10^(-s)
             // But for simplicity and to avoid edge cases, we use 10^(p-s)
-            max_value = 10_f64.powi((precision - scale) as i32)
+            max_value = 10_f64.powi(precision - scale)
         );
         
         conn.execute(&insert_trigger_sql, [])?;
         info!("Created numeric INSERT validation trigger for {}.{}", table_name, column_name);
         
         // Create UPDATE trigger with same logic
-        let update_trigger_name = format!("__pgsqlite_numeric_update_{}_{}", table_name, column_name);
+        let update_trigger_name = format!("__pgsqlite_numeric_update_{table_name}_{column_name}");
         let update_trigger_sql = format!(
             r#"
             CREATE TRIGGER IF NOT EXISTS {trigger_name}
@@ -114,7 +114,7 @@ impl NumericTriggers {
             table = table_name,
             column = column_name,
             scale = scale,
-            max_value = 10_f64.powi((precision - scale) as i32)
+            max_value = 10_f64.powi(precision - scale)
         );
         
         conn.execute(&update_trigger_sql, [])?;
@@ -129,11 +129,11 @@ impl NumericTriggers {
         table_name: &str,
         column_name: &str,
     ) -> Result<()> {
-        let insert_trigger_name = format!("__pgsqlite_numeric_insert_{}_{}", table_name, column_name);
-        let update_trigger_name = format!("__pgsqlite_numeric_update_{}_{}", table_name, column_name);
+        let insert_trigger_name = format!("__pgsqlite_numeric_insert_{table_name}_{column_name}");
+        let update_trigger_name = format!("__pgsqlite_numeric_update_{table_name}_{column_name}");
         
-        conn.execute(&format!("DROP TRIGGER IF EXISTS {}", insert_trigger_name), [])?;
-        conn.execute(&format!("DROP TRIGGER IF EXISTS {}", update_trigger_name), [])?;
+        conn.execute(&format!("DROP TRIGGER IF EXISTS {insert_trigger_name}"), [])?;
+        conn.execute(&format!("DROP TRIGGER IF EXISTS {update_trigger_name}"), [])?;
         
         info!("Dropped numeric validation triggers for {}.{}", table_name, column_name);
         Ok(())
@@ -145,7 +145,7 @@ impl NumericTriggers {
         table_name: &str,
         column_name: &str,
     ) -> Result<bool> {
-        let trigger_name = format!("__pgsqlite_numeric_insert_{}_{}", table_name, column_name);
+        let trigger_name = format!("__pgsqlite_numeric_insert_{table_name}_{column_name}");
         let count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND name = ?1",
             [&trigger_name],

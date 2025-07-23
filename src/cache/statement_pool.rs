@@ -62,7 +62,7 @@ impl StatementPool {
             let original_values_pos = query.to_uppercase().find("VALUES").unwrap();
             let prefix = &query[..original_values_pos + 6].trim(); // Include "VALUES"
             // Replace the actual values with a placeholder
-            Some(format!("{} (?)", prefix))
+            Some(format!("{prefix} (?)"))
         } else {
             None
         }

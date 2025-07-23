@@ -18,6 +18,12 @@ pub struct NumericConstraintValidator {
     constraints: Arc<RwLock<HashMap<String, HashMap<String, NumericConstraint>>>>,
 }
 
+impl Default for NumericConstraintValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NumericConstraintValidator {
     pub fn new() -> Self {
         Self {

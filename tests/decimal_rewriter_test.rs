@@ -56,7 +56,7 @@ fn setup_test_db() -> Connection {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -126,7 +126,7 @@ fn test_mixed_type_operations() {
     // NUMERIC with literal float
     let sql = "SELECT amount * 0.08 FROM transactions";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Mixed type query rewritten to: {}", result);
+    println!("Mixed type query rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     // The literal 0.08 is already a valid decimal, so it might not need wrapping
     // depending on the implementation details
@@ -201,7 +201,7 @@ fn test_update_with_numeric_operations() {
     // UPDATE with arithmetic
     let sql = "UPDATE products SET price = price * 1.05 WHERE discount > 0";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("UPDATE query rewritten to: {}", result);
+    println!("UPDATE query rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     assert!(result.contains("decimal_gt"));
     
@@ -219,7 +219,7 @@ fn test_delete_with_numeric_condition() {
     
     let sql = "DELETE FROM products WHERE price < 10 OR discount > 50";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("DELETE query rewritten to: {}", result);
+    println!("DELETE query rewritten to: {result}");
     // Note: DELETE statement table extraction is simplified in current implementation
     // The rewriting might not work for all DELETE variants
     if result.contains("decimal_lt") {
@@ -329,7 +329,7 @@ fn test_already_wrapped_expressions() {
     // If expression already uses decimal functions, arguments still need rewriting
     let sql = "SELECT decimal_add(price, 10) FROM products";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Rewritten query: {}", result);
+    println!("Rewritten query: {result}");
     // The function itself should be preserved
     assert!(result.contains("decimal_add"));
     // Note: Currently the rewriter doesn't rewrite arguments of existing decimal functions
@@ -390,7 +390,7 @@ mod integration_tests {
         ).unwrap();
         
         // Verify precision is maintained (123.456789 * 8.375 / 100)
-        println!("Precision test result: {}", text_result);
+        println!("Precision test result: {text_result}");
         // The exact result depends on rust_decimal's precision handling
         assert!(text_result.starts_with("10.339"));
     }

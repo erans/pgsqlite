@@ -58,7 +58,7 @@ async fn test_at_time_zone() {
     
     // Test AT TIME ZONE with UTC (should be no change)
     let row = client.query_one(
-        &format!("SELECT {} AT TIME ZONE 'UTC' as ts_utc", base_timestamp_micros),
+        &format!("SELECT {base_timestamp_micros} AT TIME ZONE 'UTC' as ts_utc"),
         &[]
     ).await.unwrap();
     let ts_utc: f64 = row.get(0);
@@ -68,7 +68,7 @@ async fn test_at_time_zone() {
     
     // Test AT TIME ZONE with EST (should subtract 5 hours = 5 * 3600 * 1000000 microseconds)
     let row = client.query_one(
-        &format!("SELECT {} AT TIME ZONE 'EST' as ts_est", base_timestamp_micros),
+        &format!("SELECT {base_timestamp_micros} AT TIME ZONE 'EST' as ts_est"),
         &[]
     ).await.unwrap();
     let ts_est: f64 = row.get(0);
@@ -78,7 +78,7 @@ async fn test_at_time_zone() {
     
     // Test AT TIME ZONE with offset (+05:30 = +5.5 hours = 5.5 * 3600 * 1000000 microseconds)
     let row = client.query_one(
-        &format!("SELECT {} AT TIME ZONE '+05:30' as ts_ist", base_timestamp_micros),
+        &format!("SELECT {base_timestamp_micros} AT TIME ZONE '+05:30' as ts_ist"),
         &[]
     ).await.unwrap();
     let ts_ist: f64 = row.get(0);

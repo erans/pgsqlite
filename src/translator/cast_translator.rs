@@ -87,7 +87,7 @@ impl CastTranslator {
                     
                     // Always preserve cast for aggregate functions or complex expressions
                     if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
-                        format!("CAST({} AS TEXT)", clean_expr)
+                        format!("CAST({clean_expr} AS TEXT)")
                     } else {
                         clean_expr.to_string()
                     }
@@ -101,10 +101,10 @@ impl CastTranslator {
                         expr.to_string()
                     } else if sqlite_type == type_name.to_uppercase().as_str() {
                         // Same type name, use CAST
-                        format!("CAST({} AS {})", expr, type_name)
+                        format!("CAST({expr} AS {type_name})")
                     } else {
                         // Use SQLite type
-                        format!("CAST({} AS {})", expr, sqlite_type)
+                        format!("CAST({expr} AS {sqlite_type})")
                     }
                 }
             } else {
@@ -118,18 +118,18 @@ impl CastTranslator {
                     };
                     // Keep CAST for expressions with function calls
                     if clean_expr.contains('(') && clean_expr.contains(')') {
-                        format!("CAST({} AS TEXT)", clean_expr)
+                        format!("CAST({clean_expr} AS TEXT)")
                     } else {
                         clean_expr.to_string()
                     }
                 } else {
-                    format!("CAST({} AS {})", expr, type_name)
+                    format!("CAST({expr} AS {type_name})")
                 }
             };
             
             // If we trimmed a paren, add it back after the CAST
             let final_replacement = if trimmed_paren {
-                format!("{})", translated_cast)
+                format!("{translated_cast})")
             } else {
                 translated_cast
             };
@@ -219,11 +219,10 @@ impl CastTranslator {
             }
             
             // If we're not in parentheses, look for expression boundaries
-            if paren_depth == 0 {
-                if ch == b' ' || ch == b',' || ch == b'(' || ch == b'=' || ch == b'<' || ch == b'>' {
+            if paren_depth == 0
+                && (ch == b' ' || ch == b',' || ch == b'(' || ch == b'=' || ch == b'<' || ch == b'>') {
                     return i + 1;
                 }
-            }
         }
         
         0
@@ -288,7 +287,7 @@ impl CastTranslator {
     fn might_need_text_cast(expr: &str) -> bool {
         // If it's a column name (not a literal), it might be a special type
         // that needs explicit casting
-        !expr.starts_with('\'') && !expr.starts_with('"') && !expr.parse::<f64>().is_ok()
+        !expr.starts_with('\'') && !expr.starts_with('"') && expr.parse::<f64>().is_err()
     }
     
     /// Check if an expression is an aggregate function
@@ -407,7 +406,7 @@ impl CastTranslator {
                     
                     // Always preserve cast for aggregate functions or complex expressions
                     if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
-                        format!("CAST({} AS TEXT)", clean_expr)
+                        format!("CAST({clean_expr} AS TEXT)")
                     } else {
                         clean_expr.to_string()
                     }
@@ -419,12 +418,12 @@ impl CastTranslator {
                         expr.to_string()
                     } else {
                         // Keep the CAST with SQLite type
-                        format!("CAST({} AS {})", expr, sqlite_type)
+                        format!("CAST({expr} AS {sqlite_type})")
                     }
                 }
             } else {
                 // No connection, keep the CAST
-                format!("CAST({} AS {})", expr, type_name)
+                format!("CAST({expr} AS {type_name})")
             };
             
             // Replace the CAST expression

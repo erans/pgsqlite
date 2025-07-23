@@ -8,7 +8,7 @@ impl DecimalHandler {
     /// Convert a string to rust_decimal::Decimal
     pub fn parse_decimal(s: &str) -> Result<Decimal, String> {
         Decimal::from_str(s)
-            .map_err(|e| format!("Invalid numeric value: {}", e))
+            .map_err(|e| format!("Invalid numeric value: {e}"))
     }
     
     /// Convert rust_decimal to PostgreSQL binary NUMERIC format
@@ -62,7 +62,7 @@ impl DecimalHandler {
         // Start from the end and work backwards
         let mut pos = int_digits.len();
         while pos > 0 {
-            let start = if pos >= 4 { pos - 4 } else { 0 };
+            let start = pos.saturating_sub(4);
             let chunk = &int_digits[start..pos];
             
             let mut group_val = 0i16;
@@ -234,7 +234,7 @@ impl DecimalHandler {
         }
         
         Decimal::from_str(&result)
-            .map_err(|e| format!("Failed to parse reconstructed decimal: {}", e))
+            .map_err(|e| format!("Failed to parse reconstructed decimal: {e}"))
     }
     
     /// Validate that a string can be parsed as a valid NUMERIC value
@@ -275,7 +275,7 @@ mod tests {
             let decoded = DecimalHandler::decode_numeric(&encoded).unwrap();
             
             // Compare values, not strings (to handle different representations of same value)
-            assert_eq!(decimal, decoded, "Failed for case: {}", case);
+            assert_eq!(decimal, decoded, "Failed for case: {case}");
         }
     }
 }

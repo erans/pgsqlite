@@ -33,7 +33,7 @@ async fn test_pg_attribute_enum_types() {
     
     if !sqlite_info.is_empty() {
         let sql: &str = sqlite_info[0].get(0);
-        eprintln!("SQLite table definition: {}", sql);
+        eprintln!("SQLite table definition: {sql}");
     }
     
     // Debug: Check what tables exist in pg_class
@@ -45,7 +45,7 @@ async fn test_pg_attribute_enum_types() {
     eprintln!("Tables in pg_class:");
     for row in &all_tables {
         let name: &str = row.get(0);
-        eprintln!("  {}", name);
+        eprintln!("  {name}");
     }
     
     // First get the table OID as text
@@ -56,12 +56,12 @@ async fn test_pg_attribute_enum_types() {
     
     assert_eq!(table_oid_rows.len(), 1, "Should find test_enum_table in pg_class");
     let table_oid: &str = table_oid_rows[0].get(0);
-    eprintln!("Table OID: {}", table_oid);
+    eprintln!("Table OID: {table_oid}");
     
     // Query pg_attribute to check the type OID
-    eprintln!("Querying pg_attribute for table OID {} and column 'current_status'", table_oid);
+    eprintln!("Querying pg_attribute for table OID {table_oid} and column 'current_status'");
     let rows = client.query(
-        &format!("SELECT attname, CAST(atttypid AS TEXT) FROM pg_catalog.pg_attribute WHERE attrelid = {} AND attname = 'current_status'", table_oid),
+        &format!("SELECT attname, CAST(atttypid AS TEXT) FROM pg_catalog.pg_attribute WHERE attrelid = {table_oid} AND attname = 'current_status'"),
         &[]
     ).await.unwrap();
     eprintln!("pg_attribute query returned {} rows", rows.len());
@@ -69,7 +69,7 @@ async fn test_pg_attribute_enum_types() {
     // Debug: Check all columns if we don't find the specific one
     if rows.is_empty() {
         let all_rows = client.query(
-            &format!("SELECT attname, atttypid FROM pg_catalog.pg_attribute WHERE attrelid = {}", table_oid),
+            &format!("SELECT attname, atttypid FROM pg_catalog.pg_attribute WHERE attrelid = {table_oid}"),
             &[]
         ).await.unwrap();
         
@@ -77,7 +77,7 @@ async fn test_pg_attribute_enum_types() {
         for row in &all_rows {
             let name: &str = row.get(0);
             let typeid: &str = row.try_get(1).unwrap_or("ERROR");
-            eprintln!("  Column: {} (type OID: {})", name, typeid);
+            eprintln!("  Column: {name} (type OID: {typeid})");
         }
         
         // Debug: Check if pg_attribute returns anything at all
@@ -88,7 +88,7 @@ async fn test_pg_attribute_enum_types() {
         
         if !any_attrs.is_empty() {
             let count: i64 = any_attrs[0].get(0);
-            eprintln!("Total rows in pg_attribute: {}", count);
+            eprintln!("Total rows in pg_attribute: {count}");
         }
     }
     
@@ -100,9 +100,9 @@ async fn test_pg_attribute_enum_types() {
     
     assert_eq!(attname, "current_status");
     // The OID should be >= 10000 (our ENUM type OID offset)
-    assert!(atttypid >= 10000, "ENUM type should have custom OID >= 10000, got {}", atttypid);
+    assert!(atttypid >= 10000, "ENUM type should have custom OID >= 10000, got {atttypid}");
     
-    eprintln!("Looking for type with OID: {}", atttypid);
+    eprintln!("Looking for type with OID: {atttypid}");
     
     // Debug: Check what enum types exist
     let all_enum_types = client.query(
@@ -114,7 +114,7 @@ async fn test_pg_attribute_enum_types() {
     for row in &all_enum_types {
         let oid_str: &str = row.get(0);
         let name: &str = row.get(1);
-        eprintln!("  {} - {}", oid_str, name);
+        eprintln!("  {oid_str} - {name}");
     }
     
     // Verify the type is in pg_type
@@ -174,7 +174,7 @@ async fn test_pg_enum_filtering() {
     for row in &type_rows {
         let oid: &str = row.get(0);
         let typname: &str = row.get(1);
-        eprintln!("  ENUM type: {} (OID: {})", typname, oid);
+        eprintln!("  ENUM type: {typname} (OID: {oid})");
     }
     
     // Check if our types are in there

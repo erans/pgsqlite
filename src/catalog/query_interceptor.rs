@@ -128,7 +128,7 @@ impl CatalogInterceptor {
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
             // Check if this is a JOIN query involving catalog tables
-            if select.from.len() > 0 && !select.from[0].joins.is_empty() {
+            if !select.from.is_empty() && !select.from[0].joins.is_empty() {
                 // For JOIN queries on catalog tables, return None to let SQLite handle it
                 // This allows the views to work properly with JOINs
                 if let TableFactor::Table { name, .. } = &select.from[0].relation {
@@ -187,10 +187,7 @@ impl CatalogInterceptor {
             
             // Handle pg_class queries
             if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
-                return match PgClassHandler::handle_query(select, &db).await {
-                    Ok(response) => Some(response),
-                    Err(_) => None,
-                };
+                return (PgClassHandler::handle_query(select, &db).await).ok();
             }
             
             // Handle pg_attribute queries
@@ -210,10 +207,7 @@ impl CatalogInterceptor {
             
             // Handle pg_enum queries
             if table_name.contains("pg_enum") || table_name.contains("pg_catalog.pg_enum") {
-                return match PgEnumHandler::handle_query(select, &db).await {
-                    Ok(response) => Some(response),
-                    Err(_) => None,
-                };
+                return (PgEnumHandler::handle_query(select, &db).await).ok();
             }
         }
         None
@@ -646,14 +640,14 @@ impl CatalogInterceptor {
             Expr::UnaryOp { expr, .. } => Self::expression_contains_system_function(expr),
             Expr::Cast { expr, .. } => Self::expression_contains_system_function(expr),
             Expr::Case { operand, conditions, else_result, .. } => {
-                operand.as_ref().map_or(false, |e| Self::expression_contains_system_function(e)) ||
+                operand.as_ref().is_some_and(|e| Self::expression_contains_system_function(e)) ||
                 conditions.iter().any(|when| Self::expression_contains_system_function(&when.condition) || 
                                            Self::expression_contains_system_function(&when.result)) ||
-                else_result.as_ref().map_or(false, |e| Self::expression_contains_system_function(e))
+                else_result.as_ref().is_some_and(|e| Self::expression_contains_system_function(e))
             }
             Expr::InList { expr, list, .. } => {
                 Self::expression_contains_system_function(expr) ||
-                list.iter().any(|e| Self::expression_contains_system_function(e))
+                list.iter().any(Self::expression_contains_system_function)
             }
             Expr::InSubquery { expr, subquery: _, .. } => Self::expression_contains_system_function(expr),
             Expr::Between { expr, low, high, .. } => {
@@ -696,61 +690,58 @@ impl CatalogInterceptor {
 
     /// Extract filter conditions from WHERE clause
     fn extract_filters(expr: &Expr, filter_oid: &mut Option<i32>, has_placeholder: &mut bool, filter_typtype: &mut Option<String>) {
-        match expr {
-            Expr::BinaryOp { left, op, right } => {
-                if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
-                    // Check for OID filter
-                    let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
-                        left_parts.last().unwrap().value.to_lowercase() == "oid"
-                    } else if let Expr::Identifier(ident) = left.as_ref() {
-                        ident.value.to_lowercase() == "oid"
-                    } else {
-                        false
-                    };
-                    
-                    if is_oid_column {
-                        // Check if right side is a number (not a placeholder)
-                        match right.as_ref() {
-                            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) => {
-                                *filter_oid = n.parse::<i32>().ok();
-                                debug!("Extracted numeric OID filter: {:?}", filter_oid);
-                            }
-                            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => {
-                                // Handle quoted numeric strings (from parameter substitution)
-                                *filter_oid = s.parse::<i32>().ok();
-                                debug!("Extracted string OID filter: {:?}", filter_oid);
-                            }
-                            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) => {
-                                *has_placeholder = true;
-                                debug!("Found placeholder for OID filter");
-                            }
-                            _ => {
-                                debug!("Unknown expression type for OID filter: {:?}", right);
-                            }
+        if let Expr::BinaryOp { left, op, right } = expr {
+            if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
+                // Check for OID filter
+                let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
+                    left_parts.last().unwrap().value.to_lowercase() == "oid"
+                } else if let Expr::Identifier(ident) = left.as_ref() {
+                    ident.value.to_lowercase() == "oid"
+                } else {
+                    false
+                };
+                
+                if is_oid_column {
+                    // Check if right side is a number (not a placeholder)
+                    match right.as_ref() {
+                        Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) => {
+                            *filter_oid = n.parse::<i32>().ok();
+                            debug!("Extracted numeric OID filter: {:?}", filter_oid);
+                        }
+                        Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => {
+                            // Handle quoted numeric strings (from parameter substitution)
+                            *filter_oid = s.parse::<i32>().ok();
+                            debug!("Extracted string OID filter: {:?}", filter_oid);
+                        }
+                        Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) => {
+                            *has_placeholder = true;
+                            debug!("Found placeholder for OID filter");
+                        }
+                        _ => {
+                            debug!("Unknown expression type for OID filter: {:?}", right);
                         }
                     }
-                    
-                    // Check for typtype filter
-                    let is_typtype_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
-                        left_parts.last().unwrap().value.to_lowercase() == "typtype"
-                    } else if let Expr::Identifier(ident) = left.as_ref() {
-                        ident.value.to_lowercase() == "typtype"
-                    } else {
-                        false
-                    };
-                    
-                    if is_typtype_column {
-                        if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) = right.as_ref() {
-                            *filter_typtype = Some(s.clone());
-                        }
-                    }
-                } else if matches!(op, sqlparser::ast::BinaryOperator::And) {
-                    // Recursively check both sides of AND
-                    Self::extract_filters(left, filter_oid, has_placeholder, filter_typtype);
-                    Self::extract_filters(right, filter_oid, has_placeholder, filter_typtype);
                 }
+                
+                // Check for typtype filter
+                let is_typtype_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
+                    left_parts.last().unwrap().value.to_lowercase() == "typtype"
+                } else if let Expr::Identifier(ident) = left.as_ref() {
+                    ident.value.to_lowercase() == "typtype"
+                } else {
+                    false
+                };
+                
+                if is_typtype_column {
+                    if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) = right.as_ref() {
+                        *filter_typtype = Some(s.clone());
+                    }
+                }
+            } else if matches!(op, sqlparser::ast::BinaryOperator::And) {
+                // Recursively check both sides of AND
+                Self::extract_filters(left, filter_oid, has_placeholder, filter_typtype);
+                Self::extract_filters(right, filter_oid, has_placeholder, filter_typtype);
             }
-            _ => {}
         }
     }
 

@@ -55,6 +55,12 @@ pub struct ColumnSchema {
     pub datetime_format: Option<String>,
 }
 
+impl Default for TypeResolutionContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeResolutionContext {
     /// Create a new empty context
     pub fn new() -> Self {
@@ -94,7 +100,7 @@ impl TypeResolutionContext {
         }
         
         // Finally check schemas directly
-        for (_table_name, schema) in &self.schemas {
+        for schema in self.schemas.values() {
             if let Some(col_schema) = schema.columns.get(name) {
                 let datetime_subtype = Self::infer_datetime_subtype(&col_schema.pg_type);
                 return Some((col_schema.pg_type, datetime_subtype));

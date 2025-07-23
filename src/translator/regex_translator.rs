@@ -84,10 +84,9 @@ impl RegexTranslator {
     
     /// Translate a statement
     fn translate_statement(statement: &mut Statement) -> Result<(), PgSqliteError> {
-        match statement {
-            Statement::Query(query) => Self::translate_query_box(query)?,
-            // For now, just handle SELECT queries which are the main use case for catalog queries
-            _ => {}
+        // For now, just handle SELECT queries which are the main use case for catalog queries
+        if let Statement::Query(query) = statement { 
+            Self::translate_query_box(query)?;
         }
         Ok(())
     }

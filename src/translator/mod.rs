@@ -21,6 +21,7 @@ mod json_each_translator;
 mod row_to_json_translator;
 mod batch_update_translator;
 mod batch_delete_translator;
+mod fts_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -43,3 +44,4 @@ pub use json_each_translator::JsonEachTranslator;
 pub use row_to_json_translator::RowToJsonTranslator;
 pub use batch_update_translator::BatchUpdateTranslator;
 pub use batch_delete_translator::BatchDeleteTranslator;
+pub use fts_translator::FtsTranslator;

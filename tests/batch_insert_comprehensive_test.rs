@@ -128,8 +128,8 @@ async fn test_batch_insert_type_conversions() {
     assert_eq!(rows.len(), 3);
     
     // Check boolean conversions
-    assert_eq!(rows[0].get::<_, bool>(1), true);
-    assert_eq!(rows[1].get::<_, bool>(1), false);
+    assert!(rows[0].get::<_, bool>(1));
+    assert!(!rows[1].get::<_, bool>(1));
     
     // Check date conversions
     let date1: chrono::NaiveDate = rows[0].get(4);
@@ -293,7 +293,7 @@ async fn test_batch_insert_performance_comparison() {
     for i in 1..=100 {
         client.execute(
             "INSERT INTO perf_test (id, name, value) VALUES ($1, $2, $3)",
-            &[&i, &format!("row{}", i), &(i * 10)]
+            &[&i, &format!("row{i}"), &(i * 10)]
         ).await.unwrap();
     }
     let single_duration = start.elapsed();
@@ -316,9 +316,9 @@ async fn test_batch_insert_performance_comparison() {
     
     // Batch should be significantly faster
     let speedup = single_duration.as_secs_f64() / batch_duration.as_secs_f64();
-    println!("Single-row duration: {:?}", single_duration);
-    println!("Batch duration: {:?}", batch_duration);
-    println!("Speedup: {:.1}x", speedup);
+    println!("Single-row duration: {single_duration:?}");
+    println!("Batch duration: {batch_duration:?}");
+    println!("Speedup: {speedup:.1}x");
     
     assert!(speedup > 5.0, "Batch should be at least 5x faster than single-row inserts");
     

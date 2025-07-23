@@ -27,14 +27,14 @@ async fn setup_test_db() -> Result<(u16, Client), Box<dyn std::error::Error + Se
     let (client, connection) = timeout(
         Duration::from_secs(5),
         tokio_postgres::connect(
-            &format!("host=127.0.0.1 port={} user=test dbname=test", port),
+            &format!("host=127.0.0.1 port={port} user=test dbname=test"),
             NoTls,
         ),
     ).await??;
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -75,7 +75,7 @@ async fn test_row_to_json_basic_subquery() {
     assert!(json_result.contains("\"name\":\"Alice\"") || json_result.contains("\"name\": \"Alice\""));
     assert!(json_result.contains("\"age\":30") || json_result.contains("\"age\": 30"));
     
-    println!("Row to JSON result: {}", json_result);
+    println!("Row to JSON result: {json_result}");
 }
 
 #[tokio::test]
@@ -105,15 +105,15 @@ async fn test_row_to_json_multiple_columns() {
     assert_eq!(rows.len(), 1);
     let json_result: String = rows[0].get(0);
     
-    println!("Multi-column row to JSON result: {}", json_result);
+    println!("Multi-column row to JSON result: {json_result}");
     
     // Verify all columns are present
-    assert!(json_result.contains("\"id\":1") || json_result.contains("\"id\": 1"), "Missing id field in: {}", json_result);
-    assert!(json_result.contains("\"name\":\"Widget\"") || json_result.contains("\"name\": \"Widget\""), "Missing name field in: {}", json_result);
-    assert!(json_result.contains("\"price\":19.99") || json_result.contains("\"price\": 19.99"), "Missing price field in: {}", json_result);
+    assert!(json_result.contains("\"id\":1") || json_result.contains("\"id\": 1"), "Missing id field in: {json_result}");
+    assert!(json_result.contains("\"name\":\"Widget\"") || json_result.contains("\"name\": \"Widget\""), "Missing name field in: {json_result}");
+    assert!(json_result.contains("\"price\":19.99") || json_result.contains("\"price\": 19.99"), "Missing price field in: {json_result}");
     assert!(json_result.contains("\"in_stock\":1") || json_result.contains("\"in_stock\": 1") ||
             json_result.contains("\"in_stock\":true") || json_result.contains("\"in_stock\": true"), 
-            "Missing in_stock field in: {}", json_result);
+            "Missing in_stock field in: {json_result}");
 }
 
 #[tokio::test]
@@ -148,7 +148,7 @@ async fn test_row_to_json_with_aliases() {
     assert!(json_result.contains("\"lname\":\"Doe\"") || json_result.contains("\"lname\": \"Doe\""));
     assert!(json_result.contains("\"salary\":50000") || json_result.contains("\"salary\": 50000"));
     
-    println!("Aliased row to JSON result: {}", json_result);
+    println!("Aliased row to JSON result: {json_result}");
 }
 
 #[tokio::test]
@@ -168,7 +168,7 @@ async fn test_row_to_json_simple_function_call() {
     let json_result: String = rows[0].get(0);
     
     // For simple values, the SQLite function should handle it
-    println!("Simple row to JSON result: {}", json_result);
+    println!("Simple row to JSON result: {json_result}");
     
     // The result should be a JSON representation of the input
     assert!(json_result.contains("test value") || json_result == "\"test value\"");
@@ -210,6 +210,6 @@ async fn test_row_to_json_multiple_rows() {
     assert!(json_result2.contains("\"name\":\"Carrot\"") || json_result2.contains("\"name\": \"Carrot\""));
     assert!(json_result2.contains("\"category\":\"Vegetable\"") || json_result2.contains("\"category\": \"Vegetable\""));
     
-    println!("Multiple rows - Row 1: {}", json_result1);
-    println!("Multiple rows - Row 2: {}", json_result2);
+    println!("Multiple rows - Row 1: {json_result1}");
+    println!("Multiple rows - Row 2: {json_result2}");
 }

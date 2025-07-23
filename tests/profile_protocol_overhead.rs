@@ -23,7 +23,7 @@ async fn profile_protocol_overhead() {
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -70,7 +70,7 @@ async fn setup_test_data(client: &tokio_postgres::Client) {
     for i in 0..1000 {
         client.execute(
             "INSERT INTO profile_simple (id, value) VALUES ($1, $2)",
-            &[&i, &format!("value_{}", i)],
+            &[&i, &format!("value_{i}")],
         ).await.unwrap();
         
         let long_text = "x".repeat(1000);
@@ -86,7 +86,7 @@ async fn setup_test_data(client: &tokio_postgres::Client) {
             )",
             &[
                 &i,
-                &format!("short_{}", i),
+                &format!("short_{i}"),
                 &long_text,
                 &(i % 100),
                 &(i * 1000000),
@@ -134,9 +134,9 @@ async fn profile_message_encoding_overhead(client: &tokio_postgres::Client) {
         let avg_time = average(&times);
         let avg_rows = row_counts.iter().sum::<usize>() as f64 / row_counts.len() as f64;
         
-        println!("\n{}:", label);
-        println!("  Average time: {:?}", avg_time);
-        println!("  Average rows: {:.1}", avg_rows);
+        println!("\n{label}:");
+        println!("  Average time: {avg_time:?}");
+        println!("  Average rows: {avg_rows:.1}");
         if avg_rows > 0.0 {
             println!("  Time per row: {:?}", Duration::from_secs_f64(avg_time.as_secs_f64() / avg_rows));
         }
@@ -176,7 +176,7 @@ async fn profile_value_conversion_overhead(client: &tokio_postgres::Client) {
             times.push(elapsed);
         }
         
-        println!("\n{} conversion:", type_name);
+        println!("\n{type_name} conversion:");
         println!("  Average: {:?}", average(&times));
         println!("  Per 100 rows: {:?}", average(&times));
     }
@@ -201,7 +201,7 @@ async fn profile_protocol_vs_direct(client: &tokio_postgres::Client) {
     // Simple protocol
     let mut simple_times = Vec::new();
     for i in 0..500 {
-        let query = format!("SELECT * FROM profile_simple WHERE id = {}", i);
+        let query = format!("SELECT * FROM profile_simple WHERE id = {i}");
         let start = Instant::now();
         let _rows = client.simple_query(&query).await.unwrap();
         simple_times.push(start.elapsed());
@@ -211,8 +211,8 @@ async fn profile_protocol_vs_direct(client: &tokio_postgres::Client) {
     let simple_avg = average(&simple_times);
     
     println!("\nProtocol comparison:");
-    println!("  Extended protocol: {:?}", extended_avg);
-    println!("  Simple protocol:   {:?}", simple_avg);
+    println!("  Extended protocol: {extended_avg:?}");
+    println!("  Simple protocol:   {simple_avg:?}");
     println!("  Extended overhead: {:.1}%", 
         (extended_avg.as_secs_f64() - simple_avg.as_secs_f64()) / simple_avg.as_secs_f64() * 100.0);
     
@@ -311,7 +311,7 @@ fn average(times: &[Duration]) -> Duration {
 
 fn start_server() -> Child {
     Command::new("cargo")
-        .args(&["run", "--", "--port", "5433"])
+        .args(["run", "--", "--port", "5433"])
         .env("RUST_LOG", "pgsqlite=info")
         .spawn()
         .expect("Failed to start server")

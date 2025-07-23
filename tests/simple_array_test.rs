@@ -16,7 +16,7 @@ async fn test_simple_array() {
     // First test without array operations
     let row = client.query_one("SELECT tags FROM test WHERE id = 1", &[]).await.unwrap();
     let tags: String = row.get(0);
-    println!("Tags without operation: {}", tags);
+    println!("Tags without operation: {tags}");
     
     // Now test with array concatenation
     let row = client.query_one(
@@ -25,7 +25,7 @@ async fn test_simple_array() {
     ).await.unwrap();
     
     let combined: String = row.get(0);
-    println!("Combined: {}", combined);
+    println!("Combined: {combined}");
     
     server.abort();
 }

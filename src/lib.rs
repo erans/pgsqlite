@@ -176,7 +176,7 @@ pub async fn handle_test_connection_with_pool(
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Query execution failed: {}", e),
+                            format!("Query execution failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -197,7 +197,7 @@ pub async fn handle_test_connection_with_pool(
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Parse failed: {}", e),
+                            format!("Parse failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -210,7 +210,7 @@ pub async fn handle_test_connection_with_pool(
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Bind failed: {}", e),
+                            format!("Bind failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -223,7 +223,7 @@ pub async fn handle_test_connection_with_pool(
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Execute failed: {}", e),
+                            format!("Execute failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -236,7 +236,7 @@ pub async fn handle_test_connection_with_pool(
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Describe failed: {}", e),
+                            format!("Describe failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -249,7 +249,7 @@ pub async fn handle_test_connection_with_pool(
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
-                            format!("Close failed: {}", e),
+                            format!("Close failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                     }
@@ -267,11 +267,11 @@ pub async fn handle_test_connection_with_pool(
             }
             FrontendMessage::Terminate => break,
             other => {
-                eprintln!("Unhandled message: {:?}", other);
+                eprintln!("Unhandled message: {other:?}");
                 let err = ErrorResponse::new(
                     "ERROR".to_string(),
                     "0A000".to_string(),
-                    format!("Feature not supported: {:?}", other),
+                    format!("Feature not supported: {other:?}"),
                 );
                 framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                 framed.send(BackendMessage::ReadyForQuery {

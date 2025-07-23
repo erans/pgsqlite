@@ -172,7 +172,7 @@ impl BatchUpdateTranslator {
                     .position(|col| col == &values_column)
                     .unwrap_or(1);
 
-                let mut case_stmt = format!("{} = CASE {}", column, key_column);
+                let mut case_stmt = format!("{column} = CASE {key_column}");
                 
                 for row in &info.values_data {
                     if key_column_index < row.len() && values_column_index < row.len() {
@@ -207,7 +207,7 @@ impl BatchUpdateTranslator {
         // Simplified extraction - look for pattern like "t.id = v.id" or "table.id = values.id"
         if let Some(alias) = table_alias {
             // Remove alias prefix if present
-            where_clause.replace(&format!("{}.", alias), "")
+            where_clause.replace(&format!("{alias}."), "")
                 .split('=')
                 .next()
                 .unwrap_or("id")
@@ -233,7 +233,7 @@ impl BatchUpdateTranslator {
                     let value = parts[1].trim();
                     
                     // Extract values column name (remove alias prefix)
-                    let values_column = value.replace(&format!("{}.", values_alias), "");
+                    let values_column = value.replace(&format!("{values_alias}."), "");
                     
                     Some((column, values_column))
                 } else {
@@ -355,7 +355,7 @@ mod tests {
         ];
         
         for part in expected_parts {
-            assert!(result.contains(part), "Result should contain '{}', but got: {}", part, result);
+            assert!(result.contains(part), "Result should contain '{part}', but got: {result}");
         }
     }
 

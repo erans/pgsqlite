@@ -166,7 +166,7 @@ impl SchemaCache {
         let mut column_data = Vec::new();
         
         // First get all columns from SQLite schema
-        let pragma_query = format!("PRAGMA table_info({})", table_name);
+        let pragma_query = format!("PRAGMA table_info({table_name})");
         let mut stmt = conn.prepare(&pragma_query)?;
         let rows = stmt.query_map([], |row| {
             let name: String = row.get(1)?;
@@ -303,7 +303,7 @@ fn extract_table_names_simple(query: &str) -> Result<Vec<String>, String> {
     // Look for FROM clause
     if let Some(from_pos) = query_upper.find(" FROM ") {
         let after_from = &query[from_pos + 6..];
-        if let Some(end_pos) = after_from.find(|c: char| c == ' ' || c == ';' || c == ')') {
+        if let Some(end_pos) = after_from.find([' ', ';', ')']) {
             let table_name = after_from[..end_pos].trim().to_string();
             tables.push(table_name);
         } else {

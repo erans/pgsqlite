@@ -56,7 +56,7 @@ fn setup_test_db() -> Connection {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -76,7 +76,7 @@ fn test_group_by_decimal_column() {
                FROM sales 
                GROUP BY category, price";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("GROUP BY decimal column rewritten to: {}", result);
+    println!("GROUP BY decimal column rewritten to: {result}");
     // For grouping, we might need to ensure consistent decimal representation
     // but SQLite should handle grouping text values correctly
 }
@@ -91,7 +91,7 @@ fn test_group_by_with_decimal_having() {
                GROUP BY category 
                HAVING SUM(price) > 1000";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("GROUP BY with HAVING rewritten to: {}", result);
+    println!("GROUP BY with HAVING rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
 }
 
@@ -102,7 +102,7 @@ fn test_order_by_decimal_column() {
     // Test ORDER BY with decimal column
     let sql = "SELECT * FROM sales ORDER BY price DESC";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("ORDER BY decimal column rewritten to: {}", result);
+    println!("ORDER BY decimal column rewritten to: {result}");
     // We need to wrap the decimal column for proper ordering
     // Since decimal values are stored as text, we need to convert them for proper numeric ordering
     assert!(result.contains("CAST") || result.contains("decimal_to_real"));
@@ -117,7 +117,7 @@ fn test_order_by_decimal_expression() {
                FROM sales 
                ORDER BY price * (1 - discount)";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("ORDER BY decimal expression rewritten to: {}", result);
+    println!("ORDER BY decimal expression rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     assert!(result.contains("decimal_sub"));
 }
@@ -129,7 +129,7 @@ fn test_order_by_multiple_columns_with_decimal() {
     // Test ORDER BY with multiple columns including decimal
     let sql = "SELECT * FROM sales ORDER BY category, price DESC, quantity";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("ORDER BY multiple columns rewritten to: {}", result);
+    println!("ORDER BY multiple columns rewritten to: {result}");
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn test_order_by_aggregate_decimal() {
                GROUP BY category 
                ORDER BY AVG(price) DESC";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("ORDER BY aggregate decimal rewritten to: {}", result);
+    println!("ORDER BY aggregate decimal rewritten to: {result}");
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn test_complex_group_order_query() {
                HAVING SUM(s.price * s.quantity) > 500
                ORDER BY SUM(s.price * s.quantity) DESC, p.cost ASC";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Complex GROUP BY/ORDER BY rewritten to: {}", result);
+    println!("Complex GROUP BY/ORDER BY rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     assert!(result.contains("decimal_lt"));
     assert!(result.contains("decimal_gt"));

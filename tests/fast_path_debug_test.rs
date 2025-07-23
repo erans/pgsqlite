@@ -17,7 +17,7 @@ async fn test_fast_path_with_metadata() -> Result<(), Box<dyn std::error::Error>
     ];
     
     for (query, _expected_fast_path, description) in queries {
-        println!("Testing: {} - {}", query, description);
+        println!("Testing: {query} - {description}");
         // Note: can_use_fast_path function needs connection and schema_cache which aren't directly accessible
         // from DbHandler. This test mainly verifies the table creation works.
     }

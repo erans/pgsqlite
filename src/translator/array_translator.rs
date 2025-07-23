@@ -231,7 +231,7 @@ impl ArrayTranslator {
                     json_elements.push(trimmed_element.to_string());
                 } else {
                     // Treat as string and quote it
-                    json_elements.push(format!("\"{}\"", trimmed_element));
+                    json_elements.push(format!("\"{trimmed_element}\""));
                 }
             }
         }
@@ -249,7 +249,7 @@ impl ArrayTranslator {
             // PostgreSQL arrays are 1-based, JSON arrays are 0-based
             let json_index = if index > 0 { index - 1 } else { 0 };
             
-            let replacement = format!("json_extract({}, '$[{}]')", array_col, json_index);
+            let replacement = format!("json_extract({array_col}, '$[{json_index}]')");
             result = result.replace(&captures[0], &replacement);
         }
         
@@ -265,7 +265,7 @@ impl ArrayTranslator {
             let start = &captures[2];
             let end = &captures[3];
             
-            let replacement = format!("array_slice({}, {}, {})", array_col, start, end);
+            let replacement = format!("array_slice({array_col}, {start}, {end})");
             result = result.replace(&captures[0], &replacement);
         }
         
@@ -281,8 +281,7 @@ impl ArrayTranslator {
             let array_col = &captures[2];
             
             let replacement = format!(
-                "EXISTS (SELECT 1 FROM json_each({}) WHERE value = {})",
-                array_col, value
+                "EXISTS (SELECT 1 FROM json_each({array_col}) WHERE value = {value})"
             );
             result = result.replace(&captures[0], &replacement);
         }
@@ -321,25 +320,22 @@ impl ArrayTranslator {
                 if let Some(from_pos) = subquery_or_array.to_uppercase().find(" FROM") {
                     let from_part = &subquery_or_array[from_pos..];
                     format!(
-                        "NOT EXISTS (SELECT 1{} WHERE {} {} {})",
-                        from_part, select_expr, inverted_op, value
+                        "NOT EXISTS (SELECT 1{from_part} WHERE {select_expr} {inverted_op} {value})"
                     )
                 } else {
                     // Fallback if we can't parse the FROM clause
                     format!(
-                        "NOT EXISTS ({} WHERE {} {} {})",
-                        subquery_or_array, select_expr, inverted_op, value
+                        "NOT EXISTS ({subquery_or_array} WHERE {select_expr} {inverted_op} {value})"
                     )
                 }
             } else {
                 // Handle array column case: ALL(array_col) -> NOT EXISTS(SELECT 1 FROM json_each(array_col) WHERE value <= ?)
                 format!(
-                    "NOT EXISTS (SELECT 1 FROM json_each({}) WHERE value {} {})",
-                    subquery_or_array, inverted_op, value
+                    "NOT EXISTS (SELECT 1 FROM json_each({subquery_or_array}) WHERE value {inverted_op} {value})"
                 )
             };
             
-            let full_match = format!("{} {} ALL({})", value, operator, subquery_or_array);
+            let full_match = format!("{value} {operator} ALL({subquery_or_array})");
             result = result.replace(&full_match, &replacement);
         }
         
@@ -383,7 +379,7 @@ impl ArrayTranslator {
             let array1 = &captures[1];
             let array2 = captures[2].trim();
             
-            let replacement = format!("array_contains({}, {})", array1, array2);
+            let replacement = format!("array_contains({array1}, {array2})");
             result = result.replace(&captures[0], &replacement);
         }
         
@@ -398,7 +394,7 @@ impl ArrayTranslator {
             let array1 = captures[1].trim();
             let array2 = &captures[2];
             
-            let replacement = format!("array_contained({}, {})", array1, array2);
+            let replacement = format!("array_contained({array1}, {array2})");
             result = result.replace(&captures[0], &replacement);
         }
         
@@ -413,7 +409,7 @@ impl ArrayTranslator {
             let array1 = &captures[1];
             let array2 = captures[2].trim();
             
-            let replacement = format!("array_overlap({}, {})", array1, array2);
+            let replacement = format!("array_overlap({array1}, {array2})");
             result = result.replace(&captures[0], &replacement);
         }
         
@@ -439,7 +435,7 @@ impl ArrayTranslator {
                     // Use type-aware resolution
                     if Self::is_likely_array_concatenation(&left_operand, &right_operand) {
                         let original_text = chars[left_start..right_end].iter().collect::<String>();
-                        let replacement = format!("array_cat({}, {})", left_operand, right_operand);
+                        let replacement = format!("array_cat({left_operand}, {right_operand})");
                         replacements.push((original_text, replacement));
                     }
                 }
@@ -686,7 +682,7 @@ impl ArrayTranslator {
             // Use type-aware resolution to determine if this should be array concatenation
             if Self::is_likely_array_concatenation(operand1, operand2) {
                 let original = captures[0].to_string();
-                let replacement = format!("array_cat({}, {})", operand1, operand2);
+                let replacement = format!("array_cat({operand1}, {operand2})");
                 
                 replacements.push((original, replacement, operand1.to_string()));
             }
@@ -799,7 +795,7 @@ mod tests {
     fn test_any_operator() {
         let sql = "SELECT * FROM products WHERE 'electronics' = ANY(tags)";
         let result = ArrayTranslator::translate_array_operators(sql).unwrap();
-        println!("ANY operator result: {}", result);
+        println!("ANY operator result: {result}");
         assert!(result.contains("EXISTS (SELECT 1 FROM json_each(tags) WHERE value = 'electronics')"));
     }
     
@@ -812,14 +808,14 @@ mod tests {
         // Test ALL with subquery
         let sql2 = "SELECT id, name FROM products WHERE 5 < ALL(SELECT length(value) FROM json_each(tags))";
         let result2 = ArrayTranslator::translate_array_operators(sql2).unwrap();
-        println!("Original: {}", sql2);
-        println!("ALL subquery result: {}", result2);
+        println!("Original: {sql2}");
+        println!("ALL subquery result: {result2}");
         assert!(result2.contains("NOT EXISTS"));
         // Note: This may not contain "length(value)" due to the translation
         
         // Test expression extraction
         let expr = extract_select_expression("SELECT length(value) FROM json_each(tags)");
-        println!("Extracted expression: {:?}", expr);
+        println!("Extracted expression: {expr:?}");
         assert_eq!(expr, Some("length(value)"));
     }
     
@@ -827,12 +823,12 @@ mod tests {
     fn test_all_operator_debug() {
         let sql = "SELECT id, name FROM products WHERE 5 < ALL(SELECT length(value) FROM json_each(tags))";
         let result = ArrayTranslator::translate_array_operators(sql).unwrap();
-        println!("ALL operator debug - Original: {}", sql);
-        println!("ALL operator debug - Result: {}", result);
+        println!("ALL operator debug - Original: {sql}");
+        println!("ALL operator debug - Result: {result}");
         
         // Test if the regex is matching
         let captures = ALL_OPERATOR_REGEX.captures(sql);
-        println!("ALL regex captures: {:?}", captures);
+        println!("ALL regex captures: {captures:?}");
         if let Some(captures) = captures {
             println!("  Value: '{}'", &captures[1]);
             println!("  Operator: '{}'", &captures[2]);
@@ -840,7 +836,7 @@ mod tests {
             // Test the balanced parentheses extraction
             let start_pos = captures.get(0).unwrap().end();
             let subquery = ArrayTranslator::extract_balanced_parentheses(sql, start_pos - 1).unwrap();
-            println!("  Extracted subquery: '{}'", subquery);
+            println!("  Extracted subquery: '{subquery}'");
         }
     }
     
@@ -897,20 +893,20 @@ mod tests {
         // Array function calls should trigger array concatenation
         let sql = "SELECT array_agg(id) || '{999}' FROM products";
         let result = ArrayTranslator::translate_array_operators(sql).unwrap();
-        println!("Array function result: {}", result);
+        println!("Array function result: {result}");
         assert!(result.contains("array_cat(array_agg(id), '{999}')"));
         
         // Array-like column names should trigger array concatenation
         let sql2 = "SELECT tags || categories FROM products";
         let result2 = ArrayTranslator::translate_array_operators(sql2).unwrap();
-        println!("Array column result: {}", result2);
+        println!("Array column result: {result2}");
         println!("is_likely_array for tags || categories: {}", ArrayTranslator::is_likely_array_concatenation("tags", "categories"));
         assert!(result2.contains("array_cat(tags, categories)"));
         
         // String columns should not trigger array concatenation
         let sql3 = "SELECT name || description FROM products";
         let result3 = ArrayTranslator::translate_array_operators(sql3).unwrap();
-        println!("String column result: {}", result3);
+        println!("String column result: {result3}");
         println!("is_likely_array for name || description: {}", ArrayTranslator::is_likely_array_concatenation("name", "description"));
         assert_eq!(result3, sql3); // Should remain unchanged
     }

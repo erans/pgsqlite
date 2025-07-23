@@ -21,13 +21,13 @@ async fn test_json_agg_integration() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -178,13 +178,13 @@ async fn test_json_agg_with_nulls() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     

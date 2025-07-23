@@ -17,6 +17,12 @@ pub struct StringConstraintValidator {
     constraints: Arc<RwLock<HashMap<String, HashMap<String, StringConstraint>>>>,
 }
 
+impl Default for StringConstraintValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StringConstraintValidator {
     pub fn new() -> Self {
         Self {

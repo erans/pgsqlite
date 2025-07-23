@@ -32,7 +32,7 @@ async fn benchmark_batch_insert_performance() {
     
     // First run migration
     let output = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--", "-d", db_path, "--migrate"])
+        .args(["run", "--release", "--", "-d", db_path, "--migrate"])
         .output()
         .await
         .expect("Failed to run migration");
@@ -52,12 +52,12 @@ async fn benchmark_batch_insert_performance() {
     // Start pgsqlite server
     let port = 25437;
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
     
     let mut server = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--", "-d", db_path, "-p", &port.to_string(), "--log-level", "error"])
+        .args(["run", "--release", "--", "-d", db_path, "-p", &port.to_string(), "--log-level", "error"])
         .spawn()
         .expect("Failed to start server");
     
@@ -65,7 +65,7 @@ async fn benchmark_batch_insert_performance() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     
     // Connect to server
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
         .expect("Failed to connect to server");
     
@@ -76,8 +76,8 @@ async fn benchmark_batch_insert_performance() {
     perform_startup(&mut stream).await;
     
     println!("\n=== Batch INSERT Performance Benchmark ===\n");
-    println!("Total rows to insert: {}", TOTAL_ROWS);
-    println!("Testing batch sizes: {:?}\n", BATCH_SIZES);
+    println!("Total rows to insert: {TOTAL_ROWS}");
+    println!("Testing batch sizes: {BATCH_SIZES:?}\n");
     
     // Benchmark each batch size
     let mut results = Vec::new();
@@ -93,7 +93,7 @@ async fn benchmark_batch_insert_performance() {
         println!("Testing batch size {} ({} batches{})", 
             batch_size, 
             num_batches,
-            if remainder > 0 { format!(" + {} rows", remainder) } else { String::new() }
+            if remainder > 0 { format!(" + {remainder} rows") } else { String::new() }
         );
         
         let start = Instant::now();
@@ -118,9 +118,9 @@ async fn benchmark_batch_insert_performance() {
         
         results.push((batch_size, elapsed, per_row, rows_per_sec));
         
-        println!("  Total time: {:?}", elapsed);
-        println!("  Per row: {:?}", per_row);
-        println!("  Rows/sec: {:.0}", rows_per_sec);
+        println!("  Total time: {elapsed:?}");
+        println!("  Per row: {per_row:?}");
+        println!("  Rows/sec: {rows_per_sec:.0}");
         println!();
     }
     
@@ -147,8 +147,7 @@ async fn benchmark_batch_insert_performance() {
         for i in 0..100 {
             let row_id = batch * 100 + i;
             if i > 0 { query.push_str(", "); }
-            query.push_str(&format!("({}, 'test_{}', {}, 'Description for row {}')", 
-                row_id, row_id, row_id, row_id));
+            query.push_str(&format!("({row_id}, 'test_{row_id}', {row_id}, 'Description for row {row_id}')"));
         }
         conn.execute(&query, []).unwrap();
     }
@@ -167,8 +166,7 @@ async fn benchmark_batch_insert_performance() {
     println!("\npgsqlite via PostgreSQL protocol:");
     for (batch_size, elapsed, _per_row, rows_per_sec) in &results {
         let speedup = results[0].1.as_secs_f64() / elapsed.as_secs_f64();
-        println!("  Batch size {:4}: {:?} ({:6.0} rows/sec, {:.1}x speedup vs single)",
-            batch_size, elapsed, rows_per_sec, speedup);
+        println!("  Batch size {batch_size:4}: {elapsed:?} ({rows_per_sec:6.0} rows/sec, {speedup:.1}x speedup vs single)");
     }
     
     // Calculate overhead vs SQLite
@@ -176,20 +174,19 @@ async fn benchmark_batch_insert_performance() {
     let sqlite_best = sqlite_batch_elapsed.min(sqlite_single_elapsed);
     for (batch_size, elapsed, _, _) in &results {
         let overhead = elapsed.as_secs_f64() / sqlite_best.as_secs_f64();
-        println!("  Batch size {:4}: {:.1}x overhead", batch_size, overhead);
+        println!("  Batch size {batch_size:4}: {overhead:.1}x overhead");
     }
     
     // Find optimal batch size
     let (optimal_size, optimal_time, _, optimal_rate) = results.iter()
         .min_by_key(|(_, elapsed, _, _)| elapsed.as_nanos())
         .unwrap();
-    println!("\nOptimal batch size: {} ({:?}, {:.0} rows/sec)", 
-        optimal_size, optimal_time, optimal_rate);
+    println!("\nOptimal batch size: {optimal_size} ({optimal_time:?}, {optimal_rate:.0} rows/sec)");
     
     // Kill server
     server.kill().await.unwrap();
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
 }
@@ -203,8 +200,7 @@ fn build_batch_insert_query(start_id: usize, batch_size: usize) -> String {
         }
         let id = start_id + i;
         query.push_str(&format!(
-            "({}, 'test_{}', {}, 'Description for row {}')",
-            id, id, id, id
+            "({id}, 'test_{id}', {id}, 'Description for row {id}')"
         ));
     }
     

@@ -92,8 +92,8 @@ impl CertificateManager {
             .and_then(|s| s.to_str())
             .context("Invalid database filename")?;
 
-        let cert_path = db_dir.join(format!("{}.crt", db_stem));
-        let key_path = db_dir.join(format!("{}.key", db_stem));
+        let cert_path = db_dir.join(format!("{db_stem}.crt"));
+        let key_path = db_dir.join(format!("{db_stem}.key"));
 
         if cert_path.exists() && key_path.exists() {
             debug!("Found existing certificates on filesystem");
@@ -140,13 +140,13 @@ impl CertificateManager {
             .and_then(|s| s.to_str())
             .context("Invalid database filename")?;
 
-        let cert_path = db_dir.join(format!("{}.crt", db_stem));
-        let key_path = db_dir.join(format!("{}.key", db_stem));
+        let cert_path = db_dir.join(format!("{db_stem}.crt"));
+        let key_path = db_dir.join(format!("{db_stem}.key"));
 
         fs::write(&cert_path, cert)
-            .with_context(|| format!("Failed to write certificate to {:?}", cert_path))?;
+            .with_context(|| format!("Failed to write certificate to {cert_path:?}"))?;
         fs::write(&key_path, key)
-            .with_context(|| format!("Failed to write private key to {:?}", key_path))?;
+            .with_context(|| format!("Failed to write private key to {key_path:?}"))?;
 
         // Set appropriate permissions on the private key (Unix only)
         #[cfg(unix)]
@@ -183,7 +183,7 @@ impl CertificateManager {
     fn load_certificates_from_files(&self, cert_path: &str, key_path: &str) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>)> {
         // Load certificate
         let cert_file = fs::File::open(cert_path)
-            .with_context(|| format!("Failed to open certificate file: {}", cert_path))?;
+            .with_context(|| format!("Failed to open certificate file: {cert_path}"))?;
         let mut cert_reader = BufReader::new(cert_file);
         let certs = rustls_pemfile::certs(&mut cert_reader)
             .collect::<Result<Vec<_>, _>>()
@@ -195,7 +195,7 @@ impl CertificateManager {
 
         // Load private key
         let key_file = fs::File::open(key_path)
-            .with_context(|| format!("Failed to open key file: {}", key_path))?;
+            .with_context(|| format!("Failed to open key file: {key_path}"))?;
         let mut key_reader = BufReader::new(key_file);
         
         let key = rustls_pemfile::private_key(&mut key_reader)?

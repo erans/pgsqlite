@@ -146,6 +146,12 @@ pub struct TypeConverterTable {
     binary_converter: BinaryTypeConverter,
 }
 
+impl Default for TypeConverterTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TypeConverterTable {
     pub fn new() -> Self {
         Self {
@@ -285,7 +291,7 @@ impl TypeConverterTable {
 
 /// Global type converter table
 static GLOBAL_TYPE_CONVERTER_TABLE: std::sync::LazyLock<TypeConverterTable> = 
-    std::sync::LazyLock::new(|| TypeConverterTable::new());
+    std::sync::LazyLock::new(TypeConverterTable::new);
 
 /// Get the global type converter table
 pub fn global_type_converter_table() -> &'static TypeConverterTable {

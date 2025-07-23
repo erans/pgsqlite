@@ -21,7 +21,7 @@ async fn test_server_accepts_connections() {
     // Try to connect
     let result = timeout(
         Duration::from_secs(1),
-        TcpStream::connect(format!("127.0.0.1:{}", port))
+        TcpStream::connect(format!("127.0.0.1:{port}"))
     ).await;
     
     assert!(result.is_ok(), "Should be able to connect to server");
@@ -47,9 +47,9 @@ async fn test_multiple_connections() {
     for i in 0..5 {
         let result = timeout(
             Duration::from_secs(1),
-            TcpStream::connect(format!("127.0.0.1:{}", port))
+            TcpStream::connect(format!("127.0.0.1:{port}"))
         ).await;
         
-        assert!(result.is_ok(), "Connection {} should succeed", i);
+        assert!(result.is_ok(), "Connection {i} should succeed");
     }
 }

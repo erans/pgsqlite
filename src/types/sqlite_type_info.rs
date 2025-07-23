@@ -41,7 +41,7 @@ fn get_type_from_schema(conn: &Connection, table_name: &str, column_name: &str) 
     }
     
     // Fall back to PRAGMA table_info
-    let query = format!("PRAGMA table_info({})", table_name);
+    let query = format!("PRAGMA table_info({table_name})");
     let mut stmt = conn.prepare(&query)?;
     
     let mut rows = stmt.query_map([], |row| {

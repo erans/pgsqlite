@@ -20,7 +20,7 @@ async fn test_numeric_types() {
             let table: String = row.get(0);
             let column: String = row.get(1);
             let pg_type: String = row.get(2);
-            println!("  {}.{} -> {}", table, column, pg_type);
+            println!("  {table}.{column} -> {pg_type}");
         }
     } else {
         println!("Could not query __pgsqlite_schema table - may not exist");
@@ -69,11 +69,11 @@ async fn test_boolean_representations() {
     // Test boolean values (now properly returned as PostgreSQL bool type)
     let row = &rows[0];
     let flag: bool = row.get(1);
-    assert_eq!(flag, true);
+    assert!(flag);
     
     let row = &rows[1];
     let flag: bool = row.get(1);
-    assert_eq!(flag, false);
+    assert!(!flag);
     
     // Test with WHERE clause
     let rows = client.query("SELECT id FROM bool_test WHERE flag = true", &[]).await.unwrap();
@@ -249,7 +249,7 @@ async fn test_date_time_types() {
     let row = client.query_one("SELECT date('now')", &[]).await.unwrap();
     
     // Debug: Check what type we're getting
-    let col = row.columns().get(0).unwrap();
+    let col = row.columns().first().unwrap();
     
     // Our datetime translation converts date() to epoch days (INTEGER since redesign)
     if col.type_() == &tokio_postgres::types::Type::TEXT {
@@ -270,7 +270,7 @@ async fn test_date_time_types() {
         assert!(epoch_days > 0, "Epoch days should be positive");
         // Verify it's a reasonable epoch days value (after year 2000)
         // 2000-01-01 is epoch day 10957
-        assert!(epoch_days > 10957, "Epoch days should be after year 2000, got {}", epoch_days);
+        assert!(epoch_days > 10957, "Epoch days should be after year 2000, got {epoch_days}");
     } else if col.type_().oid() == 1082 { // DATE type OID
         let val: chrono::NaiveDate = row.get(0);
         assert!(val.to_string().len() == 10); // YYYY-MM-DD format
@@ -280,7 +280,7 @@ async fn test_date_time_types() {
     
     // Test datetime arithmetic
     let row = client.query_one("SELECT date('2024-01-15', '+1 day')", &[]).await.unwrap();
-    let col = row.columns().get(0).unwrap();
+    let col = row.columns().first().unwrap();
     if col.type_() == &tokio_postgres::types::Type::TEXT {
         let val: &str = row.get(0);
         // Should be Unix timestamp for 2024-01-16
@@ -301,7 +301,7 @@ async fn test_date_time_types() {
         let expected_epoch_day = 19738; // Actual value returned by the system
         // Allow some tolerance since we're doing date arithmetic
         assert!((epoch_days - expected_epoch_day).abs() <= 2, 
-               "Expected epoch day around {} for 2024-01-16, got {}", expected_epoch_day, epoch_days);
+               "Expected epoch day around {expected_epoch_day} for 2024-01-16, got {epoch_days}");
     } else if col.type_().oid() == 1082 { // DATE type OID
         let val: chrono::NaiveDate = row.get(0);
         assert_eq!(val.to_string(), "2024-01-16");
@@ -329,7 +329,7 @@ async fn test_bytea_type() {
     let test_data = vec![0u8, 1, 2, 3, 255, 254, 253];
     let hex_data = hex::encode(&test_data);
     client.execute(
-        &format!("INSERT INTO bytea_test (id, data) VALUES (1, X'{}')", hex_data),
+        &format!("INSERT INTO bytea_test (id, data) VALUES (1, X'{hex_data}')"),
         &[]
     ).await.unwrap();
     

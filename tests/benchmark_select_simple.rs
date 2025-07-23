@@ -10,12 +10,12 @@ async fn benchmark_select_simple() {
     // Start pgsqlite server with in-memory database
     let port = 25439;
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
     
     let mut server = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--", "-p", &port.to_string(), "--in-memory", "--log-level", "error"])
+        .args(["run", "--release", "--", "-p", &port.to_string(), "--in-memory", "--log-level", "error"])
         .spawn()
         .expect("Failed to start server");
     
@@ -23,7 +23,7 @@ async fn benchmark_select_simple() {
     tokio::time::sleep(Duration::from_secs(3)).await;
     
     // Connect to server
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
         .expect("Failed to connect to server");
     
@@ -74,7 +74,7 @@ async fn benchmark_select_simple() {
         read_until_ready(&mut stream).await;
     }
     
-    println!("Inserted {} rows\n", TOTAL_ROWS);
+    println!("Inserted {TOTAL_ROWS} rows\n");
     
     // Test queries
     let test_queries = vec![
@@ -117,14 +117,14 @@ async fn benchmark_select_simple() {
         let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
         let min_time = times.iter().min().unwrap();
         
-        println!("{}", description);
-        println!("  Query: {}", query);
+        println!("{description}");
+        println!("  Query: {query}");
         println!("  First: {:?}, Avg: {:?}, Min: {:?}", first_time.unwrap(), avg_time, min_time);
         
         if let Some(first) = first_time {
             let cache_speedup = first.as_secs_f64() / min_time.as_secs_f64();
             if cache_speedup > 1.2 {
-                println!("  Cache speedup: {:.1}x", cache_speedup);
+                println!("  Cache speedup: {cache_speedup:.1}x");
             }
         }
         println!();
@@ -178,7 +178,7 @@ async fn benchmark_select_simple() {
             let mut stmt = conn.prepare(query).unwrap();
             let mut rows = stmt.query([]).unwrap();
             let mut _count = 0;
-            while let Some(_) = rows.next().unwrap() {
+            while rows.next().unwrap().is_some() {
                 _count += 1;
             }
             let elapsed = start.elapsed();
@@ -186,14 +186,14 @@ async fn benchmark_select_simple() {
         }
         
         let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
-        println!("{}: {:?}", description, avg_time);
+        println!("{description}: {avg_time:?}");
     }
     
     println!("\n--- Overhead Analysis ---\n");
     
     // Test with different result sizes
     for limit in &[1, 10, 100, 1000] {
-        let query = format!("SELECT * FROM test_select LIMIT {}", limit);
+        let query = format!("SELECT * FROM test_select LIMIT {limit}");
         
         // pgsqlite timing
         let mut pg_times = Vec::new();
@@ -211,20 +211,19 @@ async fn benchmark_select_simple() {
             let start = Instant::now();
             let mut stmt = conn.prepare(&query).unwrap();
             let mut rows = stmt.query([]).unwrap();
-            while let Some(_) = rows.next().unwrap() {}
+            while rows.next().unwrap().is_some() {}
             sq_times.push(start.elapsed());
         }
         let sq_avg = sq_times.iter().sum::<Duration>() / sq_times.len() as u32;
         
         let overhead = pg_avg.as_secs_f64() / sq_avg.as_secs_f64();
-        println!("{} rows: pgsqlite {:?}, SQLite {:?}, overhead {:.1}x", 
-            limit, pg_avg, sq_avg, overhead);
+        println!("{limit} rows: pgsqlite {pg_avg:?}, SQLite {sq_avg:?}, overhead {overhead:.1}x");
     }
     
     // Kill server
     server.kill().await.unwrap();
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
 }

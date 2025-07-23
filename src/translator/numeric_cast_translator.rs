@@ -27,7 +27,7 @@ impl NumericCastTranslator {
             let scale = captures.get(3).unwrap().as_str();
             
             tracing::info!("Translating CAST({} AS NUMERIC({},{})) to numeric_cast", expr, precision, scale);
-            let replacement = format!("numeric_cast({}, {}, {})", expr, precision, scale);
+            let replacement = format!("numeric_cast({expr}, {precision}, {scale})");
             result = result.replace(full_match.as_str(), &replacement);
         }
         

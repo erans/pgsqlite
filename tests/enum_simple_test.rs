@@ -37,7 +37,7 @@ async fn test_enum_simple_query() {
     // Check we got the row back
     eprintln!("Got {} results", results.len());
     for (i, result) in results.iter().enumerate() {
-        eprintln!("Result {}: {:?}", i, result);
+        eprintln!("Result {i}: {result:?}");
     }
     
     // Skip RowDescription at index 0, get Row at index 1
@@ -77,8 +77,7 @@ async fn test_enum_check_constraint() {
     let err_str = err.to_string();
     assert!(
         err_str.contains("invalid input value for enum") || err_str.contains("CHECK constraint"),
-        "Error should mention invalid enum value or CHECK constraint. Got: {}",
-        err_str
+        "Error should mention invalid enum value or CHECK constraint. Got: {err_str}"
     );
     
     // Test that valid values work

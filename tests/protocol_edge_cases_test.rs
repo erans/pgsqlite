@@ -16,8 +16,7 @@ async fn test_large_result_set() {
             // Insert 5000 rows
             for i in 1..=5000 {
                 db.execute(&format!(
-                    "INSERT INTO large_data (id, data) VALUES ({}, 'Row {} data with some padding to make it larger')",
-                    i, i
+                    "INSERT INTO large_data (id, data) VALUES ({i}, 'Row {i} data with some padding to make it larger')"
                 )).await?;
             }
             
@@ -152,8 +151,7 @@ async fn test_portal_suspension() {
             // Insert 100 rows
             for i in 1..=100 {
                 db.execute(&format!(
-                    "INSERT INTO suspension_test VALUES ({}, 'Value {}')",
-                    i, i
+                    "INSERT INTO suspension_test VALUES ({i}, 'Value {i}')"
                 )).await?;
             }
             
@@ -241,7 +239,7 @@ async fn test_empty_query() {
         }
         Err(e) => {
             // Some implementations might error on empty query
-            println!("Empty query error (may be expected): {}", e);
+            println!("Empty query error (may be expected): {e}");
         }
     }
     
@@ -251,7 +249,7 @@ async fn test_empty_query() {
             assert!(messages.is_empty() || messages.len() == 1);
         }
         Err(e) => {
-            println!("Whitespace query error (may be expected): {}", e);
+            println!("Whitespace query error (may be expected): {e}");
         }
     }
     
@@ -316,9 +314,9 @@ async fn test_query_timeout() {
     match result {
         Ok(Ok(rows)) => {
             let count: i64 = rows[0].get(0);
-            println!("Recursive query completed with count: {}", count);
+            println!("Recursive query completed with count: {count}");
         }
-        Ok(Err(e)) => println!("Query error: {}", e),
+        Ok(Err(e)) => println!("Query error: {e}"),
         Err(_) => println!("Query timed out (expected for very large recursive)"),
     }
     
@@ -343,8 +341,7 @@ async fn test_special_characters_in_strings() {
     let client = &server.client;
     
     // Test various special characters
-    let test_strings = vec![
-        "Simple string",
+    let test_strings = ["Simple string",
         "String with 'quotes'",
         "String with \"double quotes\"",
         "String with \\ backslash",
@@ -352,8 +349,7 @@ async fn test_special_characters_in_strings() {
         "String with \t tab",
         "String with NULL \0 byte",
         "Unicode: émojis 🎉 and 中文",
-        "Mixed: 'quotes' and \"more\" \\ stuff",
-    ];
+        "Mixed: 'quotes' and \"more\" \\ stuff"];
     
     for (i, s) in test_strings.iter().enumerate() {
         // Skip NULL byte test if it causes issues
@@ -364,7 +360,7 @@ async fn test_special_characters_in_strings() {
             ).await {
                 Ok(_) => {},
                 Err(e) => {
-                    println!("NULL byte in string not supported (expected): {}", e);
+                    println!("NULL byte in string not supported (expected): {e}");
                     continue;
                 }
             }
@@ -381,7 +377,7 @@ async fn test_special_characters_in_strings() {
             &[&(i as i32)]
         ).await.unwrap();
         let retrieved: String = row.get(0);
-        assert_eq!(&retrieved, s, "Failed for string: {:?}", s);
+        assert_eq!(&retrieved, s, "Failed for string: {s:?}");
     }
     
     server.abort();
@@ -394,7 +390,7 @@ async fn test_parameter_limit() {
             // Create table with many columns
             let mut cols = Vec::new();
             for i in 1..=100 {
-                cols.push(format!("col{} INTEGER", i));
+                cols.push(format!("col{i} INTEGER"));
             }
             
             db.execute(&format!(
@@ -434,7 +430,7 @@ async fn test_parameter_limit() {
             println!("Successfully inserted with 101 parameters");
         }
         Err(e) => {
-            println!("Failed with many parameters: {}", e);
+            println!("Failed with many parameters: {e}");
         }
     }
     

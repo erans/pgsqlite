@@ -1,7 +1,7 @@
 use crate::protocol::{BackendMessage, FieldDescription};
 use crate::session::{DbHandler, SessionState, QueryRouter};
 use crate::catalog::CatalogInterceptor;
-use crate::translator::{JsonTranslator, ReturningTranslator, BatchUpdateTranslator, BatchDeleteTranslator};
+use crate::translator::{JsonTranslator, ReturningTranslator, BatchUpdateTranslator, BatchDeleteTranslator, FtsTranslator};
 use crate::types::PgType;
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::metadata::EnumTriggers;
@@ -118,8 +118,8 @@ fn create_command_tag(operation: &str, rows_affected: usize) -> String {
         ("DELETE", 0) => "DELETE 0".to_string(),
         ("DELETE", 1) => "DELETE 1".to_string(),
         // Format for all other cases
-        ("INSERT", n) => format!("INSERT 0 {}", n),
-        (op, n) => format!("{} {}", op, n),
+        ("INSERT", n) => format!("INSERT 0 {n}"),
+        (op, n) => format!("{op} {n}"),
     }
 }
 
@@ -215,7 +215,7 @@ impl QueryExecutor {
                         .collect();
                     
                     framed.send(BackendMessage::RowDescription(fields)).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+                        .map_err(PgSqliteError::Io)?;
                     
                     // Send data rows with boolean and datetime conversion
                     for row in response.rows {
@@ -291,13 +291,13 @@ impl QueryExecutor {
                             .collect();
                         
                         framed.send(BackendMessage::DataRow(converted_row)).await
-                            .map_err(|e| PgSqliteError::Io(e))?;
+                            .map_err(PgSqliteError::Io)?;
                     }
                     
                     // Send command complete
                     let tag = create_command_tag("SELECT", response.rows_affected);
                     framed.send(BackendMessage::CommandComplete { tag }).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+                        .map_err(PgSqliteError::Io)?;
                     
                     return Ok(());
                 }
@@ -316,7 +316,7 @@ impl QueryExecutor {
                 crate::time_cast_translation!({
                     use crate::translator::CastTranslator;
                     let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                     let translated = CastTranslator::translate_query(query, Some(&conn));
                     drop(conn); // Release the connection
                     translated
@@ -324,7 +324,7 @@ impl QueryExecutor {
             } else {
                 use crate::translator::CastTranslator;
                 let conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                 let translated = CastTranslator::translate_query(query, Some(&conn));
                 drop(conn); // Release the connection
                 translated
@@ -337,7 +337,7 @@ impl QueryExecutor {
         if crate::translator::NumericFormatTranslator::needs_translation(&translated_query) {
             use crate::translator::NumericFormatTranslator;
             let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
             translated_query = NumericFormatTranslator::translate_query(&translated_query, &conn);
             drop(conn); // Release the connection
         }
@@ -360,6 +360,49 @@ impl QueryExecutor {
             let batch_translator = BatchDeleteTranslator::new(decimal_cache);
             translated_query = batch_translator.translate(&translated_query, &[]);
             debug!("Query after batch DELETE translation: {}", translated_query);
+        }
+        
+        // Translate FTS operations if needed
+        if FtsTranslator::contains_fts_operations(&translated_query) {
+            debug!("Query contains FTS operations: {}", translated_query);
+            let fts_translator = FtsTranslator::new();
+            
+            // Get connection, do translation, and immediately drop it to avoid Send issues
+            let fts_queries = {
+                let conn = db.get_mut_connection()
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
+                let result = fts_translator.translate(&translated_query, Some(&conn));
+                drop(conn); // Release the connection immediately
+                result
+            };
+            
+            match fts_queries {
+                Ok(fts_queries) => {
+                    // For multiple queries (like CREATE TABLE with shadow tables), execute them all
+                    if fts_queries.len() > 1 {
+                        debug!("FTS translation produced {} queries", fts_queries.len());
+                        
+                        // Execute all but the last query first
+                        for (i, fts_query) in fts_queries.iter().take(fts_queries.len() - 1).enumerate() {
+                            debug!("Executing FTS query {}: {}", i + 1, fts_query);
+                            db.execute(fts_query).await?;
+                        }
+                        
+                        // Use the last query as the main query
+                        if let Some(main_query) = fts_queries.last() {
+                            translated_query = main_query.clone();
+                            debug!("Using final FTS query: {}", translated_query);
+                        }
+                    } else if fts_queries.len() == 1 {
+                        translated_query = fts_queries[0].clone();
+                        debug!("Query after FTS translation: {}", translated_query);
+                    }
+                }
+                Err(e) => {
+                    debug!("FTS translation failed: {}", e);
+                    return Err(PgSqliteError::Protocol(format!("FTS translation error: {e}")));
+                }
+            }
         }
         
         // Translate INSERT statements with datetime values if needed
@@ -682,7 +725,7 @@ impl QueryExecutor {
         
         // Send RowDescription
         framed.send(BackendMessage::RowDescription(fields.clone())).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         
         // Convert array data before sending rows
@@ -699,14 +742,14 @@ impl QueryExecutor {
             // Use individual sending for small result sets
             for row in converted_rows {
                 framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
         }
         
         // Send CommandComplete with optimized tag creation
         let tag = create_command_tag("SELECT", response.rows_affected);
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -736,7 +779,7 @@ impl QueryExecutor {
                 if let Some(table_name) = extract_table_name_from_insert(query) {
                     // Get a connection to check constraints
                     let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                     
                     // Validate numeric constraints
                     let validation_result = NumericValidator::validate_insert(&conn, query, &table_name);
@@ -751,7 +794,7 @@ impl QueryExecutor {
                 if let Some(table_name) = extract_table_name_from_update(query) {
                     // Get a connection to check constraints
                     let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                     
                     // Validate numeric constraints
                     let validation_result = NumericValidator::validate_update(&conn, query, &table_name);
@@ -769,7 +812,7 @@ impl QueryExecutor {
         if let Some(e) = validation_error {
             let error_response = e.to_error_response();
             framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             return Ok(());
         }
         
@@ -789,7 +832,7 @@ impl QueryExecutor {
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -823,9 +866,7 @@ impl QueryExecutor {
             
             // Get the last inserted rowid and query for RETURNING data
             let returning_query = format!(
-                "SELECT {} FROM {} WHERE rowid = last_insert_rowid()",
-                returning_clause,
-                table_name
+                "SELECT {returning_clause} FROM {table_name} WHERE rowid = last_insert_rowid()"
             );
             
             let returning_response = if let Some(router) = query_router {
@@ -849,18 +890,18 @@ impl QueryExecutor {
                 .collect();
             
             framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             // Send data rows
             for row in returning_response.rows {
                 framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             
             // Send command complete
             let tag = format!("INSERT 0 {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Update) {
             // For UPDATE, we need a different approach
             // SQLite doesn't support RETURNING natively, so we'll use a workaround
@@ -870,9 +911,7 @@ impl QueryExecutor {
             // First, get the rowids of rows that will be updated
             let where_clause = ReturningTranslator::extract_where_clause(&base_query);
             let rowid_query = format!(
-                "SELECT rowid FROM {} {}",
-                table_name,
-                where_clause
+                "SELECT rowid FROM {table_name} {where_clause}"
             );
             let rowid_response = if let Some(router) = query_router {
                 router.execute_query(&rowid_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
@@ -895,10 +934,7 @@ impl QueryExecutor {
             if !rowids.is_empty() {
                 let rowid_list = rowids.join(",");
                 let returning_query = format!(
-                    "SELECT {} FROM {} WHERE rowid IN ({})",
-                    returning_clause,
-                    table_name,
-                    rowid_list
+                    "SELECT {returning_clause} FROM {table_name} WHERE rowid IN ({rowid_list})"
                 );
                 
                 let returning_response = if let Some(router) = query_router {
@@ -922,19 +958,19 @@ impl QueryExecutor {
                     .collect();
                 
                 framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
                 
                 // Send data rows
                 for row in returning_response.rows {
                     framed.send(BackendMessage::DataRow(row)).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
+                        .map_err(PgSqliteError::Io)?;
                 }
             }
             
             // Send command complete
             let tag = format!("UPDATE {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Delete) {
             // For DELETE, capture rows before deletion
             let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
@@ -976,7 +1012,7 @@ impl QueryExecutor {
                 .collect();
             
             framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             // Send captured rows (skip rowid column)
             for row in captured_rows.rows {
@@ -984,13 +1020,13 @@ impl QueryExecutor {
                     .skip(1) // Skip rowid
                     .collect();
                 framed.send(BackendMessage::DataRow(data_row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             
             // Send command complete
             let tag = format!("DELETE {}", response.rows_affected);
             framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
         }
         
         Ok(())
@@ -1015,7 +1051,7 @@ impl QueryExecutor {
             // Handle the ENUM DDL in a scope to ensure the mutex guard is dropped
             let command_tag = {
                 let mut conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
                 
                 // Handle the ENUM DDL
                 EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
@@ -1036,7 +1072,7 @@ impl QueryExecutor {
             framed.send(BackendMessage::CommandComplete { 
                 tag: command_tag.to_string() 
             }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             
             return Ok(());
         }
@@ -1044,10 +1080,10 @@ impl QueryExecutor {
         let (translated_query, type_mappings, enum_columns, array_columns) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
             // Use CREATE TABLE translator with connection for ENUM support
             let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {}", e)))?;
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
             
             let result = CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
-                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {}", e)))?;
+                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {e}")))?;
             
             // Connection guard is dropped here
             (result.sql, result.type_mappings, result.enum_columns, result.array_columns)
@@ -1153,16 +1189,16 @@ impl QueryExecutor {
                 // Create triggers for ENUM columns
                 if !enum_columns.is_empty() {
                     let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {}", e)))?;
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {e}")))?;
                     
                     for (column_name, enum_type) in &enum_columns {
                         // Record enum usage
                         EnumTriggers::record_enum_usage(&conn, &table_name, column_name, enum_type)
-                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {}", e)))?;
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {e}")))?;
                         
                         // Create validation triggers
                         EnumTriggers::create_enum_validation_triggers(&conn, &table_name, column_name, enum_type)
-                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {}", e)))?;
+                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {e}")))?;
                         
                         info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
                     }
@@ -1171,7 +1207,7 @@ impl QueryExecutor {
                 // Store array column metadata
                 if !array_columns.is_empty() {
                     let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {}", e)))?;
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {e}")))?;
                     
                     // Create array metadata table if it doesn't exist (should exist from migration v8)
                     conn.execute(
@@ -1183,7 +1219,7 @@ impl QueryExecutor {
                             PRIMARY KEY (table_name, column_name)
                         )", 
                         []
-                    ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {}", e)))?;
+                    ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {e}")))?;
                     
                     // Insert array column metadata
                     for (column_name, element_type, dimensions) in &array_columns {
@@ -1191,7 +1227,7 @@ impl QueryExecutor {
                             "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
                              VALUES (?1, ?2, ?3, ?4)",
                             params![table_name, column_name, element_type, dimensions]
-                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {}", e)))?;
+                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {e}")))?;
                         
                         info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
                               table_name, column_name, element_type, dimensions);
@@ -1207,7 +1243,7 @@ impl QueryExecutor {
                 // Populate PostgreSQL catalog tables with constraint information
                 if let Some(table_name) = extract_table_name_from_create(query) {
                     let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for constraint population: {}", e)))?;
+                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for constraint population: {e}")))?;
                     
                     // Populate pg_constraint, pg_attrdef, and pg_index tables
                     if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
@@ -1243,7 +1279,7 @@ impl QueryExecutor {
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -1263,17 +1299,17 @@ impl QueryExecutor {
             QueryType::Begin => {
                 db.execute("BEGIN").await?;
                 framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             QueryType::Commit => {
                 db.execute("COMMIT").await?;
                 framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             QueryType::Rollback => {
                 db.execute("ROLLBACK").await?;
                 framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
             _ => {}
         }
@@ -1299,7 +1335,7 @@ impl QueryExecutor {
         }
         
         framed.send(BackendMessage::CommandComplete { tag: "OK".to_string() }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }
@@ -1330,7 +1366,7 @@ impl QueryExecutor {
             // Send individually for small result sets
             for row in rows {
                 framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
+                    .map_err(PgSqliteError::Io)?;
             }
         } else {
             // Send in batches with periodic flushing
@@ -1340,7 +1376,7 @@ impl QueryExecutor {
                 for _ in 0..batch_size {
                     if let Some(row) = row_iter.next() {
                         framed.send(BackendMessage::DataRow(row)).await
-                            .map_err(|e| PgSqliteError::Io(e))?;
+                            .map_err(PgSqliteError::Io)?;
                         batch_sent = true;
                     } else {
                         break;
@@ -1350,7 +1386,7 @@ impl QueryExecutor {
                     break;
                 }
                 // Flush after each batch to ensure timely delivery
-                framed.flush().await.map_err(|e| PgSqliteError::Io(e))?;
+                framed.flush().await.map_err(PgSqliteError::Io)?;
             }
         }
         
@@ -1394,7 +1430,7 @@ impl QueryExecutor {
                     let type_oid = type_oids.get(col_idx).copied().unwrap_or(25); // Default to TEXT
                     
                     // Check if this is an array type that needs conversion
-                    if PgType::from_oid(type_oid).map_or(false, |t| t.is_array()) {
+                    if PgType::from_oid(type_oid).is_some_and(|t| t.is_array()) {
                         // Try to convert JSON array to PostgreSQL array format
                         match Self::convert_json_to_pg_array(&data) {
                             Ok(converted_data) => Some(converted_data),
@@ -1467,7 +1503,7 @@ impl QueryExecutor {
                 serde_json::Value::String(s) => {
                     // Escape quotes and backslashes
                     let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-                    format!("\"{}\"", escaped)
+                    format!("\"{escaped}\"")
                 }
                 serde_json::Value::Array(_) => {
                     // Nested arrays - convert recursively
@@ -1482,68 +1518,6 @@ impl QueryExecutor {
         }).collect();
         
         format!("{{{}}}", elements.join(","))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_json_to_pg_array_conversion() {
-        let json_data = b"[\"a\", \"b\", \"c\"]";
-        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
-        let pg_array = String::from_utf8(result).unwrap();
-        assert_eq!(pg_array, r#"{"a","b","c"}"#);
-    }
-    
-    #[test]
-    fn test_json_to_pg_array_numbers() {
-        let json_data = b"[1, 2, 3]";
-        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
-        let pg_array = String::from_utf8(result).unwrap();
-        assert_eq!(pg_array, "{1,2,3}");
-    }
-    
-    #[test]
-    fn test_non_array_json() {
-        let json_data = b"\"not an array\"";
-        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
-        assert_eq!(result, json_data);
-    }
-    
-    #[test]
-    fn test_array_type_detection() {
-        use crate::protocol::FieldDescription;
-        
-        // Test that TextArray type OID 1009 is correctly detected as an array
-        let text_array_type = PgType::TextArray.to_oid();
-        assert_eq!(text_array_type, 1009);
-        assert!(PgType::from_oid(text_array_type).map_or(false, |t| t.is_array()));
-        
-        // Test that regular text is not detected as an array
-        let text_type = PgType::Text.to_oid();
-        assert_eq!(text_type, 25);
-        assert!(!PgType::from_oid(text_type).map_or(false, |t| t.is_array()));
-        
-        // Test conversion with array type
-        let fields = vec![
-            FieldDescription {
-                name: "test_col".to_string(),
-                table_oid: 0,
-                column_id: 1,
-                type_oid: 1009, // TextArray
-                type_size: -1,
-                type_modifier: -1,
-                format: 0,
-            }
-        ];
-        
-        let rows = vec![vec![Some(b"[\"a\", \"b\", \"c\"]".to_vec())]];
-        let converted = QueryExecutor::convert_array_data_in_rows(rows, &fields).unwrap();
-        let result_data = &converted[0][0].as_ref().unwrap();
-        let result_str = String::from_utf8_lossy(result_data);
-        assert_eq!(result_str, r#"{"a","b","c"}"#);
     }
 }
 
@@ -1650,5 +1624,67 @@ fn extract_table_name_from_update(query: &str) -> Option<String> {
         Some(table_name.to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_json_to_pg_array_conversion() {
+        let json_data = b"[\"a\", \"b\", \"c\"]";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        let pg_array = String::from_utf8(result).unwrap();
+        assert_eq!(pg_array, r#"{"a","b","c"}"#);
+    }
+    
+    #[test]
+    fn test_json_to_pg_array_numbers() {
+        let json_data = b"[1, 2, 3]";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        let pg_array = String::from_utf8(result).unwrap();
+        assert_eq!(pg_array, "{1,2,3}");
+    }
+    
+    #[test]
+    fn test_non_array_json() {
+        let json_data = b"\"not an array\"";
+        let result = QueryExecutor::convert_json_to_pg_array(json_data).unwrap();
+        assert_eq!(result, json_data);
+    }
+    
+    #[test]
+    fn test_array_type_detection() {
+        use crate::protocol::FieldDescription;
+        
+        // Test that TextArray type OID 1009 is correctly detected as an array
+        let text_array_type = PgType::TextArray.to_oid();
+        assert_eq!(text_array_type, 1009);
+        assert!(PgType::from_oid(text_array_type).is_some_and(|t| t.is_array()));
+        
+        // Test that regular text is not detected as an array
+        let text_type = PgType::Text.to_oid();
+        assert_eq!(text_type, 25);
+        assert!(!PgType::from_oid(text_type).is_some_and(|t| t.is_array()));
+        
+        // Test conversion with array type
+        let fields = vec![
+            FieldDescription {
+                name: "test_col".to_string(),
+                table_oid: 0,
+                column_id: 1,
+                type_oid: 1009, // TextArray
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            }
+        ];
+        
+        let rows = vec![vec![Some(b"[\"a\", \"b\", \"c\"]".to_vec())]];
+        let converted = QueryExecutor::convert_array_data_in_rows(rows, &fields).unwrap();
+        let result_data = &converted[0][0].as_ref().unwrap();
+        let result_str = String::from_utf8_lossy(result_data);
+        assert_eq!(result_str, r#"{"a","b","c"}"#);
     }
 }

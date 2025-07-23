@@ -28,8 +28,8 @@ async fn test_datetime_conversion_success() {
             let time_type = data.get("typeof(time_col)").unwrap();
             
             println!("Storage check:");
-            println!("  Date type: {}", date_type);
-            println!("  Time type: {}", time_type);
+            println!("  Date type: {date_type}");
+            println!("  Time type: {time_type}");
             
             assert_eq!(date_type, "integer", "Date stored as INTEGER");
             assert_eq!(time_type, "integer", "Time stored as INTEGER");
@@ -47,8 +47,8 @@ async fn test_datetime_conversion_success() {
             let time_str = data.get("time_col").unwrap();
             
             println!("\nRetrieved values:");
-            println!("  Date: {}", date_str);
-            println!("  Time: {}", time_str);
+            println!("  Date: {date_str}");
+            println!("  Time: {time_str}");
             
             // These should be the converted values
             assert_eq!(date_str, "2024-01-15", "Date should be converted back");

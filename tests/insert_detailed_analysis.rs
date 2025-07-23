@@ -38,7 +38,7 @@ async fn test_insert_detailed_timing() {
         }
         
         let avg_time = times.iter().sum::<std::time::Duration>() / times.len() as u32;
-        println!("{}: {:?} (avg of 10 runs)", desc, avg_time);
+        println!("{desc}: {avg_time:?} (avg of 10 runs)");
     }
     
     // Test parameterized INSERT through extended protocol
@@ -51,7 +51,7 @@ async fn test_insert_detailed_timing() {
         db.try_execute_fast_path_with_params(
             param_query,
             &[
-                rusqlite::types::Value::Text(format!("param{}", i)),
+                rusqlite::types::Value::Text(format!("param{i}")),
                 rusqlite::types::Value::Integer(i as i64),
             ],
         )
@@ -61,7 +61,7 @@ async fn test_insert_detailed_timing() {
     }
     
     let avg_param_time = param_times.iter().sum::<std::time::Duration>() / param_times.len() as u32;
-    println!("Parameterized INSERT: {:?} (avg of 10 runs)", avg_param_time);
+    println!("Parameterized INSERT: {avg_param_time:?} (avg of 10 runs)");
     
     // Test transaction batching
     println!("\nTransaction batching analysis:");
@@ -69,7 +69,7 @@ async fn test_insert_detailed_timing() {
     // Without explicit transaction
     let start = Instant::now();
     for i in 0..50 {
-        let query = format!("INSERT INTO test_insert (name, value) VALUES ('batch1_{}', {})", i, i);
+        let query = format!("INSERT INTO test_insert (name, value) VALUES ('batch1_{i}', {i})");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let no_txn_time = start.elapsed();
@@ -79,7 +79,7 @@ async fn test_insert_detailed_timing() {
     let start = Instant::now();
     db.begin().await.expect("Failed to begin transaction");
     for i in 0..50 {
-        let query = format!("INSERT INTO test_insert (name, value) VALUES ('batch2_{}', {})", i, i);
+        let query = format!("INSERT INTO test_insert (name, value) VALUES ('batch2_{i}', {i})");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     db.commit().await.expect("Failed to commit transaction");
@@ -103,20 +103,20 @@ async fn test_insert_detailed_timing() {
         .expect("Failed to create table");
     let create_with_decimal = start.elapsed();
     
-    println!("CREATE TABLE without decimal: {:?}", create_no_decimal);
-    println!("CREATE TABLE with decimal: {:?}", create_with_decimal);
+    println!("CREATE TABLE without decimal: {create_no_decimal:?}");
+    println!("CREATE TABLE with decimal: {create_with_decimal:?}");
     
     // Test INSERT into both tables
     let start = Instant::now();
     for i in 0..20 {
-        let query = format!("INSERT INTO no_decimal (id, name) VALUES ({}, 'test{}')", i, i);
+        let query = format!("INSERT INTO no_decimal (id, name) VALUES ({i}, 'test{i}')");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let insert_no_decimal = start.elapsed();
     
     let start = Instant::now();
     for i in 0..20 {
-        let query = format!("INSERT INTO with_decimal (id, price) VALUES ({}, {}.99)", i, i);
+        let query = format!("INSERT INTO with_decimal (id, price) VALUES ({i}, {i}.99)");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let insert_with_decimal = start.elapsed();

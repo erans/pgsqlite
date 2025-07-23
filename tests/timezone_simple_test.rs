@@ -11,11 +11,8 @@ async fn test_simple_set_timezone() {
     
     // Verify command completed
     for msg in results {
-        match msg {
-            tokio_postgres::SimpleQueryMessage::CommandComplete(_) => {
-                // Command completed successfully
-            }
-            _ => {}
+        if let tokio_postgres::SimpleQueryMessage::CommandComplete(_) = msg {
+            // Command completed successfully
         }
     }
     

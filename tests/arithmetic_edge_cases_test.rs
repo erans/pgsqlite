@@ -25,13 +25,13 @@ async fn test_division_by_zero() {
     
     // Connect client
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -72,13 +72,13 @@ async fn test_very_large_numbers() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -118,13 +118,13 @@ async fn test_negative_number_arithmetic() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -163,13 +163,13 @@ async fn test_case_sensitivity_in_aliases() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -214,21 +214,21 @@ async fn test_arithmetic_with_cast() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
     // Test simpler cases first
     let simple_test = client.query("SELECT int_val * real_val AS simple_mult FROM mixed_types WHERE id = 1", &[]).await.unwrap();
-    if simple_test.len() > 0 {
+    if !simple_test.is_empty() {
         let simple_result: f64 = simple_test[0].get(0);
-        println!("DEBUG: int_val * real_val = {}", simple_result);
+        println!("DEBUG: int_val * real_val = {simple_result}");
     }
     
     // The pattern int_val * 1.0 is currently problematic due to decimal query rewriting
@@ -266,13 +266,13 @@ async fn test_multiple_arithmetic_operators() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     
@@ -323,13 +323,13 @@ async fn test_floating_point_precision() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=127.0.0.1 port={} dbname=test user=test", port),
+        &format!("host=127.0.0.1 port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("connection error: {}", e);
+            eprintln!("connection error: {e}");
         }
     });
     

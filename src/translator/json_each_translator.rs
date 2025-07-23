@@ -43,7 +43,7 @@ impl JsonEachTranslator {
             let json_expr = caps.get(1).unwrap().as_str();
             let alias = caps.get(2).unwrap().as_str();
             // For json_each_text, use json_each_text_value function
-            let replacement = format!("FROM (SELECT ('' || key) AS key, json_each_text_value({}, key) AS value FROM json_each({})) AS {}", json_expr, json_expr, alias);
+            let replacement = format!("FROM (SELECT ('' || key) AS key, json_each_text_value({json_expr}, key) AS value FROM json_each({json_expr})) AS {alias}");
             debug!("JSON each_text FROM translation: {} -> {}", &caps[0], replacement);
             replacement
         }).to_string();
@@ -60,7 +60,7 @@ impl JsonEachTranslator {
             let json_expr = caps.get(1).unwrap().as_str();
             let alias = caps.get(2).unwrap().as_str();
             // Use custom json_each_value function to handle boolean conversion properly
-            let replacement = format!("FROM (SELECT ('' || key) AS key, json_each_value({}, key) AS value FROM json_each({})) AS {}", json_expr, json_expr, alias);
+            let replacement = format!("FROM (SELECT ('' || key) AS key, json_each_value({json_expr}, key) AS value FROM json_each({json_expr})) AS {alias}");
             debug!("JSON each translation: {} -> {}", &caps[0], replacement);
             replacement
         }).to_string();
@@ -104,8 +104,8 @@ impl JsonEachTranslator {
             
             // Common aliases used in json_each queries
             for alias in &["t", "j", "json", "data", "expanded", "item", "row"] {
-                metadata.add_hint(format!("{}.key", alias), text_hint.clone());
-                metadata.add_hint(format!("{}.value", alias), text_hint.clone());
+                metadata.add_hint(format!("{alias}.key"), text_hint.clone());
+                metadata.add_hint(format!("{alias}.value"), text_hint.clone());
             }
             
             debug!("Added aggressive type hints for json_each columns: key and value as TEXT");
@@ -127,8 +127,8 @@ impl JsonEachTranslator {
             };
             
             // Add specific hints for this alias
-            metadata.add_hint(format!("{}.key", alias), text_hint.clone());
-            metadata.add_hint(format!("{}.value", alias), text_hint.clone());
+            metadata.add_hint(format!("{alias}.key"), text_hint.clone());
+            metadata.add_hint(format!("{alias}.value"), text_hint.clone());
             
             debug!("Added specific type hints for json_each alias '{}'", alias);
         }

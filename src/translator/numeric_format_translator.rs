@@ -72,7 +72,7 @@ impl NumericFormatTranslator {
         for constraint in constraint_iter {
             let (table_name, column_name, precision, scale) = constraint?;
             // Store with both table.column and just column formats
-            constraints.insert(format!("{}.{}", table_name, column_name), (precision, scale));
+            constraints.insert(format!("{table_name}.{column_name}"), (precision, scale));
             constraints.insert(column_name.clone(), (precision, scale));
         }
         
@@ -94,7 +94,7 @@ impl NumericFormatTranslator {
             
             // Check if this column has numeric constraints
             if let Some((precision, scale)) = constraints.get(column_ref) {
-                let replacement = format!("numeric_format({}, {}, {})", column_ref, precision, scale);
+                let replacement = format!("numeric_format({column_ref}, {precision}, {scale})");
                 let start = full_match.start() + offset;
                 let end = full_match.end() + offset;
                 result.replace_range(start..end, &replacement);
@@ -120,7 +120,7 @@ impl NumericFormatTranslator {
             
             // Check if this column has numeric constraints
             if let Some((precision, scale)) = constraints.get(column_ref) {
-                let replacement = format!("numeric_format({}, {}, {})", column_ref, precision, scale);
+                let replacement = format!("numeric_format({column_ref}, {precision}, {scale})");
                 let start = full_match.start() + offset;
                 let end = full_match.end() + offset;
                 result.replace_range(start..end, &replacement);

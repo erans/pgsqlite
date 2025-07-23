@@ -80,8 +80,21 @@ impl DateTimeTranslator {
         let mut result = query.to_string();
         let mut metadata = super::TranslationMetadata::new();
         
-        // Replace NOW() and CURRENT_TIMESTAMP with our custom function
-        result = NOW_PATTERN.replace_all(&result, "now()").to_string();
+        let query_upper = query.to_uppercase();
+        let is_create_table_with_default = query_upper.contains("CREATE TABLE") && query_upper.contains("DEFAULT");
+        
+        // Replace NOW() and CURRENT_TIMESTAMP 
+        // In CREATE TABLE DEFAULT clauses, use SQLite's built-in datetime('now') 
+        // In other contexts, use our custom now() function
+        if is_create_table_with_default {
+            // For CREATE TABLE with DEFAULT, use SQLite's built-in functions
+            result = NOW_PATTERN.replace_all(&result, "datetime('now')").to_string();
+            // Don't process datetime functions further for CREATE TABLE
+            return (result, metadata);
+        } else {
+            // For other contexts, use our custom function
+            result = NOW_PATTERN.replace_all(&result, "now()").to_string();
+        }
         
         // Don't translate CURRENT_DATE - SQLite has its own built-in that returns text
         // We'll let the value converter handle the conversion if needed
@@ -93,19 +106,26 @@ impl DateTimeTranslator {
         // Wrap SQLite date() function to convert to epoch days (INTEGER)
         result = DATE_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST(julianday({}) - 2440587.5 AS INTEGER)", args)
+            format!("CAST(julianday({args}) - 2440587.5 AS INTEGER)")
         }).to_string();
         
         // Wrap SQLite time() function to convert to microseconds since midnight (INTEGER)
         result = TIME_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST((strftime('%s', '2000-01-01 ' || time({})) - strftime('%s', '2000-01-01')) * 1000000 AS INTEGER)", args)
+            format!("CAST((strftime('%s', '2000-01-01 ' || time({args})) - strftime('%s', '2000-01-01')) * 1000000 AS INTEGER)")
         }).to_string();
         
         // Wrap SQLite datetime() function to convert to microseconds since epoch (INTEGER)
+        // But skip datetime('now') when used in CREATE TABLE DEFAULT clauses
+        let is_create_table = query_upper.contains("CREATE TABLE");
         result = DATETIME_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST((julianday(datetime({})) - 2440587.5) * 86400 * 1000000 AS INTEGER)", args)
+            // Don't process datetime('now') - leave it as-is for CREATE TABLE DEFAULT
+            if args.trim() == "'now'" && is_create_table {
+                format!("datetime({args})")
+            } else {
+                format!("CAST((julianday(datetime({args})) - 2440587.5) * 86400 * 1000000 AS INTEGER)")
+            }
         }).to_string();
         
         // Handle EXTRACT(field FROM timestamp) -> extract(field, timestamp)
@@ -142,7 +162,7 @@ impl DateTimeTranslator {
         interval_pattern.replace_all(query, |caps: &regex::Captures| {
             let interval_str = &caps[1];
             if let Some(microseconds) = Self::parse_interval_to_seconds(interval_str) {
-                format!("{:.0}", microseconds)
+                format!("{microseconds:.0}")
             } else {
                 // If we can't parse it, leave it as is
                 caps[0].to_string()
@@ -187,7 +207,7 @@ impl DateTimeTranslator {
             let interval_str = &caps[3];
             
             if let Some(microseconds) = Self::parse_interval_to_seconds(interval_str) {
-                format!("({} {} {:.0})", column, operator, microseconds)
+                format!("({column} {operator} {microseconds:.0})")
             } else {
                 caps[0].to_string()
             }
@@ -238,7 +258,7 @@ impl DateTimeTranslator {
             
             // If timezone is UTC or offset is 0, just return the expression
             if offset_seconds == 0 {
-                format!("{}{}", expression, alias_part)
+                format!("{expression}{alias_part}")
             } else {
                 // Apply offset to the timestamp (convert seconds to microseconds)
                 format!("{} + {}{}", expression, offset_seconds as i64 * 1_000_000, alias_part)
@@ -266,11 +286,7 @@ impl DateTimeTranslator {
             "IST" | "ASIA/KOLKATA" => 5 * 3600 + 1800, // +5:30 hours
             _ => {
                 // Try to parse offset format like '+05:30' or '-08:00'
-                if let Some(offset) = Self::parse_offset_string(tz) {
-                    offset
-                } else {
-                    0 // Default to UTC if unknown
-                }
+                Self::parse_offset_string(tz).unwrap_or_default()
             }
         }
     }

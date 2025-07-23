@@ -117,7 +117,7 @@ async fn test_numeric_error_messages() {
     // Check error contains column information
     let err_str = err.to_string();
     assert!(err_str.contains("numeric") || err_str.contains("NUMERIC"), 
-            "Error should mention numeric type: {}", err_str);
+            "Error should mention numeric type: {err_str}");
     
     server.abort();
 }

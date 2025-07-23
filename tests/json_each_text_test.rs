@@ -21,13 +21,13 @@ async fn test_json_each_text_basic() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -75,13 +75,13 @@ async fn test_jsonb_each_text_with_nested() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -123,13 +123,13 @@ async fn test_json_each_text_with_table() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -193,13 +193,13 @@ async fn test_json_each_text_with_filter() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -246,13 +246,13 @@ async fn test_json_each_text_empty_and_null() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     

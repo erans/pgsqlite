@@ -108,6 +108,7 @@ struct WorkloadMetrics {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TransactionMetrics {
     successful_transactions: u64,
     failed_transactions: u64,
@@ -178,7 +179,7 @@ async fn run_mixed_workload(
                 } else {
                     // Write operation
                     let new_value = (rng_state % 10000) as i64;
-                    let success = db.execute(&format!("UPDATE benchmark_data SET value = {} WHERE id = 1", new_value)).await.is_ok();
+                    let success = db.execute(&format!("UPDATE benchmark_data SET value = {new_value} WHERE id = 1")).await.is_ok();
                     OperationResult {
                         success,
                         latency: op_start.elapsed(),
@@ -255,6 +256,7 @@ async fn run_read_only_benchmark(db_handler: Arc<DbHandler>, task_count: usize) 
     calculate_workload_metrics(&results, total_duration)
 }
 
+#[allow(dead_code)]
 async fn run_transaction_benchmark(db_handler: Arc<DbHandler>, task_count: usize) -> TransactionMetrics {
     let mut tasks = Vec::new();
     let metrics = Arc::new(tokio::sync::Mutex::new(TransactionMetrics {
@@ -314,8 +316,8 @@ async fn run_transaction_benchmark(db_handler: Arc<DbHandler>, task_count: usize
         task.await.unwrap();
     }
     
-    let final_metrics = metrics.lock().await.clone();
-    final_metrics
+    
+    metrics.lock().await.clone()
 }
 
 // Helper functions
@@ -339,6 +341,7 @@ async fn setup_test_data(db_handler: &DbHandler) {
     }
 }
 
+#[allow(dead_code)]
 async fn execute_transfer_transaction(
     db: &DbHandler,
     from_id: usize,
@@ -349,8 +352,8 @@ async fn execute_transfer_transaction(
     db.execute("BEGIN").await?;
     
     // Check balances
-    let from_result = db.query(&format!("SELECT value FROM benchmark_data WHERE id = {}", from_id)).await?;
-    let to_result = db.query(&format!("SELECT value FROM benchmark_data WHERE id = {}", to_id)).await?;
+    let from_result = db.query(&format!("SELECT value FROM benchmark_data WHERE id = {from_id}")).await?;
+    let to_result = db.query(&format!("SELECT value FROM benchmark_data WHERE id = {to_id}")).await?;
     
     if from_result.rows.is_empty() || to_result.rows.is_empty() {
         db.execute("ROLLBACK").await?;
@@ -384,6 +387,7 @@ async fn execute_transfer_transaction(
     Ok(())
 }
 
+#[allow(dead_code)]
 fn parse_balance(value_bytes: &Option<Vec<u8>>) -> Result<i64, Box<dyn std::error::Error + Send + Sync>> {
     match value_bytes {
         Some(bytes) => {
@@ -472,6 +476,7 @@ fn print_metrics(metrics: &WorkloadMetrics) {
     println!("  P99 Latency: {:.2}ms", metrics.p99_latency_ms);
 }
 
+#[allow(dead_code)]
 fn print_transaction_metrics(metrics: &TransactionMetrics) {
     println!("  Successful Transactions: {}", metrics.successful_transactions);
     println!("  Failed Transactions: {}", metrics.failed_transactions);

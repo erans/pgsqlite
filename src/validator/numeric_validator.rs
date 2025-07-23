@@ -66,7 +66,7 @@ impl NumericValidator {
         // Validate scale (decimal places)
         if decimal_part.len() > scale as usize {
             return Err(PgError::NumericValueOutOfRange {
-                type_name: format!("numeric({},{})", precision, scale),
+                type_name: format!("numeric({precision},{scale})"),
                 column_name: String::new(),
                 value: value.to_string(),
             });
@@ -81,7 +81,7 @@ impl NumericValidator {
         let significant_integer = integer_without_sign.trim_start_matches('0');
         if significant_integer.len() > max_integer_digits {
             return Err(PgError::NumericValueOutOfRange {
-                type_name: format!("numeric({},{})", precision, scale),
+                type_name: format!("numeric({precision},{scale})"),
                 column_name: String::new(),
                 value: value.to_string(),
             });
@@ -95,7 +95,7 @@ impl NumericValidator {
                 let max_value_str = "9".repeat(max_integer_digits);
                 if significant_integer > max_value_str.as_str() {
                     return Err(PgError::NumericValueOutOfRange {
-                        type_name: format!("numeric({},{})", precision, scale),
+                        type_name: format!("numeric({precision},{scale})"),
                         column_name: String::new(),
                         value: value.to_string(),
                     });
@@ -106,7 +106,7 @@ impl NumericValidator {
                     let max_value = 10f64.powi(precision - scale);
                     if num_value.abs() >= max_value {
                         return Err(PgError::NumericValueOutOfRange {
-                            type_name: format!("numeric({},{})", precision, scale),
+                            type_name: format!("numeric({precision},{scale})"),
                             column_name: String::new(),
                             value: value.to_string(),
                         });
@@ -128,7 +128,7 @@ impl NumericValidator {
             match value.parse::<f64>() {
                 Ok(num) => {
                     // Format to string without scientific notation
-                    let formatted = format!("{:.10}", num);
+                    let formatted = format!("{num:.10}");
                     // Remove trailing zeros after decimal
                     let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
                     return Self::parse_numeric_parts(trimmed);
@@ -377,7 +377,7 @@ fn parse_insert_statement(sql: &str, conn: &Connection, table_name: &str) -> Opt
         let all_values_str = caps.get(1)?.as_str();
         
         // Get column names from table schema
-        let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table_name)).ok()?;
+        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table_name})")).ok()?;
         let column_info = stmt.query_map([], |row| {
             Ok((
                 row.get::<_, i32>(0)?, // cid
@@ -547,45 +547,6 @@ fn parse_update_statement(sql: &str) -> Option<Vec<(String, String)>> {
     Some(result)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_is_computed_expression() {
-        // Computed expressions that should be skipped
-        assert!(is_computed_expression("amount * 1.1"));
-        assert!(is_computed_expression("price + 100"));
-        assert!(is_computed_expression("quantity / 2"));
-        assert!(is_computed_expression("SUM(amount)"));
-        assert!(is_computed_expression("CASE WHEN amount > 100 THEN 'high' ELSE 'low' END"));
-        assert!(is_computed_expression("column_name")); // Column reference
-        assert!(is_computed_expression("(SELECT COUNT(*) FROM table)"));
-        
-        // Literal values that should be validated
-        assert!(!is_computed_expression("123.45"));
-        assert!(!is_computed_expression("'quoted string'"));
-        assert!(!is_computed_expression("0"));
-        assert!(!is_computed_expression("-456.78"));
-    }
-    
-    #[test]
-    fn test_parse_update_statement_with_computed_expressions() {
-        // Test that computed expressions are filtered out
-        let sql = "UPDATE table SET amount = amount * 1.1, name = 'test', quantity = 5";
-        let result = parse_update_statement(sql).unwrap();
-        
-        // Should only contain literal assignments, not computed expressions
-        // Now that we preserve quotes for detection, 'test' should be recognized as a literal
-        assert_eq!(result.len(), 2);
-        assert!(result.contains(&("name".to_string(), "test".to_string())));
-        assert!(result.contains(&("quantity".to_string(), "5".to_string())));
-        
-        // Should not contain the computed expression
-        assert!(!result.iter().any(|(col, _)| col == "amount"));
-    }
-}
-
 
 /// Check if a value is a computed expression that shouldn't be validated
 fn is_computed_expression(value: &str) -> bool {
@@ -678,4 +639,43 @@ fn split_assignments(assignments_str: &str) -> Vec<String> {
     }
     
     assignments
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_is_computed_expression() {
+        // Computed expressions that should be skipped
+        assert!(is_computed_expression("amount * 1.1"));
+        assert!(is_computed_expression("price + 100"));
+        assert!(is_computed_expression("quantity / 2"));
+        assert!(is_computed_expression("SUM(amount)"));
+        assert!(is_computed_expression("CASE WHEN amount > 100 THEN 'high' ELSE 'low' END"));
+        assert!(is_computed_expression("column_name")); // Column reference
+        assert!(is_computed_expression("(SELECT COUNT(*) FROM table)"));
+        
+        // Literal values that should be validated
+        assert!(!is_computed_expression("123.45"));
+        assert!(!is_computed_expression("'quoted string'"));
+        assert!(!is_computed_expression("0"));
+        assert!(!is_computed_expression("-456.78"));
+    }
+    
+    #[test]
+    fn test_parse_update_statement_with_computed_expressions() {
+        // Test that computed expressions are filtered out
+        let sql = "UPDATE table SET amount = amount * 1.1, name = 'test', quantity = 5";
+        let result = parse_update_statement(sql).unwrap();
+        
+        // Should only contain literal assignments, not computed expressions
+        // Now that we preserve quotes for detection, 'test' should be recognized as a literal
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&("name".to_string(), "test".to_string())));
+        assert!(result.contains(&("quantity".to_string(), "5".to_string())));
+        
+        // Should not contain the computed expression
+        assert!(!result.iter().any(|(col, _)| col == "amount"));
+    }
 }

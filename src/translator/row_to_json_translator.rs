@@ -69,14 +69,14 @@ impl RowToJsonTranslator {
                 if let Some(columns) = Self::extract_columns_from_select(subquery) {
                     // Build JSON object construction
                     let json_fields: Vec<String> = columns.iter()
-                        .map(|col| format!("'{}', {}", col, col))
+                        .map(|col| format!("'{col}', {col}"))
                         .collect();
                     
                     let json_construction = format!("json_object({})", json_fields.join(", "));
                     
                     // Replace the row_to_json call with json_object
                     let result = query.replace(
-                        &format!("row_to_json({})", alias),
+                        &format!("row_to_json({alias})"),
                         &json_construction
                     );
                     
@@ -166,7 +166,7 @@ mod tests {
         let mut metadata = TranslationMetadata::new();
         
         let result = RowToJsonTranslator::translate_subquery_pattern(query, &mut metadata);
-        assert!(result.is_some(), "Expected translation result for query: {}", query);
+        assert!(result.is_some(), "Expected translation result for query: {query}");
         
         let translated = result.unwrap();
         assert!(translated.contains("json_object('name', name, 'age', age)"));
