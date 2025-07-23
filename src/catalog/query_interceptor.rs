@@ -34,7 +34,7 @@ impl CatalogInterceptor {
         if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && 
            !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") &&
            !lower_query.contains("pg_class") && !lower_query.contains("pg_attribute") &&
-           !lower_query.contains("pg_enum") {
+           !lower_query.contains("pg_enum") && !lower_query.contains("information_schema") {
             return None;
         }
         
@@ -214,6 +214,11 @@ impl CatalogInterceptor {
                     Ok(response) => Some(response),
                     Err(_) => None,
                 };
+            }
+            
+            // Handle information_schema.tables queries
+            if table_name.contains("information_schema.tables") {
+                return Some(Self::handle_information_schema_tables_query(select, &db).await);
             }
         }
         None
@@ -830,5 +835,103 @@ impl CatalogInterceptor {
         }
         Ok(())
         })
+    }
+
+    async fn handle_information_schema_tables_query(select: &Select, db: &DbHandler) -> DbResponse {
+        debug!("Handling information_schema.tables query");
+        
+        // Get list of tables from SQLite
+        let tables_response = match db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
+            Ok(response) => response,
+            Err(_) => return DbResponse {
+                columns: vec!["table_name".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            },
+        };
+        
+        // Define information_schema.tables columns
+        let all_columns = vec![
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "table_type".to_string(),
+            "self_referencing_column_name".to_string(),
+            "reference_generation".to_string(),
+            "user_defined_type_catalog".to_string(),
+            "user_defined_type_schema".to_string(),
+            "user_defined_type_name".to_string(),
+        ];
+        
+        // Determine which columns to return based on SELECT clause
+        let (selected_columns, column_indices) = if select.projection.len() == 1 {
+            if let SelectItem::Wildcard(_) = &select.projection[0] {
+                // SELECT * - return all columns
+                (all_columns.clone(), (0..all_columns.len()).collect::<Vec<_>>())
+            } else {
+                // Extract specific columns
+                let mut cols = Vec::new();
+                let mut indices = Vec::new();
+                for item in &select.projection {
+                    if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
+                        let col_name = ident.value.to_string();
+                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                            cols.push(col_name);
+                            indices.push(idx);
+                        }
+                    }
+                }
+                (cols, indices)
+            }
+        } else {
+            // Multiple specific columns
+            let mut cols = Vec::new();
+            let mut indices = Vec::new();
+            for item in &select.projection {
+                if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
+                    let col_name = ident.value.to_string();
+                    if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                        cols.push(col_name);
+                        indices.push(idx);
+                    }
+                }
+            }
+            (cols, indices)
+        };
+        
+        // Build rows
+        let mut rows = Vec::new();
+        for table_row in &tables_response.rows {
+            if let Some(Some(table_name_bytes)) = table_row.get(0) {
+                let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
+                
+                // Create full row with all columns
+                let full_row: Vec<Option<Vec<u8>>> = vec![
+                    Some("main".to_string().into_bytes()),        // table_catalog
+                    Some("public".to_string().into_bytes()),      // table_schema  
+                    Some(table_name.into_bytes()),                // table_name
+                    Some("BASE TABLE".to_string().into_bytes()),  // table_type
+                    None,                                         // self_referencing_column_name
+                    None,                                         // reference_generation
+                    None,                                         // user_defined_type_catalog
+                    None,                                         // user_defined_type_schema
+                    None,                                         // user_defined_type_name
+                ];
+                
+                // Project only the requested columns
+                let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                    .map(|&idx| full_row[idx].clone())
+                    .collect();
+                
+                rows.push(projected_row);
+            }
+        }
+        
+        let rows_count = rows.len();
+        DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        }
     }
 }

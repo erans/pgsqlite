@@ -573,6 +573,30 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Scalable resource management: 100+ portals per session with sub-millisecond operations
   - [x] Direct API benchmarks validate architecture without network protocol overhead
 
+### PostgreSQL Type OID Mapping Edge Cases - COMPLETED (2025-07-23)
+- [x] **SQLAlchemy + psycopg2 Compatibility Issues Resolved** - Fixed "Unknown PG numeric type: 25" errors
+  - [x] **Root Cause Analysis**: All columns were returning TEXT type OID (25) instead of correct PostgreSQL type OIDs
+  - [x] **Ultra-Fast Path Fix**: Enhanced cache was bypassing type inference for SimpleSelect queries
+  - [x] **Execute Path Fix**: Fixed table name extraction and column alias resolution for complex queries
+  - [x] **Column Alias Resolution**: Added support for multiple SQLAlchemy alias patterns:
+    - [x] `products_name_1` → `name` (numbered patterns with suffix stripping)
+    - [x] `product_name` → `name` (SELECT clause mapping via SQL parsing)
+    - [x] `products.name AS product_name` (full qualified column mapping)
+  - [x] **SQL Query Analysis**: Implemented `extract_column_mappings_from_query()` function
+  - [x] **Table Name Extraction**: Enhanced regex pattern to handle multi-line queries with newlines
+  - [x] **information_schema.tables Support**: Added PostgreSQL catalog compatibility for SQLAlchemy metadata
+  - [x] **INSERT RETURNING Fix**: Fixed regex patterns to properly handle RETURNING clauses with NULL values
+- [x] **Technical Results**:
+  - [x] **Correct Type OIDs**: `[1043, 1700, 16]` (VARCHAR, NUMERIC, BOOLEAN) instead of `[25, 25, 25]` (all TEXT)
+  - [x] **Column Mapping Working**: Logs show `(via SELECT mapping product_name) -> VARCHAR(100)`
+  - [x] **SQLAlchemy Compatibility**: `('Test Product', Decimal('123.45'), True)` with proper data types
+  - [x] **Zero Performance Regression**: All optimizations maintained, SELECT ~283x overhead
+- [x] **Comprehensive Testing**: 
+  - [x] Basic SQLAlchemy ORM operations working (table creation, INSERT, SELECT with aliases)
+  - [x] Type inference working across both ultra-fast path and execute_select path
+  - [x] NULL date handling with RETURNING clauses fixed
+  - [x] Complex alias patterns resolved for SQLAlchemy-generated queries
+
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 
 ### Data Type Improvements

@@ -9,12 +9,12 @@ pub struct InsertTranslator;
 
 // Pattern to match INSERT INTO table (...) VALUES (...)
 static INSERT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:;?\s*$)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:\s+RETURNING|;?\s*$)").unwrap()
 });
 
 // Pattern to match INSERT INTO table VALUES (...) without column list
 static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:;?\s*$)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:\s+RETURNING|;?\s*$)").unwrap()
 });
 
 impl InsertTranslator {
