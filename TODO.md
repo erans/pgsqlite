@@ -597,6 +597,45 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] NULL date handling with RETURNING clauses fixed
   - [x] Complex alias patterns resolved for SQLAlchemy-generated queries
 
+### INSERT SELECT Translation Bug - COMPLETED (2025-07-23)
+- [x] **Critical Data Integrity Issue Fixed** - INSERT SELECT datetime translation now working correctly
+  - [x] **Bug Identified**: INSERT SELECT with literal datetime values stored as TEXT instead of INTEGER microseconds
+  - [x] **Root Cause**: InsertTranslator only handled INSERT VALUES patterns, not INSERT SELECT patterns
+  - [x] **Impact**: Mixed storage formats in same table causing data corruption and compatibility issues
+- [x] **Enhanced InsertTranslator Architecture**:
+  - [x] **New Pattern Recognition**: Added INSERT_SELECT_PATTERN and INSERT_SELECT_NO_COLUMNS_PATTERN regex
+  - [x] **SELECT Clause Analysis**: Implemented `translate_select_clause()` method for expression parsing
+  - [x] **Column Type Mapping**: Added position-based mapping of SELECT expressions to target table columns
+  - [x] **Expression Parsing**: Added `parse_select_expressions()` with proper parentheses handling
+  - [x] **Datetime Literal Conversion**: Added `convert_select_expression()` and `convert_datetime_literal()`
+- [x] **Translation Logic Implementation**:
+  - [x] **Date Literals**: `'2024-01-15'` → `19737` (INTEGER days since epoch)
+  - [x] **Timestamp Literals**: `'2024-01-15 14:30:00'` → `1705329000000000` (INTEGER microseconds)
+  - [x] **Function Handling**: PostgreSQL functions like NOW() properly converted to SQLite equivalents
+  - [x] **Array Support**: Extended to handle ARRAY[] literals in INSERT SELECT (bonus fix)
+  - [x] **Column References**: Existing datetime columns properly preserved through copy operations
+- [x] **Pattern Coverage**:
+  - [x] `INSERT INTO table (cols) SELECT literal_dates, existing_cols FROM source`
+  - [x] `INSERT INTO table SELECT literal_dates, functions FROM source` (without column list)
+  - [x] Mixed literal datetime values and column references in same SELECT
+  - [x] PostgreSQL datetime functions (NOW(), CURRENT_DATE, CURRENT_TIMESTAMP)
+- [x] **Technical Results**:
+  - [x] **Consistent Storage**: All datetime values now stored as INTEGER microseconds regardless of INSERT method
+  - [x] **Data Integrity**: No more mixed TEXT/INTEGER storage in same table
+  - [x] **Perfect Compatibility**: INSERT SELECT now behaves identically to INSERT VALUES
+  - [x] **Zero Performance Regression**: All existing optimizations maintained
+- [x] **Comprehensive Testing**:
+  - [x] **Unit Tests**: 7 new unit tests for SELECT expression parsing and conversion logic
+  - [x] **Integration Tests**: Multiple comprehensive test scenarios validating real-world usage
+  - [x] **Edge Cases**: Complex expressions, function calls, mixed datatypes
+  - [x] **Regression Tests**: Verified existing INSERT VALUES functionality unaffected
+  - [x] **SQLite Storage Validation**: Direct SQLite inspection confirms INTEGER storage format
+- [x] **Production Impact Assessment**:
+  - [x] **Critical Fix**: Resolves silent data corruption affecting SQLAlchemy ORM users
+  - [x] **ETL/Migration Support**: INSERT SELECT now safe for data transfer operations
+  - [x] **PostgreSQL Compatibility**: Maintains consistent datetime storage across all INSERT patterns
+  - [x] **Backward Compatible**: No breaking changes to existing functionality
+
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 
 ### Data Type Improvements

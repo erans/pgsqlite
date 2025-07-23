@@ -234,6 +234,34 @@ impl CastTranslator {
         let bytes = after.as_bytes();
         let mut paren_depth = 0;
         
+        // Check if this starts with a multi-word type pattern
+        let upper_after = after.to_uppercase();
+        let multiword_types = [
+            ("TIMESTAMP WITHOUT TIME ZONE", 27),
+            ("TIMESTAMP WITH TIME ZONE", 24),
+            ("TIME WITHOUT TIME ZONE", 22), 
+            ("TIME WITH TIME ZONE", 19),
+            ("DOUBLE PRECISION", 16),
+            ("CHARACTER VARYING", 17),
+            ("BIT VARYING", 11),
+        ];
+        
+        for (pattern, len) in multiword_types {
+            if upper_after.starts_with(pattern) {
+                // Make sure this is followed by a word boundary or end of string
+                if after.len() == len {
+                    // Exact match - this is the end of the string
+                    return len;
+                } else if let Some(next_char) = after.as_bytes().get(len) {
+                    // There's a character after the pattern - make sure it's a word boundary
+                    if !next_char.is_ascii_alphanumeric() && *next_char != b'_' {
+                        return len;
+                    }
+                }
+            }
+        }
+        
+        // Fall back to original logic for single-word types
         for i in 0..bytes.len() {
             let ch = bytes[i];
             

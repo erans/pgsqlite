@@ -17,16 +17,34 @@ static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:\s+RETURNING|;?\s*$)").unwrap()
 });
 
+// Pattern to match INSERT INTO table (...) SELECT ...
+static INSERT_SELECT_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s+SELECT\s+(.+)").unwrap()
+});
+
+// Pattern to match INSERT INTO table SELECT ... (without column list)
+static INSERT_SELECT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+SELECT\s+(.+)").unwrap()
+});
+
 impl InsertTranslator {
     /// Check if the query is an INSERT that might need datetime or array translation
     pub fn needs_translation(query: &str) -> bool {
-        let result = (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
-            query.contains('-') ||  // Date patterns like '2024-01-01'
-            query.contains(':') ||  // Time patterns like '14:30:00'
-            query.contains('{') ||  // Array patterns like '{1,2,3}'
-            query.contains("ARRAY[") // Array constructor like ARRAY[1,2,3]
-        );
-        result
+        let is_insert = INSERT_PATTERN.is_match(query) || 
+                       INSERT_NO_COLUMNS_PATTERN.is_match(query) ||
+                       INSERT_SELECT_PATTERN.is_match(query) ||
+                       INSERT_SELECT_NO_COLUMNS_PATTERN.is_match(query);
+        
+        let has_datetime_or_array = query.contains('-') ||  // Date patterns like '2024-01-01'
+                                   query.contains(':') ||  // Time patterns like '14:30:00'
+                                   query.contains('{') ||  // Array patterns like '{1,2,3}'
+                                   query.contains("ARRAY[") || // Array constructor like ARRAY[1,2,3]
+                                   query.contains("NOW()") ||  // PostgreSQL datetime functions
+                                   query.contains("CURRENT_DATE") ||
+                                   query.contains("CURRENT_TIME") ||
+                                   query.contains("CURRENT_TIMESTAMP");
+        
+        is_insert && has_datetime_or_array
     }
     
     /// Translate INSERT statement to convert datetime values to INTEGER format
@@ -120,8 +138,58 @@ impl InsertTranslator {
                 table_name,
                 converted_values
             ))
+        } else if let Some(caps) = INSERT_SELECT_PATTERN.captures(query) {
+            // Handle INSERT INTO table (...) SELECT ...
+            let table_name = &caps[1];
+            let columns_str = &caps[2];
+            let select_clause = &caps[3];
+            
+            // Parse column names
+            let columns: Vec<&str> = columns_str.split(',')
+                .map(|c| c.trim())
+                .collect();
+            
+            // Get column types from __pgsqlite_schema
+            let column_types = Self::get_column_types(db, table_name).await?;
+            
+            // Translate the SELECT clause
+            let converted_select = Self::translate_select_clause(
+                select_clause,
+                &columns,
+                &column_types
+            )?;
+            
+            // Reconstruct the INSERT query
+            Ok(format!(
+                "INSERT INTO {} ({}) SELECT {}",
+                table_name,
+                columns_str,
+                converted_select
+            ))
+        } else if let Some(caps) = INSERT_SELECT_NO_COLUMNS_PATTERN.captures(query) {
+            // Handle INSERT INTO table SELECT ... (without column list)
+            let table_name = &caps[1];
+            let select_clause = &caps[2];
+            
+            // Get all columns and types from __pgsqlite_schema, ordered by column position
+            let (columns, column_types) = Self::get_all_columns_and_types(db, table_name).await?;
+            
+            // Translate the SELECT clause
+            let columns_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
+            let converted_select = Self::translate_select_clause(
+                select_clause,
+                &columns_refs,
+                &column_types
+            )?;
+            
+            // Reconstruct the INSERT query  
+            Ok(format!(
+                "INSERT INTO {} SELECT {}",
+                table_name,
+                converted_select
+            ))
         } else {
-            // Not a simple INSERT statement, return as-is
+            // Not a recognized INSERT pattern, return as-is
             Ok(query.to_string())
         }
     }
@@ -572,6 +640,154 @@ impl InsertTranslator {
         // Default to string
         Ok(serde_json::Value::String(elem.to_string()))
     }
+    
+    /// Translate SELECT clause expressions to convert datetime literals and functions
+    fn translate_select_clause(
+        select_clause: &str,
+        columns: &[&str],
+        column_types: &std::collections::HashMap<String, String>
+    ) -> Result<String, String> {
+        // Parse the SELECT clause to extract individual expressions
+        let expressions = Self::parse_select_expressions(select_clause)?;
+        
+        if expressions.len() != columns.len() {
+            return Err(format!(
+                "Column count mismatch in SELECT: {} columns but {} expressions", 
+                columns.len(), 
+                expressions.len()
+            ));
+        }
+        
+        // Convert each expression based on the target column type
+        let mut converted_expressions = Vec::new();
+        for (i, expr) in expressions.iter().enumerate() {
+            let column_name = columns[i];
+            let converted_expr = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
+                Self::convert_select_expression(expr, pg_type)?
+            } else {
+                expr.to_string()
+            };
+            converted_expressions.push(converted_expr);
+        }
+        
+        Ok(converted_expressions.join(", "))
+    }
+    
+    /// Parse SELECT clause into individual expressions, handling commas within function calls
+    fn parse_select_expressions(select_clause: &str) -> Result<Vec<String>, String> {
+        let mut expressions = Vec::new();
+        let mut current = String::new();
+        let mut paren_depth = 0;
+        let mut in_quotes = false;
+        let mut chars = select_clause.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\'' => {
+                    current.push(ch);
+                    // Handle escaped quotes
+                    if in_quotes && chars.peek() == Some(&'\'') {
+                        current.push('\'');
+                        chars.next();
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                }
+                '(' if !in_quotes => {
+                    paren_depth += 1;
+                    current.push(ch);
+                }
+                ')' if !in_quotes => {
+                    paren_depth -= 1;
+                    current.push(ch);
+                }
+                ',' if !in_quotes && paren_depth == 0 => {
+                    // End of expression
+                    expressions.push(current.trim().to_string());
+                    current.clear();
+                }
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+        
+        // Don't forget the last expression
+        if !current.trim().is_empty() {
+            expressions.push(current.trim().to_string());
+        }
+        
+        Ok(expressions)
+    }
+    
+    /// Convert a single SELECT expression to handle datetime literals and functions
+    fn convert_select_expression(expr: &str, pg_type: &str) -> Result<String, String> {
+        let expr_trimmed = expr.trim();
+        
+        // Check if this is a datetime/array type that needs conversion
+        let needs_datetime_conversion = matches!(pg_type.to_lowercase().as_str(),
+            "date" | "time" | "timestamp" | "timestamptz" | "timetz" | "interval"
+        );
+        
+        let needs_array_conversion = pg_type.ends_with("[]") || pg_type.starts_with("_");
+        
+        if needs_datetime_conversion {
+            // Handle PostgreSQL datetime functions
+            let expr_upper = expr_trimmed.to_uppercase();
+            if expr_upper == "NOW()" {
+                return Ok("CURRENT_TIMESTAMP".to_string());
+            }
+            if expr_upper == "CURRENT_DATE" || 
+               expr_upper == "CURRENT_TIME" || 
+               expr_upper == "CURRENT_TIMESTAMP" {
+                return Ok(expr_trimmed.to_string());
+            }
+            
+            // Handle literal datetime values (quoted strings)
+            if expr_trimmed.starts_with('\'') && expr_trimmed.ends_with('\'') && expr_trimmed.len() > 1 {
+                let literal_value = &expr_trimmed[1..expr_trimmed.len()-1];
+                return Self::convert_datetime_literal(literal_value, pg_type);
+            }
+        }
+        
+        if needs_array_conversion {
+            // Handle array literals and constructors
+            if expr_trimmed.starts_with("ARRAY[") || expr_trimmed.starts_with("'{") {
+                return Self::convert_array_value(expr_trimmed);
+            }
+        }
+        
+        // No conversion needed, return as-is
+        Ok(expr_trimmed.to_string())
+    }
+    
+    /// Convert datetime literal to INTEGER format
+    fn convert_datetime_literal(literal: &str, pg_type: &str) -> Result<String, String> {
+        match pg_type.to_lowercase().as_str() {
+            "date" => {
+                match ValueConverter::convert_date_to_unix(literal) {
+                    Ok(days) => Ok(days),
+                    Err(e) => Err(format!("Invalid date value '{}': {}", literal, e))
+                }
+            }
+            "time" => {
+                match ValueConverter::convert_time_to_seconds(literal) {
+                    Ok(micros) => Ok(micros),
+                    Err(e) => Err(format!("Invalid time value '{}': {}", literal, e))
+                }
+            }
+            "timestamp" => {
+                match ValueConverter::convert_timestamp_to_unix(literal) {
+                    Ok(micros) => Ok(micros),
+                    Err(e) => Err(format!("Invalid timestamp value '{}': {}", literal, e))
+                }
+            }
+            _ => {
+                // For other types (timestamptz, timetz, interval), keep as quoted string for now
+                Ok(format!("'{}'", literal))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -597,6 +813,12 @@ mod tests {
         assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES ('{1,2,3}')"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES (ARRAY[1,2,3])"));
         assert!(!InsertTranslator::needs_translation("INSERT INTO test (id) VALUES (1)"));
+        
+        // Test INSERT SELECT patterns
+        assert!(InsertTranslator::needs_translation("INSERT INTO test (date_col) SELECT '2024-01-15' FROM source"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test SELECT '2024-01-15', NOW() FROM source"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test (time_col) SELECT CURRENT_TIME FROM source"));
+        assert!(!InsertTranslator::needs_translation("INSERT INTO test SELECT id, name FROM source"));
     }
     
     #[test]
@@ -628,5 +850,39 @@ mod tests {
         
         let elements = InsertTranslator::parse_array_elements("1,NULL,3").unwrap();
         assert_eq!(elements, vec![serde_json::json!(1), serde_json::Value::Null, serde_json::json!(3)]);
+    }
+    
+    #[test]
+    fn test_parse_select_expressions() {
+        // Test simple expressions
+        let expressions = InsertTranslator::parse_select_expressions("id, name, '2024-01-15'").unwrap();
+        assert_eq!(expressions, vec!["id", "name", "'2024-01-15'"]);
+        
+        // Test expressions with function calls
+        let expressions = InsertTranslator::parse_select_expressions("id, UPPER(name), NOW()").unwrap();
+        assert_eq!(expressions, vec!["id", "UPPER(name)", "NOW()"]);
+        
+        // Test complex expressions with nested commas
+        let expressions = InsertTranslator::parse_select_expressions("id, COALESCE(date_col, '2024-01-01'), name").unwrap();
+        assert_eq!(expressions, vec!["id", "COALESCE(date_col, '2024-01-01')", "name"]);
+    }
+    
+    #[test]
+    fn test_convert_select_expression() {
+        // Test datetime literal conversion
+        let result = InsertTranslator::convert_select_expression("'2024-01-15'", "date").unwrap();
+        assert_eq!(result, "19737"); // Days since epoch
+        
+        // Test function conversion
+        let result = InsertTranslator::convert_select_expression("NOW()", "timestamp").unwrap();
+        assert_eq!(result, "CURRENT_TIMESTAMP");
+        
+        // Test non-datetime expression (should pass through)
+        let result = InsertTranslator::convert_select_expression("id + 1", "integer").unwrap();
+        assert_eq!(result, "id + 1");
+        
+        // Test CURRENT_DATE (should pass through)
+        let result = InsertTranslator::convert_select_expression("CURRENT_DATE", "date").unwrap();
+        assert_eq!(result, "CURRENT_DATE");
     }
 }

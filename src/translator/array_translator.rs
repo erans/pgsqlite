@@ -31,7 +31,7 @@ static ARRAY_SLICE_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static ANY_OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"('[^']+'|"[^"]+"|[^\s=]+)\s*=\s*ANY\s*\((\b\w+(?:\.\w+)*)\)"#).unwrap()
+    Regex::new(r#"('[^']+'|"[^"]+"|[^\s=]+)\s*=\s*ANY\s*\(('[^']+'|"[^"]+"|[\w\.]+)\)"#).unwrap()
 });
 
 static ALL_OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| {

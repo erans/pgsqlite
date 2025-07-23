@@ -19,6 +19,7 @@ test_minimal.db
 pgsqlite.log
 simple_test.log
 minimal.log
+*.db-*
 
 # Poetry
 poetry.lock

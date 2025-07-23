@@ -136,8 +136,21 @@ pgsqlite --database existingdb.db
     - InsertTranslator converts datetime literals to INTEGER during INSERT/UPDATE
     - Fast path value converters transform INTEGER back to datetime strings during SELECT
     - Supports both single-row and multi-row INSERT statements
+    - **INSERT SELECT Support**: Full support for INSERT SELECT with datetime literal translation
     - No triggers needed - all conversion happens in the query pipeline
   - Clients see proper PostgreSQL datetime formats via wire protocol
+
+- **INSERT SELECT Translation**:
+  - Full support for INSERT SELECT statements with automatic datetime/array translation
+  - Pattern recognition for both explicit and implicit column specifications:
+    - `INSERT INTO table (cols) SELECT literal_values, existing_cols FROM source`
+    - `INSERT INTO table SELECT literal_values, functions FROM source`
+  - SELECT clause analysis with proper expression parsing and parentheses handling
+  - Position-based mapping of SELECT expressions to target table column types
+  - Literal datetime conversion: `'2024-01-15'` → `19737` (INTEGER days), timestamps → microseconds
+  - PostgreSQL function handling: `NOW()` → `CURRENT_TIMESTAMP`, preserves runtime evaluation
+  - Data integrity guarantee: INSERT SELECT now behaves identically to INSERT VALUES
+  - Zero performance impact: maintains all existing optimizations and ultra-fast paths
 
 ## Quality Standards
 - Write tests that actually verify functionality, not tests that are designed to pass easily
@@ -279,6 +292,16 @@ INSERT INTO table (col1, col2) VALUES
   - Resolved "time not drained" error in GitHub Actions tests
   - All datetime roundtrip tests now pass with proper PostgreSQL protocol compliance
   - Zero performance impact - maintains system performance characteristics
+- **INSERT SELECT Translation Bug Fix (2025-07-23)**: Critical data integrity issue resolved
+  - **Bug Fixed**: INSERT SELECT with literal datetime values stored as TEXT instead of INTEGER microseconds
+  - **Root Cause**: InsertTranslator only handled INSERT VALUES patterns, bypassing INSERT SELECT entirely
+  - **Impact**: Prevented silent data corruption affecting SQLAlchemy ORM users and ETL operations
+  - **Enhanced Architecture**: Added INSERT_SELECT_PATTERN recognition and SELECT clause analysis
+  - **Translation Logic**: Implemented `translate_select_clause()` with expression parsing and column type mapping
+  - **Technical Results**: Date literals `'2024-01-15'` → `19737` (INTEGER), timestamps → microseconds (INTEGER)
+  - **Pattern Coverage**: Both explicit/implicit column lists, mixed expressions, PostgreSQL functions
+  - **Comprehensive Testing**: 7 new unit tests, multiple integration scenarios, SQLite storage validation
+  - **Production Ready**: Zero performance regression, backward compatible, resolves data corruption
 - **Boolean Conversion Fix (2025-07-17)**: Complete PostgreSQL boolean protocol compliance
   - Fixed psycopg2 compatibility issue where boolean values were returned as strings '0'/'1' instead of 't'/'f'
   - Root cause: Ultra-fast path in simple query protocol was not converting boolean values
