@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "pgsqlite-sqlalchemy-tests"
+version = "0.1.0"
+description = "SQLAlchemy integration tests for pgsqlite"
+authors = ["pgsqlite-team"]
+readme = "README.md"
+packages = []
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.12"
+sqlalchemy = "^2.0.0"
+psycopg2-binary = "^2.9.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

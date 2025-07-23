@@ -1,0 +1,52 @@
+# Python virtual environment
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Test artifacts
+*.db
+*.log
+test_sqlalchemy_orm.db
+test_sqlalchemy_simple.db
+test_minimal.db
+pgsqlite.log
+simple_test.log
+minimal.log
+
+# Poetry
+poetry.lock
+dist/
+
+# Python packaging
+build/
+*.egg-info/
+.eggs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+.temp/
