@@ -79,6 +79,7 @@ pgsqlite --database existingdb.db
 - **v6**: VARCHAR/CHAR constraints (adds type_modifier to __pgsqlite_schema, creates __pgsqlite_string_constraints table)
 - **v7**: NUMERIC/DECIMAL constraints (creates __pgsqlite_numeric_constraints table for precision/scale validation)
 - **v8**: Array support (creates __pgsqlite_array_types table, updates pg_type view with typarray field)
+- **v9**: Full-Text Search support (creates __pgsqlite_fts_tables, __pgsqlite_fts_columns tables for PostgreSQL tsvector/tsquery with SQLite FTS5 backend)
 
 ### Creating New Migrations
 **IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:
@@ -227,6 +228,24 @@ INSERT INTO table (col1, col2) VALUES
 7. **Network Efficiency**: Reduces round trips between client and server
 
 ## Recent Major Features
+- **PostgreSQL Full-Text Search Support (2025-07-23)**: Complete tsvector/tsquery implementation with SQLite FTS5 backend
+  - **Migration v9**: FTS schema tables (__pgsqlite_fts_tables, __pgsqlite_fts_columns) for metadata tracking
+  - **Type System**: Full tsvector and tsquery type support with proper PostgreSQL wire protocol integration
+  - **CREATE TABLE**: Automatic FTS5 virtual table creation for tsvector columns with SQLite FTS5 backend
+  - **Search Functions**: to_tsvector(), to_tsquery(), plainto_tsquery() with comprehensive text processing
+  - **Query Operations**: @@ operator translation to SQLite FTS5 MATCH with complex query support
+  - **Data Operations**: INSERT, UPDATE, DELETE with automatic tsvector population and FTS index maintenance
+  - **Advanced Query Support**: Complex tsquery to FTS5 syntax conversion (AND, OR, NOT, phrase matching)
+  - **Table Alias Resolution**: Proper handling of table aliases in FTS queries (d.search_vector @@ query)
+  - **SQL Parser Compatibility**: Custom pgsqlite_fts_match() function to avoid MATCH syntax parser conflicts
+  - **Comprehensive Testing**: Full integration test suite covering all FTS operations and edge cases
+  - **Production Ready**: Zero performance impact on non-FTS queries, full PostgreSQL FTS compatibility
+- **CREATE TABLE DEFAULT now() Fix (2025-07-23)**: Fixed CREATE TABLE statements with DEFAULT NOW() clauses
+  - **CreateTableTranslator Enhancement**: Added datetime translation support for DEFAULT clauses
+  - **SQLite Compatibility**: Proper translation of DEFAULT NOW() to DEFAULT datetime('now') for SQLite
+  - **Parser Integration**: Fixed SQL syntax errors in CREATE TABLE statements with datetime defaults
+  - **Unit Test Coverage**: Added test_translate_default_now() to validate translation works correctly
+  - **Code Quality**: Fixed all compilation warnings (6 warnings across benchmark test files)
 - **Portal Management Support (2025-01-22)**: Complete Extended Query Protocol enhancement with proven performance benefits
   - **Enhanced Portal Architecture**: PortalManager with configurable limits (default: 100 concurrent portals)
   - **Partial Result Fetching**: Execute messages respect max_rows parameter with portal suspension/resumption

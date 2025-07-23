@@ -687,6 +687,20 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] test_standalone_current_timestamp_returns_formatted passes with correct typing
   - [x] All existing datetime tests continue to pass with no regression
 
+#### Bug Fix: CREATE TABLE DEFAULT now() Translation - COMPLETED (2025-07-23)
+- [x] **CreateTableTranslator DateTime Support** - Fixed CREATE TABLE statements with DEFAULT NOW()
+  - [x] Root cause: CreateTableTranslator was not calling DateTimeTranslator for DEFAULT clauses
+  - [x] Enhanced CreateTableTranslator to apply datetime translation to DEFAULT clauses
+  - [x] Added fake CREATE TABLE context detection to trigger SQLite datetime('now') translation
+  - [x] Implemented proper string extraction to preserve datetime('now') function calls
+  - [x] Added comprehensive unit test: test_translate_default_now() validates translation works
+  - [x] Fixed SQL syntax errors: "DEFAULT NOW()" now correctly becomes "DEFAULT datetime('now')"
+- [x] **Code Quality Improvements** - Fixed all compilation warnings
+  - [x] Added #[allow(dead_code)] to unused test functions in benchmark files
+  - [x] Fixed 6 warnings across benchmark_portal_simple.rs and benchmark_concurrent.rs
+  - [x] Clean compilation with zero warnings across all targets
+  - [x] All 331 unit tests continue to pass with no regressions
+
 #### Date/Time Types - Future Work
 - [ ] Handle special values (infinity, -infinity) for all datetime types
 - [ ] Complex interval handling (months/years in addition to microseconds)
@@ -1168,11 +1182,24 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 - [ ] Handle EXCLUDE clause
 - [ ] Optimize performance for large windows
 
-#### Full Text Search
-- [ ] Implement tsvector and tsquery types
-- [ ] Add text search operators
-- [ ] Support text search configurations
-- [ ] Implement ts_rank and ts_headline
+#### Full Text Search - COMPLETED (2025-07-23)
+- [x] **PostgreSQL Full-Text Search Implementation** - Complete tsvector/tsquery support with SQLite FTS5 backend
+  - [x] **Migration v9**: FTS schema tables (__pgsqlite_fts_tables, __pgsqlite_fts_columns)
+  - [x] **Type System**: tsvector and tsquery types with proper PostgreSQL wire protocol support
+  - [x] **CREATE TABLE**: Automatic FTS5 virtual table creation for tsvector columns
+  - [x] **Data Operations**: INSERT, UPDATE, DELETE with automatic tsvector population
+  - [x] **Search Operations**: @@ operator translation to SQLite FTS5 MATCH queries
+  - [x] **Function Support**: to_tsvector(), to_tsquery(), plainto_tsquery() functions
+  - [x] **Query Translation**: Complex tsquery to FTS5 syntax conversion (AND, OR, NOT, phrase matching)
+  - [x] **Table Alias Resolution**: Proper handling of table aliases in FTS queries
+  - [x] **SQL Parser Compatibility**: Custom pgsqlite_fts_match() function to avoid MATCH syntax conflicts
+  - [x] **Comprehensive Testing**: Full integration test suite with edge cases covered
+- [x] **Advanced Features**
+  - [x] DELETE FROM table WHERE search_vector @@ query support
+  - [x] UPDATE table SET ... WHERE search_vector @@ query support
+  - [x] Complex query patterns with JOINs and subqueries
+  - [x] Multiple tsvector columns per table
+  - [x] Phrase queries with proper quote handling
 
 ### Storage & Optimization
 
@@ -1199,6 +1226,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - v6: VARCHAR/CHAR constraints (type_modifier column, __pgsqlite_string_constraints table)
     - v7: NUMERIC/DECIMAL constraints (__pgsqlite_numeric_constraints table)
     - v8: Array support (__pgsqlite_array_types table, pg_type typarray field)
+    - v9: Full-Text Search support (__pgsqlite_fts_tables, __pgsqlite_fts_columns tables)
 
 #### Indexing
 - [ ] Support for expression indexes
