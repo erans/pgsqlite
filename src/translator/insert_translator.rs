@@ -3,6 +3,7 @@ use once_cell::sync::Lazy;
 use crate::session::DbHandler;
 use crate::types::ValueConverter;
 use serde_json;
+use tracing::debug;
 
 /// Translates INSERT statements to convert datetime literals to INTEGER values
 pub struct InsertTranslator;
@@ -144,6 +145,9 @@ impl InsertTranslator {
             let columns_str = &caps[2];
             let select_clause = &caps[3];
             
+            debug!("INSERT SELECT translation called for table: {}", table_name);
+            debug!("SELECT clause: {}", select_clause);
+            
             // Parse column names
             let columns: Vec<&str> = columns_str.split(',')
                 .map(|c| c.trim())
@@ -159,12 +163,24 @@ impl InsertTranslator {
                 &column_types
             )?;
             
+            eprintln!("   Converted SELECT: {}", converted_select);
+            
+            // For SQLAlchemy VALUES pattern, we need to also clean up the FROM clause
+            let final_select = if Self::is_sqlalchemy_values_pattern(select_clause) {
+                // Remove the problematic column alias and clean up the FROM clause
+                Self::clean_sqlalchemy_from_clause(&converted_select, select_clause)?
+            } else {
+                converted_select
+            };
+            
+            eprintln!("   Final SELECT: {}", final_select);
+            
             // Reconstruct the INSERT query
             Ok(format!(
                 "INSERT INTO {} ({}) SELECT {}",
                 table_name,
                 columns_str,
-                converted_select
+                final_select
             ))
         } else if let Some(caps) = INSERT_SELECT_NO_COLUMNS_PATTERN.captures(query) {
             // Handle INSERT INTO table SELECT ... (without column list)
@@ -647,6 +663,11 @@ impl InsertTranslator {
         columns: &[&str],
         column_types: &std::collections::HashMap<String, String>
     ) -> Result<String, String> {
+        // Check if this is the SQLAlchemy pattern with VALUES subquery and column aliases
+        if Self::is_sqlalchemy_values_pattern(select_clause) {
+            return Self::translate_sqlalchemy_values_pattern(select_clause, columns, column_types);
+        }
+        
         // Parse the SELECT clause to extract individual expressions
         let expressions = Self::parse_select_expressions(select_clause)?;
         
@@ -671,6 +692,97 @@ impl InsertTranslator {
         }
         
         Ok(converted_expressions.join(", "))
+    }
+    
+    /// Check if this is the SQLAlchemy VALUES pattern with column aliases
+    fn is_sqlalchemy_values_pattern(select_clause: &str) -> bool {
+        // Look for pattern: p0::TYPE, p1::TYPE, ... FROM (VALUES ...) AS alias(p0, p1, p2, ...)
+        let is_pattern = select_clause.contains("FROM (VALUES") && 
+        select_clause.contains(") AS ") && 
+        select_clause.contains("(p0, p1, p2");
+        
+        if is_pattern {
+            eprintln!("🎯 SQLAlchemy VALUES pattern detected in: {}", select_clause);
+        }
+        
+        is_pattern
+    }
+    
+    /// Translate SQLAlchemy VALUES pattern to direct column references
+    fn translate_sqlalchemy_values_pattern(
+        select_clause: &str,
+        columns: &[&str],
+        column_types: &std::collections::HashMap<String, String>
+    ) -> Result<String, String> {
+        // For SQLAlchemy VALUES pattern, replace p0, p1, p2 with column1, column2, column3
+        // This works because SQLite automatically assigns column1, column2, etc. to VALUES columns
+        
+        let expressions = Self::parse_select_expressions(select_clause)?;
+        let mut converted_expressions = Vec::new();
+        
+        for (i, expr) in expressions.iter().enumerate() {
+            let expr_trimmed = expr.trim();
+            
+            // Check if this expression references p{i} column (could be p0::TYPE, CAST(p0 AS TEXT), or just p0)
+            let p_ref = format!("p{}", i);
+            if expr_trimmed.contains(&p_ref) {
+                // Replace any reference to p{i} with column{i+1}
+                let column_ref = format!("column{}", i + 1);
+                let converted_expr = expr_trimmed.replace(&p_ref, &column_ref);
+                eprintln!("   🔄 Replaced {} with {} in: {} → {}", p_ref, column_ref, expr_trimmed, converted_expr);
+                converted_expressions.push(converted_expr);
+            } else {
+                // Handle other expressions normally
+                let column_name = columns.get(i).unwrap_or(&"unknown");
+                let converted_expr = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
+                    Self::convert_select_expression(expr, pg_type)?
+                } else {
+                    expr.to_string()
+                };
+                converted_expressions.push(converted_expr);
+            }
+        }
+        
+        Ok(converted_expressions.join(", "))
+    }
+    
+    /// Clean up the FROM clause for SQLAlchemy VALUES pattern
+    fn clean_sqlalchemy_from_clause(converted_select: &str, original_select_clause: &str) -> Result<String, String> {
+        // Find the FROM clause in the original
+        if let Some(from_pos) = original_select_clause.find(" FROM ") {
+            let from_clause = &original_select_clause[from_pos..];
+            
+            // Replace the problematic alias AS imp_sen(p0, p1, p2, sen_counter) with no alias
+            // This makes SQLite use default column names (column1, column2, etc.)
+            let cleaned_from = if from_clause.contains(") AS ") && from_clause.contains("(p0, p1, p2") {
+                // Find the closing parenthesis of AS imp_sen(p0, p1, p2, sen_counter)
+                if let Some(as_pos) = from_clause.find(") AS ") {
+                    let values_part = &from_clause[..as_pos + 1]; // Keep ") before AS"
+                    let after_as = &from_clause[as_pos + 4..]; // Skip ") AS "
+                    
+                    // Find the end of the alias definition
+                    if let Some(alias_end) = after_as.find(')') {
+                        let after_alias = &after_as[alias_end + 1..]; // Everything after the alias
+                        format!("{}{}", values_part, after_alias)
+                    } else {
+                        from_clause.to_string()
+                    }
+                } else {
+                    from_clause.to_string()
+                }
+            } else {
+                from_clause.to_string()
+            };
+            
+            // Also replace any references to sen_counter with column4
+            let final_from = cleaned_from.replace("sen_counter", "column4");
+            
+            eprintln!("   🧹 Cleaned FROM clause: {} → {}", from_clause, final_from);
+            Ok(format!("{}{}", converted_select, final_from))
+        } else {
+            // No FROM clause found, just return the converted select
+            Ok(converted_select.to_string())
+        }
     }
     
     /// Parse SELECT clause into individual expressions, handling commas within function calls

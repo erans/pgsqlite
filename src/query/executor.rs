@@ -169,6 +169,19 @@ impl QueryExecutor {
         
         info!("Executing query: {}", query_to_execute);
         
+        // Check for Python-style parameters and provide helpful error
+        use crate::query::parameter_parser::ParameterParser;
+        let python_params = ParameterParser::find_python_parameters(query_to_execute);
+        if !python_params.is_empty() {
+            let error_msg = format!(
+                "Python-style parameters detected: {:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query.",
+                python_params
+            );
+            info!("⚠️  {}", error_msg);
+            info!("Query: {}", query_to_execute);
+            return Err(PgSqliteError::Protocol(error_msg));
+        }
+        
         // Check if query contains multiple statements
         let trimmed = query_to_execute.trim();
         if trimmed.contains(';') {

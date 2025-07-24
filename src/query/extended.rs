@@ -72,7 +72,7 @@ impl ExtendedQueryHandler {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Strip SQL comments first to avoid parsing issues
-        let cleaned_query = crate::query::strip_sql_comments(&query);
+        let mut cleaned_query = crate::query::strip_sql_comments(&query);
         
         // Check if query is empty after comment stripping
         if cleaned_query.trim().is_empty() {
@@ -81,6 +81,28 @@ impl ExtendedQueryHandler {
         
         info!("Parsing statement '{}': {}", name, cleaned_query);
         info!("Provided param_types: {:?}", param_types);
+        
+        // Check for Python-style parameters and convert to PostgreSQL-style
+        use crate::query::parameter_parser::ParameterParser;
+        let python_params = ParameterParser::find_python_parameters(&cleaned_query);
+        if !python_params.is_empty() {
+            info!("Found Python-style parameters: {:?}", python_params);
+            
+            // Convert %(name)s parameters to $1, $2, $3, etc.
+            let mut param_counter = 1;
+            for param_name in &python_params {
+                let placeholder = format!("%({})s", param_name);
+                let numbered_placeholder = format!("${}", param_counter);
+                cleaned_query = cleaned_query.replace(&placeholder, &numbered_placeholder);
+                param_counter += 1;
+            }
+            
+            info!("Converted query: {}", cleaned_query);
+            
+            // Store the parameter mapping in session for later use in bind
+            let mut python_param_mapping = session.python_param_mapping.write().await;
+            python_param_mapping.insert(name.clone(), python_params);
+        }
         
         // Check if this is a SET command - handle it specially
         if crate::query::SetHandler::is_set_command(&cleaned_query) {
@@ -604,6 +626,20 @@ impl ExtendedQueryHandler {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         info!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
+        
+        // Check if this statement used Python-style parameters and reorder values if needed
+        {
+            let python_mappings = session.python_param_mapping.read().await;
+            if let Some(param_names) = python_mappings.get(&statement) {
+                info!("Statement '{}' used Python parameters: {:?}", statement, param_names);
+                
+                // The values come in as a map (conceptually), but we received them as a Vec
+                // We need to reorder them to match the $1, $2, $3... order we created
+                // Since we already converted %(name__0)s -> $1, %(name__1)s -> $2, etc. in parse,
+                // the values should already be in the correct order
+                info!("Python parameter mapping found, values should already be in correct order");
+            }
+        }
         
         // Get the prepared statement
         let statements = session.prepared_statements.read().await;
