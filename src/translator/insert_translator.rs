@@ -29,7 +29,7 @@ static INSERT_SELECT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 impl InsertTranslator {
-    /// Check if the query is an INSERT that might need datetime or array translation
+    /// Check if the query is an INSERT that might need datetime, array, or VALUES translation
     pub fn needs_translation(query: &str) -> bool {
         let is_insert = INSERT_PATTERN.is_match(query) || 
                        INSERT_NO_COLUMNS_PATTERN.is_match(query) ||
@@ -45,7 +45,11 @@ impl InsertTranslator {
                                    query.contains("CURRENT_TIME") ||
                                    query.contains("CURRENT_TIMESTAMP");
         
-        is_insert && has_datetime_or_array
+        // Also check for SQLAlchemy VALUES pattern
+        let has_sqlalchemy_values = query.contains("FROM (VALUES") && query.contains(") AS ") && 
+                                   (query.contains("imp_sen") || query.contains("(p0, p1"));
+        
+        is_insert && (has_datetime_or_array || has_sqlalchemy_values)
     }
     
     /// Translate INSERT statement to convert datetime values to INTEGER format
@@ -159,6 +163,9 @@ impl InsertTranslator {
             // Check if this is the SQLAlchemy VALUES pattern FIRST
             let final_select = if Self::is_sqlalchemy_values_pattern(select_clause) {
                 eprintln!("🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL");
+                eprintln!("   Table: {}", table_name);
+                eprintln!("   Columns: {:?}", columns);
+                eprintln!("   Select clause: {}", select_clause);
                 // Convert VALUES pattern to UNION ALL
                 Self::convert_sqlalchemy_values_to_union(select_clause, &columns, &column_types)?
             } else {
@@ -692,10 +699,12 @@ impl InsertTranslator {
     
     /// Check if this is the SQLAlchemy VALUES pattern with column aliases
     fn is_sqlalchemy_values_pattern(select_clause: &str) -> bool {
-        // Look for pattern: p0::TYPE, p1::TYPE, ... FROM (VALUES ...) AS alias(p0, p1, p2, ...)
+        // Look for pattern: p0::TYPE or CAST(p0 AS TYPE), ... FROM (VALUES ...) AS alias(p0, p1, p2, ...)
+        // This works for both original queries and after CastTranslator has run
         select_clause.contains("FROM (VALUES") && 
         select_clause.contains(") AS ") && 
-        select_clause.contains("(p0, p1, p2")
+        (select_clause.contains("(p0, p1, p2") || 
+         (select_clause.contains("CAST(p0") && select_clause.contains("imp_sen")))
     }
     
     /// Convert SQLAlchemy VALUES pattern to UNION ALL syntax
@@ -706,6 +715,15 @@ impl InsertTranslator {
     ) -> Result<String, String> {
         // Extract the VALUES rows from the pattern:
         // SELECT p0::TYPE, p1::TYPE FROM (VALUES (val1, val2, val3, idx), ...) AS alias(p0, p1, p2, sen_counter)
+        
+        // First, extract the SELECT expressions to understand what type casts are applied
+        let select_start = 0;
+        let from_pos = select_clause.find(" FROM ").ok_or("FROM not found")?;
+        let select_expressions = &select_clause[select_start..from_pos];
+        
+        // Parse the SELECT expressions to get the type casts
+        let type_casts = Self::parse_sqlalchemy_type_casts(select_expressions)?;
+        eprintln!("   🔍 Type casts: {:?}", type_casts);
         
         // Find the VALUES clause
         let values_start = select_clause.find("VALUES").ok_or("VALUES not found")?;
@@ -747,12 +765,19 @@ impl InsertTranslator {
                 }
                 
                 let column_name = columns[col_idx];
-                let pg_type = column_types.get(&column_name.to_lowercase());
                 
-                // Convert the value if it's a datetime type
-                let converted_value = if let Some(typ) = pg_type {
-                    Self::convert_value(value, typ)?
+                // Apply type cast if specified in the original query
+                let converted_value = if col_idx < type_casts.len() {
+                    if let Some(ref cast_type) = type_casts[col_idx] {
+                        // Apply the CAST
+                        format!("CAST({} AS {})", value, cast_type)
+                    } else {
+                        // No cast found in query, just use the value
+                        // For NUMERIC columns, we don't need special handling since SQLite stores them as-is
+                        value.to_string()
+                    }
                 } else {
+                    // Beyond the type_casts array, just use value as-is
                     value.to_string()
                 };
                 
@@ -772,9 +797,9 @@ impl InsertTranslator {
         // Join with UNION ALL
         let union_query = union_parts.join(" UNION ALL ");
         
-        // Add ORDER BY if we need to preserve row order
+        // Add ORDER BY if we need to preserve row order (but skip sen_counter)
         let final_query = if !order_by.is_empty() && order_by.contains("sen_counter") {
-            // Replace sen_counter with row number
+            // Skip ORDER BY sen_counter as it doesn't exist in UNION ALL
             format!("{}{}", union_query, returning)
         } else {
             format!("{}{}{}", union_query, order_by, returning)
@@ -784,6 +809,44 @@ impl InsertTranslator {
     }
     
     /// Parse VALUES rows from a VALUES clause like ((val1, val2), (val3, val4))
+    /// Parse type casts from SQLAlchemy SELECT expressions like "CAST(p0 AS INTEGER), p1::NUMERIC(10, 2)"
+    fn parse_sqlalchemy_type_casts(select_expressions: &str) -> Result<Vec<Option<String>>, String> {
+        let mut type_casts = Vec::new();
+        
+        // Split by comma but handle nested parentheses
+        let expressions = Self::parse_select_expressions(select_expressions)?;
+        
+        for expr in expressions {
+            let expr_trimmed = expr.trim();
+            
+            // Check for CAST(p{n} AS TYPE) pattern
+            if expr_trimmed.starts_with("CAST(") {
+                if let Some(as_pos) = expr_trimmed.find(" AS ") {
+                    let after_as = &expr_trimmed[as_pos + 4..];
+                    if let Some(close_pos) = after_as.rfind(')') {
+                        let cast_type = after_as[..close_pos].trim();
+                        type_casts.push(Some(cast_type.to_string()));
+                        continue;
+                    }
+                }
+            }
+            
+            // Check for p{n}::TYPE pattern
+            if expr_trimmed.contains("::") {
+                if let Some(cast_pos) = expr_trimmed.find("::") {
+                    let cast_type = expr_trimmed[cast_pos + 2..].trim();
+                    type_casts.push(Some(cast_type.to_string()));
+                    continue;
+                }
+            }
+            
+            // No cast found
+            type_casts.push(None);
+        }
+        
+        Ok(type_casts)
+    }
+    
     fn parse_values_rows(values_content: &str) -> Result<Vec<Vec<String>>, String> {
         let mut rows = Vec::new();
         let mut current_row = Vec::new();
