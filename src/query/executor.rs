@@ -911,194 +911,52 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
-            .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
-        
         use crate::query::{QueryTypeDetector, QueryType};
         
-        if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Insert) {
-            // For INSERT, execute the insert and then query by last_insert_rowid
-            let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
-            
-            // Execute the INSERT
-            let response = if let Some(router) = query_router {
-                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.execute(&base_query).await?
-            };
-            
-            // Get the last inserted rowid and query for RETURNING data
-            let returning_query = format!(
-                "SELECT {} FROM {} WHERE rowid = last_insert_rowid()",
-                returning_clause,
-                table_name
-            );
-            
-            let returning_response = if let Some(router) = query_router {
-                router.execute_query(&returning_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.query(&returning_query).await?
-            };
-            
-            // Send row description
-            let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: PgType::Text.to_oid(), // Default to text
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
-                .collect();
-            
-            framed.send(BackendMessage::RowDescription(fields)).await
+        // SQLite 3.35.0+ supports native RETURNING clause
+        // Execute the query with RETURNING clause directly
+        let returning_response = if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+        } else {
+            db.query(query).await?
+        };
+        
+        // Send row description
+        let fields: Vec<FieldDescription> = returning_response.columns.iter()
+            .enumerate()
+            .map(|(i, name)| FieldDescription {
+                name: name.clone(),
+                table_oid: 0,
+                column_id: (i + 1) as i16,
+                type_oid: PgType::Text.to_oid(), // Default to text
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            })
+            .collect();
+        
+        framed.send(BackendMessage::RowDescription(fields)).await
+            .map_err(|e| PgSqliteError::Io(e))?;
+        
+        // Send data rows
+        let mut row_count = 0;
+        for row in returning_response.rows {
+            framed.send(BackendMessage::DataRow(row)).await
                 .map_err(|e| PgSqliteError::Io(e))?;
-            
-            // Send data rows
-            for row in returning_response.rows {
-                framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
-            }
-            
-            // Send command complete
-            let tag = format!("INSERT 0 {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
-        } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Update) {
-            // For UPDATE, we need a different approach
-            // SQLite doesn't support RETURNING natively, so we'll use a workaround
-            let table_name = ReturningTranslator::extract_table_from_update(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
-            
-            // First, get the rowids of rows that will be updated
-            let where_clause = ReturningTranslator::extract_where_clause(&base_query);
-            let rowid_query = format!(
-                "SELECT rowid FROM {} {}",
-                table_name,
-                where_clause
-            );
-            let rowid_response = if let Some(router) = query_router {
-                router.execute_query(&rowid_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.query(&rowid_query).await?
-            };
-            let rowids: Vec<String> = rowid_response.rows.iter()
-                .filter_map(|row| row[0].as_ref())
-                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                .collect();
-            
-            // Execute the UPDATE
-            let response = if let Some(router) = query_router {
-                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.execute(&base_query).await?
-            };
-            
-            // Now query the updated rows
-            if !rowids.is_empty() {
-                let rowid_list = rowids.join(",");
-                let returning_query = format!(
-                    "SELECT {} FROM {} WHERE rowid IN ({})",
-                    returning_clause,
-                    table_name,
-                    rowid_list
-                );
-                
-                let returning_response = if let Some(router) = query_router {
-                    router.execute_query(&returning_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-                } else {
-                    db.query(&returning_query).await?
-                };
-                
-                // Send row description
-                let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                    .enumerate()
-                    .map(|(i, name)| FieldDescription {
-                        name: name.clone(),
-                        table_oid: 0,
-                        column_id: (i + 1) as i16,
-                        type_oid: PgType::Text.to_oid(),
-                        type_size: -1,
-                        type_modifier: -1,
-                        format: 0,
-                    })
-                    .collect();
-                
-                framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
-                
-                // Send data rows
-                for row in returning_response.rows {
-                    framed.send(BackendMessage::DataRow(row)).await
-                        .map_err(|e| PgSqliteError::Io(e))?;
-                }
-            }
-            
-            // Send command complete
-            let tag = format!("UPDATE {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
-        } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Delete) {
-            // For DELETE, capture rows before deletion
-            let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
-            
-            let capture_query = ReturningTranslator::generate_capture_query(
-                &base_query,
-                &table_name,
-                &returning_clause
-            )?;
-            
-            // Capture the rows that will be affected
-            let captured_rows = if let Some(router) = query_router {
-                router.execute_query(&capture_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.query(&capture_query).await?
-            };
-            
-            // Execute the actual DELETE
-            let response = if let Some(router) = query_router {
-                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.execute(&base_query).await?
-            };
-            
-            // Send row description
-            let fields: Vec<FieldDescription> = captured_rows.columns.iter()
-                .skip(1) // Skip rowid column
-                .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: PgType::Text.to_oid(),
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
-                .collect();
-            
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
-            
-            // Send captured rows (skip rowid column)
-            for row in captured_rows.rows {
-                let data_row: Vec<Option<Vec<u8>>> = row.into_iter()
-                    .skip(1) // Skip rowid
-                    .collect();
-                framed.send(BackendMessage::DataRow(data_row)).await
-                    .map_err(|e| PgSqliteError::Io(e))?;
-            }
-            
-            // Send command complete
-            let tag = format!("DELETE {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+            row_count += 1;
         }
+        
+        // Determine the command tag based on query type
+        let query_type = QueryTypeDetector::detect_query_type(query);
+        let tag = match query_type {
+            QueryType::Insert => format!("INSERT 0 {}", row_count),
+            QueryType::Update => format!("UPDATE {}", row_count),
+            QueryType::Delete => format!("DELETE {}", row_count),
+            _ => format!("OK {}", row_count),
+        };
+        
+        framed.send(BackendMessage::CommandComplete { tag }).await
+            .map_err(|e| PgSqliteError::Io(e))?;
         
         Ok(())
     }

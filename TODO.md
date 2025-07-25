@@ -597,6 +597,28 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] NULL date handling with RETURNING clauses fixed
   - [x] Complex alias patterns resolved for SQLAlchemy-generated queries
 
+### Multi-Row INSERT RETURNING Fix - COMPLETED (2025-07-25)
+- [x] **PostgreSQL RETURNING Clause Multi-Row Support** - Fixed multi-row INSERT only returning last row
+  - [x] **Bug Identified**: Multi-row INSERT with RETURNING only returned the last inserted row
+  - [x] **Root Cause**: Implementation used SQLite's `last_insert_rowid()` which only returns single row ID
+  - [x] **Solution**: Switched to SQLite's native RETURNING support (available since SQLite 3.35.0)
+  - [x] **Impact**: SQLAlchemy and other ORMs now properly receive all rows from multi-row INSERT RETURNING
+- [x] **Implementation Details**:
+  - [x] Modified `execute_dml_with_returning()` to pass full query (including RETURNING) to SQLite
+  - [x] Removed the pattern of stripping RETURNING clause and simulating with follow-up SELECT
+  - [x] SQLite natively handles returning all affected rows, not just the last one
+  - [x] Maintained backward compatibility for UPDATE and DELETE RETURNING operations
+- [x] **Pattern Coverage**:
+  - [x] Regular multi-row INSERT: `INSERT INTO table VALUES (...), (...) RETURNING *`
+  - [x] SQLAlchemy-style INSERT SELECT: `INSERT INTO table SELECT ... FROM (VALUES ...) RETURNING *`
+  - [x] All column specifications work: RETURNING *, RETURNING id, RETURNING id AS id__1
+  - [x] Both simple and extended query protocols properly handle multi-row results
+- [x] **Testing & Validation**:
+  - [x] Created comprehensive test suite in `multirow_insert_returning_test.rs`
+  - [x] Tests verify all rows are returned, not just the last one
+  - [x] SQLAlchemy-style patterns tested with complex column aliases
+  - [x] All existing RETURNING tests continue to pass
+
 ### INSERT SELECT Translation Bug - COMPLETED (2025-07-23)
 - [x] **Critical Data Integrity Issue Fixed** - INSERT SELECT datetime translation now working correctly
   - [x] **Bug Identified**: INSERT SELECT with literal datetime values stored as TEXT instead of INTEGER microseconds
