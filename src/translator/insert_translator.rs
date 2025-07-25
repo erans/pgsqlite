@@ -156,20 +156,19 @@ impl InsertTranslator {
             // Get column types from __pgsqlite_schema
             let column_types = Self::get_column_types(db, table_name).await?;
             
-            // Translate the SELECT clause
-            let converted_select = Self::translate_select_clause(
-                select_clause,
-                &columns,
-                &column_types
-            )?;
-            
-            eprintln!("   Converted SELECT: {}", converted_select);
-            
-            // For SQLAlchemy VALUES pattern, we need to also clean up the FROM clause
+            // Check if this is the SQLAlchemy VALUES pattern FIRST
             let final_select = if Self::is_sqlalchemy_values_pattern(select_clause) {
-                // Remove the problematic column alias and clean up the FROM clause
-                Self::clean_sqlalchemy_from_clause(&converted_select, select_clause)?
+                eprintln!("🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL");
+                // Convert VALUES pattern to UNION ALL
+                Self::convert_sqlalchemy_values_to_union(select_clause, &columns, &column_types)?
             } else {
+                // Translate the SELECT clause normally
+                let converted_select = Self::translate_select_clause(
+                    select_clause,
+                    &columns,
+                    &column_types
+                )?;
+                eprintln!("   Converted SELECT: {}", converted_select);
                 converted_select
             };
             
@@ -663,10 +662,7 @@ impl InsertTranslator {
         columns: &[&str],
         column_types: &std::collections::HashMap<String, String>
     ) -> Result<String, String> {
-        // Check if this is the SQLAlchemy pattern with VALUES subquery and column aliases
-        if Self::is_sqlalchemy_values_pattern(select_clause) {
-            return Self::translate_sqlalchemy_values_pattern(select_clause, columns, column_types);
-        }
+        // SQLAlchemy VALUES pattern is now handled in the main translate_query method
         
         // Parse the SELECT clause to extract individual expressions
         let expressions = Self::parse_select_expressions(select_clause)?;
@@ -697,92 +693,160 @@ impl InsertTranslator {
     /// Check if this is the SQLAlchemy VALUES pattern with column aliases
     fn is_sqlalchemy_values_pattern(select_clause: &str) -> bool {
         // Look for pattern: p0::TYPE, p1::TYPE, ... FROM (VALUES ...) AS alias(p0, p1, p2, ...)
-        let is_pattern = select_clause.contains("FROM (VALUES") && 
+        select_clause.contains("FROM (VALUES") && 
         select_clause.contains(") AS ") && 
-        select_clause.contains("(p0, p1, p2");
-        
-        if is_pattern {
-            eprintln!("🎯 SQLAlchemy VALUES pattern detected in: {}", select_clause);
-        }
-        
-        is_pattern
+        select_clause.contains("(p0, p1, p2")
     }
     
-    /// Translate SQLAlchemy VALUES pattern to direct column references
-    fn translate_sqlalchemy_values_pattern(
+    /// Convert SQLAlchemy VALUES pattern to UNION ALL syntax
+    fn convert_sqlalchemy_values_to_union(
         select_clause: &str,
         columns: &[&str],
         column_types: &std::collections::HashMap<String, String>
     ) -> Result<String, String> {
-        // For SQLAlchemy VALUES pattern, replace p0, p1, p2 with column1, column2, column3
-        // This works because SQLite automatically assigns column1, column2, etc. to VALUES columns
+        // Extract the VALUES rows from the pattern:
+        // SELECT p0::TYPE, p1::TYPE FROM (VALUES (val1, val2, val3, idx), ...) AS alias(p0, p1, p2, sen_counter)
         
-        let expressions = Self::parse_select_expressions(select_clause)?;
-        let mut converted_expressions = Vec::new();
+        // Find the VALUES clause
+        let values_start = select_clause.find("VALUES").ok_or("VALUES not found")?;
+        let values_end_search = &select_clause[values_start..];
         
-        for (i, expr) in expressions.iter().enumerate() {
-            let expr_trimmed = expr.trim();
+        // Find the end of VALUES - look for ) AS
+        let as_pos = values_end_search.find(") AS").ok_or("End of VALUES not found")?;
+        let values_content = &values_end_search[6..as_pos + 1]; // Skip "VALUES" and include the last )
+        
+        // Parse the VALUES rows
+        let rows = Self::parse_values_rows(values_content)?;
+        eprintln!("   📦 Parsed {} rows from VALUES clause", rows.len());
+        
+        // Extract ORDER BY and RETURNING clauses if present
+        let mut order_by = "";
+        let mut returning = "";
+        
+        if let Some(order_pos) = select_clause.find(" ORDER BY ") {
+            let order_end = select_clause[order_pos..].find(" RETURNING ")
+                .map(|p| order_pos + p)
+                .unwrap_or(select_clause.len());
+            order_by = &select_clause[order_pos..order_end];
+        }
+        
+        if let Some(ret_pos) = select_clause.find(" RETURNING ") {
+            returning = &select_clause[ret_pos..];
+        }
+        
+        // Build UNION ALL query
+        let mut union_parts = Vec::new();
+        
+        for (row_idx, row_values) in rows.iter().enumerate() {
+            let mut select_parts = Vec::new();
             
-            // Check if this expression references p{i} column (could be p0::TYPE, CAST(p0 AS TEXT), or just p0)
-            let p_ref = format!("p{}", i);
-            if expr_trimmed.contains(&p_ref) {
-                // Replace any reference to p{i} with column{i+1}
-                let column_ref = format!("column{}", i + 1);
-                let converted_expr = expr_trimmed.replace(&p_ref, &column_ref);
-                eprintln!("   🔄 Replaced {} with {} in: {} → {}", p_ref, column_ref, expr_trimmed, converted_expr);
-                converted_expressions.push(converted_expr);
-            } else {
-                // Handle other expressions normally
-                let column_name = columns.get(i).unwrap_or(&"unknown");
-                let converted_expr = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
-                    Self::convert_select_expression(expr, pg_type)?
+            for (col_idx, value) in row_values.iter().enumerate() {
+                if col_idx >= columns.len() {
+                    // This is probably the sen_counter column, skip it
+                    continue;
+                }
+                
+                let column_name = columns[col_idx];
+                let pg_type = column_types.get(&column_name.to_lowercase());
+                
+                // Convert the value if it's a datetime type
+                let converted_value = if let Some(typ) = pg_type {
+                    Self::convert_value(value, typ)?
                 } else {
-                    expr.to_string()
+                    value.to_string()
                 };
-                converted_expressions.push(converted_expr);
+                
+                select_parts.push(converted_value);
+            }
+            
+            // For the first row, don't include SELECT (it will be added by the caller)
+            // For subsequent rows, we need SELECT for UNION ALL
+            if row_idx == 0 {
+                union_parts.push(select_parts.join(", "));
+            } else {
+                let select_stmt = format!("SELECT {}", select_parts.join(", "));
+                union_parts.push(select_stmt);
             }
         }
         
-        Ok(converted_expressions.join(", "))
+        // Join with UNION ALL
+        let union_query = union_parts.join(" UNION ALL ");
+        
+        // Add ORDER BY if we need to preserve row order
+        let final_query = if !order_by.is_empty() && order_by.contains("sen_counter") {
+            // Replace sen_counter with row number
+            format!("{}{}", union_query, returning)
+        } else {
+            format!("{}{}{}", union_query, order_by, returning)
+        };
+        
+        Ok(final_query)
     }
     
-    /// Clean up the FROM clause for SQLAlchemy VALUES pattern
-    fn clean_sqlalchemy_from_clause(converted_select: &str, original_select_clause: &str) -> Result<String, String> {
-        // Find the FROM clause in the original
-        if let Some(from_pos) = original_select_clause.find(" FROM ") {
-            let from_clause = &original_select_clause[from_pos..];
+    /// Parse VALUES rows from a VALUES clause like ((val1, val2), (val3, val4))
+    fn parse_values_rows(values_content: &str) -> Result<Vec<Vec<String>>, String> {
+        let mut rows = Vec::new();
+        let mut current_row = Vec::new();
+        let mut current_value = String::new();
+        let mut in_quotes = false;
+        let mut paren_depth = 0;
+        let mut in_row = false;
+        
+        let chars: Vec<char> = values_content.chars().collect();
+        let mut i = 0;
+        
+        while i < chars.len() {
+            let ch = chars[i];
             
-            // Replace the problematic alias AS imp_sen(p0, p1, p2, sen_counter) with no alias
-            // This makes SQLite use default column names (column1, column2, etc.)
-            let cleaned_from = if from_clause.contains(") AS ") && from_clause.contains("(p0, p1, p2") {
-                // Find the closing parenthesis of AS imp_sen(p0, p1, p2, sen_counter)
-                if let Some(as_pos) = from_clause.find(") AS ") {
-                    let values_part = &from_clause[..as_pos + 1]; // Keep ") before AS"
-                    let after_as = &from_clause[as_pos + 4..]; // Skip ") AS "
-                    
-                    // Find the end of the alias definition
-                    if let Some(alias_end) = after_as.find(')') {
-                        let after_alias = &after_as[alias_end + 1..]; // Everything after the alias
-                        format!("{}{}", values_part, after_alias)
+            match ch {
+                '\'' => {
+                    current_value.push(ch);
+                    if in_quotes && i + 1 < chars.len() && chars[i + 1] == '\'' {
+                        // Escaped quote
+                        current_value.push('\'');
+                        i += 1;
                     } else {
-                        from_clause.to_string()
+                        in_quotes = !in_quotes;
                     }
-                } else {
-                    from_clause.to_string()
                 }
-            } else {
-                from_clause.to_string()
-            };
-            
-            // Also replace any references to sen_counter with column4
-            let final_from = cleaned_from.replace("sen_counter", "column4");
-            
-            eprintln!("   🧹 Cleaned FROM clause: {} → {}", from_clause, final_from);
-            Ok(format!("{}{}", converted_select, final_from))
-        } else {
-            // No FROM clause found, just return the converted select
-            Ok(converted_select.to_string())
+                '(' if !in_quotes => {
+                    if paren_depth == 0 {
+                        in_row = true;
+                    } else {
+                        current_value.push(ch);
+                    }
+                    paren_depth += 1;
+                }
+                ')' if !in_quotes => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 && in_row {
+                        // End of row
+                        if !current_value.trim().is_empty() {
+                            current_row.push(current_value.trim().to_string());
+                            current_value.clear();
+                        }
+                        rows.push(current_row.clone());
+                        current_row.clear();
+                        in_row = false;
+                    } else {
+                        current_value.push(ch);
+                    }
+                }
+                ',' if !in_quotes && in_row => {
+                    // End of value within row
+                    current_row.push(current_value.trim().to_string());
+                    current_value.clear();
+                }
+                _ => {
+                    if in_row {
+                        current_value.push(ch);
+                    }
+                }
+            }
+            i += 1;
         }
+        
+        Ok(rows)
     }
     
     /// Parse SELECT clause into individual expressions, handling commas within function calls

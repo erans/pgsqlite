@@ -240,6 +240,15 @@ INSERT INTO table (col1, col2) VALUES
 7. **Network Efficiency**: Reduces round trips between client and server
 
 ## Recent Major Features
+- **SQLAlchemy INSERT SELECT VALUES Fix (2025-07-25)**: Critical compatibility fix for SQLAlchemy ORM
+  - **Bug Fixed**: SQLAlchemy multi-row INSERT statements using VALUES clause failed with "Mapper[Category(categories)]" error
+  - **Root Cause**: SQLAlchemy generates complex INSERT SELECT statements with PostgreSQL VALUES syntax not supported by SQLite
+  - **Pattern Example**: `INSERT INTO table SELECT p0::TYPE FROM (VALUES (val1, val2, 0)) AS imp_sen(p0, p1, sen_counter)`
+  - **Solution**: Detect SQLAlchemy VALUES pattern and convert to UNION ALL syntax for SQLite compatibility
+  - **Implementation**: Added `is_sqlalchemy_values_pattern()` and `convert_sqlalchemy_values_to_union()` in InsertTranslator
+  - **Technical Details**: VALUES clause with column aliases converted to SELECT UNION ALL while preserving datetime conversions
+  - **Impact**: SQLAlchemy ORM bulk inserts now work correctly with pgsqlite, resolving data insertion failures
+  - **Zero Performance Impact**: Fix maintains all existing optimizations and fast-path behaviors
 - **Portal Management Support (2025-01-22)**: Complete Extended Query Protocol enhancement with proven performance benefits
   - **Enhanced Portal Architecture**: PortalManager with configurable limits (default: 100 concurrent portals)
   - **Partial Result Fetching**: Execute messages respect max_rows parameter with portal suspension/resumption
