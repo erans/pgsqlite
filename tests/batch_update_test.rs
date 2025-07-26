@@ -47,9 +47,9 @@ async fn test_batch_update_with_values() -> Result<(), Box<dyn std::error::Error
         let age: i32 = String::from_utf8(row[2].as_ref().unwrap().clone())?.parse()?;
         
         let (expected_id, expected_name, expected_age) = expected_data[i];
-        assert_eq!(id, expected_id, "ID mismatch at row {}", i);
-        assert_eq!(name, expected_name, "Name mismatch at row {}", i);
-        assert_eq!(age, expected_age, "Age mismatch at row {}", i);
+        assert_eq!(id, expected_id, "ID mismatch at row {i}");
+        assert_eq!(name, expected_name, "Name mismatch at row {i}");
+        assert_eq!(age, expected_age, "Age mismatch at row {i}");
     }
     
     println!("✅ Batch UPDATE with VALUES test passed");
@@ -86,7 +86,7 @@ async fn test_batch_update_single_column() -> Result<(), Box<dyn std::error::Err
     // Verify the updates
     let select_result = db_handler.query("SELECT id, price FROM products ORDER BY id").await?;
     
-    let expected_prices = vec![12.99, 27.99, 17.99];
+    let expected_prices = [12.99, 27.99, 17.99];
     for (i, row) in select_result.rows.iter().enumerate() {
         let price_str = String::from_utf8(row[1].as_ref().unwrap().clone())?;
         let price: f64 = price_str.parse()?;
@@ -126,15 +126,13 @@ async fn test_batch_update_with_quotes() -> Result<(), Box<dyn std::error::Error
     // Verify the updates
     let select_result = db_handler.query("SELECT id, description FROM quotes_test ORDER BY id").await?;
     
-    let expected_descriptions = vec![
-        "Text with, comma",
-        "Text with 'apostrophe'",
-    ];
+    let expected_descriptions = ["Text with, comma",
+        "Text with 'apostrophe'"];
     
     for (i, row) in select_result.rows.iter().enumerate() {
         let description = String::from_utf8(row[1].as_ref().unwrap().clone())?;
         assert_eq!(description, expected_descriptions[i], 
-            "Description mismatch at row {}", i);
+            "Description mismatch at row {i}");
     }
     
     println!("✅ Quoted string batch UPDATE test passed");
@@ -165,10 +163,10 @@ async fn test_batch_update_no_alias() -> Result<(), Box<dyn std::error::Error>> 
     // Verify the updates
     let select_result = db_handler.query("SELECT id, value FROM simple_table ORDER BY id").await?;
     
-    let expected_values = vec![150, 250, 300]; // Only first two updated
+    let expected_values = [150, 250, 300]; // Only first two updated
     for (i, row) in select_result.rows.iter().enumerate() {
         let value: i32 = String::from_utf8(row[1].as_ref().unwrap().clone())?.parse()?;
-        assert_eq!(value, expected_values[i], "Value mismatch at row {}", i);
+        assert_eq!(value, expected_values[i], "Value mismatch at row {i}");
     }
     
     println!("✅ No alias batch UPDATE test passed");
@@ -199,25 +197,25 @@ async fn test_batch_update_performance() -> Result<(), Box<dyn std::error::Error
     let query = format!(r#"
         UPDATE perf_test AS p 
         SET value = v.new_value 
-        FROM (VALUES {}) AS v(id, new_value) 
+        FROM (VALUES {values_clause}) AS v(id, new_value) 
         WHERE p.id = v.id
-    "#, values_clause);
+    "#);
     
     let start = std::time::Instant::now();
     let result = db_handler.execute(&query).await?;
     let elapsed = start.elapsed();
     
-    println!("Batch UPDATE of 100 rows took: {:?}", elapsed);
+    println!("Batch UPDATE of 100 rows took: {elapsed:?}");
     println!("Affected {} rows", result.rows_affected);
     
     // Verify some of the updates
     let verify_result = db_handler.query("SELECT value FROM perf_test WHERE id IN (1, 50, 100)").await?;
-    let expected = vec![20, 1000, 2000]; // New values for rows 1, 50, 100
+    let expected = [20, 1000, 2000]; // New values for rows 1, 50, 100
     
     for (i, row) in verify_result.rows.iter().enumerate() {
         let value: i32 = String::from_utf8(row[0].as_ref().unwrap().clone())?.parse()?;
         let row_id = if i == 0 { 1 } else if i == 1 { 50 } else { 100 };
-        assert_eq!(value, expected[i], "Value mismatch for row {}", row_id);
+        assert_eq!(value, expected[i], "Value mismatch for row {row_id}");
     }
     
     println!("✅ Performance batch UPDATE test passed");

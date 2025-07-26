@@ -27,7 +27,7 @@ async fn test_fast_path_performance() -> Result<(), Box<dyn std::error::Error>> 
     let start = Instant::now();
     for _ in 0..100 {
         let result = db_handler.query("SELECT * FROM users WHERE age > 25").await?;
-        assert!(result.rows.len() > 0);
+        assert!(!result.rows.is_empty());
     }
     let select_duration = start.elapsed();
     println!("100 SELECTs took: {:?} ({:.3}ms per select)", select_duration, select_duration.as_secs_f64() * 1000.0 / 100.0);
@@ -37,7 +37,7 @@ async fn test_fast_path_performance() -> Result<(), Box<dyn std::error::Error>> 
     
     let start = Instant::now();
     for i in 0..100 {
-        db_handler.execute(&format!("INSERT INTO products (name, price) VALUES ('product{}', {}.99)", i, i)).await?;
+        db_handler.execute(&format!("INSERT INTO products (name, price) VALUES ('product{i}', {i}.99)")).await?;
     }
     let decimal_insert_duration = start.elapsed();
     println!("100 DECIMAL INSERTs took: {:?} ({:.3}ms per insert)", decimal_insert_duration, decimal_insert_duration.as_secs_f64() * 1000.0 / 100.0);
@@ -45,8 +45,7 @@ async fn test_fast_path_performance() -> Result<(), Box<dyn std::error::Error>> 
     // Fast path should generally be faster, but with our optimized implementation
     // the difference might be small. Log the results for analysis.
     if insert_duration >= decimal_insert_duration {
-        println!("WARNING: Fast path INSERT ({:?}) was not faster than decimal path ({:?})", 
-            insert_duration, decimal_insert_duration);
+        println!("WARNING: Fast path INSERT ({insert_duration:?}) was not faster than decimal path ({decimal_insert_duration:?})");
     }
     
     Ok(())
@@ -69,7 +68,7 @@ async fn test_fast_path_detection() -> Result<(), Box<dyn std::error::Error>> {
     ];
     
     for query in fast_queries {
-        println!("Testing fast path for: {}", query);
+        println!("Testing fast path for: {query}");
         let start = Instant::now();
         if query.starts_with("SELECT") {
             db_handler.query(query).await?;
@@ -77,7 +76,7 @@ async fn test_fast_path_detection() -> Result<(), Box<dyn std::error::Error>> {
             db_handler.execute(query).await?;
         }
         let duration = start.elapsed();
-        println!("  Executed in: {:?}", duration);
+        println!("  Executed in: {duration:?}");
     }
     
     // These should NOT use fast path (queries on DECIMAL tables)
@@ -88,7 +87,7 @@ async fn test_fast_path_detection() -> Result<(), Box<dyn std::error::Error>> {
     ];
     
     for query in slow_queries {
-        println!("Testing non-fast path for: {}", query);
+        println!("Testing non-fast path for: {query}");
         let start = Instant::now();
         if query.starts_with("SELECT") {
             db_handler.query(query).await?;
@@ -96,7 +95,7 @@ async fn test_fast_path_detection() -> Result<(), Box<dyn std::error::Error>> {
             db_handler.execute(query).await?;
         }
         let duration = start.elapsed();
-        println!("  Executed in: {:?}", duration);
+        println!("  Executed in: {duration:?}");
     }
     
     Ok(())

@@ -24,14 +24,14 @@ async fn catalog_simple_repro() {
     
     eprintln!("Testing explicit columns query...");
     match client.query(
-        &format!("SELECT {} FROM pg_catalog.pg_class WHERE relkind = 'r'", all_cols),
+        &format!("SELECT {all_cols} FROM pg_catalog.pg_class WHERE relkind = 'r'"),
         &[]
     ).await {
         Ok(rows) => {
             eprintln!("✓ Explicit columns works! Got {} rows", rows.len());
         }
         Err(e) => {
-            eprintln!("✗ Explicit columns failed: {:?}", e);
+            eprintln!("✗ Explicit columns failed: {e:?}");
             panic!("Test failed!");
         }
     }

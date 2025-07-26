@@ -189,7 +189,7 @@ impl BatchDeleteTranslator {
             
             for (j, column) in info.values_columns.iter().enumerate() {
                 if let Some(value) = row.get(j) {
-                    select_parts.push(format!("{} as {}", value, column));
+                    select_parts.push(format!("{value} as {column}"));
                 }
             }
             
@@ -217,7 +217,7 @@ impl BatchDeleteTranslator {
         // Simplified extraction - look for pattern like "t.id = v.id" or "table.id = values.id"
         if let Some(alias) = table_alias {
             // Remove alias prefix if present
-            where_clause.replace(&format!("{}.", alias), "")
+            where_clause.replace(&format!("{alias}."), "")
                 .split('=')
                 .next()
                 .unwrap_or("id")
@@ -355,7 +355,7 @@ mod tests {
         ];
         
         for part in expected_parts {
-            assert!(result.contains(part), "Result should contain '{}', but got: {}", part, result);
+            assert!(result.contains(part), "Result should contain '{part}', but got: {result}");
         }
     }
 

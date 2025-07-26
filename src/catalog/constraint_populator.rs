@@ -163,8 +163,8 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
         for cap in pk_regex.captures_iter(create_sql) {
             if let Some(column_name) = cap.get(1) {
                 constraints.push(ConstraintInfo {
-                    oid: generate_table_oid(&format!("{}_pkey", table_name)),
-                    name: format!("{}_pkey", table_name),
+                    oid: generate_table_oid(&format!("{table_name}_pkey")),
+                    name: format!("{table_name}_pkey"),
                     contype: "p".to_string(),
                     columns: vec![column_name.as_str().to_string()],
                     definition: "PRIMARY KEY".to_string(),
@@ -182,8 +182,8 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
                     .map(|s| s.trim().to_string())
                     .collect();
                 constraints.push(ConstraintInfo {
-                    oid: generate_table_oid(&format!("{}_pkey", table_name)),
-                    name: format!("{}_pkey", table_name),
+                    oid: generate_table_oid(&format!("{table_name}_pkey")),
+                    name: format!("{table_name}_pkey"),
                     contype: "p".to_string(),
                     columns,
                     definition: "PRIMARY KEY".to_string(),

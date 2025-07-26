@@ -25,7 +25,7 @@ fn test_create_table_with_enum() {
         Some(&conn)
     ).unwrap();
     
-    println!("Translated SQL: {}", translated_sql);
+    println!("Translated SQL: {translated_sql}");
     
     // Verify the translation includes TEXT type for ENUM column
     assert!(translated_sql.contains("TEXT"));

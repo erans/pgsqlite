@@ -66,9 +66,9 @@ async fn test_db_handler_concurrent_access() -> Result<(), Box<dyn std::error::E
     
     // First insert some test data
     for i in 0..10 {
-        db_handler.execute(&format!("INSERT INTO test_concurrent (thread_id) VALUES ({})", i))
+        db_handler.execute(&format!("INSERT INTO test_concurrent (thread_id) VALUES ({i})"))
             .await
-            .unwrap_or_else(|e| panic!("Failed to insert initial data {}: {:?}", i, e));
+            .unwrap_or_else(|e| panic!("Failed to insert initial data {i}: {e:?}"));
     }
     
     // Add a small delay to ensure data is committed (helps with CI timing)
@@ -96,14 +96,14 @@ async fn test_db_handler_concurrent_access() -> Result<(), Box<dyn std::error::E
                             if let Some(count_bytes) = &result.rows[0][0] {
                                 let count_str = std::str::from_utf8(count_bytes).unwrap();
                                 let count: i64 = count_str.parse().unwrap();
-                                assert!(count >= 10, "Expected at least 10 rows, got {}", count);
+                                assert!(count >= 10, "Expected at least 10 rows, got {count}");
                             }
                             break;
                         }
                         Err(e) => {
                             retry_count += 1;
                             if retry_count >= max_retries {
-                                panic!("Read failed in task {}, iteration {} after {} retries: {:?}", i, j, retry_count, e);
+                                panic!("Read failed in task {i}, iteration {j} after {retry_count} retries: {e:?}");
                             }
                             // Small delay before retry
                             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -121,7 +121,7 @@ async fn test_db_handler_concurrent_access() -> Result<(), Box<dyn std::error::E
     for (idx, handle) in handles.into_iter().enumerate() {
         match handle.await {
             Ok(task_id) => results.push(task_id),
-            Err(e) => panic!("Task {} panicked: {:?}", idx, e),
+            Err(e) => panic!("Task {idx} panicked: {e:?}"),
         }
     }
     assert_eq!(results.len(), num_tasks, "Not all concurrent read tasks completed");
@@ -134,9 +134,9 @@ async fn test_db_handler_concurrent_access() -> Result<(), Box<dyn std::error::E
     for i in 0..write_batches {
         for j in 0..writes_per_batch {
             let value = (i + 1) * 100 + j;  // Start from 100 to avoid duplicates with initial inserts
-            let exec_result = db_handler.execute(&format!("INSERT INTO test_concurrent (thread_id) VALUES ({})", value))
+            let exec_result = db_handler.execute(&format!("INSERT INTO test_concurrent (thread_id) VALUES ({value})"))
                 .await
-                .unwrap_or_else(|e| panic!("Failed to insert in batch {}, item {} (value {}): {:?}", i, j, value, e));
+                .unwrap_or_else(|e| panic!("Failed to insert in batch {i}, item {j} (value {value}): {e:?}"));
             if exec_result.rows_affected != 1 {
                 panic!("INSERT affected {} rows instead of 1 for value {}", exec_result.rows_affected, value);
             }
@@ -165,8 +165,7 @@ async fn test_db_handler_concurrent_access() -> Result<(), Box<dyn std::error::E
     // Note: There's a pgsqlite bug where SELECT queries return only 10 rows regardless of LIMIT
     // We use COUNT as a workaround to verify the correct number of rows were inserted
     assert_eq!(actual_count, expected_count, 
-        "Expected {} rows (10 initial + {} batches * {} writes), got {}", 
-        expected_count, write_batches, writes_per_batch, actual_count);
+        "Expected {expected_count} rows (10 initial + {write_batches} batches * {writes_per_batch} writes), got {actual_count}");
     
     Ok(())
 }

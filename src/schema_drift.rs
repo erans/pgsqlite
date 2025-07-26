@@ -193,7 +193,7 @@ impl SchemaDriftDetector {
     }
     
     fn get_sqlite_columns(conn: &Connection, table_name: &str) -> Result<HashMap<String, ColumnInfo>, rusqlite::Error> {
-        let query = format!("PRAGMA table_info({})", table_name);
+        let query = format!("PRAGMA table_info({table_name})");
         let mut stmt = conn.prepare(&query)?;
         
         let mut columns = HashMap::new();

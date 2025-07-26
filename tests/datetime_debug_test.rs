@@ -12,13 +12,13 @@ async fn test_extract_simple() {
     match result {
         Ok(rows) => {
             eprintln!("Success! Got {} rows", rows.len());
-            if let Some(row) = rows.get(0) {
+            if let Some(row) = rows.first() {
                 let val: f64 = row.get(0);
-                eprintln!("Value: {}", val);
+                eprintln!("Value: {val}");
             }
         }
         Err(e) => {
-            eprintln!("Error executing extract: {}", e);
+            eprintln!("Error executing extract: {e}");
         }
     }
 }
@@ -34,13 +34,13 @@ async fn test_date_trunc_simple() {
     match result {
         Ok(rows) => {
             eprintln!("Success! Got {} rows", rows.len());
-            if let Some(row) = rows.get(0) {
+            if let Some(row) = rows.first() {
                 let val: f64 = row.get(0);
-                eprintln!("Value: {}", val);
+                eprintln!("Value: {val}");
             }
         }
         Err(e) => {
-            eprintln!("Error executing date_trunc: {}", e);
+            eprintln!("Error executing date_trunc: {e}");
         }
     }
 }
@@ -56,13 +56,13 @@ async fn test_extract_uppercase() {
     match result {
         Ok(rows) => {
             eprintln!("EXTRACT uppercase success! Got {} rows", rows.len());
-            if let Some(row) = rows.get(0) {
+            if let Some(row) = rows.first() {
                 let val: f64 = row.get(0);
-                eprintln!("Value: {}", val);
+                eprintln!("Value: {val}");
             }
         }
         Err(e) => {
-            eprintln!("Error executing EXTRACT uppercase: {}", e);
+            eprintln!("Error executing EXTRACT uppercase: {e}");
         }
     }
 }
@@ -82,14 +82,14 @@ async fn test_multiple_extracts() {
     match result {
         Ok(rows) => {
             eprintln!("Multiple EXTRACTs success! Got {} rows", rows.len());
-            if let Some(row) = rows.get(0) {
+            if let Some(row) = rows.first() {
                 let year: f64 = row.get(0);
                 let month: f64 = row.get(1);
-                eprintln!("Year: {}, Month: {}", year, month);
+                eprintln!("Year: {year}, Month: {month}");
             }
         }
         Err(e) => {
-            eprintln!("Error executing multiple EXTRACTs: {}", e);
+            eprintln!("Error executing multiple EXTRACTs: {e}");
         }
     }
 }
@@ -109,10 +109,10 @@ async fn test_extract_query_one() {
         Ok(row) => {
             eprintln!("query_one EXTRACT success!");
             let year: f64 = row.get(0);
-            eprintln!("Year: {}", year);
+            eprintln!("Year: {year}");
         }
         Err(e) => {
-            eprintln!("Error with query_one EXTRACT: {}", e);
+            eprintln!("Error with query_one EXTRACT: {e}");
         }
     }
 }
@@ -126,7 +126,7 @@ async fn test_extract_with_format() {
     
     // Test EXTRACT using format! (exactly like the failing test)
     let result = client.query_one(
-        &format!("SELECT EXTRACT(YEAR FROM {}) as year", test_timestamp),
+        &format!("SELECT EXTRACT(YEAR FROM {test_timestamp}) as year"),
         &[]
     ).await;
     
@@ -134,11 +134,11 @@ async fn test_extract_with_format() {
         Ok(row) => {
             eprintln!("format! EXTRACT success!");
             let year: i32 = row.get("year");
-            eprintln!("Year: {}", year);
+            eprintln!("Year: {year}");
         }
         Err(e) => {
-            eprintln!("Error with format! EXTRACT: {}", e);
-            eprintln!("Query was: SELECT EXTRACT(YEAR FROM {}) as year", test_timestamp);
+            eprintln!("Error with format! EXTRACT: {e}");
+            eprintln!("Query was: SELECT EXTRACT(YEAR FROM {test_timestamp}) as year");
         }
     }
 }

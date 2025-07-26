@@ -140,7 +140,7 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
                     Ok(date.num_days_from_ce() as i64 - 719163)
                 }
                 None => Err(Error::UserFunctionError(
-                    format!("Invalid date: {}-{}-{}", year, month, day).into()
+                    format!("Invalid date: {year}-{month}-{day}").into()
                 ))
             }
         },
@@ -166,7 +166,7 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
                     Ok(micros)
                 }
                 None => Err(Error::UserFunctionError(
-                    format!("Invalid time: {}:{}:{}", hour, min, sec).into()
+                    format!("Invalid time: {hour}:{min}:{sec}").into()
                 ))
             }
         },
@@ -203,7 +203,7 @@ fn extract_date_part(field: &str, timestamp: i64) -> Result<f64> {
         "century" => Ok(((datetime.year() - 1) / 100 + 1) as f64),
         "millennium" => Ok(((datetime.year() - 1) / 1000 + 1) as f64),
         _ => Err(Error::UserFunctionError(
-            format!("Unknown date part: {}", field).into()
+            format!("Unknown date part: {field}").into()
         ))
     }
 }
@@ -293,7 +293,7 @@ fn truncate_date(field: &str, timestamp: i64) -> Result<i64> {
             dt.and_utc().timestamp() * 1_000_000
         }
         _ => return Err(Error::UserFunctionError(
-            format!("Unknown truncation field: {}", field).into()
+            format!("Unknown truncation field: {field}").into()
         ))
     };
     

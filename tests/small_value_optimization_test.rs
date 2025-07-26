@@ -60,8 +60,8 @@ async fn test_small_value_optimization_performance() {
     let avg_time = elapsed.as_micros() as f64 / iterations as f64;
     
     println!("Small value query performance:");
-    println!("  Total time: {:?}", elapsed);
-    println!("  Average time per query: {:.2} µs", avg_time);
+    println!("  Total time: {elapsed:?}");
+    println!("  Average time per query: {avg_time:.2} µs");
     println!("  Queries per second: {:.0}", 1_000_000.0 / avg_time);
 
     // Test memory usage by querying all rows
@@ -75,7 +75,7 @@ async fn test_small_value_optimization_performance() {
     // Verify values are correct
     let first_row = &all_rows[0];
     assert_eq!(first_row.get::<_, i32>("id"), 0);
-    assert_eq!(first_row.get::<_, bool>("bool_col"), true);
+    assert!(first_row.get::<_, bool>("bool_col"));
     assert_eq!(first_row.get::<_, i32>("small_int"), 0);
     assert_eq!(first_row.get::<_, i32>("zero_val"), 0);
     assert_eq!(first_row.get::<_, i32>("one_val"), 1);
@@ -115,8 +115,8 @@ async fn test_small_value_correctness() {
     ).await.expect("Failed to query");
 
     // Verify all small values are correctly handled
-    assert_eq!(row.get::<_, bool>(0), true);
-    assert_eq!(row.get::<_, bool>(1), false);
+    assert!(row.get::<_, bool>(0));
+    assert!(!row.get::<_, bool>(1));
     assert_eq!(row.get::<_, i32>(2), 0);
     assert_eq!(row.get::<_, i32>(3), 1);
     assert_eq!(row.get::<_, i32>(4), -1);
@@ -158,7 +158,7 @@ async fn test_small_value_binary_protocol() {
 
     // Verify binary protocol works correctly
     assert_eq!(row.get::<_, i32>(0), 1);
-    assert_eq!(row.get::<_, bool>(1), true);
+    assert!(row.get::<_, bool>(1));
     assert_eq!(row.get::<_, i32>(2), 42);
     assert_eq!(row.get::<_, f32>(3), 3.25);
 }

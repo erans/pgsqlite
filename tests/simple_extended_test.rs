@@ -30,12 +30,12 @@ async fn test_simple_extended_protocol() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect with tokio-postgres
-    let config = format!("host=localhost port={} dbname=test user=testuser", port);
+    let config = format!("host=localhost port={port} dbname=test user=testuser");
     let (client, connection) = tokio_postgres::connect(&config, NoTls).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -46,7 +46,7 @@ async fn test_simple_extended_protocol() {
             println!("Simple query successful");
         }
         Err(e) => {
-            println!("Simple query failed: {:?}", e);
+            println!("Simple query failed: {e:?}");
             panic!("Simple query failed");
         }
     }
@@ -59,7 +59,7 @@ async fn test_simple_extended_protocol() {
             assert_eq!(rows.len(), 2);
         }
         Err(e) => {
-            println!("Query failed: {:?}", e);
+            println!("Query failed: {e:?}");
             panic!("First query failed");
         }
     }
@@ -72,7 +72,7 @@ async fn test_simple_extended_protocol() {
             assert_eq!(rows.len(), 1);
         }
         Err(e) => {
-            println!("Query with parameter failed: {:?}", e);
+            println!("Query with parameter failed: {e:?}");
             panic!("Second query failed");
         }
     }

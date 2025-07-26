@@ -248,9 +248,8 @@ impl WhereEvaluator {
                 // Exact match pattern
                 let pattern_content = &pattern_str[1..pattern_str.len()-1];
                 value == pattern_content
-            } else if pattern_str.starts_with('^') {
+            } else if let Some(pattern_content) = pattern_str.strip_prefix('^') {
                 // Starts with pattern
-                let pattern_content = &pattern_str[1..];
                 value.starts_with(pattern_content)
             } else if pattern_str.ends_with('$') {
                 // Ends with pattern

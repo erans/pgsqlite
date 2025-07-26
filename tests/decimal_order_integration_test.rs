@@ -127,7 +127,7 @@ fn test_decimal_grouping_integration() {
     // Debug: print results
     println!("GROUP BY results:");
     for (cat, amt, cnt) in &results {
-        println!("  {} | {} | {}", cat, amt, cnt);
+        println!("  {cat} | {amt} | {cnt}");
     }
     
     // Verify grouping worked correctly

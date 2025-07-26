@@ -23,7 +23,7 @@ async fn simple_protocol_profile() {
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -37,20 +37,20 @@ async fn simple_protocol_profile() {
     for i in 0..100 {
         client.execute(
             "INSERT INTO protocol_test (id, value) VALUES ($1, $2)",
-            &[&i, &format!("value_{}", i)],
+            &[&i, &format!("value_{i}")],
         ).await.unwrap();
     }
     
     println!("\n1. Simple Query Protocol:");
     let mut simple_times = Vec::new();
     for i in 0..100 {
-        let query = format!("SELECT * FROM protocol_test WHERE id = {}", i);
+        let query = format!("SELECT * FROM protocol_test WHERE id = {i}");
         let start = Instant::now();
         let _rows = client.simple_query(&query).await.unwrap();
         simple_times.push(start.elapsed());
     }
     let simple_avg = average(&simple_times);
-    println!("   Average: {:?}", simple_avg);
+    println!("   Average: {simple_avg:?}");
     
     println!("\n2. Extended Protocol (Prepared):");
     let stmt = client.prepare("SELECT * FROM protocol_test WHERE id = $1").await.unwrap();
@@ -61,14 +61,14 @@ async fn simple_protocol_profile() {
         extended_times.push(start.elapsed());
     }
     let extended_avg = average(&extended_times);
-    println!("   Average: {:?}", extended_avg);
+    println!("   Average: {extended_avg:?}");
     println!("   Overhead vs simple: {:.1}%", 
         (extended_avg.as_secs_f64() - simple_avg.as_secs_f64()) / simple_avg.as_secs_f64() * 100.0);
     
     println!("\n3. Parse Message Overhead:");
     let mut parse_times = Vec::new();
     for i in 0..50 {
-        let query = format!("SELECT * FROM protocol_test WHERE id = $1 -- {}", i);
+        let query = format!("SELECT * FROM protocol_test WHERE id = $1 -- {i}");
         let start = Instant::now();
         let _stmt = client.prepare(&query).await.unwrap();
         parse_times.push(start.elapsed());
@@ -77,13 +77,13 @@ async fn simple_protocol_profile() {
     
     println!("\n4. Different Result Sizes:");
     for size in &[1, 10, 50, 100] {
-        let query = format!("SELECT * FROM protocol_test LIMIT {}", size);
+        let query = format!("SELECT * FROM protocol_test LIMIT {size}");
         let mut times = Vec::new();
         for _ in 0..20 {
             let start = Instant::now();
             let rows = client.simple_query(&query).await.unwrap();
             times.push(start.elapsed());
-            assert!(rows.len() > 0);
+            assert!(!rows.is_empty());
         }
         let avg = average(&times);
         println!("   {} rows: {:?} ({:.2} µs/row)", 
@@ -108,7 +108,7 @@ async fn simple_protocol_profile() {
     for i in 0..100 {
         client.execute(
             "INSERT INTO type_test VALUES ($1, $2, $3, $4, $5)",
-            &[&i, &format!("text_{}", i), &(i * 10), &(i as f32 * 1.5), &(i % 2 == 0)],
+            &[&i, &format!("text_{i}"), &(i * 10), &(i as f32 * 1.5), &(i % 2 == 0)],
         ).await.unwrap();
     }
     
@@ -138,8 +138,8 @@ async fn simple_protocol_profile() {
     server.kill().expect("Failed to kill server");
     
     println!("\n=== Summary ===");
-    println!("Simple protocol avg: {:?}", simple_avg);
-    println!("Extended protocol avg: {:?}", extended_avg);
+    println!("Simple protocol avg: {simple_avg:?}");
+    println!("Extended protocol avg: {extended_avg:?}");
     println!("Protocol translation adds ~{:.0} µs overhead per query", 
         (extended_avg.as_micros() - simple_avg.as_micros()) as f64);
 }
@@ -150,7 +150,7 @@ fn average(times: &[Duration]) -> Duration {
 
 fn start_server() -> Child {
     Command::new("cargo")
-        .args(&["run", "--", "--port", "5433"])
+        .args(["run", "--", "--port", "5433"])
         .spawn()
         .expect("Failed to start server")
 }

@@ -64,7 +64,7 @@ impl SystemFunctions {
                         
                         // Try to extract constraints from the CREATE TABLE statement
                         // This is a simplified approach - a full implementation would parse the SQL
-                        if let Some(constraint_def) = extract_constraint_by_oid(&create_sql, oid, table_name) {
+                        if let Some(constraint_def) = extract_constraint_by_oid(create_sql, oid, table_name) {
                             return Ok(Some(constraint_def));
                         }
                     }
@@ -188,9 +188,9 @@ impl SystemFunctions {
                             let precision = (mod_val - 4) >> 16;
                             let scale = (mod_val - 4) & 0xFFFF;
                             if scale > 0 {
-                                format!("numeric({},{})", precision, scale)
+                                format!("numeric({precision},{scale})")
                             } else {
-                                format!("numeric({})", precision)
+                                format!("numeric({precision})")
                             }
                         } else {
                             "numeric".to_string()
@@ -220,7 +220,7 @@ impl SystemFunctions {
                 t if t == PgType::Uuid.to_oid() => "uuid".to_string(),
                 t if t == PgType::Json.to_oid() => "json".to_string(),
                 t if t == PgType::Jsonb.to_oid() => "jsonb".to_string(),
-                _ => format!("unknown({})", oid),
+                _ => format!("unknown({oid})"),
             };
 
             Ok(Some(type_name))
@@ -291,7 +291,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
     // Check for PRIMARY KEY
     if sql_upper.contains("PRIMARY KEY") {
         let mut hasher = DefaultHasher::new();
-        format!("{}_pkey", table_name).hash(&mut hasher);
+        format!("{table_name}_pkey").hash(&mut hasher);
         let pkey_oid = hasher.finish() as i64 & 0x7FFFFFFF; // Keep it positive
         
         if pkey_oid == target_oid {
@@ -302,7 +302,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
                 if let Some(paren_start) = remaining.find('(') {
                     if let Some(paren_end) = remaining.find(')') {
                         let columns = &remaining[paren_start..=paren_end];
-                        return Some(format!("PRIMARY KEY {}", columns));
+                        return Some(format!("PRIMARY KEY {columns}"));
                     }
                 }
             }
@@ -319,7 +319,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
             fkey_count += 1;
             
             let mut hasher = DefaultHasher::new();
-            format!("{}_fkey_{}", table_name, fkey_count).hash(&mut hasher);
+            format!("{table_name}_fkey_{fkey_count}").hash(&mut hasher);
             let fkey_oid = hasher.finish() as i64 & 0x7FFFFFFF;
             
             if fkey_oid == target_oid {
@@ -367,7 +367,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
             check_count += 1;
             
             let mut hasher = DefaultHasher::new();
-            format!("{}_check_{}", table_name, check_count).hash(&mut hasher);
+            format!("{table_name}_check_{check_count}").hash(&mut hasher);
             let check_oid = hasher.finish() as i64 & 0x7FFFFFFF;
             
             if check_oid == target_oid {

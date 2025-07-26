@@ -63,7 +63,7 @@ impl EnumDdlHandler {
             &type_name,
             &values.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             None, // Use default namespace
-        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create ENUM type: {}", e)))?;
+        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create ENUM type: {e}")))?;
         
         // Clear the cache
         global_enum_cache().invalidate_type(type_oid);
@@ -78,7 +78,7 @@ impl EnumDdlHandler {
         // Format: CREATE TYPE name AS ENUM ('value1', 'value2', ...)
         
         let re = regex::Regex::new(r"(?i)CREATE\s+TYPE\s+(\w+)\s+AS\s+ENUM\s*\((.*)\)")
-            .map_err(|e| PgSqliteError::Protocol(format!("Regex error: {}", e)))?;
+            .map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
         
         let captures = re.captures(query)
             .ok_or_else(|| PgSqliteError::Protocol("Invalid CREATE TYPE AS ENUM syntax".to_string()))?;
@@ -138,7 +138,7 @@ impl EnumDdlHandler {
                     // Ignore whitespace outside quotes
                     if !ch.is_whitespace() {
                         return Err(PgSqliteError::Protocol(
-                            format!("Invalid character '{}' outside quotes", ch)
+                            format!("Invalid character '{ch}' outside quotes")
                         ));
                     }
                 }
@@ -160,7 +160,7 @@ impl EnumDdlHandler {
         // Parse ALTER TYPE for ADD VALUE
         let re_add = regex::Regex::new(
             r"(?i)ALTER\s+TYPE\s+(\w+)\s+ADD\s+VALUE\s+'([^']+)'(?:\s+(BEFORE|AFTER)\s+'([^']+)')?"
-        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {}", e)))?;
+        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
         
         if let Some(captures) = re_add.captures(query) {
             let type_name = captures.get(1).unwrap().as_str();
@@ -172,8 +172,8 @@ impl EnumDdlHandler {
             
             // Get type OID for cache invalidation
             let type_oid = EnumMetadata::get_enum_type(conn, type_name)
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get ENUM type: {}", e)))?
-                .ok_or_else(|| PgSqliteError::Protocol(format!("Type '{}' does not exist", type_name)))?
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get ENUM type: {e}")))?
+                .ok_or_else(|| PgSqliteError::Protocol(format!("Type '{type_name}' does not exist")))?
                 .type_oid;
             
             // Add the value
@@ -187,7 +187,7 @@ impl EnumDdlHandler {
                 _ => {
                     EnumMetadata::add_enum_value(conn, type_name, new_value, None, None)
                 }
-            }.map_err(|e| PgSqliteError::Protocol(format!("Failed to add ENUM value: {}", e)))?;
+            }.map_err(|e| PgSqliteError::Protocol(format!("Failed to add ENUM value: {e}")))?;
             
             // Clear the cache
             global_enum_cache().invalidate_type(type_oid);
@@ -207,7 +207,7 @@ impl EnumDdlHandler {
     ) -> Result<(), PgSqliteError> {
         // Parse DROP TYPE
         let re = regex::Regex::new(r"(?i)DROP\s+TYPE\s+(?:IF\s+EXISTS\s+)?(\w+)(?:\s+CASCADE)?")
-            .map_err(|e| PgSqliteError::Protocol(format!("Regex error: {}", e)))?;
+            .map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
         
         let captures = re.captures(query)
             .ok_or_else(|| PgSqliteError::Protocol("Invalid DROP TYPE syntax".to_string()))?;
@@ -220,7 +220,7 @@ impl EnumDdlHandler {
         
         // Check if type exists
         let enum_type = EnumMetadata::get_enum_type(conn, type_name)
-            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get ENUM type: {}", e)))?;
+            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get ENUM type: {e}")))?;
         
         if let Some(et) = enum_type {
             // Check if type is used in any tables (unless CASCADE)
@@ -233,17 +233,17 @@ impl EnumDdlHandler {
                 ";
                 
                 let mut stmt = conn.prepare(check_sql)
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to prepare dependency check: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to prepare dependency check: {e}")))?;
                 
                 let dependent_tables: Vec<String> = stmt.query_map([type_name], |row| {
                     row.get::<_, String>(0)
-                }).map_err(|e| PgSqliteError::Protocol(format!("Failed to check dependencies: {}", e)))?
+                }).map_err(|e| PgSqliteError::Protocol(format!("Failed to check dependencies: {e}")))?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to collect dependencies: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to collect dependencies: {e}")))?;
                 
                 if !dependent_tables.is_empty() {
                     return Err(PgSqliteError::Protocol(
-                        format!("cannot drop type {} because other objects depend on it", type_name)
+                        format!("cannot drop type {type_name} because other objects depend on it")
                     ));
                 }
             } else {
@@ -255,13 +255,13 @@ impl EnumDdlHandler {
                 ";
                 
                 let mut stmt = conn.prepare(usage_sql)
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to prepare usage query: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to prepare usage query: {e}")))?;
                 
                 let usages: Vec<(String, String)> = stmt.query_map([type_name], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-                }).map_err(|e| PgSqliteError::Protocol(format!("Failed to query usage: {}", e)))?
+                }).map_err(|e| PgSqliteError::Protocol(format!("Failed to query usage: {e}")))?
                     .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to collect usage: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to collect usage: {e}")))?;
                 
                 // Drop all triggers
                 for (table_name, column_name) in usages {
@@ -272,19 +272,19 @@ impl EnumDdlHandler {
                 
                 // Clean up enum usage records
                 conn.execute("DELETE FROM __pgsqlite_enum_usage WHERE enum_type = ?1", [type_name])
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to clean enum usage: {}", e)))?;
+                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to clean enum usage: {e}")))?;
             }
             
             // Drop the type
             EnumMetadata::drop_enum_type(conn, type_name)
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to drop ENUM type: {}", e)))?;
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to drop ENUM type: {e}")))?;
             
             // Clear the cache
             global_enum_cache().invalidate_type(et.type_oid);
             
             info!("Successfully dropped ENUM type '{}'", type_name);
         } else if !if_exists {
-            return Err(PgSqliteError::Protocol(format!("Type '{}' does not exist", type_name)));
+            return Err(PgSqliteError::Protocol(format!("Type '{type_name}' does not exist")));
         }
         
         Ok(())

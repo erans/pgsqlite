@@ -31,13 +31,13 @@ async fn test_returning_clause() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -56,7 +56,7 @@ async fn test_returning_clause() {
     assert_eq!(returned_row.get("name").unwrap(), "Alice");
     assert_eq!(returned_row.get("email").unwrap(), "alice@example.com");
     let user_id = returned_row.get("id").unwrap();
-    println!("Inserted user with id: {}", user_id);
+    println!("Inserted user with id: {user_id}");
     
     // Test 2: INSERT with RETURNING specific columns
     let result = client.simple_query(
@@ -72,11 +72,11 @@ async fn test_returning_clause() {
     
     assert_eq!(returned_row.get("name").unwrap(), "Bob");
     let bob_id = returned_row.get("id").unwrap();
-    println!("Inserted Bob with id: {}", bob_id);
+    println!("Inserted Bob with id: {bob_id}");
     
     // Test 3: UPDATE with RETURNING
     let result = client.simple_query(
-        &format!("UPDATE users SET email = 'alice.smith@example.com' WHERE id = {} RETURNING id, name, email", user_id)
+        &format!("UPDATE users SET email = 'alice.smith@example.com' WHERE id = {user_id} RETURNING id, name, email")
     ).await.unwrap();
     
     let returned_row = result.iter()
@@ -92,7 +92,7 @@ async fn test_returning_clause() {
     
     // Test 4: DELETE with RETURNING
     let result = client.simple_query(
-        &format!("DELETE FROM users WHERE id = {} RETURNING name, email", bob_id)
+        &format!("DELETE FROM users WHERE id = {bob_id} RETURNING name, email")
     ).await.unwrap();
     
     let returned_row = result.iter()
@@ -124,7 +124,7 @@ async fn test_returning_clause() {
             updated_count += 1;
             let name = row.get("name").unwrap();
             let email = row.get("email").unwrap();
-            println!("Updated: {} -> {}", name, email);
+            println!("Updated: {name} -> {email}");
             assert!(email.ends_with("@updated.com"));
         }
     }

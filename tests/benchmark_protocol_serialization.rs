@@ -29,7 +29,7 @@ async fn benchmark_protocol_serialization() {
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -71,7 +71,7 @@ async fn warmup(client: &tokio_postgres::Client) {
         client
             .execute(
                 "INSERT INTO bench_protocol (id, text_col, int_col) VALUES ($1, $2, $3)",
-                &[&i, &format!("warmup_{}", i), &(i * 10)],
+                &[&i, &format!("warmup_{i}"), &(i * 10)],
             )
             .await
             .ok();
@@ -106,7 +106,7 @@ async fn profile_simple_protocol(client: &tokio_postgres::Client) {
     // Query parsing overhead
     let mut parse_times = Vec::new();
     for i in 0..100 {
-        let query = format!("SELECT * FROM bench_protocol WHERE id = {}", i);
+        let query = format!("SELECT * FROM bench_protocol WHERE id = {i}");
         let start = Instant::now();
         // This will trigger parsing in pgsqlite
         let _ = client.simple_query(&query).await.unwrap();
@@ -126,8 +126,7 @@ async fn profile_extended_protocol(client: &tokio_postgres::Client) {
     let mut parse_times = Vec::new();
     for i in 0..100 {
         let query = format!(
-            "SELECT * FROM bench_protocol WHERE id = $1 AND int_col > $2 -- {}",
-            i // Unique query to force re-parsing
+            "SELECT * FROM bench_protocol WHERE id = $1 AND int_col > $2 -- {i}" // Unique query to force re-parsing
         );
         let start = Instant::now();
         let _stmt = client.prepare(&query).await.unwrap();
@@ -167,7 +166,7 @@ async fn profile_extended_protocol(client: &tokio_postgres::Client) {
         client
             .execute(
                 &typed_stmt,
-                &[&i, &format!("text_{}", i), &(i * 2), &(i as f32 * 1.5), &(i % 2 == 0)],
+                &[&i, &format!("text_{i}"), &(i * 2), &(i as f32 * 1.5), &(i % 2 == 0)],
             )
             .await
             .unwrap();
@@ -182,7 +181,7 @@ async fn profile_data_serialization(client: &tokio_postgres::Client) {
     
     // Test different result set sizes
     for size in &[1, 10, 100, 1000] {
-        println!("\nResult set size: {} rows", size);
+        println!("\nResult set size: {size} rows");
         
         // Insert test data if needed
         let max_id = client
@@ -196,14 +195,14 @@ async fn profile_data_serialization(client: &tokio_postgres::Client) {
             client
                 .execute(
                     "INSERT INTO bench_protocol (id, text_col, int_col) VALUES ($1, $2, $3)",
-                    &[&i, &format!("row_{}", i), &(i * 10)],
+                    &[&i, &format!("row_{i}"), &(i * 10)],
                 )
                 .await
                 .ok();
         }
         
         let stmt = client
-            .prepare(&format!("SELECT * FROM bench_protocol LIMIT {}", size))
+            .prepare(&format!("SELECT * FROM bench_protocol LIMIT {size}"))
             .await
             .unwrap();
         
@@ -215,7 +214,7 @@ async fn profile_data_serialization(client: &tokio_postgres::Client) {
             times.push(start.elapsed());
         }
         
-        analyze_timings(&format!("{} row serialization", size), &times);
+        analyze_timings(&format!("{size} row serialization"), &times);
     }
 }
 
@@ -242,7 +241,7 @@ async fn profile_type_conversions(client: &tokio_postgres::Client) {
             times.push(start.elapsed());
         }
         
-        analyze_timings(&format!("{} type conversion", type_name), &times);
+        analyze_timings(&format!("{type_name} type conversion"), &times);
     }
     
     // Profile binary vs text encoding
@@ -297,13 +296,13 @@ fn analyze_timings(label: &str, timings: &[Duration]) {
     let p95 = percentile(timings, 95.0);
     let p99 = percentile(timings, 99.0);
     
-    println!("\n{}:", label);
-    println!("  Average: {:?}", avg);
-    println!("  Min:     {:?}", min);
-    println!("  Max:     {:?}", max);
-    println!("  P50:     {:?}", p50);
-    println!("  P95:     {:?}", p95);
-    println!("  P99:     {:?}", p99);
+    println!("\n{label}:");
+    println!("  Average: {avg:?}");
+    println!("  Min:     {min:?}");
+    println!("  Max:     {max:?}");
+    println!("  P50:     {p50:?}");
+    println!("  P95:     {p95:?}");
+    println!("  P99:     {p99:?}");
 }
 
 fn average(timings: &[Duration]) -> Duration {
@@ -320,7 +319,7 @@ fn percentile(timings: &[Duration], p: f64) -> Duration {
 
 fn start_server() -> Child {
     Command::new("cargo")
-        .args(&["run", "--", "--port", "5433"])
+        .args(["run", "--", "--port", "5433"])
         .env("RUST_LOG", "pgsqlite=debug")
         .spawn()
         .expect("Failed to start server")

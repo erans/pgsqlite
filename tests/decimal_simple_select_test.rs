@@ -36,7 +36,7 @@ fn setup_test_db() -> Connection {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -54,7 +54,7 @@ fn test_simple_column_selection() {
     // Test 1: Simple column selection should NOT be wrapped
     let sql = "SELECT price FROM products";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Simple SELECT rewritten to: {}", result);
+    println!("Simple SELECT rewritten to: {result}");
     
     // The simple column reference should NOT be wrapped in decimal_from_text
     assert_eq!(result, "SELECT price FROM products");
@@ -67,7 +67,7 @@ fn test_arithmetic_needs_wrapping() {
     // Test 2: Arithmetic operations SHOULD be wrapped
     let sql = "SELECT price * 1.1 FROM products";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Arithmetic SELECT rewritten to: {}", result);
+    println!("Arithmetic SELECT rewritten to: {result}");
     
     // Arithmetic operations should use decimal functions
     assert!(result.contains("decimal_mul"));
@@ -80,7 +80,7 @@ fn test_comparison_needs_wrapping() {
     // Test 3: Comparisons in WHERE clause SHOULD be wrapped
     let sql = "SELECT * FROM products WHERE price > 100";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("WHERE clause rewritten to: {}", result);
+    println!("WHERE clause rewritten to: {result}");
     
     // Comparisons should use decimal functions
     assert!(result.contains("decimal_gt"));
@@ -93,7 +93,7 @@ fn test_aggregate_needs_wrapping() {
     // Test 4: Aggregates on decimal columns SHOULD be wrapped
     let sql = "SELECT SUM(price) FROM products";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Aggregate rewritten to: {}", result);
+    println!("Aggregate rewritten to: {result}");
     
     // Aggregates should wrap the column in decimal_from_text
     assert!(result.contains("decimal_from_text"));

@@ -53,7 +53,7 @@ async fn test_array_declarations() {
         Err(e) => {
             // For now, it's OK if this fails since SQLite doesn't support arrays
             // In a full implementation, we'd translate this to TEXT columns
-            println!("Array type declaration not fully supported yet: {}", e);
+            println!("Array type declaration not fully supported yet: {e}");
         }
     }
     
@@ -105,13 +105,13 @@ async fn test_array_literals() {
     // This will likely fail for now, which is expected
     match client.query_one("SELECT ARRAY[1,2,3]", &[]).await {
         Ok(_) => println!("Array literal syntax supported"),
-        Err(e) => println!("Array literal syntax not yet supported: {}", e),
+        Err(e) => println!("Array literal syntax not yet supported: {e}"),
     }
     
     // Test alternative array syntax
     match client.query_one("SELECT '{1,2,3}'::integer[]", &[]).await {
         Ok(_) => println!("PostgreSQL array cast syntax supported"),
-        Err(e) => println!("PostgreSQL array cast syntax not yet supported: {}", e),
+        Err(e) => println!("PostgreSQL array cast syntax not yet supported: {e}"),
     }
     
     server.abort();
@@ -178,9 +178,9 @@ async fn test_array_operations() {
     ];
     
     for (op, desc) in unsupported_ops {
-        match client.query(&format!("SELECT {} FROM array_ops WHERE id = 1", op), &[]).await {
-            Ok(_) => println!("{} is supported!", desc),
-            Err(_) => println!("{} not yet supported (expected)", desc),
+        match client.query(&format!("SELECT {op} FROM array_ops WHERE id = 1"), &[]).await {
+            Ok(_) => println!("{desc} is supported!"),
+            Err(_) => println!("{desc} not yet supported (expected)"),
         }
     }
     

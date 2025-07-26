@@ -29,3 +29,8 @@ protocol_benchmark_results.txt
 protocol_profile_results.txt
 simple_protocol_results.txt
 test_*.db*
+
+# Debug and temporary files
+debug_*
+test_datetime_translation
+benchmark.db

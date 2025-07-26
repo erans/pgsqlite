@@ -313,9 +313,9 @@ impl<'a> DecimalQueryRewriter<'a> {
                         SelectItem::UnnamedExpr(expr) => {
                             let expr_type = self.resolver.resolve_expr_type(expr, &base_context);
                             let col_name = if !cte.alias.columns.is_empty() {
-                                cte.alias.columns.get(idx).map(|c| c.name.value.clone()).unwrap_or_else(|| format!("column{}", idx))
+                                cte.alias.columns.get(idx).map(|c| c.name.value.clone()).unwrap_or_else(|| format!("column{idx}"))
                             } else {
-                                self.resolver.extract_column_name(expr).unwrap_or_else(|| format!("column{}", idx))
+                                self.resolver.extract_column_name(expr).unwrap_or_else(|| format!("column{idx}"))
                             };
                             cte_column_types.push((col_name, expr_type));
                         }
@@ -668,7 +668,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                             if self.contains_arithmetic(inner) {
                                 // Decompose the nested arithmetic expression first
                                 let mut arithmetic_expr = left;
-                                if let Err(_) = self.force_decimal_arithmetic(&mut arithmetic_expr, context) {
+                                if self.force_decimal_arithmetic(&mut arithmetic_expr, context).is_err() {
                                     // If decomposition fails, apply the original cast
                                     cast.apply()
                                 } else {
@@ -767,7 +767,7 @@ impl<'a> DecimalQueryRewriter<'a> {
             if self.contains_arithmetic(inner) {
                 let mut unwrapped_expr = *inner.clone();
                 // Force decimal arithmetic processing on the unwrapped expression
-                if let Err(_) = self.force_decimal_arithmetic(&mut unwrapped_expr, context) {
+                if self.force_decimal_arithmetic(&mut unwrapped_expr, context).is_err() {
                     return unwrapped_expr;
                 }
                 return unwrapped_expr;
@@ -778,7 +778,7 @@ impl<'a> DecimalQueryRewriter<'a> {
         if self.contains_arithmetic(&expr) {
             // Force decimal arithmetic processing and return the processed expression
             let mut arithmetic_expr = expr;
-            if let Err(_) = self.force_decimal_arithmetic(&mut arithmetic_expr, context) {
+            if self.force_decimal_arithmetic(&mut arithmetic_expr, context).is_err() {
                 // If processing fails, return the original expression
                 return arithmetic_expr;
             }
@@ -921,7 +921,7 @@ impl<'a> DecimalQueryRewriter<'a> {
             "ABS" => {
                 func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_abs"))]);
             }
-            _ => return Err(format!("Unsupported math function: {}", func_name)),
+            _ => return Err(format!("Unsupported math function: {func_name}")),
         }
         
         Ok(())
@@ -985,7 +985,7 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let pg_type_query = "SELECT pg_type FROM __pgsqlite_schema 
                                      WHERE table_name = ?1 AND column_name = ?2";
                 if let Ok(pg_type_str) = self.resolver.conn().query_row(pg_type_query, [&table_name, column], |row| {
-                    Ok(row.get::<_, String>(0)?)
+                    row.get::<_, String>(0)
                 }) {
                     // Only wrap NUMERIC types, not FLOAT types
                     pg_type_str == "NUMERIC"

@@ -31,7 +31,7 @@ async fn test_extract_minimal() {
             println!("EXTRACT from column works!");
         }
         Err(e) => {
-            eprintln!("Error with EXTRACT from column: {}", e);
+            eprintln!("Error with EXTRACT from column: {e}");
         }
     }
     
@@ -48,7 +48,7 @@ async fn test_extract_minimal() {
             println!("EXTRACT from literal works!");
         }
         Err(e) => {
-            eprintln!("Error with EXTRACT from literal: {}", e);
+            eprintln!("Error with EXTRACT from literal: {e}");
         }
     }
 }

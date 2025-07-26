@@ -11,14 +11,14 @@ fn test_insert_fast_path_detection() {
     ];
 
     for query in test_cases {
-        println!("Testing query: {}", query);
+        println!("Testing query: {query}");
         match can_use_fast_path_enhanced(query) {
             Some(fast_query) => {
                 assert!(matches!(fast_query.operation, FastPathOperation::Insert));
                 println!("✅ Fast path detected for INSERT: table={}", fast_query.table_name);
             }
             None => {
-                panic!("❌ Fast path NOT detected for simple INSERT: {}", query);
+                panic!("❌ Fast path NOT detected for simple INSERT: {query}");
             }
         }
     }
@@ -35,13 +35,13 @@ fn test_insert_complex_queries_no_fast_path() {
     ];
 
     for query in test_cases {
-        println!("Testing complex query: {}", query);
+        println!("Testing complex query: {query}");
         match can_use_fast_path_enhanced(query) {
             Some(_) => {
-                println!("⚠️  Fast path detected (may be okay): {}", query);
+                println!("⚠️  Fast path detected (may be okay): {query}");
             }
             None => {
-                println!("✅ Fast path correctly rejected for complex INSERT: {}", query);
+                println!("✅ Fast path correctly rejected for complex INSERT: {query}");
             }
         }
     }
@@ -61,12 +61,12 @@ async fn test_insert_performance_improvement() {
     // Test fast path INSERT performance
     let start = Instant::now();
     for i in 0..100 {
-        let query = format!("INSERT INTO test_table (id, name) VALUES ({}, 'test{}')", i, i);
+        let query = format!("INSERT INTO test_table (id, name) VALUES ({i}, 'test{i}')");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let duration = start.elapsed();
     
-    println!("100 INSERT operations (fast path) took: {:?}", duration);
+    println!("100 INSERT operations (fast path) took: {duration:?}");
     println!("Average per INSERT: {:?}", duration / 100);
     
     // Verify data was inserted
@@ -74,7 +74,7 @@ async fn test_insert_performance_improvement() {
     assert_eq!(result.rows.len(), 1);
     
     // The actual count should be 100
-    if let Some(Some(count_bytes)) = result.rows[0].get(0) {
+    if let Some(Some(count_bytes)) = result.rows[0].first() {
         let count_str = String::from_utf8_lossy(count_bytes);
         assert_eq!(count_str, "100");
     }
@@ -94,12 +94,12 @@ async fn test_insert_with_decimal_columns_fallback() {
     // Test slow path INSERT performance (with decimal columns)
     let start = Instant::now();
     for i in 0..100 {
-        let query = format!("INSERT INTO decimal_table (id, price, name) VALUES ({}, {}.99, 'test{}')", i, i, i);
+        let query = format!("INSERT INTO decimal_table (id, price, name) VALUES ({i}, {i}.99, 'test{i}')");
         db.execute(&query).await.expect("Failed to execute INSERT");
     }
     let duration = start.elapsed();
     
-    println!("100 INSERT operations (slow path - with decimals) took: {:?}", duration);
+    println!("100 INSERT operations (slow path - with decimals) took: {duration:?}");
     println!("Average per INSERT: {:?}", duration / 100);
     
     // Verify data was inserted
@@ -107,7 +107,7 @@ async fn test_insert_with_decimal_columns_fallback() {
     assert_eq!(result.rows.len(), 1);
     
     // The actual count should be 100
-    if let Some(Some(count_bytes)) = result.rows[0].get(0) {
+    if let Some(Some(count_bytes)) = result.rows[0].first() {
         let count_str = String::from_utf8_lossy(count_bytes);
         assert_eq!(count_str, "100");
     }
@@ -155,7 +155,7 @@ async fn test_insert_bottleneck_analysis() {
     let start_total = Instant::now();
     db.execute("INSERT INTO perf_test (name, value) VALUES ('single', 100)").await.expect("Failed to execute INSERT");
     let total_time = start_total.elapsed();
-    println!("Total INSERT time: {:?}", total_time);
+    println!("Total INSERT time: {total_time:?}");
     
     // Test 4: Batch of INSERTs to see if there's per-operation overhead
     println!("\nBatch INSERT performance:");
@@ -164,7 +164,7 @@ async fn test_insert_bottleneck_analysis() {
     for &batch_size in &batch_sizes {
         let start = Instant::now();
         for i in 0..batch_size {
-            let query = format!("INSERT INTO perf_test (name, value) VALUES ('batch{}', {})", i, i);
+            let query = format!("INSERT INTO perf_test (name, value) VALUES ('batch{i}', {i})");
             db.execute(&query).await.expect("Failed to execute INSERT");
         }
         let duration = start.elapsed();
@@ -192,7 +192,7 @@ async fn test_insert_bottleneck_analysis() {
         let query = "INSERT INTO perf_test (name, value) VALUES ($1, $2)";
         db.execute_with_statement_pool_params(
             query,
-            &[rusqlite::types::Value::Text(format!("pooled{}", i)), 
+            &[rusqlite::types::Value::Text(format!("pooled{i}")), 
               rusqlite::types::Value::Integer(i as i64)]
         ).await.expect("Failed to execute INSERT");
     }

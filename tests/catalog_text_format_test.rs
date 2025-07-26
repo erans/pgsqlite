@@ -22,7 +22,7 @@ async fn test_catalog_text_format() {
             s
         }
         Err(e) => {
-            eprintln!("✗ Prepare failed: {:?}", e);
+            eprintln!("✗ Prepare failed: {e:?}");
             panic!("Prepare should work!");
         }
     };
@@ -33,11 +33,11 @@ async fn test_catalog_text_format() {
             eprintln!("✓ Query succeeded: {} rows", rows.len());
             for row in &rows {
                 let name: &str = row.get(0);
-                eprintln!("  Table: {}", name);
+                eprintln!("  Table: {name}");
             }
         }
         Err(e) => {
-            eprintln!("✗ Query failed: {:?}", e);
+            eprintln!("✗ Query failed: {e:?}");
             panic!("Query should work!");
         }
     }

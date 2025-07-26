@@ -24,7 +24,7 @@ async fn test_concurrent_reads_baseline() {
             while Instant::now() < end_time {
                 match db.query("SELECT COUNT(*) FROM test_data").await {
                     Ok(_) => count += 1,
-                    Err(e) => eprintln!("Query error: {}", e),
+                    Err(e) => eprintln!("Query error: {e}"),
                 }
                 tokio::time::sleep(Duration::from_micros(100)).await;
             }
@@ -42,9 +42,9 @@ async fn test_concurrent_reads_baseline() {
     let qps = total_queries as f64 / duration.as_secs_f64();
     
     println!("📊 Baseline Results:");
-    println!("  Total queries: {}", total_queries);
+    println!("  Total queries: {total_queries}");
     println!("  Duration: {:.2}s", duration.as_secs_f64());
-    println!("  QPS: {:.0}", qps);
+    println!("  QPS: {qps:.0}");
     
     assert!(total_queries > 1000, "Should execute at least 1000 queries");
 }
@@ -71,14 +71,14 @@ async fn test_mixed_workload_simple() {
             while Instant::now() < end_time {
                 let result = if is_writer {
                     let new_value = count % 1000;
-                    db.execute(&format!("UPDATE test_data SET value = {} WHERE id = 1", new_value)).await.map(|_| ())
+                    db.execute(&format!("UPDATE test_data SET value = {new_value} WHERE id = 1")).await.map(|_| ())
                 } else {
                     db.query("SELECT id, value FROM test_data WHERE id <= 10").await.map(|_| ())
                 };
                 
                 match result {
                     Ok(_) => count += 1,
-                    Err(e) => eprintln!("Operation error: {}", e),
+                    Err(e) => eprintln!("Operation error: {e}"),
                 }
                 
                 tokio::time::sleep(Duration::from_micros(if is_writer { 1000 } else { 100 })).await;
@@ -105,11 +105,11 @@ async fn test_mixed_workload_simple() {
     let ops_per_sec = total_ops as f64 / duration.as_secs_f64();
     
     println!("📊 Mixed Workload Results:");
-    println!("  Read operations: {}", total_reads);
-    println!("  Write operations: {}", total_writes);
-    println!("  Total operations: {}", total_ops);
+    println!("  Read operations: {total_reads}");
+    println!("  Write operations: {total_writes}");
+    println!("  Total operations: {total_ops}");
     println!("  Duration: {:.2}s", duration.as_secs_f64());
-    println!("  Operations/sec: {:.0}", ops_per_sec);
+    println!("  Operations/sec: {ops_per_sec:.0}");
     
     assert!(total_reads > 1000, "Should have substantial read operations");
     assert!(total_writes > 10, "Should have some write operations");
@@ -156,8 +156,8 @@ async fn test_transaction_handling() {
     }
     
     println!("📊 Transaction Results:");
-    println!("  Successful transactions: {}", total_success);
-    println!("  Failed transactions: {}", total_failed);
+    println!("  Successful transactions: {total_success}");
+    println!("  Failed transactions: {total_failed}");
     println!("  Success rate: {:.1}%", 100.0 * total_success as f64 / (total_success + total_failed) as f64);
     
     assert!(total_success > 15, "Most transactions should succeed");

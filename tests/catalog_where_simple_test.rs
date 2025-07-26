@@ -11,7 +11,7 @@ async fn test_catalog_where_simple() {
     // Start test server without using the helper
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    eprintln!("Test server listening on port {}", port);
+    eprintln!("Test server listening on port {port}");
     
     let server_handle = tokio::spawn(async move {
         let db_handler = Arc::new(DbHandler::new(":memory:").unwrap());
@@ -21,9 +21,9 @@ async fn test_catalog_where_simple() {
         eprintln!("Server: Created test table");
         
         let (stream, addr) = listener.accept().await.unwrap();
-        eprintln!("Server: Accepted connection from {}", addr);
+        eprintln!("Server: Accepted connection from {addr}");
         if let Err(e) = pgsqlite::handle_test_connection_with_pool(stream, addr, db_handler).await {
-            eprintln!("Server error: {}", e);
+            eprintln!("Server error: {e}");
         }
         eprintln!("Server: Connection handler finished");
     });
@@ -32,14 +32,14 @@ async fn test_catalog_where_simple() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect with tokio-postgres
-    let config = format!("host=localhost port={} dbname=test user=testuser", port);
-    eprintln!("Connecting to {}", config);
+    let config = format!("host=localhost port={port} dbname=test user=testuser");
+    eprintln!("Connecting to {config}");
     let (client, connection) = tokio_postgres::connect(&config, NoTls).await.unwrap();
     eprintln!("Client connected");
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -47,7 +47,7 @@ async fn test_catalog_where_simple() {
     eprintln!("\nTesting simple query...");
     match client.query("SELECT 1", &[]).await {
         Ok(rows) => eprintln!("✓ Simple query succeeded: {} rows", rows.len()),
-        Err(e) => eprintln!("✗ Simple query failed: {:?}", e),
+        Err(e) => eprintln!("✗ Simple query failed: {e:?}"),
     }
     
     // Test with simple query protocol first
@@ -69,15 +69,15 @@ async fn test_catalog_where_simple() {
                         }
                     }
                     tokio_postgres::SimpleQueryMessage::CommandComplete(n) => {
-                        eprintln!("  CommandComplete: {}", n);
+                        eprintln!("  CommandComplete: {n}");
                     }
                     _ => {}
                 }
             }
-            eprintln!("  Total rows: {}", row_count);
+            eprintln!("  Total rows: {row_count}");
         }
         Err(e) => {
-            eprintln!("✗ Simple catalog query failed: {:?}", e);
+            eprintln!("✗ Simple catalog query failed: {e:?}");
         }
     }
     
@@ -89,13 +89,13 @@ async fn test_catalog_where_simple() {
     ).await {
         Ok(rows) => {
             eprintln!("✓ Extended catalog query succeeded: {} rows", rows.len());
-            if rows.len() > 0 {
+            if !rows.is_empty() {
                 let relname: &str = rows[0].get(0);
-                eprintln!("  First row relname: {}", relname);
+                eprintln!("  First row relname: {relname}");
             }
         }
         Err(e) => {
-            eprintln!("✗ Extended catalog query failed: {:?}", e);
+            eprintln!("✗ Extended catalog query failed: {e:?}");
             panic!("Test failed!");
         }
     }

@@ -9,7 +9,7 @@ async fn test_portal_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
     // Create test table with data
     db_handler.execute("CREATE TABLE test_portal (id INTEGER PRIMARY KEY, value TEXT)").await?;
     for i in 1..=10 {
-        db_handler.execute(&format!("INSERT INTO test_portal VALUES ({}, 'value{}')", i, i)).await?;
+        db_handler.execute(&format!("INSERT INTO test_portal VALUES ({i}, 'value{i}')")).await?;
     }
     
     // Create a portal manually
@@ -66,8 +66,8 @@ async fn test_multiple_concurrent_portals() -> Result<(), Box<dyn std::error::Er
     // Create multiple portals
     for i in 1..=5 {
         let portal = pgsqlite::session::Portal {
-            statement_name: format!("stmt{}", i),
-            query: format!("SELECT * FROM table{}", i),
+            statement_name: format!("stmt{i}"),
+            query: format!("SELECT * FROM table{i}"),
             translated_query: None,
             bound_values: vec![],
             param_formats: vec![],
@@ -75,7 +75,7 @@ async fn test_multiple_concurrent_portals() -> Result<(), Box<dyn std::error::Er
             inferred_param_types: None,
         };
         
-        session.portal_manager.create_portal(format!("portal{}", i), portal)?;
+        session.portal_manager.create_portal(format!("portal{i}"), portal)?;
     }
     
     // Check all portals exist
@@ -169,8 +169,8 @@ async fn test_portal_limit_enforcement() -> Result<(), Box<dyn std::error::Error
     // Create portals beyond the limit
     for i in 1..=5 {
         let portal = pgsqlite::session::Portal {
-            statement_name: format!("stmt{}", i),
-            query: format!("SELECT {}", i),
+            statement_name: format!("stmt{i}"),
+            query: format!("SELECT {i}"),
             translated_query: None,
             bound_values: vec![],
             param_formats: vec![],
@@ -178,7 +178,7 @@ async fn test_portal_limit_enforcement() -> Result<(), Box<dyn std::error::Error
             inferred_param_types: None,
         };
         
-        session.portal_manager.create_portal(format!("portal{}", i), portal)?;
+        session.portal_manager.create_portal(format!("portal{i}"), portal)?;
         
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -207,8 +207,8 @@ async fn test_stale_portal_cleanup() -> Result<(), Box<dyn std::error::Error>> {
     // Create several portals with delays
     for i in 1..=3 {
         let portal = pgsqlite::session::Portal {
-            statement_name: format!("stmt{}", i),
-            query: format!("SELECT {}", i),
+            statement_name: format!("stmt{i}"),
+            query: format!("SELECT {i}"),
             translated_query: None,
             bound_values: vec![],
             param_formats: vec![],
@@ -216,7 +216,7 @@ async fn test_stale_portal_cleanup() -> Result<(), Box<dyn std::error::Error>> {
             inferred_param_types: None,
         };
         
-        session.portal_manager.create_portal(format!("portal{}", i), portal)?;
+        session.portal_manager.create_portal(format!("portal{i}"), portal)?;
         
         if i < 3 {
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;

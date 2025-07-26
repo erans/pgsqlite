@@ -35,10 +35,10 @@ async fn test_numeric_constraint_enforcement() {
     ).await;
     assert!(result.is_err(), "Expected precision overflow to fail");
     let err = result.unwrap_err();
-    println!("Precision overflow error: {:?}", err);
+    println!("Precision overflow error: {err:?}");
     assert!(err.to_string().contains("numeric field overflow") || 
             err.code() == Some(&tokio_postgres::error::SqlState::NUMERIC_VALUE_OUT_OF_RANGE),
-            "Expected numeric field overflow error, got: {}", err);
+            "Expected numeric field overflow error, got: {err}");
     
     // Test scale overflow - should fail
     let result = client.execute(
@@ -281,7 +281,7 @@ async fn test_numeric_edge_cases() {
     // Using a smaller number to avoid precision loss
     let large_num = "12345678901234.1234567890";
     client.execute(
-        &format!("UPDATE edge_cases SET large = {} WHERE id = 1", large_num),
+        &format!("UPDATE edge_cases SET large = {large_num} WHERE id = 1"),
         &[]
     ).await.unwrap();
     

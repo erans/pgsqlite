@@ -58,7 +58,7 @@ async fn benchmark_select_detailed() {
     
     // Insert test data
     const NUM_ROWS: usize = 10000;
-    println!("Inserting {} test rows...", NUM_ROWS);
+    println!("Inserting {NUM_ROWS} test rows...");
     
     let mut stmt = conn.prepare(
         "INSERT INTO select_test (id, name, value, score, active, description) 
@@ -81,12 +81,12 @@ async fn benchmark_select_detailed() {
     // Start pgsqlite server
     let port = 25438;
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
     
     let mut server = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--", "-d", db_path, "-p", &port.to_string(), "--log-level", "error"])
+        .args(["run", "--release", "--", "-d", db_path, "-p", &port.to_string(), "--log-level", "error"])
         .spawn()
         .expect("Failed to start server");
     
@@ -94,7 +94,7 @@ async fn benchmark_select_detailed() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     
     // Connect to server
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
         .expect("Failed to connect to server");
     
@@ -125,8 +125,8 @@ async fn benchmark_select_detailed() {
     
     // Benchmark each query type
     for (name, query) in &test_queries {
-        println!("\nTesting: {}", name);
-        println!("Query: {}", query);
+        println!("\nTesting: {name}");
+        println!("Query: {query}");
         
         let mut times = Vec::new();
         let mut first_time = None;
@@ -150,15 +150,15 @@ async fn benchmark_select_detailed() {
         let max_time = times.iter().max().unwrap();
         
         println!("  First run:  {:?}", first_time.unwrap());
-        println!("  Average:    {:?}", avg_time);
-        println!("  Min:        {:?}", min_time);
-        println!("  Max:        {:?}", max_time);
+        println!("  Average:    {avg_time:?}");
+        println!("  Min:        {min_time:?}");
+        println!("  Max:        {max_time:?}");
         
         // Check cache effectiveness
         if let Some(first) = first_time {
             let cache_speedup = first.as_secs_f64() / min_time.as_secs_f64();
             if cache_speedup > 1.2 {
-                println!("  Cache speedup: {:.1}x", cache_speedup);
+                println!("  Cache speedup: {cache_speedup:.1}x");
             }
         }
     }
@@ -169,7 +169,7 @@ async fn benchmark_select_detailed() {
     let conn = Connection::open(db_path).unwrap();
     
     for (name, query) in &test_queries {
-        println!("\nTesting: {}", name);
+        println!("\nTesting: {name}");
         
         let mut times = Vec::new();
         
@@ -178,7 +178,7 @@ async fn benchmark_select_detailed() {
             let mut stmt = conn.prepare(query).unwrap();
             let mut rows = stmt.query([]).unwrap();
             let mut _count = 0;
-            while let Some(_) = rows.next().unwrap() {
+            while rows.next().unwrap().is_some() {
                 _count += 1;
             }
             let elapsed = start.elapsed();
@@ -186,7 +186,7 @@ async fn benchmark_select_detailed() {
         }
         
         let avg_time = times.iter().sum::<Duration>() / times.len() as u32;
-        println!("  SQLite avg: {:?}", avg_time);
+        println!("  SQLite avg: {avg_time:?}");
     }
     
     // Profile specific bottlenecks
@@ -201,12 +201,12 @@ async fn benchmark_select_detailed() {
         protocol_times.push(start.elapsed());
     }
     let protocol_avg = protocol_times.iter().sum::<Duration>() / protocol_times.len() as u32;
-    println!("Protocol round-trip (SELECT 1): {:?}", protocol_avg);
+    println!("Protocol round-trip (SELECT 1): {protocol_avg:?}");
     
     // Test with different result set sizes
     println!("\n=== Result Set Size Impact ===\n");
     for limit in &[1, 10, 100, 1000] {
-        let query = format!("SELECT * FROM select_test LIMIT {}", limit);
+        let query = format!("SELECT * FROM select_test LIMIT {limit}");
         let mut times = Vec::new();
         
         for _ in 0..10 {
@@ -224,7 +224,7 @@ async fn benchmark_select_detailed() {
     // Kill server
     server.kill().await.unwrap();
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
 }

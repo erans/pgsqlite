@@ -109,8 +109,7 @@ impl QueryMetrics {
             self.cache_lookup_ns.load(Ordering::Relaxed),
             cache_lookups
         );
-        report.push_str(&format!("Cache Lookups: {:.2}ms total, {:.2}µs avg ({}x, {:.1}% hit rate)\n", 
-            cache_total, cache_avg, cache_lookups, cache_hit_rate));
+        report.push_str(&format!("Cache Lookups: {cache_total:.2}ms total, {cache_avg:.2}µs avg ({cache_lookups}x, {cache_hit_rate:.1}% hit rate)\n"));
         
         // SQLite
         let (prepare_total, prepare_avg) = format_timing(
@@ -161,8 +160,7 @@ impl QueryMetrics {
         } else {
             0.0
         };
-        report.push_str(&format!("Fast Path: {} attempts, {} success ({:.1}% rate)\n", 
-            fast_attempts, fast_success, fast_rate));
+        report.push_str(&format!("Fast Path: {fast_attempts} attempts, {fast_success} success ({fast_rate:.1}% rate)\n"));
         
         report
     }
@@ -195,7 +193,7 @@ impl QueryMetrics {
 }
 
 /// Global metrics instance
-pub static METRICS: Lazy<QueryMetrics> = Lazy::new(|| QueryMetrics::default());
+pub static METRICS: Lazy<QueryMetrics> = Lazy::new(QueryMetrics::default);
 
 /// Timer for measuring specific operations
 pub struct Timer {

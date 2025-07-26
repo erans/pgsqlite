@@ -50,6 +50,13 @@ impl InsertTranslator {
                                    (query.contains("imp_sen") || query.contains("(p0, p1"));
         
         is_insert && (has_datetime_or_array || has_sqlalchemy_values)
+        
+        (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
+            query.contains('-') ||  // Date patterns like '2024-01-01'
+            query.contains(':') ||  // Time patterns like '14:30:00'
+            query.contains('{') ||  // Array patterns like '{1,2,3}'
+            query.contains("ARRAY[") // Array constructor like ARRAY[1,2,3]
+        )
     }
     
     /// Translate INSERT statement to convert datetime values to INTEGER format
@@ -98,10 +105,7 @@ impl InsertTranslator {
             
             // Reconstruct the INSERT query
             let result = format!(
-                "INSERT INTO {} ({}) VALUES {}",
-                table_name,
-                columns_str,
-                converted_values
+                "INSERT INTO {table_name} ({columns_str}) VALUES {converted_values}"
             );
             Ok(result)
         } else if let Some(caps) = INSERT_NO_COLUMNS_PATTERN.captures(query) {
@@ -139,9 +143,7 @@ impl InsertTranslator {
             
             // Reconstruct the INSERT query  
             Ok(format!(
-                "INSERT INTO {} VALUES {}",
-                table_name,
-                converted_values
+                "INSERT INTO {table_name} VALUES {converted_values}"
             ))
         } else if let Some(caps) = INSERT_SELECT_PATTERN.captures(query) {
             // Handle INSERT INTO table (...) SELECT ...
@@ -219,8 +221,7 @@ impl InsertTranslator {
     /// Get column types from __pgsqlite_schema
     async fn get_column_types(db: &DbHandler, table_name: &str) -> Result<std::collections::HashMap<String, String>, String> {
         let query = format!(
-            "SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = '{}'",
-            table_name
+            "SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = '{table_name}'"
         );
         
         match db.query(&query).await {
@@ -247,7 +248,7 @@ impl InsertTranslator {
     /// Get all columns and their types from __pgsqlite_schema, ordered by column position
     async fn get_all_columns_and_types(db: &DbHandler, table_name: &str) -> Result<(Vec<String>, std::collections::HashMap<String, String>), String> {
         // First get columns from PRAGMA table_info to ensure correct order
-        let pragma_query = format!("PRAGMA table_info({})", table_name);
+        let pragma_query = format!("PRAGMA table_info({table_name})");
         let column_order = match db.query(&pragma_query).await {
             Ok(response) => {
                 let mut columns = Vec::new();
@@ -262,7 +263,7 @@ impl InsertTranslator {
                 columns
             }
             Err(e) => {
-                return Err(format!("Failed to get table info: {}", e));
+                return Err(format!("Failed to get table info: {e}"));
             }
         };
         
@@ -466,19 +467,19 @@ impl InsertTranslator {
             "date" => {
                 match ValueConverter::convert_date_to_unix(unquoted) {
                     Ok(days) => Ok(days),
-                    Err(e) => Err(format!("Invalid date value '{}': {}. Expected format: YYYY-MM-DD", unquoted, e))
+                    Err(e) => Err(format!("Invalid date value '{unquoted}': {e}. Expected format: YYYY-MM-DD"))
                 }
             }
             "time" => {
                 match ValueConverter::convert_time_to_seconds(unquoted) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Invalid time value '{}': {}. Expected format: HH:MM:SS[.ffffff]", unquoted, e))
+                    Err(e) => Err(format!("Invalid time value '{unquoted}': {e}. Expected format: HH:MM:SS[.ffffff]"))
                 }
             }
             "timestamp" => {
                 match ValueConverter::convert_timestamp_to_unix(unquoted) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Invalid timestamp value '{}': {}. Expected format: YYYY-MM-DD HH:MM:SS[.ffffff]", unquoted, e))
+                    Err(e) => Err(format!("Invalid timestamp value '{unquoted}': {e}. Expected format: YYYY-MM-DD HH:MM:SS[.ffffff]"))
                 }
             }
             "timestamptz" | "timetz" | "interval" => {
@@ -513,8 +514,8 @@ impl InsertTranslator {
             let inner = &value[6..value.len()-1];
             let elements = Self::parse_array_elements(inner)?;
             let json_array = serde_json::to_string(&elements)
-                .map_err(|e| format!("Failed to convert array to JSON: {}", e))?;
-            return Ok(format!("'{}'", json_array));
+                .map_err(|e| format!("Failed to convert array to JSON: {e}"))?;
+            return Ok(format!("'{json_array}'"));
         }
         
         // Handle '{...}' literal
@@ -522,8 +523,8 @@ impl InsertTranslator {
             let inner = &value[2..value.len()-2];
             let elements = Self::parse_pg_array_literal(inner)?;
             let json_array = serde_json::to_string(&elements)
-                .map_err(|e| format!("Failed to convert array to JSON: {}", e))?;
-            return Ok(format!("'{}'", json_array));
+                .map_err(|e| format!("Failed to convert array to JSON: {e}"))?;
+            return Ok(format!("'{json_array}'"));
         }
         
         // If it's already a quoted value that doesn't look like an array, keep it

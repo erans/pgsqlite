@@ -29,7 +29,7 @@ async fn test_enum_type_oid_in_schema() {
     
     assert_eq!(table_check.len(), 1, "Table 'people' should exist in pg_class");
     let table_oid: &str = table_check[0].get(0);
-    eprintln!("Table OID: {}", table_oid);
+    eprintln!("Table OID: {table_oid}");
     
     // Query pg_attribute without WHERE to see all rows
     let all_rows = client.query(
@@ -43,12 +43,12 @@ async fn test_enum_type_oid_in_schema() {
         let name: &str = row.get(1);
         let typid: &str = row.get(2);
         let num: i16 = row.get(3);
-        eprintln!("  attrelid={}, attname={}, atttypid={}, attnum={}", relid, name, typid, num);
+        eprintln!("  attrelid={relid}, attname={name}, atttypid={typid}, attnum={num}");
     }
     
     // Try a simpler WHERE clause
     let rows = client.query(
-        &format!("SELECT attname, atttypid::text FROM pg_attribute WHERE attrelid = {}", table_oid),
+        &format!("SELECT attname, atttypid::text FROM pg_attribute WHERE attrelid = {table_oid}"),
         &[]
     ).await.expect("Failed to query pg_attribute with WHERE");
     
@@ -66,7 +66,7 @@ async fn test_enum_type_oid_in_schema() {
         assert_eq!(attname, "mood");
         
         let type_oid = atttypid.parse::<u32>().expect("Failed to parse type OID");
-        assert!(type_oid >= 10000, "ENUM type should have custom OID >= 10000, got {}", type_oid);
+        assert!(type_oid >= 10000, "ENUM type should have custom OID >= 10000, got {type_oid}");
     } else {
         eprintln!("WARNING: Not enough rows to check mood column");
     }

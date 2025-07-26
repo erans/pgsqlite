@@ -42,7 +42,7 @@ async fn test_datetime_trigger_creation() {
         let col: String = row.get(0);
         let pg_type: String = row.get(1);
         let sqlite_type: String = row.get(2);
-        println!("  {} -> pg: {}, sqlite: {}", col, pg_type, sqlite_type);
+        println!("  {col} -> pg: {pg_type}, sqlite: {sqlite_type}");
     }
     
     // Test INSERT with datetime literals
@@ -68,9 +68,9 @@ async fn test_datetime_trigger_creation() {
         let timestamp_type: &str = row.get(2);
         
         println!("\nStorage types after trigger execution:");
-        println!("  date: {}", date_type);
-        println!("  time: {}", time_type);
-        println!("  timestamp: {}", timestamp_type);
+        println!("  date: {date_type}");
+        println!("  time: {time_type}");
+        println!("  timestamp: {timestamp_type}");
         
         // Also check the actual values using cast to text
         let value_check = client.query(
@@ -118,7 +118,7 @@ async fn test_insert_translator_conversion() {
     if let Some(msg) = type_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))) {
         if let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
             let col_type = data.get("typeof(date_col)").unwrap();
-            println!("Storage type after InsertTranslator: {}", col_type);
+            println!("Storage type after InsertTranslator: {col_type}");
             assert_eq!(col_type, "integer", "InsertTranslator should convert to INTEGER");
         }
     }
@@ -131,7 +131,7 @@ async fn test_insert_translator_conversion() {
     if let Some(msg) = value_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))) {
         if let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
             let date_str = data.get("date_col").unwrap();
-            println!("Retrieved value after conversion: {}", date_str);
+            println!("Retrieved value after conversion: {date_str}");
             assert_eq!(date_str, "2024-01-15", "Value converter should convert back to date string");
         }
     }

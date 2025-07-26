@@ -388,7 +388,7 @@ mod tests {
         // Health check should succeed
         match pool.health_check().await {
             Ok(_) => {},
-            Err(e) => panic!("Health check failed: {}", e),
+            Err(e) => panic!("Health check failed: {e}"),
         }
     }
 

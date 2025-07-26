@@ -26,7 +26,7 @@ async fn benchmark_extended_protocol_parameters() {
     // Spawn connection handler
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -46,11 +46,11 @@ async fn benchmark_extended_protocol_parameters() {
     
     // Warmup
     for i in 0..100 {
-        let name = format!("warmup_{}", i);
+        let name = format!("warmup_{i}");
         client
             .execute(
                 "INSERT INTO bench_params (id, name, value, price) VALUES ($1, $2, $3, $4)",
-                &[&i, &name, &(i * 10), &rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap()],
+                &[&i, &name, &(i * 10), &rust_decimal::Decimal::from_str(&format!("{i}.99")).unwrap()],
             )
             .await
             .expect("Failed to insert warmup data");
@@ -63,11 +63,10 @@ async fn benchmark_extended_protocol_parameters() {
     for i in 100..200 {
         // Use different query each time to test inference
         let query = format!(
-            "INSERT INTO bench_params (id, name, value, price) VALUES ($1, $2, $3, $4) -- {}",
-            i
+            "INSERT INTO bench_params (id, name, value, price) VALUES ($1, $2, $3, $4) -- {i}"
         );
-        let name = format!("test_{}", i);
-        let price = rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap();
+        let name = format!("test_{i}");
+        let price = rust_decimal::Decimal::from_str(&format!("{i}.99")).unwrap();
         
         let start = Instant::now();
         client
@@ -93,8 +92,8 @@ async fn benchmark_extended_protocol_parameters() {
     
     let mut total_cached_time = std::time::Duration::ZERO;
     for i in 200..300 {
-        let name = format!("cached_{}", i);
-        let price = rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap();
+        let name = format!("cached_{i}");
+        let price = rust_decimal::Decimal::from_str(&format!("{i}.99")).unwrap();
         
         let start = Instant::now();
         client
@@ -131,7 +130,7 @@ async fn benchmark_extended_protocol_parameters() {
         
         // Verify we got results
         if i < 20 {
-            assert!(!rows.is_empty(), "Expected rows for id {}", i);
+            assert!(!rows.is_empty(), "Expected rows for id {i}");
         }
     }
     
@@ -158,8 +157,8 @@ async fn benchmark_extended_protocol_parameters() {
     
     let mut total_binary_time = std::time::Duration::ZERO;
     for i in 300..400 {
-        let name = format!("binary_{}", i);
-        let price = rust_decimal::Decimal::from_str(&format!("{}.99", i)).unwrap();
+        let name = format!("binary_{i}");
+        let price = rust_decimal::Decimal::from_str(&format!("{i}.99")).unwrap();
         
         let start = Instant::now();
         client
@@ -178,7 +177,7 @@ async fn benchmark_extended_protocol_parameters() {
     let inference_improvement = if total_cached_time < total_inference_time {
         let improvement = (total_inference_time.as_micros() as f64 - total_cached_time.as_micros() as f64)
             / total_inference_time.as_micros() as f64 * 100.0;
-        format!("{:.1}% faster", improvement)
+        format!("{improvement:.1}% faster")
     } else {
         format!("{:.1}% slower", 
             (total_cached_time.as_micros() as f64 - total_inference_time.as_micros() as f64)
@@ -188,7 +187,7 @@ async fn benchmark_extended_protocol_parameters() {
     println!("\n=== Summary ===");
     println!("Type inference (first run): {:?}", total_inference_time / 100);
     println!("Cached types (repeated):    {:?}", total_cached_time / 100);
-    println!("Improvement:                {}", inference_improvement);
+    println!("Improvement:                {inference_improvement}");
     println!("SELECT with parameters:     {:?}", total_select_time / 100);
     println!("Binary parameter format:    {:?}", total_binary_time / 100);
     
@@ -204,7 +203,7 @@ async fn benchmark_extended_protocol_parameters() {
 
 fn start_server() -> Child {
     Command::new("cargo")
-        .args(&["run", "--", "--port", "5433"])
+        .args(["run", "--", "--port", "5433"])
         .spawn()
         .expect("Failed to start server")
 }

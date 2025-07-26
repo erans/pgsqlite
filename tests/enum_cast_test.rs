@@ -114,7 +114,7 @@ async fn test_invalid_enum_cast() {
         assert!(error_msg.contains("CHECK constraint failed") || 
                 error_msg.contains("yellow") ||
                 error_msg.contains("invalid input value for enum"), 
-                "Error should mention CHECK constraint or invalid value, got: {}", error_msg);
+                "Error should mention CHECK constraint or invalid value, got: {error_msg}");
     }
     
     // Test invalid cast in SELECT - this actually succeeds in PostgreSQL

@@ -146,9 +146,9 @@ impl QueryCache {
         let mut normalized = String::with_capacity(query.len());
         let mut in_string = false;
         let mut string_delimiter = '\0';
-        let mut chars = query.chars().peekable();
+        let chars = query.chars().peekable();
         
-        while let Some(ch) = chars.next() {
+        for ch in chars {
             match ch {
                 '\'' | '"' if !in_string => {
                     in_string = true;

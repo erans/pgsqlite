@@ -51,9 +51,9 @@ async fn test_result_cache_for_identical_queries() {
     assert_eq!(rows3.len(), 10);
     
     // Log durations for debugging
-    eprintln!("First execution: {:?}", duration1);
-    eprintln!("Second execution (cached): {:?}", duration2);
-    eprintln!("Third execution (cached): {:?}", duration3);
+    eprintln!("First execution: {duration1:?}");
+    eprintln!("Second execution (cached): {duration2:?}");
+    eprintln!("Third execution (cached): {duration3:?}");
     
     // With the test harness overhead, we can't reliably test timing
     // Just verify that subsequent executions return the same results
@@ -109,7 +109,7 @@ async fn test_result_cache_not_used_for_dml() {
     for i in 1..=5 {
         let value = i * 10;
         let affected = client.execute(
-            &format!("INSERT INTO dml_test VALUES ({}, {})", i, value), 
+            &format!("INSERT INTO dml_test VALUES ({i}, {value})"), 
             &[]
         ).await.unwrap();
         assert_eq!(affected, 1);

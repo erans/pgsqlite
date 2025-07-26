@@ -54,12 +54,12 @@ async fn benchmark_with_profiling() {
     // Start pgsqlite server
     let port = 25440;
     let _ = tokio::process::Command::new("pkill")
-        .args(&["-f", &format!("pgsqlite.*{}", port)])
+        .args(["-f", &format!("pgsqlite.*{port}")])
         .output()
         .await;
     
     let mut server = tokio::process::Command::new("cargo")
-        .args(&["run", "--release", "--", "--in-memory", "-p", &port.to_string(), "--log-level", "error"])
+        .args(["run", "--release", "--", "--in-memory", "-p", &port.to_string(), "--log-level", "error"])
         .spawn()
         .expect("Failed to start server");
     
@@ -67,7 +67,7 @@ async fn benchmark_with_profiling() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     
     // Connect to server
-    let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))
+    let mut stream = TcpStream::connect(format!("127.0.0.1:{port}"))
         .await
         .expect("Failed to connect to server");
     
@@ -94,7 +94,7 @@ async fn benchmark_with_profiling() {
     
     // Run each query type multiple times
     for (name, query) in &test_queries {
-        println!("\nProfiling: {}", name);
+        println!("\nProfiling: {name}");
         
         for _ in 0..50 {
             send_query(&mut stream, query).await;
@@ -122,7 +122,7 @@ async fn benchmark_with_profiling() {
     // Insert test data
     let mut stmt = conn.prepare("INSERT INTO profile_test (id, name, value) VALUES (?1, ?2, ?3)").unwrap();
     for i in 0..1000 {
-        stmt.execute(params![i as i32, format!("name_{}", i), i as i32]).unwrap();
+        stmt.execute(params![{ i }, format!("name_{}", i), { i }]).unwrap();
     }
     drop(stmt);
     
@@ -152,7 +152,7 @@ async fn benchmark_with_profiling() {
 
 async fn perform_startup(stream: &mut TcpStream) {
     // Send startup message
-    let mut startup_msg = vec![0u8; 8];
+    let mut startup_msg = [0u8; 8];
     startup_msg[0..4].copy_from_slice(&196608i32.to_be_bytes()); // Protocol version
     startup_msg[4..8].copy_from_slice(&8i32.to_be_bytes()); // Message length
     

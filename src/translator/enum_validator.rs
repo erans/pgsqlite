@@ -14,7 +14,7 @@ impl EnumValidator {
         // Parse INSERT statement to extract table and values
         let insert_regex = Regex::new(
             r"(?i)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)"
-        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {}", e)))?;
+        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
         
         if let Some(captures) = insert_regex.captures(query) {
             let table_name = captures.get(1).unwrap().as_str();
@@ -46,7 +46,7 @@ impl EnumValidator {
                         // Validate the value
                         if !EnumMetadata::is_valid_enum_value(conn, enum_type.type_oid, value)? {
                             return Err(PgSqliteError::Protocol(
-                                format!("invalid input value for enum {}: \"{}\"", pg_type, value)
+                                format!("invalid input value for enum {pg_type}: \"{value}\"")
                             ));
                         }
                     }
@@ -80,7 +80,7 @@ impl EnumValidator {
         // Parse UPDATE statement
         let update_regex = Regex::new(
             r"(?i)UPDATE\s+(\w+)\s+SET\s+(.+?)(?:\s+WHERE|$)"
-        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {}", e)))?;
+        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
         
         if let Some(captures) = update_regex.captures(query) {
             let table_name = captures.get(1).unwrap().as_str();
@@ -110,7 +110,7 @@ impl EnumValidator {
                             // Validate the value
                             if !EnumMetadata::is_valid_enum_value(conn, enum_type.type_oid, value)? {
                                 return Err(PgSqliteError::Protocol(
-                                    format!("invalid input value for enum {}: \"{}\"", pg_type, value)
+                                    format!("invalid input value for enum {pg_type}: \"{value}\"")
                                 ));
                             }
                         }

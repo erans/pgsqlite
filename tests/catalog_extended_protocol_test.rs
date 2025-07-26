@@ -9,7 +9,7 @@ async fn test_catalog_extended_protocol() {
     // Start test server
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
-    eprintln!("Test server listening on port {}", port);
+    eprintln!("Test server listening on port {port}");
     
     let server_handle = tokio::spawn(async move {
         let db_handler = Arc::new(DbHandler::new(":memory:").unwrap());
@@ -19,7 +19,7 @@ async fn test_catalog_extended_protocol() {
         eprintln!("Server: Created test table");
         
         let (stream, addr) = listener.accept().await.unwrap();
-        eprintln!("Server: Accepted connection from {}", addr);
+        eprintln!("Server: Accepted connection from {addr}");
         
         // Use tokio_util codec
         use tokio_util::codec::Framed;
@@ -36,7 +36,7 @@ async fn test_catalog_extended_protocol() {
                 msg
             }
             other => {
-                eprintln!("Server: Expected startup message, got: {:?}", other);
+                eprintln!("Server: Expected startup message, got: {other:?}");
                 return;
             }
         };
@@ -68,11 +68,11 @@ async fn test_catalog_extended_protocol() {
         loop {
             match framed.next().await {
                 Some(Ok(msg)) => {
-                    eprintln!("Server: Received message: {:?}", msg);
+                    eprintln!("Server: Received message: {msg:?}");
                     
                     match msg {
                         FrontendMessage::Parse { query, .. } => {
-                            eprintln!("Server: Parse query: {}", query);
+                            eprintln!("Server: Parse query: {query}");
                             
                             // Check if it's a catalog query
                             if query.contains("pg_catalog.pg_class") {
@@ -126,7 +126,7 @@ async fn test_catalog_extended_protocol() {
                             eprintln!("Server: Sent RowDescription");
                         }
                         FrontendMessage::Execute { max_rows, .. } => {
-                            eprintln!("Server: Execute (max_rows: {})", max_rows);
+                            eprintln!("Server: Execute (max_rows: {max_rows})");
                             
                             // Send data row
                             let row = vec![
@@ -160,7 +160,7 @@ async fn test_catalog_extended_protocol() {
                     }
                 }
                 Some(Err(e)) => {
-                    eprintln!("Server: Error reading message: {}", e);
+                    eprintln!("Server: Error reading message: {e}");
                     break;
                 }
                 None => {
@@ -175,14 +175,14 @@ async fn test_catalog_extended_protocol() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect with tokio-postgres
-    let config = format!("host=localhost port={} dbname=test user=testuser", port);
-    eprintln!("Connecting to {}", config);
+    let config = format!("host=localhost port={port} dbname=test user=testuser");
+    eprintln!("Connecting to {config}");
     let (client, connection) = tokio_postgres::connect(&config, tokio_postgres::NoTls).await.unwrap();
     eprintln!("Client connected");
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -199,7 +199,7 @@ async fn test_catalog_extended_protocol() {
             assert_eq!(relname, "test_table1");
         }
         Err(e) => {
-            eprintln!("✗ Catalog query failed: {:?}", e);
+            eprintln!("✗ Catalog query failed: {e:?}");
             panic!("Test failed!");
         }
     }

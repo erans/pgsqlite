@@ -28,9 +28,9 @@ mod tests {
         }
         let new_duration = start.elapsed();
         
-        println!("Integer formatting ({} iterations):", ITERATIONS);
-        println!("  Old (to_string): {:?}", old_duration);
-        println!("  New (itoa):      {:?}", new_duration);
+        println!("Integer formatting ({ITERATIONS} iterations):");
+        println!("  Old (to_string): {old_duration:?}");
+        println!("  New (itoa):      {new_duration:?}");
         println!("  Speedup:         {:.2}x", old_duration.as_secs_f64() / new_duration.as_secs_f64());
         
         // Note: Float formatting test removed since we're not using ryu
@@ -41,7 +41,7 @@ mod tests {
             let old = i.to_string();
             let mut buf = itoa::Buffer::new();
             let new = buf.format(i);
-            assert_eq!(old, new, "Integer formatting mismatch for {}", i);
+            assert_eq!(old, new, "Integer formatting mismatch for {i}");
         }
     }
 }

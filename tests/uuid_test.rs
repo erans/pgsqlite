@@ -30,13 +30,13 @@ async fn test_uuid_support() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -48,7 +48,7 @@ async fn test_uuid_support() {
             _ => None,
         })
         .expect("Expected to find a row");
-    println!("Generated UUID 1: {}", uuid1);
+    println!("Generated UUID 1: {uuid1}");
     assert_eq!(uuid1.len(), 36);
     assert!(uuid1.contains('-'));
     
@@ -60,7 +60,7 @@ async fn test_uuid_support() {
             _ => None,
         })
         .expect("Expected to find a row");
-    println!("Generated UUID 2: {}", uuid2);
+    println!("Generated UUID 2: {uuid2}");
     assert_ne!(uuid1, uuid2);
     
     // Test 3: Test uuid_generate_v4() function
@@ -71,11 +71,11 @@ async fn test_uuid_support() {
             _ => None,
         })
         .expect("Expected to find a row");
-    println!("Generated UUID 3: {}", uuid3);
+    println!("Generated UUID 3: {uuid3}");
     assert_eq!(uuid3.len(), 36);
     
     // Test 4: Validate UUID function
-    let result = client.simple_query(&format!("SELECT is_valid_uuid('{}') as valid", uuid1)).await.unwrap();
+    let result = client.simple_query(&format!("SELECT is_valid_uuid('{uuid1}') as valid")).await.unwrap();
     let valid = result.iter()
         .find_map(|msg| match msg {
             tokio_postgres::SimpleQueryMessage::Row(row) => Some(row.get(0).unwrap() == "1"),
@@ -95,7 +95,7 @@ async fn test_uuid_support() {
     
     // Test 5: UUID normalization
     let upper_uuid = "550E8400-E29B-41D4-A716-446655440000";
-    let result = client.simple_query(&format!("SELECT uuid_normalize('{}') as normalized", upper_uuid)).await.unwrap();
+    let result = client.simple_query(&format!("SELECT uuid_normalize('{upper_uuid}') as normalized")).await.unwrap();
     let normalized = result.iter()
         .find_map(|msg| match msg {
             tokio_postgres::SimpleQueryMessage::Row(row) => Some(row.get(0).unwrap().to_string()),
@@ -106,13 +106,11 @@ async fn test_uuid_support() {
     
     // Test 6: Insert and retrieve UUID
     client.simple_query(&format!(
-        "INSERT INTO users (id, name) VALUES ('{}', 'Alice')",
-        uuid1
+        "INSERT INTO users (id, name) VALUES ('{uuid1}', 'Alice')"
     )).await.unwrap();
     
     let result = client.simple_query(&format!(
-        "SELECT id, name FROM users WHERE id = '{}'",
-        uuid1
+        "SELECT id, name FROM users WHERE id = '{uuid1}'"
     )).await.unwrap();
     result.iter()
         .find_map(|msg| match msg {

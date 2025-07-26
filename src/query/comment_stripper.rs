@@ -38,7 +38,7 @@ pub fn strip_sql_comments(query: &str) -> String {
             '-' if !in_string && chars.peek() == Some(&'-') => {
                 // Single-line comment, skip to end of line
                 chars.next(); // consume second '-'
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if c == '\n' {
                         result.push('\n'); // preserve line break
                         break;
@@ -49,7 +49,7 @@ pub fn strip_sql_comments(query: &str) -> String {
                 // Multi-line comment, skip until */
                 chars.next(); // consume '*'
                 let mut prev_char = '\0';
-                while let Some(c) = chars.next() {
+                for c in chars.by_ref() {
                     if prev_char == '*' && c == '/' {
                         break;
                     }

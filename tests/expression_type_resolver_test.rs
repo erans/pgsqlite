@@ -50,7 +50,7 @@ fn parse_query(sql: &str) -> Query {
 }
 
 fn parse_expression(expr_str: &str) -> Expr {
-    let sql = format!("SELECT {} FROM test_table", expr_str);
+    let sql = format!("SELECT {expr_str} FROM test_table");
     let query = parse_query(&sql);
     
     match &*query.body {

@@ -44,7 +44,7 @@ fn test_ultra_fast_path() {
     for query in &simple_queries {
         assert!(
             pgsqlite::query::simple_query_detector::is_ultra_simple_query(query),
-            "Query should be detected as ultra-simple: {}", query
+            "Query should be detected as ultra-simple: {query}"
         );
     }
     
@@ -52,7 +52,7 @@ fn test_ultra_fast_path() {
     for query in &complex_queries {
         assert!(
             !pgsqlite::query::simple_query_detector::is_ultra_simple_query(query),
-            "Query should NOT be detected as ultra-simple: {}", query
+            "Query should NOT be detected as ultra-simple: {query}"
         );
     }
     

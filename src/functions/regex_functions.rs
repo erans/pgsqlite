@@ -40,7 +40,7 @@ pub fn register_regex_functions(conn: &Connection) -> Result<()> {
             trace!("regexpi('{}', '{}')", pattern, text);
             
             // Add (?i) flag for case-insensitive matching
-            let case_insensitive_pattern = format!("(?i){}", pattern);
+            let case_insensitive_pattern = format!("(?i){pattern}");
             
             match Regex::new(&case_insensitive_pattern) {
                 Ok(re) => Ok(re.is_match(&text)),

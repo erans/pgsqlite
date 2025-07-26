@@ -29,12 +29,12 @@ async fn test_simple_select() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect with tokio-postgres
-    let config = format!("host=localhost port={} dbname=test user=testuser", port);
+    let config = format!("host=localhost port={port} dbname=test user=testuser");
     let (client, connection) = tokio_postgres::connect(&config, NoTls).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -45,7 +45,7 @@ async fn test_simple_select() {
             println!("Simple query successful: {} messages", messages.len());
         }
         Err(e) => {
-            println!("Simple query failed: {:?}", e);
+            println!("Simple query failed: {e:?}");
         }
     }
     
@@ -59,7 +59,7 @@ async fn test_simple_select() {
             assert_eq!(id, 1);
         }
         Err(e) => {
-            println!("Extended query failed: {:?}", e);
+            println!("Extended query failed: {e:?}");
             panic!("Extended query should not fail");
         }
     }

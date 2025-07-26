@@ -12,8 +12,7 @@ async fn test_batch_delete_single_column() -> Result<(), Box<dyn std::error::Err
     // Insert test data
     for i in 1..=10 {
         db_handler.execute(&format!(
-            "INSERT INTO batch_delete_users (id, name, status) VALUES ({}, 'User{}', 'active')", 
-            i, i
+            "INSERT INTO batch_delete_users (id, name, status) VALUES ({i}, 'User{i}', 'active')"
         )).await?;
     }
     
@@ -66,8 +65,7 @@ async fn test_batch_delete_multi_column() -> Result<(), Box<dyn std::error::Erro
     
     for (id, category, status) in &test_data {
         db_handler.execute(&format!(
-            "INSERT INTO batch_delete_products (id, category, status) VALUES ({}, '{}', '{}')", 
-            id, category, status
+            "INSERT INTO batch_delete_products (id, category, status) VALUES ({id}, '{category}', '{status}')"
         )).await?;
     }
     
@@ -177,7 +175,7 @@ async fn test_batch_delete_no_alias() -> Result<(), Box<dyn std::error::Error>> 
     let remaining_result = db_handler.query("SELECT id FROM batch_delete_simple ORDER BY id").await?;
     assert_eq!(remaining_result.rows.len(), 3); // Should have 1, 3, 5
     
-    let expected_ids = vec![1, 3, 5];
+    let expected_ids = [1, 3, 5];
     for (i, row) in remaining_result.rows.iter().enumerate() {
         let id: i32 = String::from_utf8(row[0].as_ref().unwrap().clone())?.parse()?;
         assert_eq!(id, expected_ids[i]);
@@ -205,20 +203,20 @@ async fn test_batch_delete_performance() -> Result<(), Box<dyn std::error::Error
         if i > 1 {
             values_clause.push_str(", ");
         }
-        values_clause.push_str(&format!("({})", i));
+        values_clause.push_str(&format!("({i})"));
     }
     
     let query = format!(r#"
         DELETE FROM batch_delete_perf AS p 
-        USING (VALUES {}) AS v(id) 
+        USING (VALUES {values_clause}) AS v(id) 
         WHERE p.id = v.id
-    "#, values_clause);
+    "#);
     
     let start = std::time::Instant::now();
     let result = db_handler.execute(&query).await?;
     let elapsed = start.elapsed();
     
-    println!("Batch DELETE of 100 rows took: {:?}", elapsed);
+    println!("Batch DELETE of 100 rows took: {elapsed:?}");
     println!("Affected {} rows", result.rows_affected);
     
     // Should have deleted exactly 100 rows
@@ -275,7 +273,7 @@ async fn test_batch_delete_edge_cases() -> Result<(), Box<dyn std::error::Error>
     
     // Insert test data
     for i in 1..=5 {
-        db_handler.execute(&format!("INSERT INTO batch_delete_edge VALUES ({}, 'data{}')", i, i)).await?;
+        db_handler.execute(&format!("INSERT INTO batch_delete_edge VALUES ({i}, 'data{i}')")).await?;
     }
     
     // Test batch DELETE with non-existent values (should affect 0 rows)

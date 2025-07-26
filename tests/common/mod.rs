@@ -40,7 +40,7 @@ where
         
         // Run custom initialization
         if let Err(e) = init(db_handler.clone()).await {
-            eprintln!("Init error: {}", e);
+            eprintln!("Init error: {e}");
             return;
         }
         
@@ -62,7 +62,7 @@ where
         
         let (stream, addr) = listener.accept().await.unwrap();
         if let Err(e) = pgsqlite::handle_test_connection_with_pool(stream, addr, db_handler).await {
-            eprintln!("Connection handling error: {}", e);
+            eprintln!("Connection handling error: {e}");
         }
     });
     
@@ -70,12 +70,12 @@ where
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect with tokio-postgres
-    let config = format!("host=localhost port={} dbname=test user=testuser", port);
+    let config = format!("host=localhost port={port} dbname=test user=testuser");
     let (client, connection) = tokio_postgres::connect(&config, NoTls).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     

@@ -86,7 +86,7 @@ impl UnnestTranslator {
             let alias = captures.get(2).map(|m| m.as_str()).unwrap_or("unnest_table");
             
             // Convert unnest(array) to json_each(array) with proper column selection
-            let replacement = format!("FROM json_each({}) AS {}", array_expr, alias);
+            let replacement = format!("FROM json_each({array_expr}) AS {alias}");
             
             replacements.push((captures[0].to_string(), replacement));
         }
@@ -113,8 +113,7 @@ impl UnnestTranslator {
             // Convert unnest(array) WITH ORDINALITY to a CTE that includes row numbers
             // PostgreSQL's WITH ORDINALITY returns (value, ordinality) columns
             let replacement = format!(
-                "FROM (SELECT value, (key + 1) AS ordinality FROM json_each({})) AS {}",
-                array_expr, alias
+                "FROM (SELECT value, (key + 1) AS ordinality FROM json_each({array_expr})) AS {alias}"
             );
             
             replacements.push((captures[0].to_string(), replacement));
@@ -141,7 +140,7 @@ impl UnnestTranslator {
             
             // This is a simplified translation that works for basic cases
             // More complex cases might need different handling
-            let replacement = format!("(SELECT value FROM json_each({}))", array_expr);
+            let replacement = format!("(SELECT value FROM json_each({array_expr}))");
             
             replacements.push((captures[0].to_string(), replacement));
         }

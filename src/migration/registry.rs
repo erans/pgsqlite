@@ -15,6 +15,7 @@ lazy_static! {
         register_v6_varchar_constraints(&mut registry);
         register_v7_numeric_constraints(&mut registry);
         register_v8_array_support(&mut registry);
+        register_v9_fts_support(&mut registry);
         
         registry
     };
@@ -600,8 +601,8 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Option<Vec<Con
         for cap in pk_regex.captures_iter(create_sql) {
             if let Some(column_name) = cap.get(1) {
                 constraints.push(ConstraintInfo {
-                    oid: generate_table_oid(&format!("{}_pkey", table_name)),
-                    name: format!("{}_pkey", table_name),
+                    oid: generate_table_oid(&format!("{table_name}_pkey")),
+                    name: format!("{table_name}_pkey"),
                     contype: "p".to_string(),
                     columns: vec![column_name.as_str().to_string()],
                     definition: "PRIMARY KEY".to_string(),
@@ -619,8 +620,8 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Option<Vec<Con
                     .map(|s| s.trim().to_string())
                     .collect();
                 constraints.push(ConstraintInfo {
-                    oid: generate_table_oid(&format!("{}_pkey", table_name)),
-                    name: format!("{}_pkey", table_name),
+                    oid: generate_table_oid(&format!("{table_name}_pkey")),
+                    name: format!("{table_name}_pkey"),
                     contype: "p".to_string(),
                     columns,
                     definition: "PRIMARY KEY".to_string(),
@@ -1013,5 +1014,86 @@ fn register_v8_array_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![7],
+    });
+}
+
+/// Version 9: Full-Text Search support
+fn register_v9_fts_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(9, Migration {
+        version: 9,
+        name: "fts_support",
+        description: "Add PostgreSQL Full-Text Search support using FTS5",
+        up: MigrationAction::SqlBatch(&[
+            // Create FTS metadata table
+            r#"
+            CREATE TABLE IF NOT EXISTS __pgsqlite_fts_metadata (
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                fts_table_name TEXT NOT NULL,
+                config_name TEXT NOT NULL DEFAULT 'english',
+                tokenizer TEXT NOT NULL DEFAULT 'porter unicode61',
+                stop_words TEXT,  -- JSON array
+                PRIMARY KEY (table_name, column_name)
+            );
+            "#,
+            
+            // Add FTS columns to schema table
+            r#"
+            ALTER TABLE __pgsqlite_schema ADD COLUMN fts_table_name TEXT;
+            "#,
+            r#"
+            ALTER TABLE __pgsqlite_schema ADD COLUMN fts_config TEXT DEFAULT 'english';
+            "#,
+            r#"
+            ALTER TABLE __pgsqlite_schema ADD COLUMN fts_weights TEXT;  -- JSON mapping
+            "#,
+            
+            // Create index for efficient FTS metadata lookups
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_fts_metadata_table 
+            ON __pgsqlite_fts_metadata(table_name);
+            "#,
+            
+            // Create table for type map if it doesn't exist
+            r#"
+            CREATE TABLE IF NOT EXISTS __pgsqlite_type_map (
+                pg_type TEXT PRIMARY KEY,
+                sqlite_type TEXT NOT NULL,
+                oid INTEGER NOT NULL UNIQUE
+            );
+            "#,
+            
+            // Register FTS types in type map
+            r#"
+            INSERT OR IGNORE INTO __pgsqlite_type_map (pg_type, sqlite_type, oid)
+            VALUES 
+                ('tsvector', 'TEXT', 3614),
+                ('tsquery', 'TEXT', 3615),
+                ('regconfig', 'TEXT', 3734);
+            "#,
+            
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata 
+            SET value = '9', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            DROP INDEX IF EXISTS idx_fts_metadata_table;
+            DROP TABLE IF EXISTS __pgsqlite_fts_metadata;
+            
+            -- Note: We can't easily remove columns from __pgsqlite_schema in SQLite
+            -- Would need to recreate the table without the FTS columns
+            
+            -- Remove FTS types from type map
+            DELETE FROM __pgsqlite_type_map 
+            WHERE pg_type IN ('tsvector', 'tsquery', 'regconfig');
+            
+            UPDATE __pgsqlite_metadata 
+            SET value = '8', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![8],
     });
 }

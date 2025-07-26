@@ -25,12 +25,12 @@ async fn test_catalog_query_handling() {
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     
     // Connect with tokio-postgres
-    let config = format!("host=localhost port={} dbname=test user=testuser", port);
+    let config = format!("host=localhost port={port} dbname=test user=testuser");
     let (client, connection) = tokio_postgres::connect(&config, NoTls).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -41,7 +41,7 @@ async fn test_catalog_query_handling() {
             println!("Simple catalog query successful, got {} messages", messages.len());
         }
         Err(e) => {
-            println!("Simple catalog query failed: {:?}", e);
+            println!("Simple catalog query failed: {e:?}");
         }
     }
     
@@ -53,13 +53,13 @@ async fn test_catalog_query_handling() {
     ).await {
         Ok(rows) => {
             println!("Direct catalog query successful, got {} rows", rows.len());
-            if rows.len() > 0 {
+            if !rows.is_empty() {
                 let typname: &str = rows[0].get(0);
-                println!("Type name for OID 23: {}", typname);
+                println!("Type name for OID 23: {typname}");
             }
         }
         Err(e) => {
-            println!("Direct catalog query failed: {:?}", e);
+            println!("Direct catalog query failed: {e:?}");
         }
     }
     
@@ -73,7 +73,7 @@ async fn test_catalog_query_handling() {
             println!("Parameterized query successful, got {} rows", rows.len());
         }
         Ok(Err(e)) => {
-            println!("Parameterized query failed: {:?}", e);
+            println!("Parameterized query failed: {e:?}");
         }
         Err(_) => {
             println!("Parameterized query timed out - catalog query loop detected");

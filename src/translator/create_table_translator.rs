@@ -72,7 +72,7 @@ impl CreateTableTranslator {
             }
             
             // Reconstruct CREATE TABLE
-            let sqlite_sql = format!("CREATE TABLE {} ({})", table_name, final_columns);
+            let sqlite_sql = format!("CREATE TABLE {table_name} ({final_columns})");
             
             // Collect enum and array columns
             let enum_columns = ENUM_COLUMNS.with(|ec| ec.borrow().clone());
@@ -308,8 +308,7 @@ impl CreateTableTranslator {
             // Note: json_valid() doesn't accept NULL, so we check for NULL first
             let constraint_name = format!("chk_{}_{}_{}", table_name, column_name, "json");
             check_constraints.push(format!(
-                "CONSTRAINT {} CHECK ({} IS NULL OR json_valid({}))",
-                constraint_name, column_name, column_name
+                "CONSTRAINT {constraint_name} CHECK ({column_name} IS NULL OR json_valid({column_name}))"
             ));
             
             (sqlite_type, pg_type.clone())
@@ -349,7 +348,7 @@ impl CreateTableTranslator {
         let type_modifier = Self::extract_type_modifier(&pg_type);
         
         // Store both PostgreSQL and SQLite types with modifier
-        let mapping_key = format!("{}.{}", table_name, column_name);
+        let mapping_key = format!("{table_name}.{column_name}");
         type_mapping.insert(mapping_key, TypeMapping {
             pg_type: normalized_pg_type,
             sqlite_type: sqlite_type.clone(),
@@ -357,9 +356,10 @@ impl CreateTableTranslator {
         });
         
         // Reconstruct the column definition with SQLite type
-        let mut result = format!("{} {}", column_name, sqlite_type);
+        let mut result = format!("{column_name} {sqlite_type}");
         
         // Add any remaining parts (constraints, defaults, etc.)
+        let mut remaining_parts = Vec::new();
         let mut skip_next = false;
         for (i, part) in parts[type_end_idx..].iter().enumerate() {
             if skip_next {
@@ -368,8 +368,8 @@ impl CreateTableTranslator {
             }
             
             // Special handling for SERIAL - skip PRIMARY KEY as it's included in the type translation
-            if pg_type.to_uppercase() == "SERIAL" || pg_type.to_uppercase() == "BIGSERIAL" {
-                if part.to_uppercase() == "PRIMARY" {
+            if (pg_type.to_uppercase() == "SERIAL" || pg_type.to_uppercase() == "BIGSERIAL")
+                && part.to_uppercase() == "PRIMARY" {
                     // Skip "PRIMARY" and check if next is "KEY"
                     if let Some(next_part) = parts.get(type_end_idx + i + 1) {
                         if next_part.to_uppercase() == "KEY" {
@@ -378,10 +378,35 @@ impl CreateTableTranslator {
                     }
                     continue;
                 }
-            }
+            
+            remaining_parts.push(*part);
+        }
+        
+        // Join remaining parts and apply datetime translation if needed
+        if !remaining_parts.is_empty() {
+            let remaining_clause = remaining_parts.join(" ");
+            
+            // Apply datetime translation for DEFAULT clauses
+            let translated_clause = if remaining_clause.to_uppercase().contains("DEFAULT") {
+                use crate::translator::DateTimeTranslator;
+                // Create a fake CREATE TABLE context so datetime translator uses SQLite's datetime('now')
+                let fake_create_table_query = format!("CREATE TABLE temp ({column_name} {remaining_clause})");
+                let translated_fake = DateTimeTranslator::translate_query(&fake_create_table_query);
+                // Extract just the DEFAULT part from the translated result
+                let temp_col_prefix = format!("CREATE TABLE temp ({column_name} ");
+                if let Some(pos) = translated_fake.find(&temp_col_prefix) {
+                    let start_pos = pos + temp_col_prefix.len();
+                    let end_pos = translated_fake.rfind(')').unwrap_or(translated_fake.len());
+                    translated_fake[start_pos..end_pos].to_string()
+                } else {
+                    remaining_clause
+                }
+            } else {
+                remaining_clause
+            };
             
             result.push(' ');
-            result.push_str(part);
+            result.push_str(&translated_clause);
         }
         
         Ok(result)
@@ -401,7 +426,7 @@ impl CreateTableTranslator {
             "TIME WITH TIME ZONE", "TIME WITHOUT TIME ZONE",
             "DOUBLE PRECISION", "CHARACTER VARYING", "BIT VARYING"
         ];
-        complete_types.iter().any(|complete| type_str == *complete)
+        complete_types.contains(&type_str)
     }
     
     fn is_constraint_keyword(word: &str) -> bool {
@@ -650,5 +675,26 @@ mod tests {
         
         // Check that JSON validation constraints were added
         assert!(result.sql.contains("json_valid"));
+    }
+    
+    #[test]
+    fn test_translate_default_now() {
+        let sql = "CREATE TABLE orders (
+            id SERIAL PRIMARY KEY,
+            customer_id INTEGER,
+            order_date TIMESTAMP DEFAULT NOW(),
+            total_amount DECIMAL(12,2),
+            status VARCHAR(50)
+        )";
+        
+        let result = CreateTableTranslator::translate_with_connection_full(sql, None).unwrap();
+        
+        println!("Translated SQL: {}", result.sql);
+        
+        // Check that NOW() was translated to datetime('now')
+        assert!(result.sql.contains("DEFAULT datetime('now')"), 
+                "Expected 'DEFAULT datetime('now')' but got: {}", result.sql);
+        assert!(!result.sql.contains("DEFAULT now()"), 
+                "Found 'DEFAULT now()' which should have been translated: {}", result.sql);
     }
 }

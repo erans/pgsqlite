@@ -22,16 +22,16 @@ async fn test_catalog_basic_functionality() {
     ).await {
         Ok(rows) => {
             println!("✓ Query succeeded: {} rows", rows.len());
-            assert!(rows.len() >= 1, "Should find at least 1 table");
+            assert!(!rows.is_empty(), "Should find at least 1 table");
             for row in &rows {
                 let relname: &str = row.get(0);
                 let relkind: &str = row.get(1);
-                println!("  Table: {}, Kind: {}", relname, relkind);
+                println!("  Table: {relname}, Kind: {relkind}");
                 assert_eq!(relkind, "r", "Should only return tables");
             }
         }
         Err(e) => {
-            eprintln!("✗ Query failed: {:?}", e);
+            eprintln!("✗ Query failed: {e:?}");
             panic!("Basic catalog query should work!");
         }
     }
@@ -50,7 +50,7 @@ async fn test_catalog_basic_functionality() {
             }
         }
         Err(e) => {
-            eprintln!("✗ SELECT * failed: {:?}", e);
+            eprintln!("✗ SELECT * failed: {e:?}");
             panic!("SELECT * should work!");
         }
     }

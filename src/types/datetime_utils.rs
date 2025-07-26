@@ -131,7 +131,7 @@ pub fn format_days_to_date(days: i64) -> String {
     }
     
     let (year, month, day) = epoch_days_to_date(days);
-    format!("{:04}-{:02}-{:02}", year, month, day)
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Optimized format epoch days as PostgreSQL date string into a buffer
@@ -153,7 +153,7 @@ pub fn format_days_to_date_buf(days: i32, buf: &mut [u8]) -> usize {
     
     // Format directly into buffer: YYYY-MM-DD (10 bytes)
     // Year (4 digits)
-    let year_abs = year.abs() as u32;
+    let year_abs = year.unsigned_abs();
     buf[0] = b'0' + ((year_abs / 1000) % 10) as u8;
     buf[1] = b'0' + ((year_abs / 100) % 10) as u8;
     buf[2] = b'0' + ((year_abs / 10) % 10) as u8;
@@ -175,9 +175,9 @@ pub fn format_microseconds_to_time(micros: i64) -> String {
     let (hours, minutes, seconds, microseconds) = microseconds_to_time(micros);
     
     if microseconds > 0 {
-        format!("{:02}:{:02}:{:02}.{:06}", hours, minutes, seconds, microseconds)
+        format!("{hours:02}:{minutes:02}:{seconds:02}.{microseconds:06}")
     } else {
-        format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+        format!("{hours:02}:{minutes:02}:{seconds:02}")
     }
 }
 

@@ -21,7 +21,7 @@ impl SchemaPrefixTranslator {
         
         for table in &catalog_tables {
             // Replace pg_catalog.table with just table
-            result = result.replace(&format!("pg_catalog.{}", table), table);
+            result = result.replace(&format!("pg_catalog.{table}"), table);
             // Also handle uppercase
             result = result.replace(&format!("PG_CATALOG.{}", table.to_uppercase()), table);
         }
@@ -35,7 +35,7 @@ impl SchemaPrefixTranslator {
         ];
         
         for func in &catalog_functions {
-            result = result.replace(&format!("pg_catalog.{}", func), func);
+            result = result.replace(&format!("pg_catalog.{func}"), func);
             result = result.replace(&format!("PG_CATALOG.{}", func.to_uppercase()), func);
         }
         

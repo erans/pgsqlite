@@ -101,11 +101,11 @@ impl QueryFingerprint {
     /// Normalize only whitespace and case (preserves literals)
     fn normalize_whitespace_and_case(query: &str) -> String {
         let mut result = String::with_capacity(query.len());
-        let mut chars = query.chars();
+        let chars = query.chars();
         let mut in_string = false;
         let mut after_whitespace = false;
         
-        while let Some(ch) = chars.next() {
+        for ch in chars {
             match ch {
                 '\'' => {
                     in_string = !in_string;

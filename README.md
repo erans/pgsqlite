@@ -175,6 +175,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
   - **Math Functions**: `trunc()`, `round()`, `ceil()`, `floor()`, `sign()`, `abs()`, `mod()`, `power()`, `sqrt()`, `exp()`, `ln()`, `log()`, trigonometric functions, `random()`
 - **Array Types**: Full support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) with ARRAY literal syntax, ALL operator, and unnest() WITH ORDINALITY
 - **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`, `?`, `?|`, `?&`) and functions (json_agg, json_object_agg, row_to_json, json_populate_record, json_to_record, jsonb_insert, jsonb_delete, jsonb_pretty, etc.)
+- **Full-Text Search**: Complete PostgreSQL FTS implementation with `tsvector`/`tsquery` types, `@@` operator, `to_tsvector()`, `to_tsquery()`, `plainto_tsquery()` functions using SQLite FTS5 backend
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
@@ -187,7 +188,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 
 - ❌ Stored procedures and custom functions
 - ❌ PostgreSQL-specific system functions (`pg_*`)
-- ❌ Some advanced data types (ranges, geometric types, full-text search)
+- ❌ Some advanced data types (ranges, geometric types)
 - ⚠️  Some advanced array features (array assignment operations, advanced indexing)
 - ❌ Multiple concurrent writers (SQLite allows only one writer at a time, mitigated by connection pooling for reads)
 
@@ -250,8 +251,9 @@ Connection pooling automatically routes SELECT queries to the read pool while di
 - **[Unix Sockets](docs/unix-sockets.md)**: Lower latency local connections
 - **[Performance Tuning](docs/performance-tuning.md)**: Cache configuration and optimization
 - **[Architecture Overview](docs/architecture.md)**: How pgsqlite works internally
-- **[Array Support](docs/array-support.md)**: Comprehensive guide to PostgreSQL arrays
+- **[Array Support](docs/array-support.md)**: Comprehensive guide to PostgreSQL arrays  
 - **[JSON/JSONB Support](docs/json-support.md)**: Comprehensive guide to JSON functionality
+- **[Full-Text Search](docs/fts_implementation_plan.md)**: PostgreSQL FTS implementation details
 - **[Future Features](docs/future-features.md)**: Roadmap for enhanced SQLite capabilities
 
 ## Development

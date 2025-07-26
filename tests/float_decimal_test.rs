@@ -57,7 +57,7 @@ fn setup_test_db() -> Connection {
 fn rewrite_query(conn: &Connection, sql: &str) -> Result<String, String> {
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, sql)
-        .map_err(|e| format!("Parse error: {}", e))?;
+        .map_err(|e| format!("Parse error: {e}"))?;
     
     if let Some(stmt) = statements.first_mut() {
         let mut rewriter = DecimalQueryRewriter::new(conn);
@@ -75,7 +75,7 @@ fn test_real_type_arithmetic() {
     // Test REAL (float4) columns
     let sql = "SELECT temperature * 1.8 + 32 FROM measurements";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("REAL arithmetic rewritten to: {}", result);
+    println!("REAL arithmetic rewritten to: {result}");
     assert!(result.contains("decimal_mul"));
     assert!(result.contains("decimal_add"));
 }
@@ -87,7 +87,7 @@ fn test_double_precision_arithmetic() {
     // Test DOUBLE PRECISION columns
     let sql = "SELECT pressure / 101.325 FROM measurements";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("DOUBLE PRECISION arithmetic rewritten to: {}", result);
+    println!("DOUBLE PRECISION arithmetic rewritten to: {result}");
     assert!(result.contains("decimal_div"));
 }
 
@@ -98,7 +98,7 @@ fn test_float_type_comparison() {
     // Test comparisons with FLOAT types
     let sql = "SELECT * FROM measurements WHERE temperature > 25.5 AND humidity < 60.0";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Float comparison rewritten to: {}", result);
+    println!("Float comparison rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
     assert!(result.contains("decimal_lt"));
 }
@@ -110,7 +110,7 @@ fn test_mixed_float_numeric_operations() {
     // Test operations mixing FLOAT8 and FLOAT4
     let sql = "SELECT value1 + value2 * 2.5 FROM calculations";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Mixed float operations rewritten to: {}", result);
+    println!("Mixed float operations rewritten to: {result}");
     assert!(result.contains("decimal_add"));
     assert!(result.contains("decimal_mul"));
 }
@@ -122,7 +122,7 @@ fn test_float_aggregates() {
     // Test aggregate functions on float columns
     let sql = "SELECT AVG(temperature), MAX(pressure), MIN(humidity) FROM measurements";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Float aggregates rewritten to: {}", result);
+    println!("Float aggregates rewritten to: {result}");
     assert!(result.contains("AVG"));
     assert!(result.contains("MAX"));
     assert!(result.contains("MIN"));
@@ -139,7 +139,7 @@ fn test_float_in_subquery() {
     // Test float types in subqueries
     let sql = "SELECT * FROM measurements WHERE temperature > (SELECT AVG(temperature) FROM measurements)";
     let result = rewrite_query(&conn, sql).unwrap();
-    println!("Float in subquery rewritten to: {}", result);
+    println!("Float in subquery rewritten to: {result}");
     assert!(result.contains("decimal_gt"));
     assert!(result.contains("AVG"));
 }

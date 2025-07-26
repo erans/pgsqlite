@@ -34,6 +34,10 @@ pub enum PgType {
     Bit = 1560,
     Varbit = 1562,
     Unknown = 705,
+    // Full-text search types
+    Tsvector = 3614,
+    Tsquery = 3615,
+    Regconfig = 3734,
     // Array types
     BoolArray = 1000,
     Int2Array = 1005,
@@ -101,6 +105,10 @@ impl PgType {
             1560 => Some(PgType::Bit),
             1562 => Some(PgType::Varbit),
             705 => Some(PgType::Unknown),
+            // Full-text search types
+            3614 => Some(PgType::Tsvector),
+            3615 => Some(PgType::Tsquery),
+            3734 => Some(PgType::Regconfig),
             // Array types
             1000 => Some(PgType::BoolArray),
             1005 => Some(PgType::Int2Array),
@@ -173,6 +181,10 @@ impl PgType {
             PgType::Bit => "bit",
             PgType::Varbit => "varbit",
             PgType::Unknown => "unknown",
+            // Full-text search types
+            PgType::Tsvector => "tsvector",
+            PgType::Tsquery => "tsquery",
+            PgType::Regconfig => "regconfig",
             // Array types
             PgType::BoolArray => "_bool",
             PgType::Int2Array => "_int2",
@@ -361,6 +373,11 @@ impl TypeMapper {
         mapper.pg_to_sqlite.insert("bit".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("bit varying".to_string(), "TEXT".to_string());
         mapper.pg_to_sqlite.insert("varbit".to_string(), "TEXT".to_string());
+        
+        // Full-text search types
+        mapper.pg_to_sqlite.insert("tsvector".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("tsquery".to_string(), "TEXT".to_string());
+        mapper.pg_to_sqlite.insert("regconfig".to_string(), "TEXT".to_string());
 
         // Array type mappings - all arrays stored as JSON TEXT
         mapper.pg_to_sqlite.insert("bool[]".to_string(), "TEXT".to_string());

@@ -21,13 +21,13 @@ async fn test_json_support() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -119,7 +119,7 @@ async fn test_json_support() {
             _ => None,
         })
         .expect("Expected to find a row");
-    println!("to_json result: {}", json_str);
+    println!("to_json result: {json_str}");
     assert_eq!(json_str, r#""hello world""#);
     
     // Test 8: Test json_extract_scalar

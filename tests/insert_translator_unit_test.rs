@@ -18,7 +18,7 @@ async fn test_insert_execution_path() {
     // 2. Go through InsertTranslator
     // 3. Convert '2024-01-15' to integer days
     let query = "INSERT INTO test_table (id, date_col, time_col) VALUES (1, '2024-01-15', '14:30:00')";
-    eprintln!("Executing: {}", query);
+    eprintln!("Executing: {query}");
     
     // Use simple_query to ensure we go through simple protocol
     server.client.simple_query(query).await.unwrap();
@@ -34,8 +34,8 @@ async fn test_insert_execution_path() {
             let time_type = data.get("typeof(time_col)").unwrap();
             
             eprintln!("Storage types:");
-            eprintln!("  Date: {}", date_type);
-            eprintln!("  Time: {}", time_type);
+            eprintln!("  Date: {date_type}");
+            eprintln!("  Time: {time_type}");
             
             assert_eq!(date_type, "integer", "Date should be stored as INTEGER");
             assert_eq!(time_type, "integer", "Time should be stored as INTEGER");
@@ -54,8 +54,8 @@ async fn test_insert_execution_path() {
             let time_value = data.get("time_col").unwrap();
             
             eprintln!("Retrieved values:");
-            eprintln!("  Date: {}", date_value);
-            eprintln!("  Time: {}", time_value);
+            eprintln!("  Date: {date_value}");
+            eprintln!("  Time: {time_value}");
             
             assert_eq!(date_value, "2024-01-15", "Date should be converted back to string");
             assert_eq!(time_value, "14:30:00", "Time should be converted back to string");

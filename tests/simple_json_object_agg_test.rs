@@ -13,22 +13,22 @@ fn test_json_object_agg_unit() {
         |row| row.get::<usize, String>(0)
     ) {
         Ok(result) => {
-            println!("json_object_agg result: {}", result);
+            println!("json_object_agg result: {result}");
             
             // Parse the result JSON to verify it contains the expected key-value pairs
             match serde_json::from_str::<serde_json::Value>(&result) {
                 Ok(json) => {
                     assert_eq!(json.get("name").unwrap(), "John");
                     assert_eq!(json.get("age").unwrap(), "30");
-                    println!("json_object_agg test passed: {}", result);
+                    println!("json_object_agg test passed: {result}");
                 }
                 Err(e) => {
-                    panic!("Failed to parse JSON: {}", e);
+                    panic!("Failed to parse JSON: {e}");
                 }
             }
         }
         Err(e) => {
-            panic!("Failed to execute query: {}", e);
+            panic!("Failed to execute query: {e}");
         }
     }
 }
@@ -51,7 +51,7 @@ fn test_jsonb_object_agg_unit() {
     assert_eq!(json.get("active").unwrap(), true);
     assert_eq!(json.get("score").unwrap(), 95.5);
     
-    println!("jsonb_object_agg test passed: {}", result);
+    println!("jsonb_object_agg test passed: {result}");
 }
 
 #[test]
@@ -69,5 +69,5 @@ fn test_json_object_agg_empty() {
     // Should return empty object for no rows
     assert_eq!(result, "{}");
     
-    println!("json_object_agg empty test passed: {}", result);
+    println!("json_object_agg empty test passed: {result}");
 }
