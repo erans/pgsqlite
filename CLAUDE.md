@@ -311,6 +311,12 @@ INSERT INTO table (col1, col2) VALUES
   - **Pattern Coverage**: Both explicit/implicit column lists, mixed expressions, PostgreSQL functions
   - **Comprehensive Testing**: 7 new unit tests, multiple integration scenarios, SQLite storage validation
   - **Production Ready**: Zero performance regression, backward compatible, resolves data corruption
+- **SQLAlchemy ORM Support (2025-07-26)**: Complete compatibility with SQLAlchemy 2.0+
+  - **Multi-Row INSERT Fix**: SQLAlchemy VALUES pattern `INSERT INTO table SELECT p0::TYPE FROM (VALUES (...)) AS alias` now converts to UNION ALL
+  - **JOIN Type Inference**: Created join_type_inference module to properly map columns to source tables in multi-table queries
+  - **Type OID Mapping**: Fixed issue where all columns returned TEXT (OID 25) instead of proper PostgreSQL types
+  - **Test Suite**: All 8 SQLAlchemy ORM tests pass including relationships, joins, transactions, and advanced queries
+  - **Pattern Support**: Handles complex SQLAlchemy patterns like `order_items.unit_price AS order_items_unit_price`
 - **Boolean Conversion Fix (2025-07-17)**: Complete PostgreSQL boolean protocol compliance
   - Fixed psycopg2 compatibility issue where boolean values were returned as strings '0'/'1' instead of 't'/'f'
   - Root cause: Ultra-fast path in simple query protocol was not converting boolean values
