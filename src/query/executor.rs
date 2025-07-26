@@ -6,6 +6,7 @@ use crate::types::PgType;
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::metadata::EnumTriggers;
 use crate::PgSqliteError;
+use crate::query::join_type_inference::build_column_to_table_mapping;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tracing::{info, debug};
@@ -57,6 +58,28 @@ fn get_boolean_columns(table_name: &str, db: &DbHandler) -> std::collections::Ha
     }
     
     boolean_columns
+}
+
+/// Get all column types for a table from the schema
+fn get_all_column_types(table_name: &str, db: &DbHandler) -> std::collections::HashMap<String, String> {
+    let mut column_types = std::collections::HashMap::new();
+    
+    if let Ok(conn) = db.get_mut_connection() {
+        if let Ok(mut stmt) = conn.prepare("SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1") {
+            if let Ok(rows) = stmt.query_map([table_name], |row| {
+                let col_name: String = row.get(0)?;
+                let pg_type: String = row.get(1)?;
+                Ok((col_name, pg_type))
+            }) {
+                for row in rows.flatten() {
+                    let (col_name, pg_type) = row;
+                    column_types.insert(col_name, pg_type);
+                }
+            }
+        }
+    }
+    
+    column_types
 }
 
 /// Cache for datetime column information to avoid repeated database queries
@@ -147,6 +170,19 @@ impl QueryExecutor {
         
         info!("Executing query: {}", query_to_execute);
         
+        // Check for Python-style parameters and provide helpful error
+        use crate::query::parameter_parser::ParameterParser;
+        let python_params = ParameterParser::find_python_parameters(query_to_execute);
+        if !python_params.is_empty() {
+            let error_msg = format!(
+                "Python-style parameters detected: {:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query.",
+                python_params
+            );
+            info!("⚠️  {}", error_msg);
+            info!("Query: {}", query_to_execute);
+            return Err(PgSqliteError::Protocol(error_msg));
+        }
+        
         // Check if query contains multiple statements
         let trimmed = query_to_execute.trim();
         if trimmed.contains(';') {
@@ -182,7 +218,7 @@ impl QueryExecutor {
     {
         // Ultra-fast path: Skip all translation if query is simple enough
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
-            debug!("Using ultra-fast path for query: {}", query);
+            info!("Using ultra-fast path for query: {}", query);
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
@@ -200,17 +236,36 @@ impl QueryExecutor {
                         (std::collections::HashSet::new(), std::collections::HashMap::new())
                     };
                     
-                    // Send minimal row description with all TEXT types
+                    // Send row description with proper type OIDs
+                    let column_types = if let Some(table_name) = extract_table_name_from_select(query) {
+                        get_all_column_types(&table_name, db)
+                    } else {
+                        std::collections::HashMap::new()
+                    };
+                    
                     let fields: Vec<FieldDescription> = response.columns.iter()
                         .enumerate()
-                        .map(|(i, name)| FieldDescription {
-                            name: name.clone(),
-                            table_oid: 0,
-                            column_id: (i + 1) as i16,
-                            type_oid: PgType::Text.to_oid(), // Default to text for ultra-fast path
-                            type_size: -1,
-                            type_modifier: -1,
-                            format: 0,
+                        .map(|(i, name)| {
+                            let type_oid = if let Some(pg_type) = column_types.get(name) {
+                                // Convert PostgreSQL type string to OID
+                                if let Ok(conn) = db.get_mut_connection() {
+                                    crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &conn)
+                                } else {
+                                    crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                                }
+                            } else {
+                                PgType::Text.to_oid() // Fallback to TEXT
+                            };
+                            
+                            FieldDescription {
+                                name: name.clone(),
+                                table_oid: 0,
+                                column_id: (i + 1) as i16,
+                                type_oid,
+                                type_size: -1,
+                                type_modifier: -1,
+                                format: 0,
+                            }
                         })
                         .collect();
                     
@@ -556,8 +611,13 @@ impl QueryExecutor {
         // Simple query routing using optimized detection
         use crate::query::{QueryTypeDetector, QueryType};
         
-        match QueryTypeDetector::detect_query_type(query_to_execute) {
-            QueryType::Select => Self::execute_select(framed, db, session, query_to_execute, &translation_metadata, query_router).await,
+        let query_type = QueryTypeDetector::detect_query_type(query_to_execute);
+        info!("Query type detected: {:?} for query: {}", query_type, query_to_execute);
+        match query_type {
+            QueryType::Select => {
+                info!("Calling execute_select for query: {}", query_to_execute);
+                Self::execute_select(framed, db, session, query_to_execute, &translation_metadata, query_router).await
+            },
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
                 Self::execute_dml(framed, db, session, query_to_execute, query_router).await
             }
@@ -590,6 +650,7 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        info!("=== EXECUTE_SELECT CALLED with query: {}", query);
         // Check if this is a catalog query first
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, Arc::new(db.clone())).await {
             catalog_result?
@@ -604,6 +665,16 @@ impl QueryExecutor {
         
         // Extract table name from query to look up schema
         let table_name = extract_table_name_from_select(query);
+        info!("Table name extraction result: {:?} for query: {}", table_name, query);
+        
+        // For JOIN queries, extract all tables and build column mappings
+        let is_join_query = query.to_uppercase().contains(" JOIN ");
+        let column_to_table_map = if is_join_query {
+            info!("Type inference: Detected JOIN query, building column-to-table mappings");
+            build_column_to_table_mapping(query)
+        } else {
+            std::collections::HashMap::new()
+        };
         
         // Create cache key
         let cache_key = RowDescriptionKey {
@@ -620,15 +691,119 @@ impl QueryExecutor {
             let mut schema_types = std::collections::HashMap::new();
             let mut hint_source_types = std::collections::HashMap::new();
             
-            if let Some(ref table) = table_name {
-                // Fetch types for actual columns
+            // For JOIN queries, use column-to-table mapping
+            if is_join_query && !column_to_table_map.is_empty() {
+                info!("Type inference: Using JOIN column mappings for {} columns", response.columns.len());
+                
                 for col_name in &response.columns {
-                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
-                        schema_types.insert(col_name.clone(), pg_type);
+                    // First check if we have a direct mapping from the query
+                    if let Some(table) = column_to_table_map.get(col_name) {
+                        // Try to find the actual column name (strip alias prefix if needed)
+                        let actual_column = if col_name.starts_with(&format!("{}_", table)) {
+                            &col_name[table.len() + 1..]
+                        } else {
+                            col_name
+                        };
+                        
+                        info!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
+                              col_name, table, actual_column);
+                        
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, actual_column).await {
+                            info!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
+                            schema_types.insert(col_name.clone(), pg_type);
+                        } else {
+                            info!("Type inference: No schema type found for '{}.{}'", table, actual_column);
+                        }
+                    } else {
+                        info!("Type inference: No table mapping found for column '{}'", col_name);
                     }
                 }
+            }
+            
+            if let Some(ref table) = table_name {
+                info!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
                 
-                // Fetch types for source columns referenced in translation hints
+                // Extract column mappings from query if possible
+                let column_mappings = extract_column_mappings_from_query(query, table);
+                
+                // Fetch types for actual columns
+                for col_name in &response.columns {
+                    // Try direct lookup first
+                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                        info!("Type inference: Found schema type for '{}.{}' -> {}", table, col_name, pg_type);
+                        schema_types.insert(col_name.clone(), pg_type);
+                    } else if let Some(source_column) = column_mappings.get(col_name) {
+                        // Try using the column mapping from SELECT clause
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, source_column).await {
+                            info!("Type inference: Found schema type for '{}.{}' (via SELECT mapping {}) -> {}", table, source_column, col_name, pg_type);
+                            schema_types.insert(col_name.clone(), pg_type);
+                            continue;
+                        }
+                    } else {
+                        // Try stripping table name prefix from column alias
+                        let potential_column = if col_name.starts_with(&format!("{}_", table)) {
+                            let after_table = &col_name[table.len() + 1..];
+                            // Handle SQLAlchemy patterns like "products_name_1" -> "name"
+                            if let Some(underscore_pos) = after_table.rfind('_') {
+                                if after_table[underscore_pos + 1..].chars().all(|c| c.is_ascii_digit()) {
+                                    // Strip numeric suffix: "name_1" -> "name"
+                                    &after_table[..underscore_pos]
+                                } else {
+                                    after_table
+                                }
+                            } else {
+                                after_table
+                            }
+                        } else {
+                            col_name
+                        };
+                        
+                        // Special handling for JOIN queries with table prefixes
+                        // Check if this is a column from a different table (e.g., "order_items_unit_price")
+                        if potential_column == col_name && col_name.contains('_') {
+                            // Try to extract table and column from patterns like "order_items_unit_price"
+                            let parts: Vec<&str> = col_name.split('_').collect();
+                            if parts.len() >= 3 {
+                                // Try common patterns: table_name_column_name
+                                let potential_table_single = parts[0];
+                                let potential_table_double = format!("{}_{}", parts[0], parts[1]);
+                                let potential_col_single = parts[parts.len() - 1];
+                                let potential_col_double = format!("{}_{}", parts[parts.len() - 2], parts[parts.len() - 1]);
+                                
+                                // Try different combinations
+                                info!("Type inference: Trying pattern matching for '{}' with parts: {:?}", col_name, parts);
+                                for (try_table, try_col) in [
+                                    (potential_table_double.as_str(), potential_col_double.as_str()),
+                                    (potential_table_double.as_str(), potential_col_single),
+                                    (potential_table_single, potential_col_double.as_str()),
+                                ] {
+                                    info!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
+                                    if let Ok(Some(pg_type)) = db.get_schema_type(try_table, try_col).await {
+                                        info!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
+                                        schema_types.insert(col_name.clone(), pg_type);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if potential_column != col_name {
+                            if let Ok(Some(pg_type)) = db.get_schema_type(table, potential_column).await {
+                                info!("Type inference: Found schema type for '{}.{}' (via alias {}) -> {}", table, potential_column, col_name, pg_type);
+                                schema_types.insert(col_name.clone(), pg_type);
+                                continue;
+                            }
+                        }
+                        
+                        info!("Type inference: No schema type found for '{}.{}'", table, col_name);
+                    }
+                }
+            } else {
+                debug!("Type inference: No table name extracted from query, using fallback logic");
+            }
+                
+            // Fetch types for source columns referenced in translation hints
+            if let Some(ref table) = table_name {
                 for col_name in &response.columns {
                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                         if let Some(ref source_col) = hint.source_column {
@@ -847,11 +1022,40 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
-            .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
-        
         use crate::query::{QueryTypeDetector, QueryType};
         
+        // SQLite 3.35.0+ supports native RETURNING clause
+        // Execute the query with RETURNING clause directly
+        let returning_response = if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+        } else {
+            db.query(query).await?
+        };
+        
+        // Send row description
+        let fields: Vec<FieldDescription> = returning_response.columns.iter()
+            .enumerate()
+            .map(|(i, name)| FieldDescription {
+                name: name.clone(),
+                table_oid: 0,
+                column_id: (i + 1) as i16,
+                type_oid: PgType::Text.to_oid(), // Default to text
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            })
+            .collect();
+        
+        framed.send(BackendMessage::RowDescription(fields)).await
+            .map_err(|e| PgSqliteError::Io(e))?;
+        
+        // Send data rows
+        let mut row_count = 0;
+        for row in returning_response.rows {
+            framed.send(BackendMessage::DataRow(row)).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            row_count += 1;
+
         if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Insert) {
             // For INSERT, execute the insert and then query by last_insert_rowid
             let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
@@ -1028,6 +1232,18 @@ impl QueryExecutor {
             framed.send(BackendMessage::CommandComplete { tag }).await
                 .map_err(PgSqliteError::Io)?;
         }
+        
+        // Determine the command tag based on query type
+        let query_type = QueryTypeDetector::detect_query_type(query);
+        let tag = match query_type {
+            QueryType::Insert => format!("INSERT 0 {}", row_count),
+            QueryType::Update => format!("UPDATE {}", row_count),
+            QueryType::Delete => format!("DELETE {}", row_count),
+            _ => format!("OK {}", row_count),
+        };
+        
+        framed.send(BackendMessage::CommandComplete { tag }).await
+            .map_err(|e| PgSqliteError::Io(e))?;
         
         Ok(())
     }
@@ -1522,27 +1738,55 @@ impl QueryExecutor {
 }
 
 fn extract_table_name_from_select(query: &str) -> Option<String> {
-    // Look for FROM clause with case-insensitive search
-    let from_pos = query.as_bytes().windows(6)
-        .position(|window| window.eq_ignore_ascii_case(b" from "))?;
+    // Look for FROM keyword using regex to handle various whitespace patterns
+    use regex::Regex;
+    let re = Regex::new(r"(?i)\bFROM\s+([^\s,;()]+)").ok()?;
     
-    let after_from = &query[from_pos + 6..].trim();
-    
-    // Find the end of table name (space, where, order by, etc.)
-    let table_end = after_from.find(|c: char| {
-        c.is_whitespace() || c == ',' || c == ';' || c == '('
-    }).unwrap_or(after_from.len());
-    
-    let table_name = after_from[..table_end].trim();
-    
-    // Remove quotes if present
-    let table_name = table_name.trim_matches('"').trim_matches('\'');
-    
-    if !table_name.is_empty() {
-        Some(table_name.to_string())
-    } else {
-        None
+    if let Some(captures) = re.captures(query) {
+        if let Some(table_match) = captures.get(1) {
+            let table_name = table_match.as_str().trim();
+            
+            // Remove quotes if present
+            let table_name = table_name.trim_matches('"').trim_matches('\'');
+            
+            if !table_name.is_empty() {
+                debug!("extract_table_name_from_select: query='{}' -> table='{}'", query, table_name);
+                return Some(table_name.to_string());
+            }
+        }
     }
+    
+    debug!("extract_table_name_from_select: query='{}' -> None", query);
+    None
+}
+
+/// Extract column mappings from SELECT query with AS aliases
+fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collections::HashMap<String, String> {
+    use regex::Regex;
+    use std::collections::HashMap;
+    
+    let mut mappings = HashMap::new();
+    
+    // Match patterns like "products.column_name AS alias" or "column_name AS alias"
+    let re = Regex::new(&format!(
+        r"(?i)\b(?:{}\.)?(\w+)\s+AS\s+(\w+)",
+        regex::escape(table)
+    )).unwrap_or_else(|_| {
+        // Fallback pattern if table name has special chars
+        Regex::new(r"(?i)\b(\w+)\s+AS\s+(\w+)").unwrap()
+    });
+    
+    for captures in re.captures_iter(query) {
+        if let (Some(source_col), Some(alias)) = (captures.get(1), captures.get(2)) {
+            let source_column = source_col.as_str().to_string();
+            let alias_name = alias.as_str().to_string();
+            
+            debug!("Column mapping: {} -> {}", alias_name, source_column);
+            mappings.insert(alias_name, source_column);
+        }
+    }
+    
+    mappings
 }
 
 /// Extract table name from CREATE TABLE statement

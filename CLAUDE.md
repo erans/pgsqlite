@@ -137,8 +137,21 @@ pgsqlite --database existingdb.db
     - InsertTranslator converts datetime literals to INTEGER during INSERT/UPDATE
     - Fast path value converters transform INTEGER back to datetime strings during SELECT
     - Supports both single-row and multi-row INSERT statements
+    - **INSERT SELECT Support**: Full support for INSERT SELECT with datetime literal translation
     - No triggers needed - all conversion happens in the query pipeline
   - Clients see proper PostgreSQL datetime formats via wire protocol
+
+- **INSERT SELECT Translation**:
+  - Full support for INSERT SELECT statements with automatic datetime/array translation
+  - Pattern recognition for both explicit and implicit column specifications:
+    - `INSERT INTO table (cols) SELECT literal_values, existing_cols FROM source`
+    - `INSERT INTO table SELECT literal_values, functions FROM source`
+  - SELECT clause analysis with proper expression parsing and parentheses handling
+  - Position-based mapping of SELECT expressions to target table column types
+  - Literal datetime conversion: `'2024-01-15'` → `19737` (INTEGER days), timestamps → microseconds
+  - PostgreSQL function handling: `NOW()` → `CURRENT_TIMESTAMP`, preserves runtime evaluation
+  - Data integrity guarantee: INSERT SELECT now behaves identically to INSERT VALUES
+  - Zero performance impact: maintains all existing optimizations and ultra-fast paths
 
 ## Quality Standards
 - Write tests that actually verify functionality, not tests that are designed to pass easily
@@ -228,6 +241,15 @@ INSERT INTO table (col1, col2) VALUES
 7. **Network Efficiency**: Reduces round trips between client and server
 
 ## Recent Major Features
+- **SQLAlchemy INSERT SELECT VALUES Fix (2025-07-25)**: Critical compatibility fix for SQLAlchemy ORM
+  - **Bug Fixed**: SQLAlchemy multi-row INSERT statements using VALUES clause failed with "Mapper[Category(categories)]" error
+  - **Root Cause**: SQLAlchemy generates complex INSERT SELECT statements with PostgreSQL VALUES syntax not supported by SQLite
+  - **Pattern Example**: `INSERT INTO table SELECT p0::TYPE FROM (VALUES (val1, val2, 0)) AS imp_sen(p0, p1, sen_counter)`
+  - **Solution**: Detect SQLAlchemy VALUES pattern and convert to UNION ALL syntax for SQLite compatibility
+  - **Implementation**: Added `is_sqlalchemy_values_pattern()` and `convert_sqlalchemy_values_to_union()` in InsertTranslator
+  - **Technical Details**: VALUES clause with column aliases converted to SELECT UNION ALL while preserving datetime conversions
+  - **Impact**: SQLAlchemy ORM bulk inserts now work correctly with pgsqlite, resolving data insertion failures
+  - **Zero Performance Impact**: Fix maintains all existing optimizations and fast-path behaviors
 - **PostgreSQL Full-Text Search Support (2025-07-23)**: Complete tsvector/tsquery implementation with SQLite FTS5 backend
   - **Migration v9**: FTS schema tables (__pgsqlite_fts_tables, __pgsqlite_fts_columns) for metadata tracking
   - **Type System**: Full tsvector and tsquery type support with proper PostgreSQL wire protocol integration
@@ -245,7 +267,7 @@ INSERT INTO table (col1, col2) VALUES
   - **SQLite Compatibility**: Proper translation of DEFAULT NOW() to DEFAULT datetime('now') for SQLite
   - **Parser Integration**: Fixed SQL syntax errors in CREATE TABLE statements with datetime defaults
   - **Unit Test Coverage**: Added test_translate_default_now() to validate translation works correctly
-  - **Code Quality**: Fixed all compilation warnings (6 warnings across benchmark test files)
+  - **Code Quality**: Fixed all compilation warnings (6 warnings across benchmark test files.
 - **Portal Management Support (2025-01-22)**: Complete Extended Query Protocol enhancement with proven performance benefits
   - **Enhanced Portal Architecture**: PortalManager with configurable limits (default: 100 concurrent portals)
   - **Partial Result Fetching**: Execute messages respect max_rows parameter with portal suspension/resumption
@@ -298,6 +320,22 @@ INSERT INTO table (col1, col2) VALUES
   - Resolved "time not drained" error in GitHub Actions tests
   - All datetime roundtrip tests now pass with proper PostgreSQL protocol compliance
   - Zero performance impact - maintains system performance characteristics
+- **INSERT SELECT Translation Bug Fix (2025-07-23)**: Critical data integrity issue resolved
+  - **Bug Fixed**: INSERT SELECT with literal datetime values stored as TEXT instead of INTEGER microseconds
+  - **Root Cause**: InsertTranslator only handled INSERT VALUES patterns, bypassing INSERT SELECT entirely
+  - **Impact**: Prevented silent data corruption affecting SQLAlchemy ORM users and ETL operations
+  - **Enhanced Architecture**: Added INSERT_SELECT_PATTERN recognition and SELECT clause analysis
+  - **Translation Logic**: Implemented `translate_select_clause()` with expression parsing and column type mapping
+  - **Technical Results**: Date literals `'2024-01-15'` → `19737` (INTEGER), timestamps → microseconds (INTEGER)
+  - **Pattern Coverage**: Both explicit/implicit column lists, mixed expressions, PostgreSQL functions
+  - **Comprehensive Testing**: 7 new unit tests, multiple integration scenarios, SQLite storage validation
+  - **Production Ready**: Zero performance regression, backward compatible, resolves data corruption
+- **SQLAlchemy ORM Support (2025-07-26)**: Complete compatibility with SQLAlchemy 2.0+
+  - **Multi-Row INSERT Fix**: SQLAlchemy VALUES pattern `INSERT INTO table SELECT p0::TYPE FROM (VALUES (...)) AS alias` now converts to UNION ALL
+  - **JOIN Type Inference**: Created join_type_inference module to properly map columns to source tables in multi-table queries
+  - **Type OID Mapping**: Fixed issue where all columns returned TEXT (OID 25) instead of proper PostgreSQL types
+  - **Test Suite**: All 8 SQLAlchemy ORM tests pass including relationships, joins, transactions, and advanced queries
+  - **Pattern Support**: Handles complex SQLAlchemy patterns like `order_items.unit_price AS order_items_unit_price`
 - **Boolean Conversion Fix (2025-07-17)**: Complete PostgreSQL boolean protocol compliance
   - Fixed psycopg2 compatibility issue where boolean values were returned as strings '0'/'1' instead of 't'/'f'
   - Root cause: Ultra-fast path in simple query protocol was not converting boolean values

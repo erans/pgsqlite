@@ -105,7 +105,10 @@ impl CreateTableTranslator {
         let mut sqlite_columns = Vec::new();
         let mut paren_depth = 0;
         let mut current_column = String::new();
+        let mut column_definitions = Vec::new();
+        let mut serial_columns = std::collections::HashSet::new();
         
+        // First pass: collect all column definitions
         for ch in columns_str.chars() {
             match ch {
                 '(' => {
@@ -118,14 +121,7 @@ impl CreateTableTranslator {
                 }
                 ',' if paren_depth == 0 => {
                     // End of column definition
-                    let translated = Self::translate_column_definition(
-                        current_column.trim(),
-                        table_name,
-                        type_mapping,
-                        check_constraints,
-                        conn
-                    )?;
-                    sqlite_columns.push(translated);
+                    column_definitions.push(current_column.trim().to_string());
                     current_column.clear();
                 }
                 _ => {
@@ -136,8 +132,25 @@ impl CreateTableTranslator {
         
         // Don't forget the last column
         if !current_column.trim().is_empty() {
+            column_definitions.push(current_column.trim().to_string());
+        }
+        
+        // Identify SERIAL columns
+        for column_def in &column_definitions {
+            if let Some(column_name) = Self::extract_serial_column_name(column_def) {
+                serial_columns.insert(column_name);
+            }
+        }
+        
+        // Second pass: translate columns, filtering out redundant PRIMARY KEY constraints
+        for column_def in column_definitions {
+            if Self::is_redundant_primary_key(&column_def, &serial_columns) {
+                // Skip this PRIMARY KEY constraint as it's already handled by SERIAL
+                continue;
+            }
+            
             let translated = Self::translate_column_definition(
-                current_column.trim(),
+                &column_def,
                 table_name,
                 type_mapping,
                 check_constraints,
@@ -147,6 +160,35 @@ impl CreateTableTranslator {
         }
         
         Ok(sqlite_columns.join(", "))
+    }
+    
+    /// Extract column name if this is a SERIAL column definition
+    fn extract_serial_column_name(column_def: &str) -> Option<String> {
+        let parts: Vec<&str> = column_def.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let pg_type = parts[1].to_uppercase();
+            if pg_type == "SERIAL" || pg_type == "BIGSERIAL" {
+                return Some(parts[0].to_string());
+            }
+        }
+        None
+    }
+    
+    /// Check if this is a PRIMARY KEY constraint that references a SERIAL column
+    fn is_redundant_primary_key(column_def: &str, serial_columns: &std::collections::HashSet<String>) -> bool {
+        let upper_def = column_def.to_uppercase();
+        if upper_def.trim().starts_with("PRIMARY KEY") {
+            // Parse PRIMARY KEY (column_name) format
+            if let Some(start) = column_def.find('(') {
+                if let Some(end) = column_def.find(')') {
+                    let column_list = &column_def[start + 1..end];
+                    let column_name = column_list.trim();
+                    // Check if this references a SERIAL column (case-insensitive)
+                    return serial_columns.iter().any(|serial_col| serial_col.eq_ignore_ascii_case(column_name));
+                }
+            }
+        }
+        false
     }
     
     fn translate_column_definition(
@@ -209,11 +251,23 @@ impl CreateTableTranslator {
         }
         
         // Handle types with parameters like VARCHAR(255) or NUMERIC(10,2)
-        if parts.len() > type_end_idx && parts[type_end_idx].starts_with('(') {
+        // Check if type already contains '(' (from splitting "NUMERIC(10," + "2)")
+        if pg_type.contains('(') && !pg_type.contains(')') {
+            // Need to continue collecting parts until we find the closing ')'
             let mut combined = pg_type.clone();
             for (i, part) in parts[type_end_idx..].iter().enumerate() {
-                combined.push(' ');
-                combined.push_str(part);
+                combined.push_str(part);  // Don't add space for comma-separated parameters
+                if part.contains(')') {
+                    type_end_idx = type_end_idx + i + 1;
+                    break;
+                }
+            }
+            pg_type = combined;
+        } else if parts.len() > type_end_idx && parts[type_end_idx].starts_with('(') {
+            // Handle case where type and parameters are separate: "NUMERIC" + "(255)"
+            let mut combined = pg_type.clone();
+            for (i, part) in parts[type_end_idx..].iter().enumerate() {
+                combined.push_str(part);  // Don't add space
                 if part.contains(')') {
                     type_end_idx = type_end_idx + i + 1;
                     break;

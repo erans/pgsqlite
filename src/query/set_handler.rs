@@ -17,7 +17,7 @@ static SET_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 static SHOW_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*SHOW\s+(\w+)\s*$").unwrap()
+    Regex::new(r"(?i)^\s*SHOW\s+(.+?)\s*$").unwrap()
 });
 
 pub struct SetHandler;
@@ -102,10 +102,26 @@ impl SetHandler {
             let param_name = caps[1].to_uppercase();
             info!("SHOW parameter: {}", param_name);
             
-            let params = session.parameters.read().await;
-            let value = params.get(&param_name)
-                .map(|v| v.as_str())
-                .unwrap_or("unset");
+            // Handle special PostgreSQL SHOW commands
+            let value = match param_name.as_str() {
+                "TRANSACTION ISOLATION LEVEL" => "read committed".to_string(),
+                "DEFAULT_TRANSACTION_ISOLATION" => "read committed".to_string(), 
+                "TRANSACTION_ISOLATION" => "read committed".to_string(),
+                "SERVER_VERSION" => "15.0".to_string(),
+                "SERVER_VERSION_NUM" => "150000".to_string(),
+                "IS_SUPERUSER" => "on".to_string(),
+                "SESSION_AUTHORIZATION" => "postgres".to_string(),
+                "STANDARD_CONFORMING_STRINGS" => "on".to_string(),
+                "CLIENT_ENCODING" => "UTF8".to_string(),
+                "SERVER_ENCODING" => "UTF8".to_string(),
+                _ => {
+                    // Fall back to session parameters
+                    let params = session.parameters.read().await;
+                    params.get(&param_name)
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "unset".to_string())
+                }
+            };
             info!("Parameter {} = {}", param_name, value);
             
             // Send row description only if not in extended protocol with pre-described statement
