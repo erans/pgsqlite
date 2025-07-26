@@ -711,7 +711,7 @@ impl InsertTranslator {
     fn convert_sqlalchemy_values_to_union(
         select_clause: &str,
         columns: &[&str],
-        column_types: &std::collections::HashMap<String, String>
+        _column_types: &std::collections::HashMap<String, String>
     ) -> Result<String, String> {
         // Extract the VALUES rows from the pattern:
         // SELECT p0::TYPE, p1::TYPE FROM (VALUES (val1, val2, val3, idx), ...) AS alias(p0, p1, p2, sen_counter)
@@ -764,7 +764,7 @@ impl InsertTranslator {
                     continue;
                 }
                 
-                let column_name = columns[col_idx];
+                let _column_name = columns[col_idx];
                 
                 // Apply type cast if specified in the original query
                 let converted_value = if col_idx < type_casts.len() {

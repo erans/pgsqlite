@@ -12,6 +12,7 @@ pub mod simple_query_detector;
 pub mod parameter_parser;
 pub mod pattern_optimizer;
 pub mod query_handler;
+pub mod join_type_inference;
 
 pub use executor::QueryExecutor;
 pub use query_handler::{QueryHandler, QueryHandlerImpl};

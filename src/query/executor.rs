@@ -6,6 +6,7 @@ use crate::types::PgType;
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::metadata::EnumTriggers;
 use crate::PgSqliteError;
+use crate::query::join_type_inference::build_column_to_table_mapping;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tracing::{info, debug};
@@ -623,6 +624,15 @@ impl QueryExecutor {
         let table_name = extract_table_name_from_select(query);
         info!("Table name extraction result: {:?} for query: {}", table_name, query);
         
+        // For JOIN queries, extract all tables and build column mappings
+        let is_join_query = query.to_uppercase().contains(" JOIN ");
+        let column_to_table_map = if is_join_query {
+            info!("Type inference: Detected JOIN query, building column-to-table mappings");
+            build_column_to_table_mapping(query)
+        } else {
+            std::collections::HashMap::new()
+        };
+        
         // Create cache key
         let cache_key = RowDescriptionKey {
             query: query.to_string(),
@@ -637,6 +647,35 @@ impl QueryExecutor {
             // Pre-fetch schema types for all columns if we have a table name
             let mut schema_types = std::collections::HashMap::new();
             let mut hint_source_types = std::collections::HashMap::new();
+            
+            // For JOIN queries, use column-to-table mapping
+            if is_join_query && !column_to_table_map.is_empty() {
+                info!("Type inference: Using JOIN column mappings for {} columns", response.columns.len());
+                
+                for col_name in &response.columns {
+                    // First check if we have a direct mapping from the query
+                    if let Some(table) = column_to_table_map.get(col_name) {
+                        // Try to find the actual column name (strip alias prefix if needed)
+                        let actual_column = if col_name.starts_with(&format!("{}_", table)) {
+                            &col_name[table.len() + 1..]
+                        } else {
+                            col_name
+                        };
+                        
+                        info!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
+                              col_name, table, actual_column);
+                        
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, actual_column).await {
+                            info!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
+                            schema_types.insert(col_name.clone(), pg_type);
+                        } else {
+                            info!("Type inference: No schema type found for '{}.{}'", table, actual_column);
+                        }
+                    } else {
+                        info!("Type inference: No table mapping found for column '{}'", col_name);
+                    }
+                }
+            }
             
             if let Some(ref table) = table_name {
                 info!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
@@ -675,6 +714,35 @@ impl QueryExecutor {
                         } else {
                             col_name
                         };
+                        
+                        // Special handling for JOIN queries with table prefixes
+                        // Check if this is a column from a different table (e.g., "order_items_unit_price")
+                        if potential_column == col_name && col_name.contains('_') {
+                            // Try to extract table and column from patterns like "order_items_unit_price"
+                            let parts: Vec<&str> = col_name.split('_').collect();
+                            if parts.len() >= 3 {
+                                // Try common patterns: table_name_column_name
+                                let potential_table_single = parts[0];
+                                let potential_table_double = format!("{}_{}", parts[0], parts[1]);
+                                let potential_col_single = parts[parts.len() - 1];
+                                let potential_col_double = format!("{}_{}", parts[parts.len() - 2], parts[parts.len() - 1]);
+                                
+                                // Try different combinations
+                                info!("Type inference: Trying pattern matching for '{}' with parts: {:?}", col_name, parts);
+                                for (try_table, try_col) in [
+                                    (potential_table_double.as_str(), potential_col_double.as_str()),
+                                    (potential_table_double.as_str(), potential_col_single),
+                                    (potential_table_single, potential_col_double.as_str()),
+                                ] {
+                                    info!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
+                                    if let Ok(Some(pg_type)) = db.get_schema_type(try_table, try_col).await {
+                                        info!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
+                                        schema_types.insert(col_name.clone(), pg_type);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         
                         if potential_column != col_name {
                             if let Ok(Some(pg_type)) = db.get_schema_type(table, potential_column).await {
