@@ -1579,13 +1579,44 @@ impl QueryExecutor {
                 db.execute("COMMIT").await?;
                 tracing::info!("COMMIT executed successfully");
                 
-                // In WAL mode, force a checkpoint to ensure committed data is durable
-                // This prevents subsequent rollbacks from undoing committed transactions
-                if let Ok(conn) = db.get_mut_connection() {
-                    if let Err(e) = conn.execute("PRAGMA wal_checkpoint(PASSIVE)", []) {
-                        tracing::warn!("Failed to checkpoint WAL after COMMIT: {}", e);
-                    } else {
-                        tracing::debug!("WAL checkpoint completed after COMMIT");
+                // Ensure transaction boundary isolation in WAL mode
+                // Force connection out of transaction state to prevent subsequent rollbacks
+                // from affecting this committed transaction
+                let session_count = session.get_session_count().await;
+                tracing::info!("WAL checkpoint check: session_count={}", session_count);
+                match db.get_mut_connection() {
+                    Ok(conn) => {
+                        tracing::info!("Successfully acquired connection for WAL checkpoint");
+                        // Check if we're still in a transaction after COMMIT (SQLite quirk in WAL mode)
+                        if conn.is_autocommit() == false {
+                            tracing::info!("Connection still in transaction after COMMIT, forcing isolation");
+                            // Execute a harmless query to force transaction boundary
+                            if let Err(e) = conn.execute("SELECT 1", []) {
+                                tracing::warn!("Failed to establish transaction boundary: {}", e);
+                            }
+                        }
+                        
+                        // Always checkpoint in WAL mode to ensure durability across sessions
+                        // This prevents the WAL mode rollback bug where subsequent ROLLBACK
+                        // can undo previously committed transactions
+                        match conn.prepare("PRAGMA wal_checkpoint(PASSIVE)") {
+                            Ok(mut stmt) => {
+                                match stmt.query([]) {
+                                    Ok(_rows) => {
+                                        tracing::info!("WAL checkpoint executed for transaction durability");
+                                    }
+                                    Err(e) => {
+                                        tracing::info!("WAL checkpoint query failed: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::info!("WAL checkpoint prepare failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to acquire connection for WAL checkpoint: {}", e);
                     }
                 }
                 

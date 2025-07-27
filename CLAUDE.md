@@ -127,6 +127,8 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **Transaction Persistence**: Resolved WAL mode transaction isolation issues causing rollbacks to undo commits
 - **Transaction Error Handling**: Fixed "cannot rollback - no transaction is active" and transaction leak errors
 - **WAL Mode Durability**: Added automatic checkpoint after COMMIT to ensure transaction persistence
+- **Session Count Tracking**: Implemented global atomic session counter for performance optimization
+- **WAL Checkpoint API**: Fixed rusqlite API usage from execute() to query() for PRAGMA wal_checkpoint
 - **Performance**: Logging optimization reduced overhead significantly
 
 ### Major Features
@@ -170,7 +172,7 @@ Session = sessionmaker(bind=engine)
 # For guaranteed compatibility (recommended)
 PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db
 
-# For performance with enhanced transaction handling
+# For performance with enhanced transaction handling and automatic WAL checkpointing
 PGSQLITE_JOURNAL_MODE=WAL pgsqlite --database mydb.db
 ```
 

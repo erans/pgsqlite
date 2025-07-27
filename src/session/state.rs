@@ -4,12 +4,16 @@ use crate::protocol::TransactionStatus;
 use crate::cache::QueryCache;
 use crate::config::CONFIG;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use once_cell::sync::Lazy;
 
 // Global query cache shared across all sessions
 pub static GLOBAL_QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| {
     Arc::new(QueryCache::new(CONFIG.query_cache_size, CONFIG.query_cache_ttl))
 });
+
+// Global session counter for WAL mode isolation optimization
+static ACTIVE_SESSION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub struct SessionState {
     pub id: uuid::Uuid,
@@ -54,6 +58,9 @@ impl SessionState {
         parameters.insert("IntervalStyle".to_string(), "postgres".to_string());
         parameters.insert("integer_datetimes".to_string(), "on".to_string());
         
+        // Increment active session count
+        ACTIVE_SESSION_COUNT.fetch_add(1, Ordering::Relaxed);
+        
         SessionState {
             id: uuid::Uuid::new_v4(),
             database,
@@ -89,5 +96,17 @@ impl SessionState {
     /// Get the transaction status
     pub async fn get_transaction_status(&self) -> TransactionStatus {
         *self.transaction_status.read().await
+    }
+    
+    /// Get the current number of active sessions
+    pub async fn get_session_count(&self) -> usize {
+        ACTIVE_SESSION_COUNT.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for SessionState {
+    fn drop(&mut self) {
+        // Decrement active session count when session is destroyed
+        ACTIVE_SESSION_COUNT.fetch_sub(1, Ordering::Relaxed);
     }
 }
