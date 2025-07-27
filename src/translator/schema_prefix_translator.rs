@@ -88,6 +88,7 @@ impl SchemaPrefixTranslator {
                 // Replace with just the table name
                 name.0 = vec![table.clone()];
             }
+            // Don't remove information_schema prefix - it's handled by query interceptor
         }
     }
 }

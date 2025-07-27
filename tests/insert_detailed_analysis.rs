@@ -1,5 +1,6 @@
 use pgsqlite::session::DbHandler;
 use std::time::Instant;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_insert_detailed_timing() {
@@ -8,13 +9,17 @@ async fn test_insert_detailed_timing() {
     // Create in-memory database
     let db = DbHandler::new(":memory:").expect("Failed to create database");
     
+    // Create a session
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.expect("Failed to create session connection");
+    
     // Create test table
-    db.execute("CREATE TABLE test_insert (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
+    db.execute_with_session("CREATE TABLE test_insert (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)", &session_id)
         .await
         .expect("Failed to create table");
     
     // Warm up
-    db.execute("INSERT INTO test_insert (name, value) VALUES ('warmup', 1)")
+    db.execute_with_session("INSERT INTO test_insert (name, value) VALUES ('warmup', 1)", &session_id)
         .await
         .expect("Failed to warm up");
     
@@ -33,7 +38,7 @@ async fn test_insert_detailed_timing() {
         // Run each query 10 times to get average
         for _ in 0..10 {
             let start = Instant::now();
-            db.execute(query).await.expect("Failed to execute INSERT");
+            db.execute_with_session(query, &session_id).await.expect("Failed to execute INSERT");
             times.push(start.elapsed());
         }
         
@@ -48,12 +53,13 @@ async fn test_insert_detailed_timing() {
     
     for i in 0..10 {
         let start = Instant::now();
-        db.try_execute_fast_path_with_params(
+        db.execute_with_params(
             param_query,
             &[
-                rusqlite::types::Value::Text(format!("param{i}")),
-                rusqlite::types::Value::Integer(i as i64),
+                Some(format!("param{i}").into_bytes()),
+                Some(i.to_string().into_bytes()),
             ],
+            &session_id
         )
         .await
         .expect("Failed to execute parameterized INSERT");
@@ -77,12 +83,12 @@ async fn test_insert_detailed_timing() {
     
     // With explicit transaction
     let start = Instant::now();
-    db.begin().await.expect("Failed to begin transaction");
+    db.begin_with_session(&session_id).await.expect("Failed to begin transaction");
     for i in 0..50 {
         let query = format!("INSERT INTO test_insert (name, value) VALUES ('batch2_{i}', {i})");
-        db.execute(&query).await.expect("Failed to execute INSERT");
+        db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
     }
-    db.commit().await.expect("Failed to commit transaction");
+    db.commit_with_session(&session_id).await.expect("Failed to commit transaction");
     let with_txn_time = start.elapsed();
     println!("50 INSERTs with transaction: {:?}, avg: {:?}", with_txn_time, with_txn_time / 50);
     
@@ -91,14 +97,14 @@ async fn test_insert_detailed_timing() {
     
     // Table without decimal
     let start = Instant::now();
-    db.execute("CREATE TABLE no_decimal (id INTEGER, name TEXT)")
+    db.execute_with_session("CREATE TABLE no_decimal (id INTEGER, name TEXT)", &session_id)
         .await
         .expect("Failed to create table");
     let create_no_decimal = start.elapsed();
     
     // Table with decimal
     let start = Instant::now();
-    db.execute("CREATE TABLE with_decimal (id INTEGER, price DECIMAL(10,2))")
+    db.execute_with_session("CREATE TABLE with_decimal (id INTEGER, price DECIMAL(10,2))", &session_id)
         .await
         .expect("Failed to create table");
     let create_with_decimal = start.elapsed();
@@ -123,4 +129,7 @@ async fn test_insert_detailed_timing() {
     
     println!("20 INSERTs without decimal: {:?}, avg: {:?}", insert_no_decimal, insert_no_decimal / 20);
     println!("20 INSERTs with decimal: {:?}, avg: {:?}", insert_with_decimal, insert_with_decimal / 20);
+    
+    // Clean up
+    db.remove_session_connection(&session_id);
 }

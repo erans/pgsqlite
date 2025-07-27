@@ -1,21 +1,14 @@
 use std::sync::Arc;
-use parking_lot::Mutex;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use sqlparser::parser::Parser;
-use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::ast::Statement;
-use crate::cache::{SchemaCache, CachedQuery, StatementPool, global_execution_cache, global_type_converter_table, ExecutionMetadata, ExecutionCache};
-use crate::cache::{global_result_cache, ResultCacheKey, ResultSetCache};
-use crate::cache::schema::TableSchema;
+use uuid::Uuid;
+use crate::cache::SchemaCache;
 use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
-use crate::rewriter::DecimalQueryRewriter;
-use crate::types::PgType;
-use crate::query::{QueryTypeDetector, QueryType};
+use crate::query::{QueryTypeDetector, QueryType, LazyQueryProcessor};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
+use crate::session::ConnectionManager;
+use crate::PgSqliteError;
 use tracing::{info, debug};
-use serde_json;
 
 /// Database response structure
 pub struct DbResponse {
@@ -24,19 +17,17 @@ pub struct DbResponse {
     pub rows_affected: usize,
 }
 
-/// Thread-safe database handler using a Mutex-protected SQLite connection
+/// Thread-safe database handler using per-session connections
 /// 
-/// This implementation was chosen after extensive benchmarking showed it provides
-/// the best performance characteristics:
-/// - ~7.7-9.6x overhead vs raw SQLite (compared to ~20-27x for channel-based)
-/// - 2.2-3.5x better performance than channel-based approach
-/// - Simpler than connection pooling with nearly identical performance
-/// - Thread-safe through parking_lot::Mutex and SQLite's FULLMUTEX mode
+/// This implementation provides true connection isolation where each
+/// PostgreSQL session gets its own SQLite connection, matching PostgreSQL's
+/// behavior and ensuring full SQLAlchemy compatibility.
 pub struct DbHandler {
-    conn: Arc<Mutex<Connection>>,
+    connection_manager: Arc<ConnectionManager>,
     schema_cache: Arc<SchemaCache>,
     string_validator: Arc<StringConstraintValidator>,
     statement_cache_optimizer: Arc<StatementCacheOptimizer>,
+    db_path: String,
 }
 
 impl DbHandler {
@@ -44,91 +35,56 @@ impl DbHandler {
         Self::new_with_config(db_path, &Config::load())
     }
     
-    #[doc(hidden)]
-    pub fn new_for_test(db_path: &str) -> Result<Self, rusqlite::Error> {
-        // For tests, create an in-memory database and run migrations automatically
-        let config = Config::load();
-        
-        // Use FULLMUTEX for SQLite's internal thread safety
-        let flags = OpenFlags::SQLITE_OPEN_READ_WRITE 
-            | OpenFlags::SQLITE_OPEN_CREATE 
-            | OpenFlags::SQLITE_OPEN_FULL_MUTEX
-            | OpenFlags::SQLITE_OPEN_URI;
-        
-        let conn = if db_path == ":memory:" {
-            Connection::open_with_flags("file::memory:?cache=private", flags)?
-        } else {
-            Connection::open_with_flags(db_path, flags)?
-        };
-        
-        // Set pragmas for performance
-        let pragma_sql = format!(
-            "PRAGMA journal_mode = {};
-             PRAGMA synchronous = {};
-             PRAGMA cache_size = {};
-             PRAGMA temp_store = MEMORY;
-             PRAGMA mmap_size = {};",
-            config.pragma_journal_mode,
-            config.pragma_synchronous,
-            config.pragma_cache_size,
-            config.pragma_mmap_size
-        );
-        conn.execute_batch(&pragma_sql)?;
-        
-        // For tests, run migrations automatically
-        let mut runner = MigrationRunner::new(conn);
-        match runner.run_pending_migrations() {
-            Ok(_) => {
-                // Migrations applied successfully
-            }
-            Err(e) => {
-                return Err(rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                    Some(format!("Test migration failed: {e}"))
-                ));
-            }
+    pub fn new_with_config(db_path: &str, config: &Config) -> Result<Self, rusqlite::Error> {
+        // For initial setup, we need to ensure database exists and run migrations
+        if !db_path.contains(":memory:") && !std::path::Path::new(db_path).exists() {
+            info!("New database file detected, will run initial migrations...");
         }
         
-        // Get connection back from runner
-        let conn = runner.into_connection();
+        // Create a temporary connection for migrations
+        let temp_conn = Self::create_initial_connection(db_path, config)?;
         
-        // Initialize functions and metadata
-        crate::functions::register_all_functions(&conn)?;
-        crate::metadata::TypeMetadata::init(&conn)?;
-        
-        info!("Test DbHandler initialized with mutex-based implementation");
+        // Run migrations if needed
+        Self::run_migrations_if_needed(temp_conn, db_path)?;
         
         // Initialize optimization components
         let optimization_manager = Arc::new(OptimizationManager::new(true));
         let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
         
+        // Create connection manager
+        let connection_manager = Arc::new(ConnectionManager::new(
+            db_path.to_string(),
+            Arc::new(config.clone())
+        ));
+        
+        info!("DbHandler initialized with per-session connection architecture");
+        
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            connection_manager,
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
             string_validator: Arc::new(StringConstraintValidator::new()),
             statement_cache_optimizer,
+            db_path: db_path.to_string(),
         })
     }
     
-    pub fn new_with_config(db_path: &str, config: &Config) -> Result<Self, rusqlite::Error> {
-        // Use FULLMUTEX for SQLite's internal thread safety
+    fn create_initial_connection(db_path: &str, config: &Config) -> Result<rusqlite::Connection, rusqlite::Error> {
+        use rusqlite::{Connection, OpenFlags};
+        
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE 
             | OpenFlags::SQLITE_OPEN_CREATE 
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX
             | OpenFlags::SQLITE_OPEN_URI;
-        
+            
         let conn = if db_path == ":memory:" {
-            // Use a unique in-memory database for each instance to avoid test interference
-            // The cache=private ensures each connection gets its own database
-            Connection::open_with_flags("file::memory:?cache=private", flags)?
-        } else if db_path.starts_with("file:") && db_path.contains(":memory:") {
-            // Allow explicit file::memory: URIs with custom parameters
-            Connection::open_with_flags(db_path, flags)?
+            // Use shared cache for memory databases to allow data sharing between connections
+            Connection::open_with_flags("file::memory:?cache=shared", flags)?
         } else {
+            // For named shared memory databases or regular files, use the path as-is
             Connection::open_with_flags(db_path, flags)?
         };
         
-        // Set pragmas for performance using config values
+        // Set pragmas
         let pragma_sql = format!(
             "PRAGMA journal_mode = {};
              PRAGMA synchronous = {};
@@ -142,64 +98,21 @@ impl DbHandler {
         );
         conn.execute_batch(&pragma_sql)?;
         
-        // Check if we're using an in-memory database
-        let is_memory_db = db_path == ":memory:" || db_path.contains(":memory:");
-        
-        // For in-memory databases, always run migrations automatically
-        // since they always start fresh and have no existing data
-        if is_memory_db {
-            // Register functions before running migrations
-            crate::functions::register_all_functions(&conn)?;
-            
-            // For in-memory databases, run migrations automatically
-            let mut runner = MigrationRunner::new(conn);
-            match runner.run_pending_migrations() {
-                Ok(applied) => {
-                    if !applied.is_empty() {
-                        info!("Applied {} migrations to in-memory database", applied.len());
-                    }
-                }
-                Err(e) => {
-                    return Err(rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("In-memory database migration failed: {e}"))
-                    ));
-                }
-            }
-            let conn = runner.into_connection();
-            
-            // Initialize functions and metadata
-            crate::functions::register_all_functions(&conn)?;
-            crate::metadata::TypeMetadata::init(&conn)?;
-            
-            info!("In-memory database initialized with migrations");
-            
-            // Initialize optimization components
-            let optimization_manager = Arc::new(OptimizationManager::new(true));
-            let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
-            
-            return Ok(Self {
-                conn: Arc::new(Mutex::new(conn)),
-                schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
-                string_validator: Arc::new(StringConstraintValidator::new()),
-                statement_cache_optimizer,
-            });
-        }
-        
-        // Check if this is a new database file by looking for any tables
-        let table_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+        Ok(conn)
+    }
+    
+    fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<(), rusqlite::Error> {
+        // Check if this is a new database
+        let needs_migrations = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_migrations'",
             [],
-            |row| row.get(0)
-        )?;
+            |row| row.get::<_, i64>(0)
+        ).unwrap_or(0) == 0;
         
-        let is_new_database = table_count == 0;
-        
-        let conn = if is_new_database {
-            // New database file - run migrations automatically
-            info!("New database file detected, running initial migrations...");
+        if needs_migrations || db_path.contains(":memory:") {
+            info!("Running initial migrations...");
             
-            // Register functions before running migrations
+            // Register functions before migrations
             crate::functions::register_all_functions(&conn)?;
             
             let mut runner = MigrationRunner::new(conn);
@@ -212,403 +125,340 @@ impl DbHandler {
                 Err(e) => {
                     return Err(rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Initial migration failed for new database: {e}"))
+                        Some(format!("Migration failed: {e}"))
                     ));
                 }
             }
-            // Get connection back from runner
-            runner.into_connection()
-        } else {
-            // Existing database - check schema version
-            // IMPORTANT: Check schema version on database load
-            // This ensures the database schema is up-to-date before any operations
-            let runner = MigrationRunner::new(conn);
-            match runner.check_schema_version() {
-                Ok(()) => {
-                    // Schema is up to date
-                }
-                Err(e) => {
-                    // Convert anyhow::Error to rusqlite::Error
-                    return Err(rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(e.to_string())
-                    ));
-                }
-            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Create a connection for a new session
+    pub async fn create_session_connection(&self, session_id: Uuid) -> Result<(), PgSqliteError> {
+        self.connection_manager.create_connection(session_id)
+    }
+    
+    /// Remove a session's connection
+    pub fn remove_session_connection(&self, session_id: &Uuid) {
+        self.connection_manager.remove_connection(session_id);
+    }
+    
+    
+    /// Execute with bound parameters
+    pub async fn execute_with_params(
+        &self,
+        query: &str,
+        params: &[Option<Vec<u8>>],
+        session_id: &Uuid
+    ) -> Result<DbResponse, PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            // Apply query translations using LazyQueryProcessor
+            let mut processor = LazyQueryProcessor::new(query);
+            let processed_query = processor.process(conn, &self.schema_cache)?;
+            debug!("Execute with params translation: {} -> {}", query, processed_query);
             
-            // Get connection back from runner
-            let conn = runner.into_connection();
+            let mut stmt = conn.prepare(processed_query)?;
             
-            // Check for schema drift
-            match crate::schema_drift::SchemaDriftDetector::detect_drift(&conn) {
-                Ok(drift) => {
-                    if !drift.is_empty() {
-                        let report = drift.format_report();
-                        return Err(rusqlite::Error::SqliteFailure(
-                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                            Some(format!("Schema drift detected:\n{report}\n\nTo fix this, ensure your SQLite schema matches the pgsqlite metadata."))
-                        ));
+            // Convert params to rusqlite values
+            let values: Vec<rusqlite::types::Value> = params.iter()
+                .map(|p| match p {
+                    Some(data) => {
+                        match String::from_utf8(data.clone()) {
+                            Ok(s) => rusqlite::types::Value::Text(s),
+                            Err(_) => rusqlite::types::Value::Blob(data.clone()),
+                        }
                     }
+                    None => rusqlite::types::Value::Null,
+                })
+                .collect();
+            
+            let query_type = QueryTypeDetector::detect_query_type(query);
+            
+            match query_type {
+                QueryType::Select => {
+                    let column_count = stmt.column_count();
+                    let mut columns = Vec::with_capacity(column_count);
+                    for i in 0..column_count {
+                        columns.push(stmt.column_name(i)?.to_string());
+                    }
+                    
+                    let rows: Result<Vec<_>, _> = stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+                        let mut row_data = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            let value: Option<rusqlite::types::Value> = row.get(i)?;
+                            row_data.push(match value {
+                                Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                Some(rusqlite::types::Value::Null) | None => None,
+                            });
+                        }
+                        Ok(row_data)
+                    })?.collect();
+                    
+                    Ok(DbResponse {
+                        columns,
+                        rows: rows?,
+                        rows_affected: 0,
+                    })
                 }
-                Err(e) => {
-                    // Log warning but don't fail - drift detection is not critical
-                    debug!("Schema drift detection failed: {}", e);
+                _ => {
+                    let rows_affected = stmt.execute(rusqlite::params_from_iter(values.iter()))?;
+                    Ok(DbResponse {
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected,
+                    })
                 }
             }
-            
-            conn
-        };
-        
-        // Initialize functions and metadata
-        crate::functions::register_all_functions(&conn)?;
-        crate::metadata::TypeMetadata::init(&conn)?;
-        
-        info!("DbHandler initialized with mutex-based implementation");
-        
-        // Populate string constraints from schema if migration v6 has been applied
-        let string_validator = Arc::new(StringConstraintValidator::new());
-        let _ = StringConstraintValidator::populate_constraints_from_schema(&conn);
-        
-        // Initialize optimization components
-        let optimization_manager = Arc::new(OptimizationManager::new(true));
-        let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
-        
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-            schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
-            string_validator,
-            statement_cache_optimizer,
         })
     }
     
-    pub async fn execute(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        // Apply batch UPDATE translator first if needed
-        let mut query_to_process = query.to_string();
-        if crate::translator::BatchUpdateTranslator::contains_batch_update(&query_to_process) {
-            use std::collections::HashMap;
-            use parking_lot::Mutex;
-            use std::sync::Arc;
-            let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
-            let batch_translator = crate::translator::BatchUpdateTranslator::new(decimal_cache);
-            query_to_process = batch_translator.translate(&query_to_process, &[]);
-        }
-        
-        // Apply batch DELETE translator if needed
-        if crate::translator::BatchDeleteTranslator::contains_batch_delete(&query_to_process) {
-            use std::collections::HashMap;
-            use parking_lot::Mutex;
-            use std::sync::Arc;
-            let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
-            let batch_translator = crate::translator::BatchDeleteTranslator::new(decimal_cache);
-            query_to_process = batch_translator.translate(&query_to_process, &[]);
-        }
-        let query = &query_to_process;
-        
-        // Try enhanced statement caching optimization first
-        if let Ok(rows_affected) = self.try_execute_with_enhanced_cache(query).await {
-            return Ok(DbResponse {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected,
-            });
-        }
-        
-        // Ultra-fast path for truly simple queries
-        if crate::query::simple_query_detector::is_ultra_simple_query(query) {
-            let conn = self.conn.lock();
-            
-            // Try direct fast path execution
-            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&conn, query, &self.schema_cache) {
-                return Ok(DbResponse {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    rows_affected,
-                });
-            }
-            
-            // Fall back to direct execution
-            // Restore JSON path $ characters right before SQLite execution
-            let final_query = crate::translator::JsonTranslator::restore_json_path_root(query);
-            let rows_affected = conn.execute(&final_query, [])?;
-            return Ok(DbResponse {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected,
-            });
-        }
-        
-        // Check if DDL to clear cache
-        if is_ddl_statement(query) {
-            self.schema_cache.clear();
-            // Clear global query cache
-            crate::session::GLOBAL_QUERY_CACHE.clear();
-            // Clear decimal table cache
-            crate::query::clear_decimal_cache();
-            // Clear statement pool
-            StatementPool::global().clear();
-            // Clear enhanced statement cache
-            self.statement_cache_optimizer.clear_cache();
-            // Clear result cache
-            global_result_cache().clear();
-            // Clear ENUM cache
-            crate::cache::global_enum_cache().clear();
-            // Clear translation cache
-            crate::cache::global_translation_cache().clear();
-        }
-        
-        let conn = self.conn.lock();
-        
-        // Create lazy processor
-        let mut processor = crate::query::LazyQueryProcessor::new(query);
-        
-        // Check if we need any processing
-        if !processor.needs_processing(&self.schema_cache) {
-            // Fast path - no processing needed
-            let query_to_execute = processor.get_unprocessed();
-            
-            // Try enhanced fast path first
-            if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
-                return Ok(DbResponse {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    rows_affected,
-                });
-            }
-        }
-        
-        // Process the query if needed
-        let query_to_execute = processor.process(&conn, &self.schema_cache)?;
-        
-        // For INSERT queries, try statement pool for better performance
-        if matches!(QueryTypeDetector::detect_query_type(query_to_execute), QueryType::Insert) {
-            // First check if we can use fast path with statement pool
-            if let Some(table_name) = extract_insert_table_name(query_to_execute) {
-                if !self.schema_cache.has_decimal_columns(&table_name) {
-                    // No decimal columns, use statement pool for optimal performance
-                    match StatementPool::global().execute_cached(&conn, query_to_execute, []) {
-                        Ok(rows_affected) => {
-                            return Ok(DbResponse {
-                                columns: Vec::new(),
-                                rows: Vec::new(),
-                                rows_affected,
-                            });
-                        }
-                        Err(e) => {
-                            // Log error but continue to fallback
-                            debug!("Statement pool execution failed: {}", e);
-                        }
-                    }
-                }
-            }
-            
-            // Check INSERT query cache to avoid re-parsing
-            if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
-                // Use cached rewritten query if available
-                let cached_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-                // Restore JSON path $ characters right before SQLite execution
-                let final_query = crate::translator::JsonTranslator::restore_json_path_root(cached_query);
-                match conn.execute(&final_query, []) {
-                    Ok(rows_affected) => return Ok(DbResponse {
-                        columns: Vec::new(),
-                        rows: Vec::new(),
-                        rows_affected,
-                    }),
-                    Err(e) => {
-                        // Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
-                        return Err(convert_enum_error(e, query_to_execute));
-                    }
-                }
-            }
-        }
-        
-        // Fall back to normal execution - but skip decimal rewriting since processor already did it
-        // Restore JSON path $ characters right before SQLite execution
-        let final_query = crate::translator::JsonTranslator::restore_json_path_root(query_to_execute);
-        match conn.execute(&final_query, []) {
-            Ok(rows_affected) => Ok(DbResponse {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected,
-            }),
-            Err(e) => {
-                // Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
-                Err(convert_enum_error(e, query_to_execute))
-            }
-        }
-    }
-    
+    /// Query without session (uses temporary connection)
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        // Debug enum cast issue
-        
-        // Ensure schema cache is populated (especially after CREATE TABLE)
-        self.schema_cache.ensure_schema_loaded(&self.conn.lock(), query);
-        
-        // Try enhanced statement caching optimization first
-        // HACK: Skip cache for enum cast queries to fix test failures
-        // The cache may contain incorrect results from before the enum cast fix
-        let skip_cache = query.contains("CAST") && query.contains(" AS ") && 
-                        (query.contains("status") || query.contains("mood") || query.contains("priority"));
-        
-        // Also skip cache for non-deterministic functions
-        let has_non_deterministic = crate::query::simple_query_detector::contains_non_deterministic_functions(query);
-        
-        let skip_cache = skip_cache || has_non_deterministic;
-        
-        match if skip_cache { Err(rusqlite::Error::QueryReturnedNoRows) } else { self.try_query_with_enhanced_cache(query).await } {
-            Ok(response) => {
-                debug!("Enhanced cache succeeded for query: {}", query);
-                // Debug enum cast issue
-                return Ok(response);
-            }
-            Err(e) => {
-                debug!("Enhanced cache failed for query '{}': {}", query, e);
-            }
-        }
-        
-        // Ultra-fast path for truly simple queries
-        if crate::query::simple_query_detector::is_ultra_simple_query(query) {
-            let conn = self.conn.lock();
-            
-            // Try direct fast path execution
-            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query, &self.schema_cache) {
-                return Ok(response);
+        // Check if it's any form of memory database (including named shared memory)
+        if self.db_path == ":memory:" || self.db_path.contains("mode=memory") {
+            // For memory databases, use a temporary session connection
+            let temp_session = Uuid::new_v4();
+            if let Err(e) = self.create_session_connection(temp_session).await {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                    Some(format!("Failed to create temporary session: {}", e))
+                ));
             }
             
-            // Fall back to regular execution without any processing
-            return execute_query_optimized(&conn, query, &self.schema_cache);
-        }
-        
-        // Create lazy processor for the query
-        let mut processor = crate::query::LazyQueryProcessor::new(query);
-        
-        // Check result cache first with original query (but skip for non-deterministic functions)
-        let skip_cache = crate::query::simple_query_detector::contains_non_deterministic_functions(query);
-        let cache_key = ResultCacheKey::new(processor.cache_key(), &[]);
-        
-        if !skip_cache {
-            let cached_result = if crate::profiling::is_profiling_enabled() {
-                crate::time_cache_lookup!({
-                    let result = global_result_cache().get(&cache_key);
-                    if result.is_some() {
-                        crate::profiling::METRICS.cache_hit_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    }
-                    result
-                })
-            } else {
-                global_result_cache().get(&cache_key)
-            };
+            let result = self.query_with_session(query, &temp_session).await
+                .map_err(|e| match e {
+                    PgSqliteError::Sqlite(sqlite_err) => sqlite_err,
+                    other => rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Query error: {}", other))
+                    )
+                })?;
             
-            if let Some(cached_result) = cached_result {
-                debug!("Result cache hit for query: {}", query);
-                return Ok(DbResponse {
-                    columns: cached_result.columns,
-                    rows: cached_result.rows,
-                    rows_affected: cached_result.rows_affected as usize,
-                });
-            }
-        }
-        
-        let conn = self.conn.lock();
-        
-        // Check if we need any processing at all
-        if !processor.needs_processing(&self.schema_cache) {
-            // Fast path - no processing needed, use original query
-            let query_to_execute = processor.get_unprocessed();
+            self.remove_session_connection(&temp_session);
+            Ok(result)
+        } else {
+            // For file databases, create a temporary connection
+            let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
             
-            if crate::profiling::is_profiling_enabled() {
-                crate::profiling::METRICS.fast_path_attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut stmt = conn.prepare(query)?;
+            let column_count = stmt.column_count();
+            let mut columns = Vec::with_capacity(column_count);
+            for i in 0..column_count {
+                columns.push(stmt.column_name(i)?.to_string());
             }
             
-            // Try enhanced fast path first
-            if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
-                if crate::profiling::is_profiling_enabled() {
-                    crate::profiling::METRICS.fast_path_success.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                let execution_time_us = 0; // Fast path doesn't track time
-                
-                // Cache the result
-                if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
-                    global_result_cache().insert(
-                        cache_key,
-                        response.columns.clone(),
-                        response.rows.clone(),
-                        response.rows_affected as u64,
-                        execution_time_us,
-                    );
-                }
-                
-                return Ok(response);
-            }
-        }
-        
-        let start = std::time::Instant::now();
-        
-        // Process the query (lazy - only does work if needed)
-        let query_to_execute = processor.process(&conn, &self.schema_cache)?;
-        
-        // Check cache again with processed query if it changed
-        let final_cache_key = if query_to_execute != query {
-            let new_key = ResultCacheKey::new(query_to_execute, &[]);
-            if !skip_cache {
-                if let Some(cached_result) = global_result_cache().get(&new_key) {
-                    debug!("Result cache hit for processed query: {}", query_to_execute);
-                    return Ok(DbResponse {
-                        columns: cached_result.columns,
-                        rows: cached_result.rows,
-                        rows_affected: cached_result.rows_affected as usize,
+            let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                let mut row_data = Vec::with_capacity(column_count);
+                for i in 0..column_count {
+                    let value: Option<rusqlite::types::Value> = row.get(i)?;
+                    row_data.push(match value {
+                        Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                        Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                        Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                        Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                        Some(rusqlite::types::Value::Null) | None => None,
                     });
                 }
-            }
-            new_key
-        } else {
-            cache_key
-        };
-        
-        // Try enhanced fast path with processed query
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced(&conn, query_to_execute, &self.schema_cache) {
-            let execution_time_us = start.elapsed().as_micros() as u64;
+                Ok(row_data)
+            })?.collect();
             
-            // Cache the result
-            if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
-                global_result_cache().insert(
-                    final_cache_key,
-                    response.columns.clone(),
-                    response.rows.clone(),
-                    response.rows_affected as u64,
-                    execution_time_us,
-                );
-            }
-            
-            return Ok(response);
+            Ok(DbResponse {
+                columns,
+                rows: rows?,
+                rows_affected: 0,
+            })
         }
-        
-        // Fall back to normal query execution
-        let response = execute_query_optimized(&conn, query_to_execute, &self.schema_cache)?;
-        let execution_time_us = start.elapsed().as_micros() as u64;
-        
-        // Debug enum cast issue
-        
-        // Cache the result
-        if ResultSetCache::should_cache(query_to_execute, execution_time_us, response.rows.len()) {
-            global_result_cache().insert(
-                final_cache_key,
-                response.columns.clone(),
-                response.rows.clone(),
-                response.rows_affected as u64,
-                execution_time_us,
-            );
-        }
-        
-        Ok(response)
     }
     
+    /// Query with session-specific connection
+    pub async fn query_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Check if this is a catalog query that should be intercepted
+        // We need to do this before applying translations
+        let lower_query = query.to_lowercase();
+        
+        // Handle special system function queries
+        if lower_query.trim() == "select current_user()" {
+            return Ok(DbResponse {
+                columns: vec!["current_user".to_string()],
+                rows: vec![vec![Some("postgres".to_string().into_bytes())]],
+                rows_affected: 1,
+            });
+        }
+        
+        if lower_query.contains("information_schema") || lower_query.contains("pg_catalog") || 
+           lower_query.contains("pg_type") || lower_query.contains("pg_class") ||
+           lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") {
+            // For catalog queries, we need to use the catalog interceptor
+            // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
+            // Instead, let's handle information_schema.tables directly for now
+            if lower_query.contains("information_schema.tables") {
+                return self.handle_information_schema_tables_query(query, session_id).await;
+            }
+            // For pg_catalog queries, let them go through LazyQueryProcessor
+            // which will strip the schema prefix and allow them to query the views
+        }
+        
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            // Apply query translations using LazyQueryProcessor
+            let mut processor = LazyQueryProcessor::new(query);
+            let processed_query = processor.process(conn, &self.schema_cache)?;
+            debug!("Query translation: {} -> {}", query, processed_query);
+            
+            let mut stmt = conn.prepare(processed_query)?;
+            let column_count = stmt.column_count();
+            let mut columns = Vec::with_capacity(column_count);
+            for i in 0..column_count {
+                columns.push(stmt.column_name(i)?.to_string());
+            }
+            
+            let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                let mut row_data = Vec::with_capacity(column_count);
+                for i in 0..column_count {
+                    let value: Option<rusqlite::types::Value> = row.get(i)?;
+                    row_data.push(match value {
+                        Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                        Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                        Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                        Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                        Some(rusqlite::types::Value::Null) | None => None,
+                    });
+                }
+                Ok(row_data)
+            })?.collect();
+            
+            Ok(DbResponse {
+                columns,
+                rows: rows?,
+                rows_affected: 0,
+            })
+        })
+    }
+    
+    /// Execute without session (compatibility - creates temporary connection)
+    pub async fn execute(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // For compatibility with tests, use shared connection if available
+        // Check if it's any form of memory database (including named shared memory)
+        debug!("DbHandler::execute - db_path: {}, query: {}", self.db_path, query);
+        if self.db_path == ":memory:" || self.db_path.contains("mode=memory") {
+            // For memory databases, we need to use a session connection
+            // Create a temporary session for backward compatibility
+            let temp_session = Uuid::new_v4();
+            if let Err(e) = self.create_session_connection(temp_session).await {
+                return Err(rusqlite::Error::SqliteFailure(
+                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                    Some(format!("Failed to create temporary session: {}", e))
+                ));
+            }
+            
+            let result = self.execute_with_session(query, &temp_session).await
+                .map_err(|e| match e {
+                    PgSqliteError::Sqlite(sqlite_err) => sqlite_err,
+                    other => rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Execution error: {}", other))
+                    )
+                })?;
+            
+            self.remove_session_connection(&temp_session);
+            Ok(result)
+        } else {
+            let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+            let rows_affected = conn.execute(query, [])?;
+            Ok(DbResponse {
+                columns: vec![],
+                rows: vec![],
+                rows_affected,
+            })
+        }
+    }
+    
+    /// Execute with session-specific connection
+    pub async fn execute_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            // Apply query translations using LazyQueryProcessor
+            let mut processor = LazyQueryProcessor::new(query);
+            let processed_query = processor.process(conn, &self.schema_cache)?;
+            debug!("Execute translation: {} -> {}", query, processed_query);
+            
+            let rows_affected = conn.execute(processed_query, [])?;
+            Ok(DbResponse {
+                columns: vec![],
+                rows: vec![],
+                rows_affected,
+            })
+        })
+    }
+    
+    /// Transaction control methods
+    pub async fn begin_with_session(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            conn.execute("BEGIN", [])?;
+            Ok(())
+        })
+    }
+    
+    pub async fn commit(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            conn.execute("COMMIT", [])?;
+            Ok(())
+        })
+    }
+    
+    pub async fn commit_with_session(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
+        self.commit(session_id).await
+    }
+    
+    pub async fn rollback(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            match conn.execute("ROLLBACK", []) {
+                Ok(_) => Ok(()),
+                Err(rusqlite::Error::SqliteFailure(_, Some(msg))) 
+                    if msg.contains("cannot rollback - no transaction is active") => {
+                    // This is fine - no transaction was active
+                    debug!("ROLLBACK called with no active transaction - ignoring");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }?;
+            Ok(())
+        })
+    }
+    
+    pub async fn rollback_with_session(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
+        self.rollback(session_id).await
+    }
+    
+    
+    
+    /// Get a mutable connection for operations that require &mut Connection
+    pub fn get_mut_connection(&self) -> Result<std::sync::MutexGuard<rusqlite::Connection>, rusqlite::Error> {
+        // Create a temporary connection for operations that need it
+        // This is not ideal but maintains compatibility
+        Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some("get_mut_connection not available in per-session mode".to_string())
+        ))
+    }
+    
+    /// Get table schema
+    pub async fn get_table_schema(&self, table_name: &str) -> Result<crate::cache::schema::TableSchema, rusqlite::Error> {
+        let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+        self.schema_cache.get_or_load(&conn, table_name)
+    }
+    
+    /// Get schema type for a column
     pub async fn get_schema_type(&self, table_name: &str, column_name: &str) -> Result<Option<String>, rusqlite::Error> {
-        let conn = self.conn.lock();
+        let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
         
         let mut stmt = conn.prepare(
             "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
         )?;
         
+        use rusqlite::OptionalExtension;
         let result = stmt.query_row([table_name, column_name], |row| {
             row.get::<_, String>(0)
         }).optional()?;
@@ -616,742 +466,113 @@ impl DbHandler {
         Ok(result)
     }
     
-    pub async fn get_table_schema(&self, table_name: &str) -> Result<TableSchema, rusqlite::Error> {
-        let conn = self.conn.lock();
-        
-        // Use enhanced schema cache with automatic preloading
-        self.schema_cache.get_or_load(&conn, table_name)
-    }
-    
-    /// Begin transaction
-    pub async fn begin(&self) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.lock();
-        conn.execute("BEGIN", [])?;
-        Ok(())
-    }
-    
-    /// Commit transaction  
-    pub async fn commit(&self) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.lock();
-        conn.execute("COMMIT", [])?;
-        Ok(())
-    }
-    
-    /// Rollback transaction
-    pub async fn rollback(&self) -> Result<(), rusqlite::Error> {
-        let conn = self.conn.lock();
-        match conn.execute("ROLLBACK", []) {
-            Ok(_) => Ok(()),
-            Err(rusqlite::Error::SqliteFailure(_err, Some(msg))) if msg.contains("cannot rollback - no transaction is active") => {
-                // This is fine - no transaction was active, so nothing to rollback
-                tracing::debug!("ROLLBACK called with no active transaction - ignoring");
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-    
-    /// Get a mutable connection for operations that require &mut Connection
-    pub fn get_mut_connection(&self) -> Result<parking_lot::MutexGuard<Connection>, rusqlite::Error> {
-        Ok(self.conn.lock())
-    }
-    
-    /// Try executing a query with parameters using the fast path
+    /// Try fast path execution with parameters
     pub async fn try_execute_fast_path_with_params(
-        &self, 
-        query: &str, 
-        params: &[rusqlite::types::Value]
-    ) -> Result<Option<DbResponse>, rusqlite::Error> {
-        let conn = self.conn.lock();
-        
-        // Try fast path for DML operations
-        if let Ok(Some(rows_affected)) = crate::query::execute_fast_path_enhanced_with_params(&conn, query, params, &self.schema_cache) {
-            return Ok(Some(DbResponse {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                rows_affected,
-            }));
-        }
-        
-        // Try fast path for SELECT operations
-        if let Ok(Some(response)) = crate::query::query_fast_path_enhanced_with_params(&conn, query, params, &self.schema_cache) {
-            return Ok(Some(response));
-        }
-        
+        &self,
+        _query: &str,
+        _params: &[rusqlite::types::Value],
+        _session_id: &Uuid,
+    ) -> Result<Option<DbResponse>, PgSqliteError> {
+        // For now, always return None to fall back to regular execution
         Ok(None)
     }
     
-    /// Execute a query using the statement pool for optimization
-    pub async fn execute_with_statement_pool(
-        &self,
-        query: &str
-    ) -> Result<DbResponse, rusqlite::Error> {
-        let conn = self.conn.lock();
-        
-        // Use statement pool for execution
-        let rows_affected = StatementPool::global().execute_cached(&conn, query, [])?;
-        
-        Ok(DbResponse {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            rows_affected,
-        })
-    }
-    
-    /// Query using the statement pool for optimization  
-    pub async fn query_with_statement_pool(
-        &self,
-        query: &str
-    ) -> Result<DbResponse, rusqlite::Error> {
-        let conn = self.conn.lock();
-        
-        // Use statement pool for querying
-        let (columns, rows) = StatementPool::global().query_cached(&conn, query, [])?;
-        let rows_affected = rows.len();
-        
-        Ok(DbResponse {
-            columns,
-            rows,
-            rows_affected,
-        })
-    }
-    
-    /// Execute a parameterized query using the statement pool
-    pub async fn execute_with_statement_pool_params(
-        &self,
-        query: &str,
-        params: &[rusqlite::types::Value]
-    ) -> Result<DbResponse, rusqlite::Error> {
-        let conn = self.conn.lock();
-        
-        // Use statement pool for execution with parameters
-        let rows_affected = StatementPool::global().execute_cached(
-            &conn, 
-            query, 
-            rusqlite::params_from_iter(params.iter())
-        )?;
-        
-        Ok(DbResponse {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            rows_affected,
-        })
-    }
-    
-    /// Query with parameters using the statement pool
+    /// Query with statement pool and parameters
     pub async fn query_with_statement_pool_params(
         &self,
         query: &str,
-        params: &[rusqlite::types::Value]
-    ) -> Result<DbResponse, rusqlite::Error> {
-        let conn = self.conn.lock();
-        
-        // Use statement pool for querying with parameters
-        let (columns, rows) = StatementPool::global().query_cached(
-            &conn, 
-            query, 
-            rusqlite::params_from_iter(params.iter())
-        )?;
-        let rows_affected = rows.len();
-        
-        Ok(DbResponse {
-            columns,
-            rows,
-            rows_affected,
-        })
+        params: &[Option<Vec<u8>>],
+        session_id: &Uuid,
+    ) -> Result<DbResponse, PgSqliteError> {
+        // Forward to execute_with_params
+        self.execute_with_params(query, params, session_id).await
     }
     
-    /// Get reference to the string validator
-    pub fn string_validator(&self) -> &StringConstraintValidator {
+    /// Execute with statement pool and parameters
+    pub async fn execute_with_statement_pool_params(
+        &self,
+        query: &str,
+        params: &[Option<Vec<u8>>],
+        session_id: &Uuid,
+    ) -> Result<DbResponse, PgSqliteError> {
+        // Forward to execute_with_params
+        self.execute_with_params(query, params, session_id).await
+    }
+    
+    // Execute a closure with access to the session's connection
+    pub async fn with_session_connection<F, R>(
+        &self,
+        session_id: &Uuid,
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<R, rusqlite::Error>
+    {
+        self.connection_manager.execute_with_session(session_id, f)
+    }
+    
+    // Compatibility methods for existing code
+    pub fn get_schema_cache(&self) -> &Arc<SchemaCache> {
+        &self.schema_cache
+    }
+    
+    pub fn get_string_validator(&self) -> &Arc<StringConstraintValidator> {
         &self.string_validator
     }
     
-    /// Try executing a query using enhanced statement caching
-    async fn try_execute_with_enhanced_cache(&self, query: &str) -> Result<usize, rusqlite::Error> {
-        let conn = self.conn.lock();
-        self.statement_cache_optimizer.execute_with_optimization(&conn, query, [])
+    pub fn get_statement_cache_optimizer(&self) -> &Arc<StatementCacheOptimizer> {
+        &self.statement_cache_optimizer
     }
     
-    /// Try querying using enhanced statement caching
-    async fn try_query_with_enhanced_cache(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
-        let conn = self.conn.lock();
-        debug!("Trying enhanced cache for query: {}", query);
+    /// Handle information_schema.tables query
+    async fn handle_information_schema_tables_query(&self, _query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // For now, just return the list of tables
+        let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
         
-        // First try the read-only optimizer for SELECT queries
-        if query.trim().to_uppercase().starts_with("SELECT") {
-            if let Some(response) = self.statement_cache_optimizer.get_optimization_manager().execute_read_only_query(&conn, query, &self.schema_cache)? {
-                debug!("Read-only optimizer succeeded for query: {}", query);
-                return Ok(response);
-            }
-        }
-        
-        // Fall back to statement cache optimizer
-        let (columns, rows) = self.statement_cache_optimizer.query_with_optimization(&conn, query, [])?;
-        debug!("Enhanced cache returned {} columns and {} rows", columns.len(), rows.len());
-        
-        Ok(DbResponse {
-            columns,
-            rows,
-            rows_affected: 0,
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            let mut stmt = conn.prepare(tables_query)?;
+            let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                let table_name: String = row.get(0)?;
+                // Return full information_schema.tables row
+                Ok(vec![
+                    Some("main".to_string().into_bytes()),      // table_catalog
+                    Some("public".to_string().into_bytes()),    // table_schema  
+                    Some(table_name.into_bytes()),              // table_name
+                    Some("BASE TABLE".to_string().into_bytes()), // table_type
+                    None,                                       // self_referencing_column_name
+                    None,                                       // reference_generation
+                    None,                                       // user_defined_type_catalog
+                    None,                                       // user_defined_type_schema
+                    None,                                       // user_defined_type_name
+                    None,                                       // is_insertable_into
+                    None,                                       // is_typed
+                    None,                                       // commit_action
+                ])
+            })?.collect();
+            
+            Ok(DbResponse {
+                columns: vec![
+                    "table_catalog".to_string(),
+                    "table_schema".to_string(),
+                    "table_name".to_string(),
+                    "table_type".to_string(),
+                    "self_referencing_column_name".to_string(),
+                    "reference_generation".to_string(),
+                    "user_defined_type_catalog".to_string(),
+                    "user_defined_type_schema".to_string(),
+                    "user_defined_type_name".to_string(),
+                    "is_insertable_into".to_string(),
+                    "is_typed".to_string(),
+                    "commit_action".to_string(),
+                ],
+                rows: rows?,
+                rows_affected: 0,
+            })
         })
     }
-    
-    /// Get comprehensive statistics from the enhanced statement cache
-    pub fn get_enhanced_cache_stats(&self) -> crate::optimization::statement_cache_optimizer::StatementCacheStats {
-        self.statement_cache_optimizer.get_comprehensive_stats()
-    }
-    
-    /// Perform periodic maintenance on the enhanced statement cache
-    pub async fn perform_cache_maintenance(&self) {
-        self.statement_cache_optimizer.maintenance();
-    }
-    
-    /// Shutdown (no-op for mutex handler)
-    pub async fn shutdown(&self) {
-        // Nothing to do
-    }
 }
 
-impl Clone for DbHandler {
-    fn clone(&self) -> Self {
-        Self {
-            conn: self.conn.clone(),
-            schema_cache: self.schema_cache.clone(),
-            string_validator: self.string_validator.clone(),
-            statement_cache_optimizer: self.statement_cache_optimizer.clone(),
-        }
-    }
-}
-
-// Helper functions (previously in db_executor.rs)
-
-pub fn is_ddl_statement(query: &str) -> bool {
-    QueryTypeDetector::is_ddl(query)
-}
-
-pub fn execute_dml_sync(
-    conn: &Connection,
-    query: &str,
-    schema_cache: &SchemaCache,
-) -> Result<DbResponse, rusqlite::Error> {
-    // Fast path: For simple INSERT statements without decimals, execute directly
-    if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Insert) {
-        if let Some(table_name) = extract_insert_table_name(query) {
-            // Check if table has decimal columns using bloom filter
-            if !schema_cache.has_decimal_columns(&table_name) {
-                // No decimal columns, execute directly without parsing
-                let rows_affected = conn.execute(query, [])?;
-                return Ok(DbResponse {
-                    columns: Vec::new(),
-                    rows: Vec::new(),
-                    rows_affected,
-                });
-            }
-        }
-    }
-    
-    // Fall back to decimal rewriting for other cases
-    let rewritten_query = rewrite_query_for_decimal(query, conn)?;
-    let rows_affected = conn.execute(&rewritten_query, [])?;
-    
-    Ok(DbResponse {
-        columns: Vec::new(),
-        rows: Vec::new(),
-        rows_affected,
-    })
-}
-
-/// Ultra-fast execution path using execution cache
-pub fn execute_query_optimized(
-    conn: &Connection,
-    query: &str,
-    schema_cache: &SchemaCache,
-) -> Result<DbResponse, rusqlite::Error> {
-    // Skip cache for non-deterministic functions
-    let skip_cache = crate::query::simple_query_detector::contains_non_deterministic_functions(query);
-    
-    // Generate cache key
-    let cache_key = ExecutionCache::generate_key(query, &[]);
-    
-    // Try execution cache first (only if not non-deterministic)
-    if !skip_cache {
-        if let Some(metadata) = global_execution_cache().get(&cache_key) {
-            return execute_with_cached_metadata(conn, &metadata);
-        }
-    }
-    
-    // Cache miss - analyze and build metadata
-    let metadata = build_execution_metadata(conn, query, schema_cache)?;
-    
-    // Cache for future use (only if not non-deterministic)
-    if !skip_cache {
-        global_execution_cache().insert(cache_key, metadata.clone());
-    }
-    
-    // Execute with new metadata
-    execute_with_cached_metadata(conn, &metadata)
-}
-
-/// Execute query using pre-computed execution metadata with batch processing
-fn execute_with_cached_metadata(
-    conn: &Connection,
-    metadata: &ExecutionMetadata,
-) -> Result<DbResponse, rusqlite::Error> {
-    // Use prepared statement for execution
-    let mut stmt = if crate::profiling::is_profiling_enabled() {
-        crate::time_sqlite_prepare!({
-            conn.prepare(&metadata.prepared_sql)?
-        })
-    } else {
-        conn.prepare(&metadata.prepared_sql)?
-    };
-    
-    // Batch processing optimization: Process rows in chunks for better cache locality
-    const BATCH_SIZE: usize = 100;
-    let mut rows = Vec::new();
-    
-    // Pre-allocate conversion buffers for better performance
-    let type_converter_table = global_type_converter_table();
-    let num_columns = metadata.type_converters.len();
-    
-    let query_result = stmt.query_map([], |row| {
-        // Pre-allocate row data vector
-        let mut row_data = Vec::with_capacity(num_columns);
-        
-        // Optimized row processing with minimal allocations
-        for (col_idx, &converter_idx) in metadata.type_converters.iter().enumerate() {
-            let value = row.get_ref(col_idx)?;
-            
-            
-            // Fast path for common value types to avoid allocation
-            // Handle NULL values explicitly
-            if matches!(value, rusqlite::types::ValueRef::Null) {
-                row_data.push(None);
-                continue;
-            }
-            
-            // Check if binary encoding is requested for this column
-            let converted = if col_idx < metadata.result_formats.len() && metadata.result_formats[col_idx] == 1 {
-                // Binary encoding requested
-                let type_oid = if col_idx < metadata.type_oids.len() {
-                    metadata.type_oids[col_idx]
-                } else {
-                    25 // Default to TEXT
-                };
-                
-                let owned_value: rusqlite::types::Value = match value {
-                    rusqlite::types::ValueRef::Integer(i) => rusqlite::types::Value::Integer(i),
-                    rusqlite::types::ValueRef::Real(r) => rusqlite::types::Value::Real(r),
-                    rusqlite::types::ValueRef::Text(t) => rusqlite::types::Value::Text(String::from_utf8_lossy(t).to_string()),
-                    rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
-                    _ => unreachable!("NULL already handled above"),
-                };
-                
-                type_converter_table.convert_binary(&owned_value, type_oid)?
-            } else {
-                // Text encoding (existing logic)
-                match (value, converter_idx) {
-                    // Fast boolean conversion (most common case)
-                    (rusqlite::types::ValueRef::Integer(i), 2) => {
-                        if i == 0 { b"f".to_vec() } else { b"t".to_vec() }
-                    },
-                    // Fast text conversion for strings
-                    (rusqlite::types::ValueRef::Text(t), 0) => t.to_vec(),
-                    // Fast integer conversion
-                    (rusqlite::types::ValueRef::Integer(i), 1) => i.to_string().into_bytes(),
-                    // Fast date conversion (INTEGER days -> YYYY-MM-DD)
-                    (rusqlite::types::ValueRef::Integer(days), 6) => {
-                        use crate::types::datetime_utils::format_days_to_date_buf;
-                        let mut buf = vec![0u8; 32];
-                        let len = format_days_to_date_buf(days as i32, &mut buf);
-                        buf.truncate(len);
-                        buf
-                    },
-                    // Fast timestamp conversion (INTEGER microseconds -> YYYY-MM-DD HH:MM:SS.ffffff)
-                    (rusqlite::types::ValueRef::Integer(micros), 8) => {
-                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
-                        let mut buf = vec![0u8; 32];
-                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
-                        buf.truncate(len);
-                        buf
-                    },
-                    // Fast time conversion (INTEGER microseconds -> HH:MM:SS.ffffff)
-                    (rusqlite::types::ValueRef::Integer(micros), 7) => {
-                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
-                        let mut buf = vec![0u8; 32];
-                        let len = format_microseconds_to_time_buf(micros, &mut buf);
-                        buf.truncate(len);
-                        buf
-                    },
-                    // Fallback to generic converter for complex cases
-                    _ => {
-                        let owned_value: rusqlite::types::Value = match value {
-                            rusqlite::types::ValueRef::Integer(i) => rusqlite::types::Value::Integer(i),
-                            rusqlite::types::ValueRef::Real(r) => rusqlite::types::Value::Real(r),
-                            rusqlite::types::ValueRef::Text(t) => rusqlite::types::Value::Text(String::from_utf8_lossy(t).to_string()),
-                            rusqlite::types::ValueRef::Blob(b) => rusqlite::types::Value::Blob(b.to_vec()),
-                            _ => unreachable!("NULL already handled above"),
-                        };
-                        type_converter_table.convert(converter_idx, &owned_value)?
-                    }
-                }
-            };
-            
-            // For non-NULL values, empty vectors are valid (e.g., empty strings)
-            row_data.push(Some(converted));
-        }
-        
-        Ok(row_data)
-    })?;
-
-    // Collect rows with batch processing for better memory efficiency
-    if crate::profiling::is_profiling_enabled() {
-        crate::time_result_format!({
-            for row in query_result {
-                rows.push(row?);
-                
-                // Process in batches for better cache performance (though we collect all here)
-                if rows.len() % BATCH_SIZE == 0 && !rows.is_empty() {
-                    // Reserve capacity for next batch
-                    rows.reserve(BATCH_SIZE);
-                }
-            }
-        });
-    } else {
-        for row in query_result {
-            rows.push(row?);
-            
-            // Process in batches for better cache performance (though we collect all here)
-            if rows.len() % BATCH_SIZE == 0 && !rows.is_empty() {
-                // Reserve capacity for next batch
-                rows.reserve(BATCH_SIZE);
-            }
-        }
-    }
-
-    Ok(DbResponse {
-        columns: metadata.columns.clone(),
-        rows,
-        rows_affected: 0,
-    })
-}
-
-/// Build execution metadata for a query
-fn build_execution_metadata(
-    conn: &Connection, 
-    query: &str, 
-    schema_cache: &SchemaCache
-) -> Result<ExecutionMetadata, rusqlite::Error> {
-    // Debug logging for enum cast issue
-    
-    // Ensure schema is loaded for tables referenced in this query
-    schema_cache.ensure_schema_loaded(conn, query);
-    
-    // Check if query can use fast path
-    let fast_path_eligible = is_fast_path_query(query);
-    
-    // Prepare the query to get column information
-    let prepared_sql = if needs_decimal_rewriting(query, schema_cache) {
-        rewrite_query_for_decimal(query, conn)?
-    } else {
-        query.to_string()
-    };
-    
-    // Restore JSON path $ characters right before SQLite preparation
-    let final_sql = crate::translator::JsonTranslator::restore_json_path_root(&prepared_sql);
-    let stmt = conn.prepare(&final_sql)?;
-    let column_count = stmt.column_count();
-    
-    // Extract column information
-    let mut columns = Vec::new();
-    let mut boolean_columns = Vec::new();
-    let mut type_converters = Vec::new();
-    
-    
-    for i in 0..column_count {
-        let col_name = stmt.column_name(i).unwrap_or("").to_string();
-        columns.push(col_name.clone());
-        
-        // Determine if this is a boolean column
-        let is_boolean = is_boolean_column(&col_name, query, schema_cache);
-        boolean_columns.push(is_boolean);
-        
-        
-        // Select appropriate type converter based on column type
-        let converter_idx = if is_boolean {
-            2 // Boolean converter
-        } else {
-            // Infer type from query patterns and column name
-            let col_type = infer_column_type(&col_name, query, schema_cache);
-            
-            
-            // HACK: Force text converter for enum columns to fix issue where
-            // enum values are incorrectly converted to "0" by integer converter
-            // This is a temporary fix until we properly track enum types
-            let idx = if query.contains("__pgsqlite_enum_values") || 
-                       (final_sql.contains("__pgsqlite_enum_values") && col_type == "text") {
-                // This is an enum query result, always use text converter
-                0
-            } else {
-                match col_type.to_lowercase().as_str() {
-                "text" => 0, // Text converter - explicitly handle text type
-                "integer" | "int4" | "int8" | "int2" | "bigint" | "smallint" => 1, // Integer converter
-                "real" | "float4" | "float8" | "double" | "numeric" => 3, // Float converter  
-                "bytea" | "blob" => 4, // Blob converter
-                "date" => 6, // Date converter (INTEGER days -> YYYY-MM-DD)
-                "time" | "timetz" | "time without time zone" | "time with time zone" => 7, // Time converter
-                "timestamp" | "timestamptz" | "timestamp without time zone" | "timestamp with time zone" => 8, // Timestamp converter
-                _ => {
-                    // For unknown types (including enums), always use text converter
-                    0 // Text converter (default)
-                }
-                }
-            };
-            idx
-        };
-        type_converters.push(converter_idx);
-    }
-    
-    let column_count = columns.len();
-    Ok(ExecutionMetadata {
-        columns,
-        boolean_columns,
-        type_converters,
-        type_oids: vec![PgType::Text.to_oid(); column_count], // Default to TEXT, will be populated later
-        result_formats: vec![], // Will be populated from Portal when executing
-        fast_path_eligible,
-        prepared_sql: final_sql,
-        param_count: 0, // TODO: Count parameters
-    })
-}
-
-/// Check if a query needs decimal rewriting
-fn needs_decimal_rewriting(query: &str, schema_cache: &SchemaCache) -> bool {
-    // Quick check for decimal operations
-    if !query.contains('+') && !query.contains('-') && !query.contains('*') && !query.contains('/') {
-        return false;
-    }
-    
-    // Extract table names and check if any have decimal columns
-    if let Ok(table_names) = extract_table_names_simple(query) {
-        for table_name in table_names {
-            if schema_cache.has_decimal_columns(&table_name) {
-                return true;
-            }
-        }
-    }
-    
-    false
-}
-
-/// Simple table name extraction without full parsing
-fn extract_table_names_simple(query: &str) -> Result<Vec<String>, ()> {
-    let mut table_names = Vec::new();
-    
-    // Look for "FROM table_name" patterns - use case-insensitive search
-    let from_pos = query.as_bytes().windows(6)
-        .position(|window| window.eq_ignore_ascii_case(b" FROM "))
-        .ok_or(())?;
-    if from_pos > 0 {
-        let after_from = &query[from_pos + 6..];
-        if let Some(next_space) = after_from.find(' ') {
-            let table_name = after_from[..next_space].trim().to_string();
-            table_names.push(table_name);
-        } else {
-            let table_name = after_from.trim().to_string();
-            table_names.push(table_name);
-        }
-    }
-    
-    if table_names.is_empty() {
-        Err(())
-    } else {
-        Ok(table_names)
-    }
-}
-
-/// Check if this is a fast path eligible query
-fn is_fast_path_query(query: &str) -> bool {
-    use crate::query::{QueryTypeDetector, QueryType};
-    
-    let trimmed = query.trim();
-    let query_bytes = trimmed.as_bytes();
-    
-    // Only SELECT queries can use fast path
-    matches!(QueryTypeDetector::detect_query_type(trimmed), QueryType::Select) &&
-    !query_bytes.windows(4).any(|w| w.eq_ignore_ascii_case(b"JOIN")) &&
-    !query_bytes.windows(5).any(|w| w.eq_ignore_ascii_case(b"UNION")) &&
-    !query_bytes.windows(8).any(|w| w.eq_ignore_ascii_case(b"SUBQUERY")) &&
-    !query_bytes.windows(8).any(|w| w.eq_ignore_ascii_case(b"GROUP BY")) &&
-    !query_bytes.windows(8).any(|w| w.eq_ignore_ascii_case(b"ORDER BY")) &&
-    !query_bytes.windows(6).any(|w| w.eq_ignore_ascii_case(b"HAVING"))
-}
-
-/// Check if a column is a boolean type
-fn is_boolean_column(col_name: &str, query: &str, schema_cache: &SchemaCache) -> bool {
-    // Try to extract table name from query
-    if let Ok(table_names) = extract_table_names_simple(query) {
-        for table_name in table_names {
-            if let Some(schema) = schema_cache.get(&table_name) {
-                if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
-                    return col_info.pg_type.to_lowercase() == "boolean" || col_info.pg_oid == PgType::Bool.to_oid();
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Infer the column type for optimized conversion
-fn infer_column_type(col_name: &str, query: &str, schema_cache: &SchemaCache) -> String {
-    // Check if this is a datetime function expression
-    let lower_col_name = col_name.to_lowercase();
-    
-    // Check for NOW() and CURRENT_TIMESTAMP variations
-    if lower_col_name == "now()" || lower_col_name == "now" ||
-       lower_col_name == "current_timestamp()" || lower_col_name == "current_timestamp" {
-        return "timestamptz".to_string();
-    }
-    
-    // Check if this is an enum cast - look for CAST(... AS <type>) or ::type patterns
-    // or if it's querying from enum tables
-    let lower_query = query.to_lowercase();
-    if (lower_query.contains("cast") && lower_query.contains(" as ")) || 
-       lower_query.contains("::") ||
-       lower_query.contains("__pgsqlite_enum_values") {
-        // This is an enum cast or enum query, always use text
-        // Enums are stored as text in SQLite
-        return "text".to_string();
-    }
-    
-    // Also check if the query contains these functions and the column might be aliased
-    if lower_query.contains("now()") || lower_query.contains("current_timestamp") {
-        // If the query contains these functions, and this looks like it could be the result column
-        // (not a table column), assume it's a timestamp
-        if !lower_col_name.contains('.') {
-            // Check if this column exists in any known table
-            let mut is_table_column = false;
-            if let Ok(table_names) = extract_table_names_simple(query) {
-                for table_name in table_names {
-                    if let Some(schema) = schema_cache.get(&table_name) {
-                        if schema.column_map.contains_key(&lower_col_name) {
-                            is_table_column = true;
-                            break;
-                        }
-                    }
-                }
-            }
-            if !is_table_column {
-                return "timestamptz".to_string();
-            }
-        }
-    }
-    
-    // Also check for current_time() and current_date()
-    if lower_col_name == "current_time()" || lower_col_name == "current_time" {
-        return "timetz".to_string();
-    }
-    if lower_col_name == "current_date()" || lower_col_name == "current_date" {
-        return "date".to_string();
-    }
-    
-    // Try to extract table name from query and get column type
-    if let Ok(table_names) = extract_table_names_simple(query) {
-        for table_name in table_names {
-            if let Some(schema) = schema_cache.get(&table_name) {
-                if let Some(col_info) = schema.column_map.get(&col_name.to_lowercase()) {
-                    return col_info.pg_type.clone();
-                }
-            }
-        }
-    }
-    
-    // Fallback to text type
-    "text".to_string()
-}
-
-pub fn execute_query_sync(
-    conn: &Connection,
-    query: &str,
-    schema_cache: &SchemaCache,
-) -> Result<DbResponse, rusqlite::Error> {
-    // Translate PostgreSQL cast syntax if present
-    let translated_query = if query.contains("::") || query.to_uppercase().contains("CAST") {
-        use crate::translator::CastTranslator;
-        CastTranslator::translate_query(query, Some(conn))
-    } else {
-        query.to_string()
-    };
-    
-    let query_to_execute = translated_query.as_str();
-    
-    // Try ultra-fast execution path first
-    match execute_query_optimized(conn, query_to_execute, schema_cache) {
-        Ok(result) => return Ok(result),
-        Err(_) => {
-            // Fall back to original path if optimized path fails
-            debug!("Optimized execution failed, falling back to original path for: {}", query_to_execute);
-        }
-    }
-    
-    // Check global query cache first
-    if let Some(cached) = crate::session::GLOBAL_QUERY_CACHE.get(query_to_execute) {
-        // Use cached rewritten query if available
-        let final_query = cached.rewritten_query.as_ref().unwrap_or(&cached.normalized_query);
-        debug!("Query cache HIT for: {}", query_to_execute);
-        
-        // Log metrics periodically (every 100 queries)
-        let metrics = crate::session::GLOBAL_QUERY_CACHE.get_metrics();
-        if metrics.total_queries % 100 == 0 {
-            info!(
-                "Query cache metrics - Total: {}, Hits: {}, Hit Rate: {:.1}%, Evictions: {}",
-                metrics.total_queries,
-                metrics.cache_hits,
-                (metrics.cache_hits as f64 / metrics.total_queries as f64) * 100.0,
-                metrics.evictions
-            );
-        }
-        
-        // For cached queries, try to use statement pool for better performance
-        return execute_cached_query_with_statement_pool(conn, query_to_execute, &cached, final_query);
-    }
-    
-    debug!("Query cache MISS for: {}", query_to_execute);
-    
-    // Parse and rewrite query for DECIMAL types if needed
-    let (rewritten_query, parsed_info) = parse_and_rewrite_query(query_to_execute, conn, schema_cache)?;
-    
-    // Cache the parsed query for future use
-    let cached_query = CachedQuery {
-        statement: parsed_info.statement,
-        param_types: Vec::new(), // Will be filled for extended protocol
-        is_decimal_query: parsed_info.is_decimal_query,
-        table_names: parsed_info.table_names,
-        column_types: parsed_info.column_types,
-        has_decimal_columns: parsed_info.has_decimal_columns,
-        rewritten_query: if parsed_info.is_decimal_query && rewritten_query != query_to_execute {
-            Some(rewritten_query.clone())
-        } else {
-            None
-        },
-        normalized_query: crate::cache::QueryCache::normalize_query(query_to_execute),
-    };
-    
-    // Insert into global cache using the translated query as key
-    crate::session::GLOBAL_QUERY_CACHE.insert(query_to_execute.to_string(), cached_query.clone());
-    debug!(
-        "Cached query - Tables: {:?}, Decimal: {}, Column types: {}",
-        cached_query.table_names,
-        cached_query.has_decimal_columns,
-        cached_query.column_types.len()
-    );
-    
-    // Execute using cached information and statement pool
-    execute_cached_query_with_statement_pool(conn, query_to_execute, &cached_query, &rewritten_query)
-}
-
-
-/// Extract table name from INSERT statement
+/// Helper function to extract table name from INSERT query
 pub fn extract_insert_table_name(query: &str) -> Option<String> {
     // Simple regex-free parsing for performance - use case-insensitive search
     let into_pos = query.as_bytes().windows(6)
@@ -1367,7 +588,10 @@ pub fn extract_insert_table_name(query: &str) -> Option<String> {
 }
 
 /// Rewrite query to handle DECIMAL types if needed
-pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
+pub fn rewrite_query_for_decimal(query: &str, conn: &rusqlite::Connection) -> Result<String, rusqlite::Error> {
+    use sqlparser::parser::Parser;
+    use sqlparser::dialect::PostgreSqlDialect;
+    
     // Parse the SQL statement (keep JSON path placeholders for now)
     let dialect = PostgreSqlDialect {};
     let mut statements = Parser::parse_sql(&dialect, query)
@@ -1378,7 +602,7 @@ pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<Strin
     }
     
     // Rewrite the first statement for decimal handling
-    let mut rewriter = DecimalQueryRewriter::new(conn);
+    let mut rewriter = crate::rewriter::DecimalQueryRewriter::new(conn);
     if let Err(e) = rewriter.rewrite_statement(&mut statements[0]) {
         // If rewriting fails, log and return original query
         tracing::warn!("Failed to rewrite query for decimal: {}", e);
@@ -1388,389 +612,4 @@ pub fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<Strin
     let rewritten = statements[0].to_string();
     tracing::debug!("Decimal rewriter output: {}", rewritten);
     Ok(rewritten)
-}
-
-struct ParsedQueryInfo {
-    statement: Statement,
-    table_names: Vec<String>,
-    column_types: Vec<(String, PgType)>,
-    has_decimal_columns: bool,
-    is_decimal_query: bool,
-}
-
-/// Parse and rewrite query, returning rewritten query and parsed info
-fn parse_and_rewrite_query(query: &str, conn: &Connection, schema_cache: &SchemaCache) -> Result<(String, ParsedQueryInfo), rusqlite::Error> {
-    // Parse the SQL statement (keep JSON path placeholders for now)
-    let dialect = PostgreSqlDialect {};
-    let statements = Parser::parse_sql(&dialect, query)
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    
-    if statements.is_empty() {
-        return Err(rusqlite::Error::InvalidQuery);
-    }
-    
-    let statement = statements.into_iter().next().unwrap();
-    
-    // Extract table names
-    let table_names = extract_table_names_from_statement(&statement);
-    
-    // Get column types for the tables using enhanced schema cache
-    let mut column_types = Vec::new();
-    let mut has_decimal_columns = false;
-    
-    for table_name in &table_names {
-        // Use the enhanced cache for fast schema lookup
-        if let Ok(table_schema) = schema_cache.get_or_load(conn, table_name) {
-            for col_info in &table_schema.columns {
-                if let Some(pg_type) = pg_type_from_string(&col_info.pg_type) {
-                    if pg_type == PgType::Numeric {
-                        has_decimal_columns = true;
-                    }
-                    column_types.push((col_info.name.clone(), pg_type));
-                }
-            }
-        } else {
-            // Fast path: check decimal table bloom filter
-            if schema_cache.has_decimal_columns(table_name) {
-                has_decimal_columns = true;
-            }
-        }
-    }
-    
-    // Rewrite for decimal if needed
-    let mut statement_clone = statement.clone();
-    let mut rewriter = DecimalQueryRewriter::new(conn);
-    let is_decimal_query = has_decimal_columns;
-    
-    let rewritten_query = if is_decimal_query {
-        if let Err(e) = rewriter.rewrite_statement(&mut statement_clone) {
-            tracing::warn!("Failed to rewrite query for decimal: {}", e);
-            query.to_string()
-        } else {
-            statement_clone.to_string()
-        }
-    } else {
-        query.to_string()
-    };
-    
-    Ok((rewritten_query, ParsedQueryInfo {
-        statement,
-        table_names,
-        column_types,
-        has_decimal_columns,
-        is_decimal_query,
-    }))
-}
-
-/// Execute a query using cached information and statement pool
-fn execute_cached_query_with_statement_pool(
-    conn: &Connection,
-    _original_query: &str,
-    cached: &CachedQuery,
-    final_query: &str,
-) -> Result<DbResponse, rusqlite::Error> {
-    // For simple queries, try to use statement pool
-    if !final_query.contains('$') && matches!(crate::query::QueryTypeDetector::detect_query_type(final_query), crate::query::QueryType::Select) {
-        if let Ok((columns, rows)) = StatementPool::global().query_cached(conn, final_query, []) {
-            // Update touch for the statement pool entry
-            StatementPool::global().touch(final_query);
-            
-            return Ok(DbResponse {
-                columns,
-                rows,
-                rows_affected: 0,
-            });
-        }
-    }
-    
-    // Fall back to original execution method
-    execute_cached_query(conn, _original_query, cached, final_query)
-}
-
-/// Execute a query using cached information
-fn execute_cached_query(
-    conn: &Connection,
-    _original_query: &str,
-    cached: &CachedQuery,
-    final_query: &str,
-) -> Result<DbResponse, rusqlite::Error> {
-    let mut stmt = conn.prepare(final_query)?;
-    let column_count = stmt.column_count();
-    
-    let columns: Vec<String> = (0..column_count)
-        .map(|i| stmt.column_name(i).unwrap_or("").to_string())
-        .collect();
-    
-    // Use cached column types for type detection
-    let mut is_boolean_col = vec![false; column_count];
-    let mut is_date_col = vec![false; column_count];
-    let mut is_time_col = vec![false; column_count];
-    let mut is_timestamp_col = vec![false; column_count];
-    let mut is_array_col = vec![false; column_count];
-    
-    for (i, col_name) in columns.iter().enumerate() {
-        for (cached_col, pg_type) in &cached.column_types {
-            if cached_col == col_name {
-                match pg_type {
-                    PgType::Bool => is_boolean_col[i] = true,
-                    PgType::Date => is_date_col[i] = true,
-                    PgType::Time | PgType::Timetz => is_time_col[i] = true,
-                    PgType::Timestamp | PgType::Timestamptz => is_timestamp_col[i] = true,
-                    // Array types - detect any array type
-                    PgType::BoolArray | PgType::Int2Array | PgType::Int4Array | PgType::Int8Array |
-                    PgType::Float4Array | PgType::Float8Array | PgType::TextArray | PgType::VarcharArray |
-                    PgType::CharArray | PgType::UuidArray | PgType::JsonArray | PgType::JsonbArray |
-                    PgType::DateArray | PgType::TimeArray | PgType::TimestampArray | PgType::TimestamptzArray |
-                    PgType::IntervalArray | PgType::NumericArray | PgType::MoneyArray | PgType::ByteaArray |
-                    PgType::BitArray | PgType::VarbitArray | PgType::CidrArray | PgType::InetArray |
-                    PgType::MacaddrArray | PgType::Macaddr8Array | PgType::Int4rangeArray | 
-                    PgType::Int8rangeArray | PgType::NumrangeArray => is_array_col[i] = true,
-                    _ => {}
-                }
-                break;
-            }
-        }
-    }
-    
-    let rows = stmt.query_map([], |row| {
-        let mut row_data = Vec::new();
-        for i in 0..column_count {
-            let value = row.get_ref(i)?;
-            match value {
-                rusqlite::types::ValueRef::Null => row_data.push(None),
-                rusqlite::types::ValueRef::Integer(int_val) => {
-                    if is_boolean_col[i] {
-                        // Convert SQLite's 0/1 to PostgreSQL's f/t format
-                        let bool_str = if int_val == 0 { "f" } else { "t" };
-                        row_data.push(Some(bool_str.as_bytes().to_vec()));
-                    } else if is_date_col[i] {
-                        // Convert INTEGER days to YYYY-MM-DD
-                        use crate::types::datetime_utils::format_days_to_date_buf;
-                        let mut buf = vec![0u8; 32];
-                        let len = format_days_to_date_buf(int_val as i32, &mut buf);
-                        buf.truncate(len);
-                        row_data.push(Some(buf));
-                    } else if is_time_col[i] {
-                        // Convert INTEGER microseconds to HH:MM:SS.ffffff
-                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
-                        let mut buf = vec![0u8; 32];
-                        let len = format_microseconds_to_time_buf(int_val, &mut buf);
-                        buf.truncate(len);
-                        row_data.push(Some(buf));
-                    } else if is_timestamp_col[i] {
-                        // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff
-                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
-                        let mut buf = vec![0u8; 64];
-                        let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
-                        buf.truncate(len);
-                        row_data.push(Some(buf));
-                    } else {
-                        // For simple query protocol, always return text format
-                        row_data.push(Some(int_val.to_string().into_bytes()));
-                    }
-                },
-                rusqlite::types::ValueRef::Real(f) => {
-                    row_data.push(Some(f.to_string().into_bytes()));
-                },
-                rusqlite::types::ValueRef::Text(s) => {
-                    if is_array_col[i] {
-                        // Convert JSON array to PostgreSQL array format
-                        if let Ok(converted) = convert_json_to_pg_array(s) {
-                            row_data.push(Some(converted));
-                        } else {
-                            // If conversion fails, use original value
-                            row_data.push(Some(s.to_vec()));
-                        }
-                    } else {
-                        row_data.push(Some(s.to_vec()));
-                    }
-                },
-                rusqlite::types::ValueRef::Blob(b) => {
-                    row_data.push(Some(b.to_vec()));
-                },
-            }
-        }
-        Ok(row_data)
-    })?;
-    
-    let mut result_rows = Vec::new();
-    for row in rows {
-        result_rows.push(row?);
-    }
-    
-    Ok(DbResponse {
-        columns,
-        rows: result_rows,
-        rows_affected: 0,
-    })
-}
-
-/// Extract table names from a statement
-fn extract_table_names_from_statement(statement: &Statement) -> Vec<String> {
-    match statement {
-        Statement::Query(query) => {
-            let mut tables = Vec::new();
-            // This is a simplified version - in production you'd want full AST traversal
-            if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
-                for table_with_joins in &select.from {
-                    if let sqlparser::ast::TableFactor::Table { name, .. } = &table_with_joins.relation {
-                        tables.push(name.to_string());
-                    }
-                }
-            }
-            tables
-        }
-        _ => Vec::new(),
-    }
-}
-
-/// Convert PostgreSQL type string to PgType enum
-fn pg_type_from_string(type_str: &str) -> Option<PgType> {
-    match type_str.to_lowercase().as_str() {
-        "boolean" | "bool" => Some(PgType::Bool),
-        "smallint" | "int2" => Some(PgType::Int2),
-        "integer" | "int" | "int4" => Some(PgType::Int4),
-        "bigint" | "int8" => Some(PgType::Int8),
-        "real" | "float4" => Some(PgType::Float4),
-        "double precision" | "float8" => Some(PgType::Float8),
-        "text" => Some(PgType::Text),
-        "varchar" => Some(PgType::Varchar),
-        "char" => Some(PgType::Char),
-        "uuid" => Some(PgType::Uuid),
-        "json" => Some(PgType::Json),
-        "jsonb" => Some(PgType::Jsonb),
-        "date" => Some(PgType::Date),
-        "time" => Some(PgType::Time),
-        "timestamp" => Some(PgType::Timestamp),
-        "timestamptz" | "timestamp with time zone" => Some(PgType::Timestamptz),
-        "numeric" | "decimal" => Some(PgType::Numeric),
-        "bytea" => Some(PgType::Bytea),
-        "money" => Some(PgType::Money),
-        _ => None,
-    }
-}
-
-/// Convert SQLite CHECK constraint errors to PostgreSQL-compatible enum errors
-fn convert_enum_error(error: rusqlite::Error, query: &str) -> rusqlite::Error {
-    if let rusqlite::Error::SqliteFailure(sqlite_error, Some(msg)) = &error {
-        if sqlite_error.code == rusqlite::ErrorCode::ConstraintViolation && msg.contains("CHECK constraint failed") {
-            // Try to extract the enum type and value from the error message
-            // SQLite error format: "CHECK constraint failed: column_name IN ('val1', 'val2', ...)"
-            if let Some(start) = msg.find("CHECK constraint failed: ") {
-                let constraint_part = &msg[start + 25..];
-                if let Some(space_pos) = constraint_part.find(' ') {
-                    let column_name = &constraint_part[..space_pos];
-                    
-                    // Try to extract the value from the INSERT query
-                    if let Some(value) = extract_enum_value_from_query(query, column_name) {
-                        // Try to find the enum type name from the constraint
-                        if let Some(enum_type) = extract_enum_type_from_constraint(constraint_part) {
-                            return rusqlite::Error::SqliteFailure(
-                                *sqlite_error,
-                                Some(format!("invalid input value for enum {enum_type}: \"{value}\""))
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-    error
-}
-
-/// Extract the enum value being inserted from the query
-fn extract_enum_value_from_query(query: &str, column_name: &str) -> Option<String> {
-    // Parse INSERT statement to find column position and corresponding value
-    let insert_re = regex::Regex::new(r"(?i)INSERT\s+INTO\s+\w+\s*\(([^)]+)\)\s*VALUES\s*\(([^)]+)\)").ok()?;
-    let captures = insert_re.captures(query)?;
-    
-    let columns_str = captures.get(1)?.as_str();
-    let values_str = captures.get(2)?.as_str();
-    
-    // Find column index
-    let columns: Vec<&str> = columns_str.split(',').map(|c| c.trim()).collect();
-    let column_index = columns.iter().position(|&c| c == column_name)?;
-    
-    // Extract corresponding value
-    let values: Vec<&str> = values_str.split(',').map(|v| v.trim()).collect();
-    let value = values.get(column_index)?;
-    
-    // Remove quotes from value
-    let trimmed = value.trim_matches('\'').trim_matches('"');
-    Some(trimmed.to_string())
-}
-
-/// Extract enum type name from CHECK constraint
-fn extract_enum_type_from_constraint(constraint: &str) -> Option<String> {
-    // Try to infer the enum type from the column name
-    // In our implementation, column names often match or relate to enum type names
-    if let Some(column_start) = constraint.find(' ') {
-        let column_part = &constraint[..column_start];
-        // Remove common suffixes like _status, _type, _mood, etc.
-        let type_name = column_part
-            .trim_end_matches("_status")
-            .trim_end_matches("_type")
-            .trim_end_matches("_state")
-            .trim_end_matches("_mood")
-            .trim_end_matches("_level");
-        
-        // If it ends with the column name pattern, just use it
-        if column_part.contains('_') {
-            return Some(column_part.split('_').next_back()?.to_string());
-        }
-        
-        return Some(type_name.to_string());
-    }
-    None
-}
-
-/// Convert JSON array string to PostgreSQL array format
-fn convert_json_to_pg_array(json_str: &[u8]) -> Result<Vec<u8>, String> {
-    // Convert bytes to string
-    let s = std::str::from_utf8(json_str).map_err(|_| "Invalid UTF-8")?;
-    
-    // Try to parse as JSON array
-    match serde_json::from_str::<serde_json::Value>(s) {
-        Ok(json_val) => {
-            if let serde_json::Value::Array(arr) = json_val {
-                // Convert to PostgreSQL array literal format
-                let pg_array = json_array_to_pg_text(&arr);
-                Ok(pg_array.into_bytes())
-            } else {
-                // Not an array, return as-is
-                Ok(json_str.to_vec())
-            }
-        }
-        Err(_) => {
-            // Not valid JSON, return as-is
-            Ok(json_str.to_vec())
-        }
-    }
-}
-
-/// Convert JSON array elements to PostgreSQL text array format
-fn json_array_to_pg_text(arr: &[serde_json::Value]) -> String {
-    let elements: Vec<String> = arr.iter().map(|elem| {
-        match elem {
-            serde_json::Value::Null => "NULL".to_string(),
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::String(s) => {
-                // Escape quotes and backslashes
-                let escaped = s.replace('\\', "\\\\").replace('"', "\\\"");
-                format!("\"{escaped}\"")
-            }
-            serde_json::Value::Array(_) => {
-                // Nested arrays - convert recursively
-                // For now, just stringify
-                elem.to_string()
-            }
-            serde_json::Value::Object(_) => {
-                // Objects - stringify
-                elem.to_string()
-            }
-        }
-    }).collect();
-    
-    format!("{{{}}}", elements.join(","))
 }

@@ -117,6 +117,11 @@ pub async fn handle_test_connection_with_pool(
     }
     
     let session = Arc::new(SessionState::new(database, user));
+    let session_id = session.id;
+    
+    // Create a connection for this session
+    db_handler.create_session_connection(session_id).await
+        .map_err(|e| anyhow::anyhow!("Failed to create session connection: {}", e))?;
     
     // Set up connection pooling infrastructure (optional - can be enabled via config)
     let config = Arc::new(Config::load());
@@ -162,129 +167,135 @@ pub async fn handle_test_connection_with_pool(
     }).await?;
     
     // Main message loop
-    while let Some(msg) = framed.next().await {
-        let message = msg?;
-        debug!("Received message: {:?}", message);
-        match message {
-            FrontendMessage::Query(sql) => {
-                // Execute the query with optional query routing
-                match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
-                    Ok(()) => {
-                        // Query executed successfully
-                    }
-                    Err(e) => {
-                        // If we're in a transaction, mark it as failed
-                        if session.in_transaction().await {
-                            session.set_transaction_status(TransactionStatus::InFailedTransaction).await;
+    let result = async {
+        while let Some(msg) = framed.next().await {
+            let message = msg?;
+            debug!("Received message: {:?}", message);
+            match message {
+                FrontendMessage::Query(sql) => {
+                    // Execute the query with optional query routing
+                    match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
+                        Ok(()) => {
+                            // Query executed successfully
                         }
-                        
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Query execution failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        Err(e) => {
+                            // If we're in a transaction, mark it as failed
+                            if session.in_transaction().await {
+                                session.set_transaction_status(TransactionStatus::InFailedTransaction).await;
+                            }
+                            
+                            let err = ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                format!("Query execution failed: {e}"),
+                            );
+                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        }
+                    }
+                    
+                    // Always send ReadyForQuery after handling the query
+                    framed.send(BackendMessage::ReadyForQuery {
+                        status: *session.transaction_status.read().await,
+                    }).await?;
+                    // Flush to ensure ReadyForQuery is sent immediately
+                    framed.flush().await?;
+                }
+                FrontendMessage::Parse { name, query, param_types } => {
+                    // TODO: Extended query protocol also needs router integration
+                    match ExtendedQueryHandler::handle_parse(&mut framed, &db_handler, &session, name, query, param_types).await {
+                        Ok(()) => {},
+                        Err(e) => {
+                            let err = ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                format!("Parse failed: {e}"),
+                            );
+                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        }
                     }
                 }
-                
-                // Always send ReadyForQuery after handling the query
-                framed.send(BackendMessage::ReadyForQuery {
-                    status: *session.transaction_status.read().await,
-                }).await?;
-                // Flush to ensure ReadyForQuery is sent immediately
-                framed.flush().await?;
-            }
-            FrontendMessage::Parse { name, query, param_types } => {
-                // TODO: Extended query protocol also needs router integration
-                match ExtendedQueryHandler::handle_parse(&mut framed, &db_handler, &session, name, query, param_types).await {
-                    Ok(()) => {},
-                    Err(e) => {
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Parse failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                FrontendMessage::Bind { portal, statement, formats, values, result_formats } => {
+                    match ExtendedQueryHandler::handle_bind(&mut framed, &session, portal, statement, formats, values, result_formats).await {
+                        Ok(()) => {},
+                        Err(e) => {
+                            let err = ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                format!("Bind failed: {e}"),
+                            );
+                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        }
                     }
                 }
-            }
-            FrontendMessage::Bind { portal, statement, formats, values, result_formats } => {
-                match ExtendedQueryHandler::handle_bind(&mut framed, &session, portal, statement, formats, values, result_formats).await {
-                    Ok(()) => {},
-                    Err(e) => {
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Bind failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                FrontendMessage::Execute { portal, max_rows } => {
+                    match ExtendedQueryHandler::handle_execute(&mut framed, &db_handler, &session, portal, max_rows).await {
+                        Ok(()) => {},
+                        Err(e) => {
+                            let err = ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                format!("Execute failed: {e}"),
+                            );
+                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        }
                     }
                 }
-            }
-            FrontendMessage::Execute { portal, max_rows } => {
-                match ExtendedQueryHandler::handle_execute(&mut framed, &db_handler, &session, portal, max_rows).await {
-                    Ok(()) => {},
-                    Err(e) => {
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Execute failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                FrontendMessage::Describe { typ, name } => {
+                    match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await {
+                        Ok(()) => {},
+                        Err(e) => {
+                            let err = ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                format!("Describe failed: {e}"),
+                            );
+                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        }
                     }
                 }
-            }
-            FrontendMessage::Describe { typ, name } => {
-                match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await {
-                    Ok(()) => {},
-                    Err(e) => {
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Describe failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                FrontendMessage::Close { typ, name } => {
+                    match ExtendedQueryHandler::handle_close(&mut framed, &session, typ, name).await {
+                        Ok(()) => {},
+                        Err(e) => {
+                            let err = ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                format!("Close failed: {e}"),
+                            );
+                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                        }
                     }
                 }
-            }
-            FrontendMessage::Close { typ, name } => {
-                match ExtendedQueryHandler::handle_close(&mut framed, &session, typ, name).await {
-                    Ok(()) => {},
-                    Err(e) => {
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Close failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                    }
+                FrontendMessage::Sync => {
+                    framed.send(BackendMessage::ReadyForQuery {
+                        status: *session.transaction_status.read().await,
+                    }).await?;
+                    // Flush to ensure ReadyForQuery is sent immediately
+                    framed.flush().await?;
                 }
-            }
-            FrontendMessage::Sync => {
-                framed.send(BackendMessage::ReadyForQuery {
-                    status: *session.transaction_status.read().await,
-                }).await?;
-                // Flush to ensure ReadyForQuery is sent immediately
-                framed.flush().await?;
-            }
-            FrontendMessage::Flush => {
-                framed.flush().await?;
-            }
-            FrontendMessage::Terminate => break,
-            other => {
-                eprintln!("Unhandled message: {other:?}");
-                let err = ErrorResponse::new(
-                    "ERROR".to_string(),
-                    "0A000".to_string(),
-                    format!("Feature not supported: {other:?}"),
-                );
-                framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                framed.send(BackendMessage::ReadyForQuery {
-                    status: *session.transaction_status.read().await,
-                }).await?;
+                FrontendMessage::Flush => {
+                    framed.flush().await?;
+                }
+                FrontendMessage::Terminate => break,
+                other => {
+                    eprintln!("Unhandled message: {other:?}");
+                    let err = ErrorResponse::new(
+                        "ERROR".to_string(),
+                        "0A000".to_string(),
+                        format!("Feature not supported: {other:?}"),
+                    );
+                    framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                    framed.send(BackendMessage::ReadyForQuery {
+                        status: *session.transaction_status.read().await,
+                    }).await?;
+                }
             }
         }
-    }
+        Ok::<(), anyhow::Error>(())
+    }.await;
     
-    Ok(())
+    // Clean up session connection
+    db_handler.remove_session_connection(&session_id);
+    
+    result
 }

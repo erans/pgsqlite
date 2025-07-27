@@ -23,6 +23,7 @@ mod batch_update_translator;
 mod batch_delete_translator;
 mod fts_translator;
 mod query_analyzer;
+mod function_parentheses_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -47,3 +48,4 @@ pub use batch_update_translator::BatchUpdateTranslator;
 pub use batch_delete_translator::BatchDeleteTranslator;
 pub use fts_translator::FtsTranslator;
 pub use query_analyzer::{QueryAnalyzer, TranslationFlags};
+pub use function_parentheses_translator::FunctionParenthesesTranslator;

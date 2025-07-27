@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 use tokio_rustls::TlsAcceptor;
 
 use pgsqlite::config::Config;
@@ -340,29 +340,19 @@ where
     }
 
     let session = Arc::new(SessionState::new(database, user));
-    let _session_id = uuid::Uuid::new_v4();
+    let session_id = session.id;
 
-    // Force new connection to see latest committed state in WAL mode
-    // This breaks read isolation that could show stale data from before recent commits
-    if let Ok(conn) = db_handler.get_mut_connection() {
-        // Force a complete view refresh for the connection
-        // 1. Start and rollback a transaction to clear any cached state
-        if let Err(e) = conn.execute("BEGIN IMMEDIATE; ROLLBACK", []) {
-            debug!("New connection transaction refresh failed: {}", e);
-        }
-        
-        // 2. Force query planner to use latest statistics
-        if let Err(e) = conn.execute("PRAGMA optimize", []) {
-            debug!("New connection query planner optimization failed: {}", e);
-        }
-        
-        // 3. Execute a dummy query to ensure connection is fully initialized
-        if let Err(e) = conn.execute("SELECT 1 WHERE 0 = 1", []) {
-            debug!("New connection isolation refresh failed: {}", e);
-        } else {
-            debug!("New connection fully refreshed to see latest committed state");
-        }
+    // Create a connection for this session
+    if let Err(e) = db_handler.create_session_connection(session_id).await {
+        error!("Failed to create session connection: {}", e);
+        return Err(anyhow::anyhow!("Failed to create session connection: {}", e));
     }
+    
+    // Ensure cleanup on disconnect
+    let cleanup_handler = db_handler.clone();
+    let cleanup_session_id = session_id;
+    
+    // We'll handle cleanup at the end of the function
 
     // Send authentication OK
     framed
@@ -587,7 +577,7 @@ where
                 // Clean up any active transaction before closing
                 if session.in_transaction().await {
                     info!("Rolling back active transaction before client disconnect");
-                    if let Err(e) = db_handler.execute("ROLLBACK").await {
+                    if let Err(e) = db_handler.rollback_with_session(&session_id).await {
                         error!("Failed to rollback transaction on disconnect: {}", e);
                     }
                     session.set_transaction_status(TransactionStatus::Idle).await;
@@ -601,6 +591,9 @@ where
         }
     }
 
+    // Clean up session connection
+    cleanup_handler.remove_session_connection(&cleanup_session_id);
+    
     info!("Connection from {} closed", connection_info);
     Ok(())
 }

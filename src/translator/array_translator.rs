@@ -287,6 +287,21 @@ impl ArrayTranslator {
     fn translate_any_operator(sql: &str) -> Result<String, PgSqliteError> {
         let mut result = sql.to_string();
         
+        // First handle ANY(ARRAY[...]) patterns - common in catalog queries
+        // Example: pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm'])
+        // Also handle parameter placeholders like %(param_1)s
+        let any_array_regex = Regex::new(r#"(\w+(?:\.\w+)*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[((?:'[^']*'(?:\s*,\s*'[^']*')*)|(?:\$\d+(?:\s*,\s*\$\d+)*)|(?:%\([^)]+\)s(?:\s*,\s*%\([^)]+\)s)*))\]\s*\)"#).unwrap();
+        while let Some(captures) = any_array_regex.captures(&result) {
+            let column = &captures[1];
+            let values = &captures[2];
+            
+            // Convert to IN clause for better performance
+            let replacement = format!("{column} IN ({values})");
+            debug!("ArrayTranslator: Converting ANY(ARRAY[...]) to IN: {} -> {}", &captures[0], &replacement);
+            result = result.replace(&captures[0], &replacement);
+        }
+        
+        // Then handle regular ANY(column) patterns
         while let Some(captures) = ANY_OPERATOR_REGEX.captures(&result) {
             let value = &captures[1];
             let array_col = &captures[2];

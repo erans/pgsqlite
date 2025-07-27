@@ -1,6 +1,7 @@
 use pgsqlite::session::DbHandler;
 use std::time::Instant;
 use tokio::time::Duration;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_protocol_overhead_breakdown() {
@@ -8,8 +9,12 @@ async fn test_protocol_overhead_breakdown() {
     
     let db = DbHandler::new(":memory:").expect("Failed to create database");
     
+    // Create a session for testing
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.expect("Failed to create session connection");
+    
     // Create test table
-    db.execute("CREATE TABLE protocol_test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)")
+    db.execute_with_session("CREATE TABLE protocol_test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)", &session_id)
         .await
         .expect("Failed to create table");
     
@@ -20,7 +25,7 @@ async fn test_protocol_overhead_breakdown() {
     let start = Instant::now();
     for i in 0..iterations {
         let query = format!("INSERT INTO protocol_test (name, value) VALUES ('direct{i}', {i})");
-        db.execute(&query).await.expect("Failed to execute INSERT");
+        db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
     }
     let direct_time = start.elapsed();
     let direct_avg = direct_time / iterations as u32;
@@ -55,7 +60,7 @@ async fn test_protocol_overhead_breakdown() {
     for batch in 0..100 {
         for i in 0..10 {
             let query = format!("INSERT INTO protocol_test (name, value) VALUES ('batch{}', {})", batch * 10 + i, i * 100);
-            db.execute(&query).await.expect("Failed to execute INSERT");
+            db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
         }
     }
     let batch_time = start.elapsed();
@@ -75,12 +80,12 @@ async fn test_protocol_overhead_breakdown() {
     
     // With transaction
     let start = Instant::now();
-    db.begin().await.expect("Failed to begin");
+    db.begin_with_session(&session_id).await.expect("Failed to begin");
     for i in 0..100 {
         let query = format!("INSERT INTO protocol_test (name, value) VALUES ('txn{i}', {i})");
-        db.execute(&query).await.expect("Failed to execute INSERT");
+        db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
     }
-    db.commit().await.expect("Failed to commit");
+    db.commit_with_session(&session_id).await.expect("Failed to commit");
     let with_txn = start.elapsed();
     
     println!("  100 INSERTs without transaction: {:?}, avg: {:?}", no_txn, no_txn / 100);
@@ -103,6 +108,9 @@ async fn test_protocol_overhead_breakdown() {
     println!("Fast path detection: {fast_path_time:?}");
     println!("Schema lookup: {schema_time:?}");
     println!("Estimated protocol overhead: ~{:?}", Duration::from_micros(200) - direct_avg);
+    
+    // Clean up session
+    db.remove_session_connection(&session_id);
 }
 
 #[tokio::test]
@@ -120,8 +128,13 @@ async fn test_connection_handling_overhead() {
     println!("Database creation overhead: {create_time:?}");
     
     // Test mutex contention with concurrent access
-    let db = DbHandler::new(":memory:").expect("Failed to create database");
-    db.execute("CREATE TABLE concurrent_test (id INTEGER PRIMARY KEY, value INTEGER)")
+    let db = std::sync::Arc::new(DbHandler::new(":memory:").expect("Failed to create database"));
+    
+    // Create session for single-threaded test
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.expect("Failed to create session connection");
+    
+    db.execute_with_session("CREATE TABLE concurrent_test (id INTEGER PRIMARY KEY, value INTEGER)", &session_id)
         .await
         .expect("Failed to create table");
     
@@ -130,25 +143,31 @@ async fn test_connection_handling_overhead() {
     // Single-threaded baseline
     let start = Instant::now();
     for i in 0..100 {
-        db.execute(&format!("INSERT INTO concurrent_test (value) VALUES ({i})"))
+        db.execute_with_session(&format!("INSERT INTO concurrent_test (value) VALUES ({i})"), &session_id)
             .await
             .expect("Failed to execute");
     }
     let single_time = start.elapsed();
     
     // Multi-threaded test
-    let db_clone = db.clone();
     let start = Instant::now();
     let mut handles = vec![];
     
     for i in 0..10 {
-        let db = db_clone.clone();
+        let db = db.clone();
         let handle = tokio::spawn(async move {
+            // Each thread needs its own session
+            let thread_session_id = Uuid::new_v4();
+            db.create_session_connection(thread_session_id).await.expect("Failed to create session connection");
+            
             for j in 0..10 {
-                db.execute(&format!("INSERT INTO concurrent_test (value) VALUES ({})", i * 10 + j))
+                db.execute_with_session(&format!("INSERT INTO concurrent_test (value) VALUES ({})", i * 10 + j), &thread_session_id)
                     .await
                     .expect("Failed to execute");
             }
+            
+            // Clean up session
+            db.remove_session_connection(&thread_session_id);
         });
         handles.push(handle);
     }
@@ -161,4 +180,7 @@ async fn test_connection_handling_overhead() {
     println!("  Single-threaded (100 INSERTs): {:?}, avg: {:?}", single_time, single_time / 100);
     println!("  Multi-threaded (10x10 INSERTs): {:?}, avg: {:?}", multi_time, multi_time / 100);
     println!("  Contention factor: {:.2}x", multi_time.as_secs_f64() / single_time.as_secs_f64());
+    
+    // Clean up session
+    db.remove_session_connection(&session_id);
 }

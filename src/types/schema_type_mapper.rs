@@ -340,6 +340,13 @@ impl SchemaTypeMapper {
             return Some(PgType::Int8.to_oid()); // bigint
         }
         
+        // Decimal arithmetic functions that return numeric
+        if upper.starts_with("DECIMAL_ADD(") || upper.starts_with("DECIMAL_SUB(") || 
+           upper.starts_with("DECIMAL_MUL(") || upper.starts_with("DECIMAL_DIV(") ||
+           upper.starts_with("DECIMAL_FROM_TEXT(") {
+            return Some(PgType::Numeric.to_oid()); // numeric
+        }
+        
         // JSON functions that return integers
         if upper.starts_with("JSON_ARRAY_LENGTH(") {
             return Some(PgType::Int4.to_oid()); // int4

@@ -14,7 +14,7 @@ impl ExtendedFastPath {
     /// Execute a parameterized query using prepared statements directly
     pub async fn execute_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         portal_name: &str,
         query: &str,
@@ -57,7 +57,7 @@ impl ExtendedFastPath {
                 }
             }
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
-                match Self::execute_dml_with_params(framed, db, query, rusqlite_params, query_type).await {
+                match Self::execute_dml_with_params(framed, db, session, query, rusqlite_params, query_type).await {
                     Ok(()) => Ok(true),
                     Err(_) => {
                         // Fast path DML failed, fall back
@@ -296,7 +296,7 @@ impl ExtendedFastPath {
     
     async fn execute_select_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         portal_name: &str,
         query: &str,
@@ -307,10 +307,10 @@ impl ExtendedFastPath {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Use DbHandler's fast path method which has access to the connection
-        let response = match db.try_execute_fast_path_with_params(query, &params).await {
+        let response = match db.try_execute_fast_path_with_params(query, &params, &session.id).await {
             Ok(Some(resp)) => resp,
             Ok(None) => return Err(PgSqliteError::Protocol("Fast path failed".to_string())),
-            Err(e) => return Err(PgSqliteError::Sqlite(e)),
+            Err(e) => return Err(e),
         };
         
         // Check if we need to send RowDescription
@@ -391,7 +391,8 @@ impl ExtendedFastPath {
     
     async fn execute_dml_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
         query: &str,
         params: Vec<rusqlite::types::Value>,
         query_type: QueryType,
@@ -400,10 +401,10 @@ impl ExtendedFastPath {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // Use DbHandler's fast path method
-        let response = match db.try_execute_fast_path_with_params(query, &params).await {
+        let response = match db.try_execute_fast_path_with_params(query, &params, &session.id).await {
             Ok(Some(resp)) => resp,
             Ok(None) => return Err(PgSqliteError::Protocol("Fast path failed".to_string())),
-            Err(e) => return Err(PgSqliteError::Sqlite(e)),
+            Err(e) => return Err(e),
         };
         
         // Send appropriate CommandComplete

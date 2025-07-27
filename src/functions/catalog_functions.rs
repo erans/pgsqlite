@@ -12,7 +12,16 @@ pub fn register_catalog_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let _oid: i64 = ctx.get(0)?;
+            // Accept either integer or text OID
+            // Try to get as i64 first, if that fails try as string and parse
+            let _oid = match ctx.get::<i64>(0) {
+                Ok(oid) => oid,
+                Err(_) => {
+                    // Try as string
+                    let oid_str: String = ctx.get(0)?;
+                    oid_str.parse::<i64>().unwrap_or(0)
+                }
+            };
             // In SQLite, all tables are visible
             // Return 1 for true (SQLite boolean convention)
             Ok(1i32)
