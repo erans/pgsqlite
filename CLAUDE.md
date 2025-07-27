@@ -126,6 +126,10 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
 - **Connection-per-Session Architecture**: Implemented true connection isolation matching PostgreSQL behavior
   - Each client session gets its own SQLite connection
+- **Test Infrastructure Stability**: Fixed migration lock contention and build system reliability
+  - Resolved "Migration lock held by process" errors in concurrent tests
+  - Updated test files to use unique temporary databases instead of shared `:memory:`
+  - Fixed common test module compatibility with connection-per-session architecture
   - Fixes SQLAlchemy transaction persistence issues with WAL mode
   - Eliminates transaction visibility problems between sessions
   - Tests now use temporary files instead of :memory: for proper isolation

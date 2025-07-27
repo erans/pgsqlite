@@ -4,7 +4,12 @@ use std::sync::Arc;
 /// Integration tests for batch DELETE operations
 #[tokio::test]
 async fn test_batch_delete_single_column() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_users (id INTEGER PRIMARY KEY, name TEXT, status TEXT)").await?;
@@ -48,7 +53,12 @@ async fn test_batch_delete_single_column() -> Result<(), Box<dyn std::error::Err
 
 #[tokio::test]
 async fn test_batch_delete_multi_column() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_products (id INTEGER PRIMARY KEY, category TEXT, status TEXT)").await?;
@@ -100,7 +110,12 @@ async fn test_batch_delete_multi_column() -> Result<(), Box<dyn std::error::Erro
 
 #[tokio::test]
 async fn test_batch_delete_with_quotes() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_quotes (id INTEGER PRIMARY KEY, description TEXT)").await?;
@@ -148,7 +163,12 @@ async fn test_batch_delete_with_quotes() -> Result<(), Box<dyn std::error::Error
 
 #[tokio::test]
 async fn test_batch_delete_no_alias() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_simple (id INTEGER PRIMARY KEY, value INTEGER)").await?;
@@ -187,7 +207,12 @@ async fn test_batch_delete_no_alias() -> Result<(), Box<dyn std::error::Error>> 
 
 #[tokio::test]
 async fn test_batch_delete_performance() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_perf (id INTEGER PRIMARY KEY, value INTEGER)").await?;
@@ -238,7 +263,12 @@ async fn test_batch_delete_performance() -> Result<(), Box<dyn std::error::Error
 
 #[tokio::test] 
 async fn test_regular_delete_still_works() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE regular_delete_test (id INTEGER PRIMARY KEY, name TEXT)").await?;
@@ -266,7 +296,12 @@ async fn test_regular_delete_still_works() -> Result<(), Box<dyn std::error::Err
 
 #[tokio::test]
 async fn test_batch_delete_edge_cases() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        Arc::new(DbHandler::new(&db_path)?)
+    };
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_edge (id INTEGER PRIMARY KEY, data TEXT)").await?;

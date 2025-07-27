@@ -224,7 +224,7 @@ async fn test_db_handler_schema_cache() -> Result<(), Box<dyn std::error::Error>
     )", &session_id).await?;
     
     // Get schema should use cache on second call
-    let schema1 = db_handler.get_table_schema("test_schema").await?;
+    let _schema1 = db_handler.get_table_schema("test_schema").await?;
     let _schema2 = db_handler.get_table_schema("test_schema").await?; // Should hit cache
     
     // Note: With connection-per-session architecture, get_table_schema uses a temporary

@@ -8,8 +8,11 @@ async fn test_null_arithmetic_propagation() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_null_arithmetic_propagation_{}.db", timestamp);
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         // Create test table with NULLs
@@ -71,8 +74,11 @@ async fn test_null_with_constants() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_null_with_constants_{}.db", timestamp);
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE nullable (id INTEGER PRIMARY KEY, amount REAL)").await.unwrap();
@@ -118,8 +124,11 @@ async fn test_null_in_complex_expressions() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_null_in_complex_expressions_{}.db", timestamp);
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE complex_null (id INTEGER PRIMARY KEY, a REAL, b REAL, c REAL)").await.unwrap();
@@ -173,8 +182,11 @@ async fn test_coalesce_with_arithmetic() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_coalesce_with_arithmetic_{}.db", timestamp);
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE defaults (id INTEGER PRIMARY KEY, price DOUBLE PRECISION, discount REAL)").await.unwrap();
@@ -226,8 +238,11 @@ async fn test_null_handling_extended_protocol() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_null_handling_extended_protocol_{}.db", timestamp);
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE param_null (id INTEGER PRIMARY KEY, base_val DOUBLE PRECISION)").await.unwrap();

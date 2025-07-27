@@ -741,6 +741,25 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Performance Impact**: Checkpoint overhead minimized with optimization infrastructure
   - [x] **Compatibility**: Works with both single and multi-session scenarios
 
+### Connection-Per-Session Architecture & Test Stability - COMPLETED (2025-07-27)
+- [x] **Connection-Per-Session Implementation** - Implemented PostgreSQL-style connection isolation
+  - [x] **ConnectionManager**: Session-specific SQLite connection management for transaction isolation
+  - [x] **SessionState Integration**: Enhanced with DbHandler references and lifecycle management
+  - [x] **Query Routing**: Modified all query execution paths to use session-specific connections
+  - [x] **Transaction Isolation**: Each PostgreSQL session gets its own SQLite connection for proper WAL mode behavior
+  - [x] **Async Compatibility**: Fixed Send trait issues with tokio::sync::Mutex for async operation
+  - [x] **SQLAlchemy Compatibility**: Resolves transaction persistence issues with proper connection isolation
+- [x] **Test Infrastructure Stability** - Fixed migration lock contention and connection-per-session compatibility
+  - [x] **Migration Lock Issues**: Fixed "Migration lock held by process" errors in concurrent tests
+  - [x] **Memory Database Isolation**: Replaced `:memory:` with unique temporary files to prevent conflicts
+  - [x] **Test File Updates**: Updated arithmetic_complex_test.rs, arithmetic_edge_cases_test.rs, arithmetic_null_test.rs
+  - [x] **Common Module Compatibility**: Updated tests/common/mod.rs to work with connection-per-session architecture
+  - [x] **Build System Stability**: cargo check, cargo build, and unit tests (360/360) all passing
+- [x] **Performance Impact Assessment**:
+  - [x] **Connection Overhead**: Minimal impact due to SQLite's lightweight connection model
+  - [x] **WAL Mode Benefits**: Each session can see committed data from other sessions properly
+  - [x] **Test Execution**: All test suites stable with no migration conflicts
+
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 
 ### Data Type Improvements

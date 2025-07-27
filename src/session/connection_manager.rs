@@ -79,6 +79,30 @@ impl ConnectionManager {
         crate::functions::register_all_functions(&conn)
             .map_err(|e| PgSqliteError::Sqlite(e))?;
         
+        // Force WAL checkpoint read to ensure this connection sees all committed data
+        // This is critical for connection-per-session architecture where each connection
+        // needs to see the latest state immediately upon creation
+        if self.config.pragma_journal_mode == "WAL" {
+            // Use RESTART mode for more aggressive checkpoint to ensure data visibility
+            match conn.execute("PRAGMA wal_checkpoint(RESTART)", []) {
+                Ok(_) => {
+                    debug!("WAL checkpoint(RESTART) completed for new session {}", session_id);
+                    
+                    // Force a read operation to ensure connection cache is updated
+                    match conn.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table'") {
+                        Ok(mut stmt) => {
+                            match stmt.query_row([], |_| Ok(())) {
+                                Ok(_) => debug!("Cache refresh read completed for session {}", session_id),
+                                Err(e) => debug!("Cache refresh read failed for session {}: {}", session_id, e),
+                            }
+                        }
+                        Err(e) => debug!("Cache refresh statement prep failed for session {}: {}", session_id, e),
+                    }
+                }
+                Err(e) => debug!("WAL checkpoint(RESTART) failed for session {}: {}", session_id, e),
+            }
+        }
+        
         // Initialize metadata
         crate::metadata::TypeMetadata::init(&conn)
             .map_err(|e| PgSqliteError::Sqlite(e))?;

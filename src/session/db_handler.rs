@@ -414,6 +414,26 @@ impl DbHandler {
     pub async fn commit(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
         self.connection_manager.execute_with_session(session_id, |conn| {
             conn.execute("COMMIT", [])?;
+            
+            // Force aggressive WAL checkpoint to ensure committed changes are immediately visible to new connections
+            // This is critical for connection-per-session architecture where each session has its own connection
+            // Use RESTART mode to force all WAL data to be written to the database file
+            match conn.execute("PRAGMA wal_checkpoint(RESTART)", []) {
+                Ok(_) => {
+                    debug!("WAL checkpoint(RESTART) completed after COMMIT for session {}", session_id);
+                    
+                    // Also force cache invalidation to ensure query planner sees latest data
+                    match conn.execute("PRAGMA optimize", []) {
+                        Ok(_) => debug!("PRAGMA optimize completed for session {}", session_id),
+                        Err(e) => debug!("PRAGMA optimize failed for session {}: {}", session_id, e),
+                    }
+                }
+                Err(e) => {
+                    // Don't fail the commit if checkpoint fails, but log a warning
+                    debug!("WAL checkpoint(RESTART) failed after COMMIT for session {}: {}", session_id, e);
+                }
+            }
+            
             Ok(())
         })
     }

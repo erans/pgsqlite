@@ -34,8 +34,11 @@ where
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_server_{}.db", timestamp);
         let db_handler = Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         // Run custom initialization
@@ -46,16 +49,9 @@ where
         
         // Force a comprehensive cache refresh after initialization
         // This ensures that tables created during init are visible to catalog queries
-        {
-            let conn = db_handler.get_mut_connection().unwrap();
-            // Force a transaction commit to ensure changes are persisted
-            let _ = conn.execute_batch("BEGIN; COMMIT;");
-            // Force SQLite to refresh its schema cache by querying sqlite_master
-            let _ = conn.execute_batch("SELECT name FROM sqlite_master WHERE type='table'");
-            // Explicitly refresh SQLite's internal schema
-            let _ = conn.execute_batch("PRAGMA schema_version; PRAGMA table_list;");
-            drop(conn);
-        }
+        // In connection-per-session mode, we use execute method instead of direct connection access
+        let _ = db_handler.execute("PRAGMA schema_version").await;
+        let _ = db_handler.execute("PRAGMA table_list").await;
         
         // Add a small delay to ensure changes propagate
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
