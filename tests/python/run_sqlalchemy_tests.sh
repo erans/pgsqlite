@@ -122,9 +122,9 @@ start_pgsqlite() {
     # Clean up any existing test database
     rm -f "$TEST_DB"
     
-    # Start pgsqlite in background
+    # Start pgsqlite in background with connection pooling enabled
     cd "$PROJECT_ROOT"
-    ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
+    PGSQLITE_USE_POOLING=true ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
     PGSQLITE_PID=$!
     
     # Wait for server to start

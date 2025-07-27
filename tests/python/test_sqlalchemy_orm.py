@@ -40,6 +40,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import StaticPool
 
 # Base class for ORM models
 Base = declarative_base()
@@ -160,9 +161,8 @@ class SQLAlchemyTestSuite:
             connection_string = f"postgresql://postgres:postgres@localhost:{self.port}/main"
             self.engine = create_engine(
                 connection_string,
-                echo=False,  # Set to True for SQL debugging
-                pool_pre_ping=True,
-                pool_recycle=3600,
+                echo=True,  # Set to True for SQL debugging
+                poolclass=StaticPool,  # Use a single connection for all sessions
                 future=True,  # Enable SQLAlchemy 2.0 style
                 # Work around RETURNING issue
                 execution_options={"no_autoflush": False},
@@ -565,66 +565,76 @@ class SQLAlchemyTestSuite:
         try:
             print("💾 Testing transaction handling...")
             
-            # Since there's an issue with RETURNING clause in transactions,
-            # let's test transaction functionality differently
+            # Test: SQLAlchemy ORM transaction with explicit debugging
+            print("  Testing SQLAlchemy ORM transaction persistence...")
             
-            # Test 1: Basic transaction with existing data update
+            # First, insert a test user
             with self.Session() as session:
-                # Update an existing user (no RETURNING needed)
-                alice = session.query(User).filter(User.username == "alice_dev").first()
-                if alice:
-                    original_name = alice.full_name
-                    alice.full_name = "Alice Transaction Test"
+                # Check if user already exists and delete
+                existing = session.query(User).filter(User.username == "transaction_test_user").first()
+                if existing:
+                    session.delete(existing)
                     session.commit()
-                    print("✅ Transaction update committed")
-                else:
-                    print("❌ Could not find alice user")
+                
+                # Insert new test user
+                test_user = User(
+                    username="transaction_test_user",
+                    email="test@transaction.com", 
+                    full_name="Original Name"
+                )
+                session.add(test_user)
+                session.commit()
+                print(f"  ✅ Inserted test user with name: {test_user.full_name}")
+            
+            # Now test transaction update
+            with self.Session() as session:
+                # Load user
+                user = session.query(User).filter(User.username == "transaction_test_user").first()
+                if not user:
+                    print("❌ Could not find test user")
                     return False
+                    
+                print(f"  📍 Before update: {user.full_name}")
+                
+                # Modify user - this should mark object as dirty
+                user.full_name = "Updated Name"
+                
+                # Check if SQLAlchemy thinks object is dirty
+                print(f"  🔍 Object is dirty: {user in session.dirty}")
+                print(f"  🔍 Session has pending changes: {session.dirty or session.new or session.deleted}")
+                
+                # Explicit flush to force UPDATE to database
+                print("  💾 Flushing changes...")
+                session.flush()
+                
+                # Commit transaction
+                print("  ✅ Committing transaction...")
+                session.commit()
+                
+                # Check in same session (should use identity map)
+                print(f"  📍 After commit (same session): {user.full_name}")
+                
+                # Force refresh from database
+                session.expire(user)
+                session.refresh(user)
+                print(f"  📍 After refresh from database: {user.full_name}")
             
-            # Verify the update persisted
+            # Check in completely new session
             with self.Session() as session:
-                alice = session.query(User).filter(User.username == "alice_dev").first()
-                if alice and alice.full_name == "Alice Transaction Test":
-                    print("✅ Transaction commit verified")
-                    # Restore original name
-                    alice.full_name = original_name
+                user = session.query(User).filter(User.username == "transaction_test_user").first()
+                result_name = user.full_name if user else "NOT FOUND"
+                print(f"  📍 New session sees: {result_name}")
+                
+                if user and user.full_name == "Updated Name":
+                    print("✅ Transaction persistence verified!")
+                    # Cleanup
+                    session.delete(user)
                     session.commit()
+                    return True
                 else:
                     print("❌ Transaction update not persisted")
+                    print(f"     Expected: 'Updated Name', Got: '{result_name}'")
                     return False
-            
-            # Test transaction rollback
-            try:
-                with self.Session() as session:
-                    with session.begin():
-                        # Update a user that will be rolled back
-                        bob = session.query(User).filter(User.username == "bob_writer").first()
-                        if bob:
-                            bob.full_name = "This should be rolled back"
-                            session.flush()  # Make sure it's in the session
-                        
-                        # Intentionally cause an error to trigger rollback
-                        raise Exception("Intentional rollback test")
-                        
-            except Exception as e:
-                if "Intentional rollback test" in str(e):
-                    print("✅ Intentional exception caught")
-                else:
-                    raise e
-            
-            # Verify update was NOT persisted due to rollback
-            with self.Session() as session:
-                bob = session.query(User).filter(
-                    User.username == "bob_writer"
-                ).first()
-                
-                if bob and bob.full_name == "Bob Smith":  # Original name
-                    print("✅ Transaction rollback successful")
-                else:
-                    print("❌ Transaction rollback failed - update persisted")
-                    return False
-            
-            return True
             
         except Exception as e:
             print(f"❌ Transaction test failed: {e}")

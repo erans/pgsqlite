@@ -2934,6 +2934,7 @@ impl ExtendedQueryHandler {
     {
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
+            info!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             // Get result formats from portal
             let result_formats = {
                 let portals = session.portals.read().await;
@@ -2945,6 +2946,7 @@ impl ExtendedQueryHandler {
         
         // Validation is now done in handle_execute before parameter substitution
         
+        info!("Extended protocol: Executing DML query without RETURNING: {}", query);
         let response = db.execute(query).await?;
         
         let tag = if query_starts_with_ignore_case(query, "INSERT") {

@@ -31,6 +31,13 @@ static INSERT_SELECT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
 impl InsertTranslator {
     /// Check if the query is an INSERT that might need datetime, array, or VALUES translation
     pub fn needs_translation(query: &str) -> bool {
+        // Skip if already processed by CastTranslator
+        if query.contains("pg_timestamp_from_text") || 
+           query.contains("pg_date_from_text") || 
+           query.contains("pg_time_from_text") {
+            return false;
+        }
+        
         let is_insert = INSERT_PATTERN.is_match(query) || 
                        INSERT_NO_COLUMNS_PATTERN.is_match(query) ||
                        INSERT_SELECT_PATTERN.is_match(query) ||
@@ -96,9 +103,16 @@ impl InsertTranslator {
                 &column_types
             )?;
             
+            // Check if there's a RETURNING clause
+            let returning_clause = if let Some(idx) = query.to_uppercase().find(" RETURNING ") {
+                &query[idx..]
+            } else {
+                ""
+            };
+            
             // Reconstruct the INSERT query
             let result = format!(
-                "INSERT INTO {table_name} ({columns_str}) VALUES {converted_values}"
+                "INSERT INTO {table_name} ({columns_str}) VALUES {converted_values}{returning_clause}"
             );
             Ok(result)
         } else if let Some(caps) = INSERT_NO_COLUMNS_PATTERN.captures(query) {
@@ -134,9 +148,16 @@ impl InsertTranslator {
                 &column_types
             )?;
             
+            // Check if there's a RETURNING clause
+            let returning_clause = if let Some(idx) = query.to_uppercase().find(" RETURNING ") {
+                &query[idx..]
+            } else {
+                ""
+            };
+            
             // Reconstruct the INSERT query  
             Ok(format!(
-                "INSERT INTO {table_name} VALUES {converted_values}"
+                "INSERT INTO {table_name} VALUES {converted_values}{returning_clause}"
             ))
         } else if let Some(caps) = INSERT_SELECT_PATTERN.captures(query) {
             // Handle INSERT INTO table (...) SELECT ...
@@ -445,6 +466,11 @@ impl InsertTranslator {
                value_upper == "CURRENT_TIME" ||
                value_upper == "CURRENT_TIMESTAMP" ||
                value_upper.starts_with("CURRENT_") {
+                return Ok(value.to_string());
+            }
+            // Check if this is a function call (contains parentheses)
+            if value.contains('(') && value.contains(')') {
+                // This is a function call, don't try to convert it
                 return Ok(value.to_string());
             }
         }

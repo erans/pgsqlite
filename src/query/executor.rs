@@ -174,6 +174,18 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        use crate::protocol::TransactionStatus;
+        
+        // Check if we're in a failed transaction
+        if session.get_transaction_status().await == TransactionStatus::InFailedTransaction {
+            // Only ROLLBACK is allowed in a failed transaction
+            use crate::query::{QueryTypeDetector, QueryType};
+            if !matches!(QueryTypeDetector::detect_query_type(query), QueryType::Rollback) {
+                return Err(PgSqliteError::Protocol(
+                    "current transaction is aborted, commands ignored until end of transaction block".to_string()
+                ));
+            }
+        }
         // Ultra-fast path: Skip all translation if query is simple enough
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
             debug!("Using ultra-fast path for query: {}", query);
@@ -189,16 +201,21 @@ impl QueryExecutor {
                     
                     // Extract table name once and get all schema information in one query
                     let table_name = extract_table_name_from_select(query);
-                    let (boolean_columns, datetime_columns, column_types) = if let Some(ref table) = table_name {
+                    let (boolean_columns, datetime_columns, column_types, column_mappings) = if let Some(ref table) = table_name {
                         let schema_info = get_table_schema_info(table, db);
+                        let mappings = extract_column_mappings_from_query(query, table);
+                        info!("Column mappings for table '{}': {:?}", table, mappings);
+                        info!("Datetime columns for table '{}': {:?}", table, schema_info.datetime_columns);
                         (
                             schema_info.boolean_columns,
                             schema_info.datetime_columns,
-                            schema_info.column_types
+                            schema_info.column_types,
+                            mappings
                         )
                     } else {
                         (
                             std::collections::HashSet::new(),
+                            std::collections::HashMap::new(),
                             std::collections::HashMap::new(),
                             std::collections::HashMap::new()
                         )
@@ -268,7 +285,16 @@ impl QueryExecutor {
                                             }
                                         }
                                         // Check for datetime columns
-                                        else if let Some(dt_type) = datetime_columns.get(col_name) {
+                                        // First try exact match, then check column mappings
+                                        else if let Some(dt_type) = datetime_columns.get(col_name)
+                                            .or_else(|| {
+                                                // Check if this is an alias mapped to a real column
+                                                if let Some(real_column) = column_mappings.get(col_name) {
+                                                    datetime_columns.get(real_column)
+                                                } else {
+                                                    None
+                                                }
+                                            }) {
                                             match std::str::from_utf8(&data) {
                                                 Ok(s) => {
                                                     // Try to parse as integer (days/microseconds)
@@ -639,6 +665,7 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // SQLAlchemy manages transactions explicitly - don't start implicit transactions
         debug!("=== EXECUTE_SELECT CALLED with query: {}", query);
         
         // Check wire protocol cache first for cacheable queries
@@ -1003,9 +1030,17 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // SQLAlchemy manages transactions explicitly - don't start implicit transactions
+        // This was interfering with SQLAlchemy's unit-of-work dirty detection
+        
+        info!("execute_dml called with query: {}", query);
+        
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
+            info!("Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             return Self::execute_dml_with_returning(framed, db, session, query, query_router).await;
+        } else {
+            info!("Query does NOT have RETURNING clause: {}", query);
         }
         
         // Validate numeric constraints for INSERT/UPDATE before execution
@@ -1096,27 +1131,117 @@ impl QueryExecutor {
             db.query(query).await?
         };
         
-        // Send row description
-        let fields: Vec<FieldDescription> = returning_response.columns.iter()
-            .enumerate()
-            .map(|(i, name)| FieldDescription {
-                name: name.clone(),
+        // Extract table name from query for type lookup
+        let table_name = match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Insert => extract_table_name_from_insert(query),
+            QueryType::Update => extract_table_name_from_update(query),
+            QueryType::Delete => extract_table_name_from_delete(query),
+            _ => None,
+        };
+        
+        // Build field descriptions with proper type information
+        let mut fields: Vec<FieldDescription> = Vec::new();
+        let mut column_types: Vec<Option<String>> = Vec::new();
+        
+        for (i, col_name) in returning_response.columns.iter().enumerate() {
+            let mut type_oid = PgType::Text.to_oid(); // Default to text
+            let mut pg_type = None;
+            
+            // Try to get type information from schema
+            if let Some(ref table) = table_name {
+                if let Ok(Some(schema_type)) = db.get_schema_type(table, col_name).await {
+                    pg_type = Some(schema_type.clone());
+                    type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&schema_type);
+                }
+            }
+            
+            fields.push(FieldDescription {
+                name: col_name.clone(),
                 table_oid: 0,
                 column_id: (i + 1) as i16,
-                type_oid: PgType::Text.to_oid(), // Default to text
+                type_oid,
                 type_size: -1,
                 type_modifier: -1,
                 format: 0,
-            })
-            .collect();
+            });
+            
+            column_types.push(pg_type);
+        }
         
         framed.send(BackendMessage::RowDescription(fields)).await
             .map_err(|e| PgSqliteError::Io(e))?;
         
-        // Send data rows
+        // Send data rows with proper type conversion
         let mut row_count = 0;
         for row in returning_response.rows {
-            framed.send(BackendMessage::DataRow(row)).await
+            // Convert row values based on column types
+            let mut converted_row = Vec::new();
+            
+            for (col_idx, value_opt) in row.iter().enumerate() {
+                if let Some(value_bytes) = value_opt {
+                    if let Some(Some(pg_type)) = column_types.get(col_idx) {
+                        // Apply type-specific formatting for datetime types
+                        let formatted = match pg_type.to_uppercase().as_str() {
+                            "DATE" => {
+                                // Convert INTEGER days to YYYY-MM-DD format
+                                if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                    if let Ok(days) = value_str.parse::<i32>() {
+                                        use crate::types::datetime_utils::format_days_to_date_buf;
+                                        let mut buf = vec![0u8; 32];
+                                        let len = format_days_to_date_buf(days, &mut buf);
+                                        buf.truncate(len);
+                                        Some(buf)
+                                    } else {
+                                        Some(value_bytes.clone())
+                                    }
+                                } else {
+                                    Some(value_bytes.clone())
+                                }
+                            }
+                            "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
+                                // Convert INTEGER microseconds to HH:MM:SS.ffffff format
+                                if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                    if let Ok(micros) = value_str.parse::<i64>() {
+                                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                                        let mut buf = vec![0u8; 32];
+                                        let len = format_microseconds_to_time_buf(micros, &mut buf);
+                                        buf.truncate(len);
+                                        Some(buf)
+                                    } else {
+                                        Some(value_bytes.clone())
+                                    }
+                                } else {
+                                    Some(value_bytes.clone())
+                                }
+                            }
+                            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff format
+                                if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                    if let Ok(micros) = value_str.parse::<i64>() {
+                                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                        let mut buf = vec![0u8; 32];
+                                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                                        buf.truncate(len);
+                                        Some(buf)
+                                    } else {
+                                        Some(value_bytes.clone())
+                                    }
+                                } else {
+                                    Some(value_bytes.clone())
+                                }
+                            }
+                            _ => Some(value_bytes.clone()),
+                        };
+                        converted_row.push(formatted);
+                    } else {
+                        converted_row.push(Some(value_bytes.clone()));
+                    }
+                } else {
+                    converted_row.push(None);
+                }
+            }
+            
+            framed.send(BackendMessage::DataRow(converted_row)).await
                 .map_err(|e| PgSqliteError::Io(e))?;
             row_count += 1;
         }
@@ -1391,7 +1516,7 @@ impl QueryExecutor {
     async fn execute_transaction<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &DbHandler,
-        _session: &Arc<SessionState>,
+        session: &Arc<SessionState>,
         query: &str,
         _query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
@@ -1399,19 +1524,70 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         use crate::query::{QueryTypeDetector, QueryType};
+        use crate::protocol::TransactionStatus;
+        
+        // Check if we're in a failed transaction
+        let current_status = session.get_transaction_status().await;
+        if current_status == TransactionStatus::InFailedTransaction {
+            // Only ROLLBACK is allowed in a failed transaction
+            if !matches!(QueryTypeDetector::detect_query_type(query), QueryType::Rollback) {
+                return Err(PgSqliteError::Protocol(
+                    "current transaction is aborted, commands ignored until end of transaction block".to_string()
+                ));
+            }
+        }
+        
         match QueryTypeDetector::detect_query_type(query) {
             QueryType::Begin => {
-                db.execute("BEGIN").await?;
-                framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
-                    .map_err(PgSqliteError::Io)?;
+                // Check if we're already in a transaction
+                if current_status == TransactionStatus::InTransaction {
+                    // PostgreSQL behavior: warn but don't fail
+                    tracing::warn!("BEGIN command received while already in transaction");
+                    // Send a warning notice
+                    use crate::protocol::messages::NoticeResponse;
+                    framed.send(BackendMessage::NoticeResponse(NoticeResponse {
+                        severity: "WARNING".to_string(),
+                        code: "25001".to_string(), // active_sql_transaction
+                        message: "there is already a transaction in progress".to_string(),
+                        detail: None,
+                        hint: None,
+                        position: None,
+                        where_: None,
+                    })).await.map_err(PgSqliteError::Io)?;
+                    // Still send CommandComplete, but don't actually execute BEGIN
+                    framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
+                        .map_err(PgSqliteError::Io)?;
+                } else {
+                    tracing::info!("Executing BEGIN command");
+                    db.execute("BEGIN").await?;
+                    tracing::info!("BEGIN executed successfully");
+                    // Update transaction status to InTransaction
+                    *session.transaction_status.write().await = TransactionStatus::InTransaction;
+                    tracing::info!("Transaction status updated to InTransaction");
+                    framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
+                        .map_err(PgSqliteError::Io)?;
+                }
             }
             QueryType::Commit => {
+                // Can't commit a failed transaction
+                if current_status == TransactionStatus::InFailedTransaction {
+                    return Err(PgSqliteError::Protocol(
+                        "current transaction is aborted, commands ignored until end of transaction block".to_string()
+                    ));
+                }
+                tracing::info!("Executing COMMIT command");
                 db.execute("COMMIT").await?;
+                tracing::info!("COMMIT executed successfully");
+                // Update transaction status to Idle
+                *session.transaction_status.write().await = TransactionStatus::Idle;
+                tracing::info!("Transaction status updated to Idle");
                 framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
                     .map_err(PgSqliteError::Io)?;
             }
             QueryType::Rollback => {
                 db.execute("ROLLBACK").await?;
+                // Update transaction status to Idle (regardless of previous state)
+                *session.transaction_status.write().await = TransactionStatus::Idle;
                 framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
                     .map_err(PgSqliteError::Io)?;
             }
@@ -1523,10 +1699,22 @@ impl QueryExecutor {
         debug!("Type OIDs for conversion: {:?}", type_oids);
         debug!("Boolean type OID: {}", PgType::Bool.to_oid());
         
-        // Quick check: if no array or boolean types, return rows as-is
+        // Quick check: if no array, boolean, or datetime types, return rows as-is
         let bool_oid = PgType::Bool.to_oid();
+        let date_oid = PgType::Date.to_oid();
+        let time_oid = PgType::Time.to_oid();
+        let timetz_oid = PgType::Timetz.to_oid();
+        let timestamp_oid = PgType::Timestamp.to_oid();
+        let timestamptz_oid = PgType::Timestamptz.to_oid();
+        
         let needs_conversion = type_oids.iter().any(|&oid| {
-            oid == bool_oid || PgType::from_oid(oid).is_some_and(|t| t.is_array())
+            oid == bool_oid || 
+            oid == date_oid ||
+            oid == time_oid ||
+            oid == timetz_oid ||
+            oid == timestamp_oid ||
+            oid == timestamptz_oid ||
+            PgType::from_oid(oid).is_some_and(|t| t.is_array())
         });
         
         if !needs_conversion {
@@ -1559,6 +1747,51 @@ impl QueryExecutor {
                             Some(b"t".to_vec())
                         } else {
                             Some(data) // Keep original data if not 0/1
+                        }
+                    } else if type_oid == date_oid {
+                        // Convert INTEGER days to YYYY-MM-DD format
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            if let Ok(days) = s.parse::<i32>() {
+                                use crate::types::datetime_utils::format_days_to_date_buf;
+                                let mut buf = vec![0u8; 32];
+                                let len = format_days_to_date_buf(days, &mut buf);
+                                buf.truncate(len);
+                                Some(buf)
+                            } else {
+                                Some(data) // Keep original if not an integer
+                            }
+                        } else {
+                            Some(data) // Keep original if not valid UTF-8
+                        }
+                    } else if type_oid == time_oid || type_oid == timetz_oid {
+                        // Convert INTEGER microseconds to HH:MM:SS.ffffff format
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            if let Ok(micros) = s.parse::<i64>() {
+                                use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                                let mut buf = vec![0u8; 32];
+                                let len = format_microseconds_to_time_buf(micros, &mut buf);
+                                buf.truncate(len);
+                                Some(buf)
+                            } else {
+                                Some(data) // Keep original if not an integer
+                            }
+                        } else {
+                            Some(data) // Keep original if not valid UTF-8
+                        }
+                    } else if type_oid == timestamp_oid || type_oid == timestamptz_oid {
+                        // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff format
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            if let Ok(micros) = s.parse::<i64>() {
+                                use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                let mut buf = vec![0u8; 32];
+                                let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                                buf.truncate(len);
+                                Some(buf)
+                            } else {
+                                Some(data) // Keep original if not an integer
+                            }
+                        } else {
+                            Some(data) // Keep original if not valid UTF-8
                         }
                     } else {
                         Some(data)
@@ -1662,12 +1895,12 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
     
     let mut mappings = HashMap::new();
     
-    // Match patterns like "products.column_name AS alias" or "column_name AS alias"
+    // Match patterns like "table.column_name AS alias"
     let re = Regex::new(&format!(
-        r"(?i)\b(?:{}\.)?(\w+)\s+AS\s+(\w+)",
+        r"(?i)\b{}\.(\w+)\s+AS\s+(\w+)",
         regex::escape(table)
     )).unwrap_or_else(|_| {
-        // Fallback pattern if table name has special chars
+        // Fallback pattern - just match any alias pattern
         Regex::new(r"(?i)\b(\w+)\s+AS\s+(\w+)").unwrap()
     });
     
@@ -1755,6 +1988,38 @@ fn extract_table_name_from_update(query: &str) -> Option<String> {
     }).unwrap_or(after_update.len());
     
     let table_name = after_update[..table_end].trim();
+    
+    // Remove quotes if present
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract table name from DELETE statement
+fn extract_table_name_from_delete(query: &str) -> Option<String> {
+    // Look for DELETE FROM pattern with case-insensitive search
+    let delete_pos = query.as_bytes().windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b"DELETE"))?;
+    
+    let after_delete = &query[delete_pos + 6..].trim();
+    
+    // Skip optional FROM keyword
+    let after_from = if after_delete.to_uppercase().starts_with("FROM") {
+        &after_delete[4..].trim()
+    } else {
+        after_delete
+    };
+    
+    // Find the end of table name (WHERE or end of query)
+    let table_end = after_from.find(|c: char| {
+        c.is_whitespace() || c == ';'
+    }).unwrap_or(after_from.len());
+    
+    let table_name = after_from[..table_end].trim();
     
     // Remove quotes if present
     let table_name = table_name.trim_matches('"').trim_matches('\'');

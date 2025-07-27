@@ -173,6 +173,11 @@ pub async fn handle_test_connection_with_pool(
                         // Query executed successfully
                     }
                     Err(e) => {
+                        // If we're in a transaction, mark it as failed
+                        if session.in_transaction().await {
+                            session.set_transaction_status(TransactionStatus::InFailedTransaction).await;
+                        }
+                        
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),

@@ -172,6 +172,102 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // pg_timestamp_from_text - Convert text to timestamp (microseconds since epoch)
+    conn.create_scalar_function(
+        "pg_timestamp_from_text",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            
+            // Try parsing with multiple formats
+            // First try ISO 8601 format with fractional seconds
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&text) {
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            // Try without timezone
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S%.f") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            // Try without fractional seconds
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            // Try space separator
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S%.f") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            Err(Error::UserFunctionError(
+                format!("Invalid timestamp format: {}", text).into()
+            ))
+        },
+    )?;
+    
+    // pg_date_from_text - Convert text to date (days since epoch)
+    conn.create_scalar_function(
+        "pg_date_from_text",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            
+            if let Ok(date) = NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
+                let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                let days = (date - epoch).num_days();
+                return Ok(days);
+            }
+            
+            Err(Error::UserFunctionError(
+                format!("Invalid date format: {}", text).into()
+            ))
+        },
+    )?;
+    
+    // pg_time_from_text - Convert text to time (microseconds since midnight)
+    conn.create_scalar_function(
+        "pg_time_from_text",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            
+            // Try with fractional seconds
+            if let Ok(time) = NaiveTime::parse_from_str(&text, "%H:%M:%S%.f") {
+                let micros = time.num_seconds_from_midnight() as i64 * 1_000_000 
+                    + (time.nanosecond() / 1000) as i64;
+                return Ok(micros);
+            }
+            
+            // Try without fractional seconds
+            if let Ok(time) = NaiveTime::parse_from_str(&text, "%H:%M:%S") {
+                let micros = time.num_seconds_from_midnight() as i64 * 1_000_000 
+                    + (time.nanosecond() / 1000) as i64;
+                return Ok(micros);
+            }
+            
+            Err(Error::UserFunctionError(
+                format!("Invalid time format: {}", text).into()
+            ))
+        },
+    )?;
+    
     Ok(())
 }
 

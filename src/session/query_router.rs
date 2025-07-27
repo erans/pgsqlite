@@ -73,7 +73,7 @@ impl QueryRouter {
         sql: &str,
         session_state: &SessionState,
     ) -> Result<DbResponse, RouterError> {
-        let route = self.determine_route(sql, session_state);
+        let route = self.determine_route(sql, session_state).await;
         debug!("Query route: {:?} for SQL: {}", route, sql.chars().take(100).collect::<String>());
 
         match route {
@@ -97,7 +97,7 @@ impl QueryRouter {
         params: &[&dyn rusqlite::ToSql],
         session_state: &SessionState,
     ) -> Result<DbResponse, RouterError> {
-        let route = self.determine_route(sql, session_state);
+        let route = self.determine_route(sql, session_state).await;
         debug!("Parameterized query route: {:?}", route);
 
         match route {
@@ -115,14 +115,14 @@ impl QueryRouter {
     }
 
     /// Determine which route to use for a query
-    pub fn determine_route(&self, sql: &str, session_state: &SessionState) -> QueryRoute {
+    pub async fn determine_route(&self, sql: &str, session_state: &SessionState) -> QueryRoute {
         // If pooling is disabled, always use write handler
         if !self.pooling_enabled {
             return QueryRoute::Write;
         }
 
         // If we're in a transaction, always use write handler for consistency
-        if session_state.in_transaction() {
+        if session_state.in_transaction().await {
             return QueryRoute::WriteTransaction;
         }
 
@@ -269,8 +269,8 @@ mod tests {
         assert!(!router.is_read_only_pragma("PRAGMA synchronous = NORMAL"));
     }
 
-    #[test]
-    fn test_route_determination() {
+    #[tokio::test]
+    async fn test_route_determination() {
         let config = Arc::new(Config::load());
         let write_handler = Arc::new(DbHandler::new(":memory:").unwrap());
         let read_handler = Arc::new(ReadOnlyDbHandler::new(":memory:", config.clone()).unwrap());
@@ -280,19 +280,19 @@ mod tests {
 
         // SELECT queries should use read-only pool
         assert_eq!(
-            router.determine_route("SELECT * FROM users", &session_state),
+            router.determine_route("SELECT * FROM users", &session_state).await,
             QueryRoute::ReadOnly
         );
 
         // Write operations should use write handler
         assert_eq!(
-            router.determine_route("INSERT INTO users VALUES (1)", &session_state),
+            router.determine_route("INSERT INTO users VALUES (1)", &session_state).await,
             QueryRoute::Write
         );
 
         // Read-only pragmas should use read-only pool
         assert_eq!(
-            router.determine_route("PRAGMA table_info(users)", &session_state),
+            router.determine_route("PRAGMA table_info(users)", &session_state).await,
             QueryRoute::ReadOnly
         );
     }

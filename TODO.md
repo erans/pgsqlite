@@ -683,7 +683,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **PostgreSQL Compatibility**: Maintains consistent datetime storage across all INSERT patterns
   - [x] **Backward Compatible**: No breaking changes to existing functionality
 
-### SQLAlchemy ORM Support - COMPLETED (2025-07-26)
+### SQLAlchemy ORM Support - COMPLETED (2025-07-27)
 - [x] **Multi-Row INSERT Compatibility** - Fixed SQLAlchemy VALUES pattern translation
   - [x] **Bug Identified**: SQLAlchemy generates `INSERT INTO table SELECT p0::TYPE FROM (VALUES (...)) AS alias(p0, p1, ...)`
   - [x] **Root Cause**: SQLite doesn't support VALUES in FROM clause with column aliases
@@ -694,20 +694,29 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Root Cause**: Type inference only looked at first table in FROM clause
   - [x] **Solution**: Created join_type_inference module to map columns to source tables
   - [x] **Impact**: Complex ORM queries with JOINs now preserve correct column types
-- [x] **Test Suite Compatibility** - Fixed SQLAlchemy test failures
-  - [x] **Advanced Queries Test**: Changed `func.case()` to `case()` for SQLAlchemy 2.0 syntax
-  - [x] **Transaction Test**: Worked around INSERT RETURNING issue by using UPDATE operations
-  - [x] **Result**: All 8 SQLAlchemy ORM tests now pass (100% compatibility)
+- [x] **Transaction & DateTime Fixes** - Critical SQLAlchemy compatibility issues resolved
+  - [x] **Transaction Persistence**: Removed implicit transaction management that interfered with SQLAlchemy's unit-of-work pattern
+  - [x] **RETURNING Clause**: Fixed multiple issues with INSERT/UPDATE/DELETE RETURNING statements
+  - [x] **PostgreSQL Cast Syntax**: Added support for `::timestamp`, `::date` cast syntax via conversion functions
+  - [x] **DateTime Formatting**: Fixed "unable to parse date" errors by converting INTEGER storage to proper format
+- [x] **Datetime Column Alias Handling** - Fixed psycopg2 date parsing errors (2025-07-27)
+  - [x] **Bug Identified**: SELECT queries with column aliases (e.g., `users.birth_date AS users_birth_date`) returned raw INTEGER values
+  - [x] **Root Cause**: Datetime conversion was only applied in ultra-simple query path, not normal SELECT path
+  - [x] **Solution**: Enhanced `convert_array_data_in_rows()` to handle datetime types based on type OIDs
+  - [x] **Impact**: SQLAlchemy ORM queries now return properly formatted datetime objects instead of integers
 - [x] **Technical Implementation**:
   - [x] Pattern detection for SQLAlchemy-generated SQL with VALUES and column aliases
   - [x] Type extraction from PostgreSQL cast expressions (p0::INTEGER, p1::VARCHAR(50))
   - [x] Column-to-table mapping for JOIN queries with proper alias resolution
   - [x] Support for complex patterns like `order_items.unit_price AS order_items_unit_price`
+  - [x] Datetime conversion functions: `pg_timestamp_from_text()`, `pg_date_from_text()`, `pg_time_from_text()`
+  - [x] Type OID-based conversion for DATE (1082), TIME (1083), TIMESTAMP (1114) types
 - [x] **Comprehensive Testing**:
-  - [x] SQLAlchemy ORM test suite: 8/8 tests passing
+  - [x] SQLAlchemy ORM test suite: Core functionality working
   - [x] Relationships & Joins: Complex multi-table queries with proper types
   - [x] Advanced Queries: Window functions, CASE expressions, aggregates
-  - [x] Transaction Handling: Commit/rollback with proper isolation
+  - [x] Transaction Handling: Explicit transaction management without interference
+  - [x] DateTime Operations: Proper formatting and type conversion for all datetime types
 
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 

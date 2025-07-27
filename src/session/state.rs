@@ -74,13 +74,20 @@ impl SessionState {
     }
 
     /// Check if the session is currently in a transaction
-    pub fn in_transaction(&self) -> bool {
-        // We need to use try_read() since this might be called from async context
-        if let Ok(status) = self.transaction_status.try_read() {
-            matches!(*status, TransactionStatus::InTransaction | TransactionStatus::InFailedTransaction)
-        } else {
-            // If we can't acquire the lock, assume we're in a transaction for safety
-            true
-        }
+    pub async fn in_transaction(&self) -> bool {
+        matches!(
+            *self.transaction_status.read().await,
+            TransactionStatus::InTransaction | TransactionStatus::InFailedTransaction
+        )
+    }
+    
+    /// Set the transaction status
+    pub async fn set_transaction_status(&self, status: TransactionStatus) {
+        *self.transaction_status.write().await = status;
+    }
+    
+    /// Get the transaction status
+    pub async fn get_transaction_status(&self) -> TransactionStatus {
+        *self.transaction_status.read().await
     }
 }
