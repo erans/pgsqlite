@@ -289,7 +289,7 @@ impl ArrayTranslator {
         
         // First handle ANY(ARRAY[...]) patterns - common in catalog queries
         // Example: pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm'])
-        // Also handle parameter placeholders like %(param_1)s
+        // Also handle parameter placeholders like $1, $2, etc (already converted from %(param)s)
         let any_array_regex = Regex::new(r#"(\w+(?:\.\w+)*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[((?:'[^']*'(?:\s*,\s*'[^']*')*)|(?:\$\d+(?:\s*,\s*\$\d+)*)|(?:%\([^)]+\)s(?:\s*,\s*%\([^)]+\)s)*))\]\s*\)"#).unwrap();
         while let Some(captures) = any_array_regex.captures(&result) {
             let column = &captures[1];

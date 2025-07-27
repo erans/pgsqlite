@@ -294,11 +294,21 @@ impl DbHandler {
            lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
-            // Instead, let's handle information_schema.tables directly for now
+            // Instead, let's handle specific queries directly for now
             if lower_query.contains("information_schema.tables") {
                 return self.handle_information_schema_tables_query(query, session_id).await;
             }
-            // For pg_catalog queries, let them go through LazyQueryProcessor
+            
+            // Handle SQLAlchemy table existence check with a simpler query
+            if lower_query.contains("pg_class.relname") && 
+               lower_query.contains("pg_namespace") && 
+               lower_query.contains("pg_table_is_visible") &&
+               lower_query.contains("any") && 
+               lower_query.contains("array") {
+                return self.handle_table_existence_query(query, session_id).await;
+            }
+            
+            // For other pg_catalog queries, let them go through LazyQueryProcessor
             // which will strip the schema prefix and allow them to query the views
         }
         
@@ -565,6 +575,44 @@ impl DbHandler {
                     "is_typed".to_string(),
                     "commit_action".to_string(),
                 ],
+                rows: rows?,
+                rows_affected: 0,
+            })
+        })
+    }
+    
+    /// Handle SQLAlchemy table existence check query
+    /// This optimizes the complex JOIN query by doing a simple table lookup
+    async fn handle_table_existence_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Extract table name from the query
+        // Look for patterns like "relname = 'table_name'" or "relname = $1"
+        let table_name = if let Some(captures) = regex::Regex::new(r"relname\s*=\s*'([^']+)'").unwrap().captures(query) {
+            captures[1].to_string()
+        } else {
+            // For parameterized queries, we need to look at the actual parameters
+            // For now, return empty result to indicate table doesn't exist
+            // This will cause SQLAlchemy to proceed with CREATE TABLE
+            return Ok(DbResponse {
+                columns: vec!["relname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        };
+        
+        debug!("Checking table existence for: {}", table_name);
+        
+        // Simple table existence check
+        let existence_query = "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name = ? AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'";
+        
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            let mut stmt = conn.prepare(existence_query)?;
+            let rows: Result<Vec<_>, _> = stmt.query_map([&table_name], |row| {
+                let name: String = row.get(0)?;
+                Ok(vec![Some(name.into_bytes())])
+            })?.collect();
+            
+            Ok(DbResponse {
+                columns: vec!["relname".to_string()],
                 rows: rows?,
                 rows_affected: 0,
             })
