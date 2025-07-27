@@ -1,0 +1,19 @@
+warning: unused import: `debug`
+  --> src/main.rs:14:15
+   |
+14 | use tracing::{debug, error, info};
+   |               ^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+warning: `pgsqlite` (bin "pgsqlite") generated 1 warning (run `cargo fix --bin "pgsqlite"` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running `target/debug/pgsqlite --database cast_test.db --port 5435`
+Error: Failed to create database handler: Schema drift detected:
+
+Table 'test_cast' has schema drift:
+  Type mismatches:
+    - id expected SQLite type 'INTEGER PRIMARY KEY AUTOINCREMENT' but found 'INTEGER'
+
+
+To fix this, ensure your SQLite schema matches the pgsqlite metadata.

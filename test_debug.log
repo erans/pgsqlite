@@ -1,0 +1,120 @@
+[2m2025-07-27T04:07:22.925411Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.11
+[2m2025-07-27T04:07:22.929045Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, running initial migrations...
+[2m2025-07-27T04:07:22.931602Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-07-27T04:07:22.931858Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-07-27T04:07:22.931891Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-07-27T04:07:22.932233Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-07-27T04:07:22.932255Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-07-27T04:07:22.932653Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-07-27T04:07:22.932681Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-07-27T04:07:22.932781Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-07-27T04:07:22.932802Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-07-27T04:07:22.944055Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 11ms
+[2m2025-07-27T04:07:22.944085Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-07-27T04:07:22.944540Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-07-27T04:07:22.944563Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-07-27T04:07:22.944781Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-07-27T04:07:22.944805Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-07-27T04:07:22.945231Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-07-27T04:07:22.945253Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-07-27T04:07:22.946372Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 0ms
+[2m2025-07-27T04:07:22.946401Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Applied 9 migrations to new database
+[2m2025-07-27T04:07:22.946502Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with mutex-based implementation
+[2m2025-07-27T04:07:22.946658Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.5435
+[2m2025-07-27T04:07:22.946693Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 5435
+[2m2025-07-27T04:07:22.946699Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: test_debug.db
+[2m2025-07-27T04:07:22.946702Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-07-27T04:07:22.947968Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-07-27T04:07:30.774893Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:41642
+[2m2025-07-27T04:07:30.774975Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:41642
+[2m2025-07-27T04:07:30.775054Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:41642 (SSL disabled)
+[2m2025-07-27T04:07:30.775109Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:41642: StartupMessage { protocol_version: 196608, parameters: {"user": "postgres", "database": "main"} }
+[2m2025-07-27T04:07:30.775224Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:41642
+[2m2025-07-27T04:07:30.778426Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:07:30.781678Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:07:30.781688Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:07:30.781755Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-27T04:07:30.783215Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 3 mappings from query
+[2m2025-07-27T04:07:30.783253Z[0m [32m INFO[0m [2mpgsqlite::cache::row_description[0m[2m:[0m Initializing RowDescription cache with capacity 1000 and TTL 10 minutes
+[2m2025-07-27T04:07:30.785552Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:07:30.785564Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:07:30.785568Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:07:30.785650Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: select pg_catalog.version()
+[2m2025-07-27T04:07:30.786903Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: TRANSACTION ISOLATION LEVEL
+[2m2025-07-27T04:07:30.786913Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter TRANSACTION ISOLATION LEVEL = read committed
+[2m2025-07-27T04:07:30.787040Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: STANDARD_CONFORMING_STRINGS
+[2m2025-07-27T04:07:30.787045Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter STANDARD_CONFORMING_STRINGS = on
+[2m2025-07-27T04:07:30.789366Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:07:30.789378Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:07:30.789381Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:07:30.803437Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'test_returning_users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:07:30.805698Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:07:30.808103Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 2
+[2m2025-07-27T04:07:30.808124Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:07:30.808157Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_returning_users.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:07:30.808179Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_returning_users.name -> VARCHAR(50) (TEXT)
+[2m2025-07-27T04:07:30.808206Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: test_returning_users.name max_length=50
+[2m2025-07-27T04:07:30.808210Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table test_returning_users (simple query protocol)
+[2m2025-07-27T04:07:30.808213Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: test_returning_users
+[2m2025-07-27T04:07:30.811198Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: test_returning_users
+[2m2025-07-27T04:07:30.811208Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: test_returning_users
+[2m2025-07-27T04:07:30.811351Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:07:30.811489Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:07:30.811492Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:07:30.812679Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:07:30.812691Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:07:30.812694Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:07:30.812910Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:07:30.812943Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:07:30.812946Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:07:30.815073Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:07:30.815085Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:07:30.815088Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:07:30.815435Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:07:30.815473Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:07:30.815477Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:07:30.816704Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:07:30.816716Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:07:30.816719Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:07:30.826571Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:41642 requested termination
+[2m2025-07-27T04:07:30.826590Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:41642 closed
+[2m2025-07-27T04:08:49.158747Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:47858
+[2m2025-07-27T04:08:49.158800Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:47858
+[2m2025-07-27T04:08:49.158872Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:47858 (SSL disabled)
+[2m2025-07-27T04:08:49.158895Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:47858: StartupMessage { protocol_version: 196608, parameters: {"database": "main", "user": "postgres"} }
+[2m2025-07-27T04:08:49.158986Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:47858
+[2m2025-07-27T04:08:49.159028Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:08:49.159056Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:08:49.159061Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:08:49.161033Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 2
+[2m2025-07-27T04:08:49.161059Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:08:49.161156Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: psycopg2_test.name -> VARCHAR(50) (TEXT)
+[2m2025-07-27T04:08:49.161189Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: psycopg2_test.name max_length=50
+[2m2025-07-27T04:08:49.161214Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: psycopg2_test.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:08:49.161220Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table psycopg2_test (simple query protocol)
+[2m2025-07-27T04:08:49.161225Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: psycopg2_test
+[2m2025-07-27T04:08:49.161985Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: psycopg2_test
+[2m2025-07-27T04:08:49.161995Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: psycopg2_test
+[2m2025-07-27T04:08:49.162062Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:08:49.162189Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:08:49.162193Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:08:49.162247Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:08:49.162256Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:08:49.162259Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:08:49.162500Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:08:49.162537Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:08:49.162541Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:08:49.162585Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:08:49.162593Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:08:49.162597Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:08:49.162711Z[0m [32m INFO[0m [2mpgsqlite::cache::enhanced_statement_pool[0m[2m:[0m Cached new statement for pattern SimpleInsert in 0ms
+[2m2025-07-27T04:08:49.162782Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:08:49.162817Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:08:49.162821Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:08:49.162864Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:47858 requested termination
+[2m2025-07-27T04:08:49.162870Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:47858 closed

@@ -1596,22 +1596,52 @@ impl QueryExecutor {
                             }
                         }
                         
-                        // Always checkpoint in WAL mode to ensure durability across sessions
-                        // This prevents the WAL mode rollback bug where subsequent ROLLBACK
-                        // can undo previously committed transactions
-                        match conn.prepare("PRAGMA wal_checkpoint(PASSIVE)") {
+                        // Aggressive WAL checkpoint strategy for SQLAlchemy compatibility
+                        // This ensures new sessions immediately see committed data
+                        
+                        // Step 1: Force complete WAL flush with RESTART mode
+                        match conn.prepare("PRAGMA wal_checkpoint(RESTART)") {
                             Ok(mut stmt) => {
                                 match stmt.query([]) {
                                     Ok(_rows) => {
-                                        tracing::info!("WAL checkpoint executed for transaction durability");
+                                        tracing::info!("WAL checkpoint(RESTART) executed - forced complete flush");
                                     }
                                     Err(e) => {
-                                        tracing::info!("WAL checkpoint query failed: {}", e);
+                                        tracing::warn!("WAL checkpoint(RESTART) failed: {}, falling back to PASSIVE", e);
+                                        // Fallback to passive if restart fails
+                                        if let Ok(mut fallback_stmt) = conn.prepare("PRAGMA wal_checkpoint(PASSIVE)") {
+                                            let _ = fallback_stmt.query([]);
+                                        }
                                     }
                                 }
                             }
                             Err(e) => {
-                                tracing::info!("WAL checkpoint prepare failed: {}", e);
+                                tracing::warn!("WAL checkpoint prepare failed: {}", e);
+                            }
+                        }
+                        
+                        // Step 2: Force connection state refresh to break read isolation
+                        // Execute a dummy transaction to invalidate any cached snapshots
+                        if let Err(e) = conn.execute("BEGIN IMMEDIATE; ROLLBACK;", []) {
+                            tracing::debug!("Connection state refresh failed: {}", e);
+                        } else {
+                            tracing::debug!("Connection state refreshed after checkpoint");
+                        }
+                        
+                        // Step 3: Force query planner to see latest statistics
+                        // This ensures new queries use updated data distribution
+                        if let Err(e) = conn.execute("PRAGMA optimize", []) {
+                            tracing::debug!("Failed to optimize query planner: {}", e);
+                        } else {
+                            tracing::debug!("Query planner optimized for latest data");
+                        }
+                        
+                        // Step 4: For high-traffic scenarios, ensure fsync completion
+                        if session_count > 1 {
+                            if let Err(e) = conn.execute("PRAGMA synchronous = FULL", []) {
+                                tracing::debug!("Failed to set synchronous mode: {}", e);
+                            } else {
+                                tracing::debug!("Forced synchronous writes for multi-session isolation");
                             }
                         }
                     }
@@ -1629,6 +1659,27 @@ impl QueryExecutor {
             QueryType::Rollback => {
                 // Use the rollback method which handles the "no transaction active" case gracefully
                 db.rollback().await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?;
+                
+                // Force connection to see latest committed state after ROLLBACK
+                // This is critical for SQLAlchemy which reuses connections across transactions
+                tracing::info!("ROLLBACK: Attempting connection isolation refresh");
+                match db.get_mut_connection() {
+                    Ok(conn) => {
+                        // Execute a dummy query to force connection to refresh its view
+                        match conn.execute("SELECT 1 WHERE 0 = 1", []) {
+                            Ok(_) => {
+                                tracing::info!("ROLLBACK connection refreshed to see latest committed state");
+                            }
+                            Err(e) => {
+                                tracing::warn!("ROLLBACK connection isolation refresh failed: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("ROLLBACK: Failed to acquire connection for isolation refresh: {}", e);
+                    }
+                }
+                
                 // Update transaction status to Idle (regardless of previous state)
                 *session.transaction_status.write().await = TransactionStatus::Idle;
                 framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await

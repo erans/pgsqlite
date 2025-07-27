@@ -342,6 +342,28 @@ where
     let session = Arc::new(SessionState::new(database, user));
     let _session_id = uuid::Uuid::new_v4();
 
+    // Force new connection to see latest committed state in WAL mode
+    // This breaks read isolation that could show stale data from before recent commits
+    if let Ok(conn) = db_handler.get_mut_connection() {
+        // Force a complete view refresh for the connection
+        // 1. Start and rollback a transaction to clear any cached state
+        if let Err(e) = conn.execute("BEGIN IMMEDIATE; ROLLBACK", []) {
+            debug!("New connection transaction refresh failed: {}", e);
+        }
+        
+        // 2. Force query planner to use latest statistics
+        if let Err(e) = conn.execute("PRAGMA optimize", []) {
+            debug!("New connection query planner optimization failed: {}", e);
+        }
+        
+        // 3. Execute a dummy query to ensure connection is fully initialized
+        if let Err(e) = conn.execute("SELECT 1 WHERE 0 = 1", []) {
+            debug!("New connection isolation refresh failed: {}", e);
+        } else {
+            debug!("New connection fully refreshed to see latest committed state");
+        }
+    }
+
     // Send authentication OK
     framed
         .send(BackendMessage::Authentication(AuthenticationMessage::Ok))

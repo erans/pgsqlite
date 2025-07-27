@@ -124,11 +124,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries
 - **SQLAlchemy ORM**: Full compatibility with VALUES clause conversion and datetime handling
 - **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
-- **Transaction Persistence**: Resolved WAL mode transaction isolation issues causing rollbacks to undo commits
+- **Transaction Persistence**: Improved WAL mode transaction isolation with aggressive checkpointing
 - **Transaction Error Handling**: Fixed "cannot rollback - no transaction is active" and transaction leak errors
-- **WAL Mode Durability**: Added automatic checkpoint after COMMIT to ensure transaction persistence
+- **WAL Mode Durability**: Added automatic checkpoint(RESTART) after COMMIT to ensure transaction persistence
 - **Session Count Tracking**: Implemented global atomic session counter for performance optimization
 - **WAL Checkpoint API**: Fixed rusqlite API usage from execute() to query() for PRAGMA wal_checkpoint
+- **Connection State Refresh**: Added BEGIN IMMEDIATE; ROLLBACK and PRAGMA optimize after COMMIT
 - **Performance**: Logging optimization reduced overhead significantly
 
 ### Major Features
@@ -169,10 +170,11 @@ Session = sessionmaker(bind=engine)
 
 **Production Configuration**:
 ```bash
-# For guaranteed compatibility (recommended)
+# For guaranteed compatibility (recommended for SQLAlchemy)
 PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db
 
 # For performance with enhanced transaction handling and automatic WAL checkpointing
+# Note: Currently 7/8 SQLAlchemy tests pass in WAL mode (transaction persistence test fails)
 PGSQLITE_JOURNAL_MODE=WAL pgsqlite --database mydb.db
 ```
 
@@ -199,6 +201,7 @@ Environment variables:
 ## Known Limitations
 - Array ORDER BY in array_agg relies on outer query ORDER BY
 - Multi-array unnest (edge case)
+- SQLAlchemy WAL mode: New sessions may see stale data after commits (workaround: use DELETE journal mode)
 
 ## Code Style
 - Follow Rust conventions

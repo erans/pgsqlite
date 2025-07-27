@@ -1,0 +1,97 @@
+[2m2025-07-27T06:09:44.993429Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.11
+[2m2025-07-27T06:09:44.997162Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, running initial migrations...
+[2m2025-07-27T06:09:44.999930Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-07-27T06:09:45.000377Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-07-27T06:09:45.000425Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-07-27T06:09:45.001009Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-07-27T06:09:45.001057Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-07-27T06:09:45.001907Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-07-27T06:09:45.001964Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-07-27T06:09:45.002169Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-07-27T06:09:45.002215Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-07-27T06:09:45.169113Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 166ms
+[2m2025-07-27T06:09:45.169185Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-07-27T06:09:45.170055Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-07-27T06:09:45.170104Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-07-27T06:09:45.170460Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-07-27T06:09:45.170507Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-07-27T06:09:45.171408Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-07-27T06:09:45.171456Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-07-27T06:09:45.173747Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 2ms
+[2m2025-07-27T06:09:45.173805Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Applied 9 migrations to new database
+[2m2025-07-27T06:09:45.174143Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with mutex-based implementation
+[2m2025-07-27T06:09:45.174351Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.5435
+[2m2025-07-27T06:09:45.174397Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 5435
+[2m2025-07-27T06:09:45.174406Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: test_wal_info.db
+[2m2025-07-27T06:09:45.174411Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-07-27T06:09:45.176884Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-07-27T06:09:51.965708Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:41386
+[2m2025-07-27T06:09:51.965844Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:41386
+[2m2025-07-27T06:09:51.965927Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:41386 (SSL disabled)
+[2m2025-07-27T06:09:51.965999Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:41386: StartupMessage { protocol_version: 196608, parameters: {"database": "main", "user": "postgres"} }
+[2m2025-07-27T06:09:51.966269Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:41386
+[2m2025-07-27T06:09:51.966394Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: BEGIN
+[2m2025-07-27T06:09:51.993545Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T06:09:52.021210Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T06:09:52.021233Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T06:09:52.021339Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: DROP TABLE IF EXISTS sqlalchemy_mimic
+[2m2025-07-27T06:09:52.023527Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 0
+[2m2025-07-27T06:09:52.023634Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: CREATE TABLE sqlalchemy_mimic (id INTEGER PRIMARY KEY, value TEXT)
+[2m2025-07-27T06:09:52.031137Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 2
+[2m2025-07-27T06:09:52.031541Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T06:09:52.031956Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: sqlalchemy_mimic.value -> TEXT (TEXT)
+[2m2025-07-27T06:09:52.032197Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: sqlalchemy_mimic.id -> INTEGER (INTEGER)
+[2m2025-07-27T06:09:52.032209Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table sqlalchemy_mimic (simple query protocol)
+[2m2025-07-27T06:09:52.032220Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: sqlalchemy_mimic
+[2m2025-07-27T06:09:52.061629Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: sqlalchemy_mimic
+[2m2025-07-27T06:09:52.061671Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: sqlalchemy_mimic
+[2m2025-07-27T06:09:52.061833Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: INSERT INTO sqlalchemy_mimic (value) VALUES ('original')
+[2m2025-07-27T06:09:52.062064Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m execute_dml called with query: INSERT INTO sqlalchemy_mimic (value) VALUES ('original')
+[2m2025-07-27T06:09:52.062075Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query does NOT have RETURNING clause: INSERT INTO sqlalchemy_mimic (value) VALUES ('original')
+[2m2025-07-27T06:09:52.062538Z[0m [32m INFO[0m [2mpgsqlite::cache::enhanced_statement_pool[0m[2m:[0m Cached new statement for pattern SimpleInsert in 0ms
+[2m2025-07-27T06:09:52.062641Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: COMMIT
+[2m2025-07-27T06:09:52.062678Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T06:09:52.062821Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T06:09:52.062829Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m WAL checkpoint check: session_count=1
+[2m2025-07-27T06:09:52.062834Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully acquired connection for WAL checkpoint
+[2m2025-07-27T06:09:52.066446Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m WAL checkpoint failed: Execute returned results - did you mean to call query?
+[2m2025-07-27T06:09:52.066473Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T06:09:52.066554Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: BEGIN
+[2m2025-07-27T06:09:52.066580Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T06:09:52.066600Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T06:09:52.066609Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T06:09:52.066682Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: UPDATE sqlalchemy_mimic SET value = 'updated' WHERE id = 1
+[2m2025-07-27T06:09:52.067019Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m execute_dml called with query: UPDATE sqlalchemy_mimic SET value = 'updated' WHERE id = 1
+[2m2025-07-27T06:09:52.067030Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query does NOT have RETURNING clause: UPDATE sqlalchemy_mimic SET value = 'updated' WHERE id = 1
+[2m2025-07-27T06:09:52.067575Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: COMMIT
+[2m2025-07-27T06:09:52.067608Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T06:09:52.068609Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T06:09:52.068624Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m WAL checkpoint check: session_count=1
+[2m2025-07-27T06:09:52.068629Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully acquired connection for WAL checkpoint
+[2m2025-07-27T06:09:52.070102Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m WAL checkpoint failed: Execute returned results - did you mean to call query?
+[2m2025-07-27T06:09:52.070117Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T06:09:52.070186Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: BEGIN
+[2m2025-07-27T06:09:52.070210Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T06:09:52.070225Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T06:09:52.070232Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T06:09:52.070295Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41386: SELECT value FROM sqlalchemy_mimic WHERE id = 1
+[2m2025-07-27T06:09:52.079284Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Column mappings for table 'sqlalchemy_mimic': {}
+[2m2025-07-27T06:09:52.079303Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Datetime columns for table 'sqlalchemy_mimic': {}
+[2m2025-07-27T06:09:52.079471Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:41386 requested termination
+[2m2025-07-27T06:09:52.079491Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rolling back active transaction before client disconnect
+[2m2025-07-27T06:09:52.079540Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:41386 closed
+[2m2025-07-27T06:09:52.079693Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:41390
+[2m2025-07-27T06:09:52.079742Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:41390
+[2m2025-07-27T06:09:52.079809Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:41390 (SSL disabled)
+[2m2025-07-27T06:09:52.079844Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:41390: StartupMessage { protocol_version: 196608, parameters: {"user": "postgres", "database": "main"} }
+[2m2025-07-27T06:09:52.079969Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:41390
+[2m2025-07-27T06:09:52.080026Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41390: BEGIN
+[2m2025-07-27T06:09:52.080057Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T06:09:52.080081Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T06:09:52.080090Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T06:09:52.080165Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:41390: SELECT value FROM sqlalchemy_mimic WHERE id = 1
+[2m2025-07-27T06:09:52.089058Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Column mappings for table 'sqlalchemy_mimic': {}
+[2m2025-07-27T06:09:52.089075Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Datetime columns for table 'sqlalchemy_mimic': {}
+[2m2025-07-27T06:09:52.089229Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:41390 requested termination
+[2m2025-07-27T06:09:52.089242Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rolling back active transaction before client disconnect
+[2m2025-07-27T06:09:52.089270Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:41390 closed
