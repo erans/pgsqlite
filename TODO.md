@@ -718,6 +718,23 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Transaction Handling: Explicit transaction management without interference
   - [x] DateTime Operations: Proper formatting and type conversion for all datetime types
 
+### SQLAlchemy Transaction Persistence - COMPLETED (2025-07-27)
+- [x] **Transaction State Management** - Fixed critical transaction persistence issues with SQLAlchemy
+  - [x] **Root Cause Analysis**: WAL mode transaction isolation causing rollbacks to undo committed transactions
+  - [x] **Journal Mode Testing**: Confirmed DELETE journal mode works perfectly, WAL mode has isolation issues
+  - [x] **Transaction Error Cleanup**: Proper handling when queries fail during transactions
+  - [x] **Graceful Rollback Handling**: Prevents "cannot rollback - no transaction is active" errors
+- [x] **WAL Mode Transaction Durability** - Enhanced commit behavior for WAL mode
+  - [x] **WAL Checkpoint After Commit**: Forces durability of committed data in WAL mode
+  - [x] **Transaction Leak Prevention**: Automatic cleanup of failed transactions to prevent hanging state
+  - [x] **Implicit Transaction Support**: Removed interference with SQLAlchemy's autocommit=False behavior
+  - [x] **State Synchronization**: Proper session state management for PostgreSQL protocol compliance
+- [x] **Production Recommendations**:
+  - [x] **DELETE Journal Mode**: Use `PGSQLITE_JOURNAL_MODE=DELETE` for guaranteed SQLAlchemy compatibility
+  - [x] **WAL Mode Support**: Enhanced WAL mode provides substantial improvement with minor edge cases
+  - [x] **Transaction Verification**: All core SQLAlchemy ORM functionality now works correctly
+  - [x] **Performance Validated**: No regression in query performance with transaction fixes
+
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 
 ### Data Type Improvements

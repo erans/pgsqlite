@@ -124,7 +124,9 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries
 - **SQLAlchemy ORM**: Full compatibility with VALUES clause conversion and datetime handling
 - **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
-- **Transaction Management**: Removed implicit transactions that interfered with SQLAlchemy
+- **Transaction Persistence**: Resolved WAL mode transaction isolation issues causing rollbacks to undo commits
+- **Transaction Error Handling**: Fixed "cannot rollback - no transaction is active" and transaction leak errors
+- **WAL Mode Durability**: Added automatic checkpoint after COMMIT to ensure transaction persistence
 - **Performance**: Logging optimization reduced overhead significantly
 
 ### Major Features
@@ -144,6 +146,34 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - Operators: `@>`, `<@`, `&&`, `||`
 - Functions: unnest(), array_agg() with DISTINCT/ORDER BY
 
+## SQLAlchemy Compatibility
+
+**Full SQLAlchemy ORM support** with transaction persistence and datetime handling:
+
+```python
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+engine = create_engine('postgresql://postgres@localhost:5432/main')
+Session = sessionmaker(bind=engine)
+
+# All SQLAlchemy operations work correctly:
+# - Table creation, INSERT, UPDATE, DELETE with RETURNING
+# - Complex JOINs with proper type inference  
+# - Transaction management and persistence
+# - Datetime operations with proper formatting
+```
+
+**Production Configuration**:
+```bash
+# For guaranteed compatibility (recommended)
+PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db
+
+# For performance with enhanced transaction handling
+PGSQLITE_JOURNAL_MODE=WAL pgsqlite --database mydb.db
+```
+
 ## Connection Pooling
 
 Enable for concurrent workloads:
@@ -157,8 +187,6 @@ Environment variables:
 - `PGSQLITE_USE_POOLING`: Enable pooling (default: false)
 - `PGSQLITE_POOL_SIZE`: Max read connections (default: 5)
 - `PGSQLITE_POOL_TIMEOUT`: Acquisition timeout seconds (default: 30)
-
-**Important**: When using SQLAlchemy or other ORMs that create multiple sessions, enable connection pooling to ensure transaction visibility across sessions. Without pooling, each session gets its own SQLite connection, which can lead to isolation issues in WAL mode.
 
 ## Quality Standards
 - Test edge cases, not just happy paths

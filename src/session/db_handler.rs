@@ -640,8 +640,15 @@ impl DbHandler {
     /// Rollback transaction
     pub async fn rollback(&self) -> Result<(), rusqlite::Error> {
         let conn = self.conn.lock();
-        conn.execute("ROLLBACK", [])?;
-        Ok(())
+        match conn.execute("ROLLBACK", []) {
+            Ok(_) => Ok(()),
+            Err(rusqlite::Error::SqliteFailure(_err, Some(msg))) if msg.contains("cannot rollback - no transaction is active") => {
+                // This is fine - no transaction was active, so nothing to rollback
+                tracing::debug!("ROLLBACK called with no active transaction - ignoring");
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
     
     /// Get a mutable connection for operations that require &mut Connection

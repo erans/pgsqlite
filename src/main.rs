@@ -389,6 +389,7 @@ where
                         error!("Query execution error: {}", e);
                         
                         // If we're in a transaction, mark it as failed
+                        // Let SQLAlchemy handle its own rollback to avoid double-rollback issues
                         if session.in_transaction().await {
                             session.set_transaction_status(TransactionStatus::InFailedTransaction).await;
                         }

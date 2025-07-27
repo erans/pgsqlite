@@ -1578,6 +1578,17 @@ impl QueryExecutor {
                 tracing::info!("Executing COMMIT command");
                 db.execute("COMMIT").await?;
                 tracing::info!("COMMIT executed successfully");
+                
+                // In WAL mode, force a checkpoint to ensure committed data is durable
+                // This prevents subsequent rollbacks from undoing committed transactions
+                if let Ok(conn) = db.get_mut_connection() {
+                    if let Err(e) = conn.execute("PRAGMA wal_checkpoint(PASSIVE)", []) {
+                        tracing::warn!("Failed to checkpoint WAL after COMMIT: {}", e);
+                    } else {
+                        tracing::debug!("WAL checkpoint completed after COMMIT");
+                    }
+                }
+                
                 // Update transaction status to Idle
                 *session.transaction_status.write().await = TransactionStatus::Idle;
                 tracing::info!("Transaction status updated to Idle");
@@ -1585,7 +1596,8 @@ impl QueryExecutor {
                     .map_err(PgSqliteError::Io)?;
             }
             QueryType::Rollback => {
-                db.execute("ROLLBACK").await?;
+                // Use the rollback method which handles the "no transaction active" case gracefully
+                db.rollback().await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?;
                 // Update transaction status to Idle (regardless of previous state)
                 *session.transaction_status.write().await = TransactionStatus::Idle;
                 framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
