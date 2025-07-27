@@ -2341,26 +2341,12 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            // Numeric type
+                            // Numeric type - always use text format to avoid binary encoding issues
                             t if t == PgType::Numeric.to_oid() => {
-                                // numeric - use DecimalHandler for proper encoding
-                                if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    match DecimalHandler::parse_decimal(&s) {
-                                        Ok(decimal) => {
-                                            let encoded = DecimalHandler::encode_numeric(&decimal);
-                                            debug!("Encoded NUMERIC '{}' to {} bytes of binary data", s, encoded.len());
-                                            Some(encoded)
-                                        }
-                                        Err(e) => {
-                                            // If parsing fails, keep as text
-                                            warn!("Failed to parse NUMERIC value '{}': {}, keeping as text", s, e);
-                                            Some(bytes.clone())
-                                        }
-                                    }
-                                } else {
-                                    warn!("NUMERIC value is not valid UTF-8, keeping as-is");
-                                    Some(bytes.clone())
-                                }
+                                // Force text format for NUMERIC to prevent Unicode decode errors
+                                // Binary NUMERIC encoding can cause issues with SQLAlchemy and other clients
+                                debug!("NUMERIC type detected - forcing text format to avoid binary encoding issues");
+                                Some(bytes.clone())
                             }
                             // Money type
                             t if t == PgType::Money.to_oid() => {
