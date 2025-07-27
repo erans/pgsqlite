@@ -535,8 +535,30 @@ impl DbHandler {
     }
     
     /// Handle information_schema.tables query
-    async fn handle_information_schema_tables_query(&self, _query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
-        // For now, just return the list of tables
+    async fn handle_information_schema_tables_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        debug!("Handling information_schema.tables query: {}", query);
+        
+        // Check if this is a simple table_name only query
+        if query.contains("SELECT table_name") && !query.contains("table_catalog") {
+            // Simple query - just return table names
+            let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
+            
+            return self.connection_manager.execute_with_session(session_id, |conn| {
+                let mut stmt = conn.prepare(tables_query)?;
+                let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                    let table_name: String = row.get(0)?;
+                    Ok(vec![Some(table_name.into_bytes())])
+                })?.collect();
+                
+                Ok(DbResponse {
+                    columns: vec!["table_name".to_string()],
+                    rows: rows?,
+                    rows_affected: 0,
+                })
+            });
+        }
+        
+        // Full information_schema.tables query
         let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
         
         self.connection_manager.execute_with_session(session_id, |conn| {
