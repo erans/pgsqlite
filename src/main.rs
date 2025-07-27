@@ -342,15 +342,17 @@ where
     let session = Arc::new(SessionState::new(database, user));
     let session_id = session.id;
 
+    // Set the database handler for this session for proper lifecycle management
+    session.set_db_handler(db_handler.clone()).await;
+
     // Create a connection for this session
-    if let Err(e) = db_handler.create_session_connection(session_id).await {
+    if let Err(e) = session.initialize_connection().await {
         error!("Failed to create session connection: {}", e);
         return Err(anyhow::anyhow!("Failed to create session connection: {}", e));
     }
     
-    // Ensure cleanup on disconnect
-    let cleanup_handler = db_handler.clone();
-    let cleanup_session_id = session_id;
+    // Note: cleanup is now handled by SessionState Drop implementation
+    // when the session Arc is dropped
     
     // We'll handle cleanup at the end of the function
 
@@ -591,8 +593,8 @@ where
         }
     }
 
-    // Clean up session connection
-    cleanup_handler.remove_session_connection(&cleanup_session_id);
+    // Clean up session connection explicitly
+    session.cleanup_connection().await;
     
     info!("Connection from {} closed", connection_info);
     Ok(())

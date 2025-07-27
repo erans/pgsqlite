@@ -1,11 +1,12 @@
 use std::collections::HashMap;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 use crate::protocol::TransactionStatus;
 use crate::cache::QueryCache;
 use crate::config::CONFIG;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use once_cell::sync::Lazy;
+use crate::session::DbHandler;
 
 // Global query cache shared across all sessions
 pub static GLOBAL_QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| {
@@ -25,6 +26,7 @@ pub struct SessionState {
     pub transaction_status: RwLock<TransactionStatus>,
     pub portal_manager: Arc<super::PortalManager>,
     pub python_param_mapping: RwLock<HashMap<String, Vec<String>>>, // Maps statement name to Python parameter names
+    pub db_handler: Mutex<Option<Arc<DbHandler>>>, // Reference to the database handler for session lifecycle management
 }
 
 pub struct PreparedStatement {
@@ -71,6 +73,7 @@ impl SessionState {
             transaction_status: RwLock::new(TransactionStatus::Idle),
             portal_manager: Arc::new(super::PortalManager::new(100)), // Allow up to 100 concurrent portals
             python_param_mapping: RwLock::new(HashMap::new()),
+            db_handler: Mutex::new(None), // Will be set after session is created
         }
     }
 
@@ -102,10 +105,42 @@ impl SessionState {
     pub async fn get_session_count(&self) -> usize {
         ACTIVE_SESSION_COUNT.load(Ordering::Relaxed)
     }
+    
+    /// Set the database handler for this session
+    /// This should be called after the session is created and a connection is established
+    pub async fn set_db_handler(&self, db_handler: Arc<DbHandler>) {
+        *self.db_handler.lock().await = Some(db_handler);
+    }
+    
+    /// Get the database handler for this session
+    pub async fn get_db_handler(&self) -> Option<Arc<DbHandler>> {
+        self.db_handler.lock().await.clone()
+    }
+    
+    /// Initialize the session connection with the database handler
+    /// This ensures the session has its dedicated connection
+    pub async fn initialize_connection(&self) -> Result<(), crate::PgSqliteError> {
+        if let Some(ref db_handler) = *self.db_handler.lock().await {
+            db_handler.create_session_connection(self.id).await?;
+        }
+        Ok(())
+    }
+    
+    /// Clean up the session connection
+    /// This should be called when the session is being terminated
+    pub async fn cleanup_connection(&self) {
+        if let Some(ref db_handler) = *self.db_handler.lock().await {
+            db_handler.remove_session_connection(&self.id);
+        }
+    }
 }
 
 impl Drop for SessionState {
     fn drop(&mut self) {
+        // Note: We can't do async operations in Drop, so cleanup is handled
+        // explicitly when the session ends or via a background task
+        // For now, just decrement the session count
+        
         // Decrement active session count when session is destroyed
         ACTIVE_SESSION_COUNT.fetch_sub(1, Ordering::Relaxed);
     }

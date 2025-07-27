@@ -119,8 +119,11 @@ pub async fn handle_test_connection_with_pool(
     let session = Arc::new(SessionState::new(database, user));
     let session_id = session.id;
     
+    // Set the database handler for this session for proper lifecycle management
+    session.set_db_handler(db_handler.clone()).await;
+    
     // Create a connection for this session
-    db_handler.create_session_connection(session_id).await
+    session.initialize_connection().await
         .map_err(|e| anyhow::anyhow!("Failed to create session connection: {}", e))?;
     
     // Set up connection pooling infrastructure (optional - can be enabled via config)
