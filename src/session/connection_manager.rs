@@ -5,7 +5,7 @@ use rusqlite::{Connection, OpenFlags};
 use uuid::Uuid;
 use crate::config::Config;
 use crate::PgSqliteError;
-use tracing::{info, warn, debug};
+use tracing::{warn, debug};
 
 /// Manages per-session SQLite connections for true isolation
 pub struct ConnectionManager {
@@ -95,7 +95,7 @@ impl ConnectionManager {
                 // Get the connection back from the runner
                 let conn = runner.into_connection();
                 connections.insert(session_id, conn);
-                info!("Created new connection for session {}", session_id);
+                debug!("Created new connection for session {}", session_id);
             }
             Err(e) => {
                 return Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(
@@ -131,7 +131,7 @@ impl ConnectionManager {
     pub fn remove_connection(&self, session_id: &Uuid) {
         let mut connections = self.connections.lock();
         if connections.remove(session_id).is_some() {
-            info!("Removed connection for session {}", session_id);
+            debug!("Removed connection for session {}", session_id);
         }
     }
     

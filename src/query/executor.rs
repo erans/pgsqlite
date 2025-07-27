@@ -155,9 +155,9 @@ impl QueryExecutor {
                 .collect();
             
             if statements.len() > 1 {
-                info!("Query contains {} statements", statements.len());
+                debug!("Query contains {} statements", statements.len());
                 for (i, stmt) in statements.iter().enumerate() {
-                    info!("Executing statement {}: {}", i + 1, stmt);
+                    debug!("Executing statement {}: {}", i + 1, stmt);
                     Self::execute_single_statement(framed, db, session, stmt, query_router).await?;
                 }
                 return Ok(());
@@ -208,8 +208,8 @@ impl QueryExecutor {
                     let (boolean_columns, datetime_columns, column_types, column_mappings) = if let Some(ref table) = table_name {
                         let schema_info = get_table_schema_info(table, db, &session.id).await;
                         let mappings = extract_column_mappings_from_query(query, table);
-                        info!("Column mappings for table '{}': {:?}", table, mappings);
-                        info!("Datetime columns for table '{}': {:?}", table, schema_info.datetime_columns);
+                        debug!("Column mappings for table '{}': {:?}", table, mappings);
+                        debug!("Datetime columns for table '{}': {:?}", table, schema_info.datetime_columns);
                         (
                             schema_info.boolean_columns,
                             schema_info.datetime_columns,
@@ -1024,14 +1024,14 @@ impl QueryExecutor {
         // SQLAlchemy manages transactions explicitly - don't start implicit transactions
         // This was interfering with SQLAlchemy's unit-of-work dirty detection
         
-        info!("execute_dml called with query: {}", query);
+        debug!("execute_dml called with query: {}", query);
         
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
-            info!("Query has RETURNING clause, using execute_dml_with_returning: {}", query);
+            debug!("Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             return Self::execute_dml_with_returning(framed, db, session, query, query_router).await;
         } else {
-            info!("Query does NOT have RETURNING clause: {}", query);
+            debug!("Query does NOT have RETURNING clause: {}", query);
         }
         
         // Validate numeric constraints for INSERT/UPDATE before execution
@@ -1342,7 +1342,7 @@ impl QueryExecutor {
         db.execute_with_session(&translated_query, &session.id).await?;
         
         // If we have type mappings, store them in the metadata table
-        info!("Type mappings count: {}", type_mappings.len());
+        debug!("Type mappings count: {}", type_mappings.len());
         if !type_mappings.is_empty() {
             // Extract table name from the original query
             if let Some(table_name) = extract_table_name_from_create(query) {
@@ -1356,7 +1356,7 @@ impl QueryExecutor {
                 )";
                 
                 match db.execute_with_session(init_query, &session.id).await {
-                    Ok(_) => info!("Successfully created/verified __pgsqlite_schema table"),
+                    Ok(_) => debug!("Successfully created/verified __pgsqlite_schema table"),
                     Err(e) => debug!("Failed to create __pgsqlite_schema table: {}", e),
                 }
                 
@@ -1371,7 +1371,7 @@ impl QueryExecutor {
                         );
                         
                         match db.execute_with_session(&insert_query, &session.id).await {
-                            Ok(_) => info!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
+                            Ok(_) => debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
                             Err(e) => debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e),
                         }
                         
@@ -1396,7 +1396,7 @@ impl QueryExecutor {
                                 );
                                 
                                 match db.execute_with_session(&constraint_query, &session.id).await {
-                                    Ok(_) => info!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
+                                    Ok(_) => debug!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
                                     Err(e) => debug!("Failed to store string constraint for {}.{}: {}", table_name, parts[1], e),
                                 }
                             } else if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
@@ -1414,7 +1414,7 @@ impl QueryExecutor {
                                 
                                 match db.execute_with_session(&constraint_query, &session.id).await {
                                     Ok(_) => {
-                                        info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                        debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                     }
                                     Err(e) => {
                                         debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
@@ -1425,7 +1425,7 @@ impl QueryExecutor {
                     }
                 }
                 
-                info!("Stored type mappings for table {} (simple query protocol)", table_name);
+                debug!("Stored type mappings for table {} (simple query protocol)", table_name);
                 
                 // Create triggers for ENUM columns
                 if !enum_columns.is_empty() {
@@ -1445,7 +1445,7 @@ impl QueryExecutor {
                                     Some(format!("Failed to create enum triggers: {e}"))
                                 ))?;
                             
-                            info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                            debug!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
                         }
                         Ok(())
                     }).await?;
@@ -1480,7 +1480,7 @@ impl QueryExecutor {
                             Some(format!("Failed to store array metadata: {e}"))
                         ))?;
                             
-                            info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
+                            debug!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
                                   table_name, column_name, element_type, dimensions);
                         }
                         Ok(())
@@ -1501,7 +1501,7 @@ impl QueryExecutor {
                             // Log the error but don't fail the CREATE TABLE operation
                             debug!("Failed to populate constraints for table {}: {}", table_name, e);
                         } else {
-                            info!("Successfully populated constraint catalog tables for table: {}", table_name);
+                            debug!("Successfully populated constraint catalog tables for table: {}", table_name);
                         }
                         Ok(())
                     }).await?;
@@ -1582,12 +1582,12 @@ impl QueryExecutor {
                     framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
                         .map_err(PgSqliteError::Io)?;
                 } else {
-                    tracing::info!("Executing BEGIN command");
+                    tracing::debug!("Executing BEGIN command");
                     db.begin_with_session(&session.id).await?;
-                    tracing::info!("BEGIN executed successfully");
+                    tracing::debug!("BEGIN executed successfully");
                     // Update transaction status to InTransaction
                     *session.transaction_status.write().await = TransactionStatus::InTransaction;
-                    tracing::info!("Transaction status updated to InTransaction");
+                    tracing::debug!("Transaction status updated to InTransaction");
                     framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
                         .map_err(PgSqliteError::Io)?;
                 }
@@ -1599,13 +1599,13 @@ impl QueryExecutor {
                         "current transaction is aborted, commands ignored until end of transaction block".to_string()
                     ));
                 }
-                tracing::info!("Executing COMMIT command");
+                tracing::debug!("Executing COMMIT command");
                 db.commit_with_session(&session.id).await?;
-                tracing::info!("COMMIT executed successfully");
+                tracing::debug!("COMMIT executed successfully");
                 
                 // Update transaction status to Idle
                 *session.transaction_status.write().await = TransactionStatus::Idle;
-                tracing::info!("Transaction status updated to Idle");
+                tracing::debug!("Transaction status updated to Idle");
                 framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
                     .map_err(PgSqliteError::Io)?;
             }

@@ -57,7 +57,7 @@ impl DbHandler {
             Arc::new(config.clone())
         ));
         
-        info!("DbHandler initialized with per-session connection architecture");
+        debug!("DbHandler initialized with per-session connection architecture");
         
         Ok(Self {
             connection_manager,
@@ -119,7 +119,7 @@ impl DbHandler {
             match runner.run_pending_migrations() {
                 Ok(applied) => {
                     if !applied.is_empty() {
-                        info!("Applied {} migrations to new database", applied.len());
+                        debug!("Applied {} migrations to new database", applied.len());
                     }
                 }
                 Err(e) => {

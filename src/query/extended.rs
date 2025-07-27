@@ -79,14 +79,14 @@ impl ExtendedQueryHandler {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
         
-        info!("Parsing statement '{}': {}", name, cleaned_query);
-        info!("Provided param_types: {:?}", param_types);
+        debug!("Parsing statement '{}': {}", name, cleaned_query);
+        debug!("Provided param_types: {:?}", param_types);
         
         // Check for Python-style parameters and convert to PostgreSQL-style
         use crate::query::parameter_parser::ParameterParser;
         let python_params = ParameterParser::find_python_parameters(&cleaned_query);
         if !python_params.is_empty() {
-            info!("Found Python-style parameters: {:?}", python_params);
+            debug!("Found Python-style parameters: {:?}", python_params);
             
             // Convert %(name)s parameters to $1, $2, $3, etc.
             let mut param_counter = 1;
@@ -97,7 +97,7 @@ impl ExtendedQueryHandler {
                 param_counter += 1;
             }
             
-            info!("Converted query: {}", cleaned_query);
+            debug!("Converted query: {}", cleaned_query);
             
             // Store the parameter mapping in session for later use in bind
             let mut python_param_mapping = session.python_param_mapping.write().await;
@@ -634,7 +634,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        info!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
+        debug!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
         
         // Check if this statement used Python-style parameters and reorder values if needed
         {
@@ -655,8 +655,8 @@ impl ExtendedQueryHandler {
         let stmt = statements.get(&statement)
             .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {statement}")))?;
             
-        info!("Statement has param_types: {:?}", stmt.param_types);
-        info!("Received param formats: {:?}", formats);
+        debug!("Statement has param_types: {:?}", stmt.param_types);
+        debug!("Received param formats: {:?}", formats);
         
         // Check if we need to infer types (only when param types are empty or unknown)
         let needs_inference = stmt.param_types.is_empty() || 
@@ -665,8 +665,8 @@ impl ExtendedQueryHandler {
         let mut inferred_types = None;
         
         if needs_inference && !values.is_empty() {
-            info!("Need to infer parameter types from values");
-            info!("Statement param_types: {:?}", stmt.param_types);
+            debug!("Need to infer parameter types from values");
+            debug!("Statement param_types: {:?}", stmt.param_types);
             let mut types = Vec::new();
             
             for (i, val) in values.iter().enumerate() {
@@ -762,7 +762,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        info!("Executing portal '{}' with max_rows: {}", portal, max_rows);
+        debug!("Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
@@ -956,7 +956,7 @@ impl ExtendedQueryHandler {
             }
         }
         
-        info!("Executing query: {}", final_query);
+        debug!("Executing query: {}", final_query);
         debug!("Original query: {}", query);
         debug!("Final query after substitution: {}", final_query);
         debug!("Original query had {} bound values", bound_values.len());
@@ -3024,7 +3024,7 @@ impl ExtendedQueryHandler {
     {
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
-            info!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
+            debug!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             // Get result formats from portal
             let result_formats = {
                 let portals = session.portals.read().await;
@@ -3036,7 +3036,7 @@ impl ExtendedQueryHandler {
         
         // Validation is now done in handle_execute before parameter substitution
         
-        info!("Extended protocol: Executing DML query without RETURNING: {}", query);
+        debug!("Extended protocol: Executing DML query without RETURNING: {}", query);
         let response = db.execute_with_session(query, &session.id).await?;
         
         let tag = if query_starts_with_ignore_case(query, "INSERT") {
@@ -3283,7 +3283,7 @@ impl ExtendedQueryHandler {
             db.execute_with_session(&sqlite_sql, &session.id).await?;
             
             // Store the type mappings if we have any
-            info!("Type mappings count: {}", type_mappings.len());
+            debug!("Type mappings count: {}", type_mappings.len());
             if !type_mappings.is_empty() {
                 // Extract table name from query
                 if let Some(table_name) = extract_table_name_from_create(query) {
@@ -3343,7 +3343,7 @@ impl ExtendedQueryHandler {
                         }
                     }
                     
-                    info!("Stored type mappings for table {} (extended query protocol)", table_name);
+                    debug!("Stored type mappings for table {} (extended query protocol)", table_name);
                     
                     // Create triggers for ENUM columns
                     if !enum_columns.is_empty() {
