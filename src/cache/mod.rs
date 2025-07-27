@@ -15,6 +15,7 @@ pub mod enum_cache;
 pub mod translation_cache;
 pub mod query_fingerprint;
 pub mod lazy_schema_loader;
+pub mod wire_protocol_cache;
 
 pub use schema::SchemaCache;
 pub use query::{QueryCache, CachedQuery, CacheMetrics};
@@ -29,6 +30,7 @@ pub use enum_cache::{EnumCache, global_enum_cache};
 pub use translation_cache::{TranslationCache, global_translation_cache};
 pub use query_fingerprint::QueryFingerprint;
 pub use lazy_schema_loader::LazySchemaLoader;
+pub use wire_protocol_cache::{WireProtocolCache, CachedWireResponse, WIRE_PROTOCOL_CACHE, is_cacheable_for_wire_protocol, encode_data_row};
 
 /// Simple LRU cache with TTL support
 pub struct LruCache<K, V> {

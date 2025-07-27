@@ -305,7 +305,7 @@ async fn benchmark_pagination_scenario(client: &Client) {
     let mut portal_total_rows = 0;
     
     for page in 0..total_pages {
-        let offset = (page * page_size);
+        let offset = page * page_size;
         
         let page_start = Instant::now();
         let rows = client.query(&stmt, &[&{ page_size }, &offset])

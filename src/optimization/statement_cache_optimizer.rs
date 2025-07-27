@@ -90,7 +90,7 @@ impl StatementCacheOptimizer {
 
         // Use enhanced statement pool for SELECT queries that benefit from caching
         // and don't require binary protocol support
-        info!("Query analysis result for '{}': pattern={:?}, cache_result={}, supports_binary={}", 
+        debug!("Query analysis result for '{}': pattern={:?}, cache_result={}, supports_binary={}", 
                query, optimization_result.pattern, optimization_result.hints.cache_result, 
                self.supports_binary_protocol(query));
         

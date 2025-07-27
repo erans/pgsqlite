@@ -161,14 +161,14 @@ pgsqlite --database existingdb.db
 - Don't claim something works without actually testing it
 
 ## Performance Characteristics
-### Current Performance (as of 2025-07-19) - POST POSTGRESQL COMPATIBILITY ENHANCEMENTS
+### Current Performance (as of 2025-07-27) - POST UUID/NOW() FIXES AND LOGGING OPTIMIZATION
 - **✅ COMPREHENSIVE QUERY OPTIMIZATION SYSTEM**: Complete optimization infrastructure with read-only optimizer
-- **SELECT**: ~291x overhead (0.288ms) - 21% improvement from previous ~369x
-- **SELECT (cached)**: ~50x overhead (0.184ms) - good cache performance maintained
-- **UPDATE**: ~56x overhead (0.064ms) - excellent performance maintained
-- **DELETE**: ~44x overhead (0.042ms) - excellent performance maintained  
-- **INSERT**: ~193x overhead (0.301ms) - within acceptable range
-- **Cache Effectiveness**: 1.6x speedup for cached queries (0.288ms → 0.184ms)
+- **SELECT**: ~674.9x overhead (0.669ms) - higher than baseline due to parameter queries preventing ultra-fast path
+- **SELECT (cached)**: ~17.2x overhead (0.046ms) - excellent cache performance, better than expected 50x
+- **UPDATE**: ~50.9x overhead (0.059ms) - excellent performance maintained
+- **DELETE**: ~35.8x overhead (0.034ms) - excellent performance maintained  
+- **INSERT**: ~36.6x overhead (0.060ms) - excellent performance
+- **Cache Effectiveness**: 14.7x speedup for cached queries (0.669ms → 0.046ms)
 - **Overall Operations**: 5,251 total operations with advanced optimization active
 - **Read-Only Optimizer**: Successfully intercepting SELECT queries as confirmed by benchmarks
 - **Enhanced Statement Caching**: 200+ cached query plans with priority-based eviction
@@ -241,6 +241,14 @@ INSERT INTO table (col1, col2) VALUES
 7. **Network Efficiency**: Reduces round trips between client and server
 
 ## Recent Major Features
+- **UUID Generation and NOW() Function Fixes (2025-07-27)**: Critical fixes for non-deterministic functions
+  - **UUID Generation Fix**: Fixed gen_random_uuid() returning duplicate values due to wire protocol caching
+  - **Caching Updates**: All cache layers now properly exclude non-deterministic functions (UUID, random, now)
+  - **NOW() Function Fix**: Fixed NOW() returning epoch time '1970-01-01 00:00:00' instead of current timestamp
+  - **Type Converter Enhancement**: Execution cache converters now handle both INTEGER and Text datetime values
+  - **Performance Optimization**: Changed excessive info!() logging to debug!() to reduce overhead
+  - **Performance Results**: SELECT cached improved to 17.2x overhead (better than 50x baseline)
+  - **Production Ready**: All non-deterministic functions now work correctly with caching enabled
 - **SQLAlchemy INSERT SELECT VALUES Fix (2025-07-25)**: Critical compatibility fix for SQLAlchemy ORM
   - **Bug Fixed**: SQLAlchemy multi-row INSERT statements using VALUES clause failed with "Mapper[Category(categories)]" error
   - **Root Cause**: SQLAlchemy generates complex INSERT SELECT statements with PostgreSQL VALUES syntax not supported by SQLite

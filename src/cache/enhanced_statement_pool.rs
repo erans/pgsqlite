@@ -87,7 +87,7 @@ impl EnhancedStatementPool {
         conn: &'conn Connection,
         query: &str,
     ) -> Result<(Statement<'conn>, StatementMetadata), rusqlite::Error> {
-        info!("Enhanced statement pool preparing query: {}", query);
+        debug!("Enhanced statement pool preparing query: {}", query);
         let start_time = Instant::now();
         
         // Generate normalized fingerprint for cache key

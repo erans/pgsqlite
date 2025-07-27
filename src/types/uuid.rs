@@ -58,22 +58,7 @@ impl UuidHandler {
 
 /// SQLite function for UUID generation (v4)
 pub fn generate_uuid_v4() -> String {
-    use rand::Rng;
-    let mut rng = rand::rng();
-    let mut bytes = [0u8; 16];
-    rng.fill(&mut bytes);
-    
-    // Set version (4) and variant bits
-    bytes[6] = (bytes[6] & 0x0f) | 0x40; // Version 4
-    bytes[8] = (bytes[8] & 0x3f) | 0x80; // Variant 10
-    
-    format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        bytes[0], bytes[1], bytes[2], bytes[3],
-        bytes[4], bytes[5],
-        bytes[6], bytes[7],
-        bytes[8], bytes[9],
-        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
-    )
+    uuid::Uuid::new_v4().to_string()
 }
 
 #[cfg(test)]

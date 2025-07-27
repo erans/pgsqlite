@@ -20,6 +20,28 @@ impl CastTranslator {
     
     /// Translate a query containing PostgreSQL cast syntax
     pub fn translate_query(query: &str, conn: Option<&Connection>) -> String {
+        let result = Self::translate_query_with_depth(query, conn, 0);
+        if query.contains("inactive") && query.contains("status") {
+            eprintln!("CastTranslator: Translating enum cast query");
+            eprintln!("  Original: {}", query);
+            eprintln!("  Result: {}", result);
+        }
+        if query.contains("::mood::text") || query.contains("::text") {
+            eprintln!("CastTranslator: Translating double cast query");
+            eprintln!("  Original: {}", query);
+            eprintln!("  Result: {}", result);
+        }
+        result
+    }
+    
+    /// Internal translation method with recursion depth tracking
+    fn translate_query_with_depth(query: &str, conn: Option<&Connection>, depth: usize) -> String {
+        // Prevent infinite recursion
+        const MAX_RECURSION_DEPTH: usize = 10;
+        if depth >= MAX_RECURSION_DEPTH {
+            return query.to_string();
+        }
+        
         // Check translation cache first
         if let Some(cached) = crate::cache::global_translation_cache().get(query) {
             return cached;
@@ -87,7 +109,12 @@ impl CastTranslator {
                     
                     // Always preserve cast for aggregate functions or complex expressions
                     if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
-                        format!("CAST({clean_expr} AS TEXT)")
+                        // Check if this is a subquery that needs extra parentheses
+                        if clean_expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({clean_expr}) AS TEXT)")
+                        } else {
+                            format!("CAST({clean_expr} AS TEXT)")
+                        }
                     } else {
                         clean_expr.to_string()
                     }
@@ -101,10 +128,20 @@ impl CastTranslator {
                         expr.to_string()
                     } else if sqlite_type == type_name.to_uppercase().as_str() {
                         // Same type name, use CAST
-                        format!("CAST({expr} AS {type_name})")
+                        // Check if expression is a subquery
+                        if expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({expr}) AS {type_name})")
+                        } else {
+                            format!("CAST({expr} AS {type_name})")
+                        }
                     } else {
                         // Use SQLite type
-                        format!("CAST({expr} AS {sqlite_type})")
+                        // Check if expression is a subquery
+                        if expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({expr}) AS {sqlite_type})")
+                        } else {
+                            format!("CAST({expr} AS {sqlite_type})")
+                        }
                     }
                 }
             } else {
@@ -118,7 +155,12 @@ impl CastTranslator {
                     };
                     // Keep CAST for expressions with function calls
                     if clean_expr.contains('(') && clean_expr.contains(')') {
-                        format!("CAST({clean_expr} AS TEXT)")
+                        // Check if this is a subquery that needs extra parentheses
+                        if clean_expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({clean_expr}) AS TEXT)")
+                        } else {
+                            format!("CAST({clean_expr} AS TEXT)")
+                        }
                     } else {
                         clean_expr.to_string()
                     }
@@ -143,9 +185,9 @@ impl CastTranslator {
         }
         
         // If we made changes, we might need to process more casts
-        if iterations > 0 && iterations < MAX_ITERATIONS {
-            // Recursively process any remaining casts
-            return Self::translate_query(&result, conn);
+        if iterations > 0 && iterations < MAX_ITERATIONS && result != query {
+            // Recursively process any remaining casts with incremented depth
+            return Self::translate_query_with_depth(&result, conn, depth + 1);
         }
         
         // Cache the translation if it changed
@@ -304,11 +346,19 @@ impl CastTranslator {
     }
     
     /// Translate an ENUM cast
-    fn translate_enum_cast(expr: &str, _type_name: &str, _conn: &Connection) -> String {
-        // For ENUM casts, we just return the expression as-is
-        // The CHECK constraint on the column will validate the value at runtime
-        // This is consistent with how PostgreSQL handles ENUM casts
-        expr.to_string()
+    fn translate_enum_cast(expr: &str, type_name: &str, _conn: &Connection) -> String {
+        // For ENUM casts, we need to validate the value exists
+        // Use a CASE expression that will cause a constraint error for invalid values
+        // We use CAST(NULL AS INTEGER) NOT NULL which will fail with "NOT NULL constraint failed"
+        
+        format!(
+            r#"(CASE 
+                WHEN EXISTS(SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{}' AND ev.label = {}) 
+                THEN (SELECT label FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{}' AND ev.label = {})
+                ELSE (SELECT CASE WHEN 1=0 THEN 'dummy' ELSE CAST('invalid input value for enum {}: ' || {} AS INTEGER) END)
+            END)"#,
+            type_name, expr, type_name, expr, type_name, expr
+        )
     }
     
     /// Check if an expression might need explicit TEXT casting
@@ -421,7 +471,7 @@ impl CastTranslator {
             // Check if this is an ENUM type cast
             let translated = if let Some(conn) = conn {
                 if Self::is_enum_type(conn, type_name) {
-                    // For ENUM types, just return the expression
+                    // For ENUM types, use the enum cast translator
                     Self::translate_enum_cast(expr, type_name, conn)
                 } else if type_name.eq_ignore_ascii_case("text") {
                     // For text cast, we need to handle parenthesized expressions carefully
@@ -434,7 +484,12 @@ impl CastTranslator {
                     
                     // Always preserve cast for aggregate functions or complex expressions
                     if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
-                        format!("CAST({clean_expr} AS TEXT)")
+                        // Check if this is a subquery that needs extra parentheses
+                        if clean_expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({clean_expr}) AS TEXT)")
+                        } else {
+                            format!("CAST({clean_expr} AS TEXT)")
+                        }
                     } else {
                         clean_expr.to_string()
                     }
@@ -446,7 +501,12 @@ impl CastTranslator {
                         expr.to_string()
                     } else {
                         // Keep the CAST with SQLite type
-                        format!("CAST({expr} AS {sqlite_type})")
+                        // Check if expression is a subquery
+                        if expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({expr}) AS {sqlite_type})")
+                        } else {
+                            format!("CAST({expr} AS {sqlite_type})")
+                        }
                     }
                 }
             } else {

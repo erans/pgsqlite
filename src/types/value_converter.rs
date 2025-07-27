@@ -3,6 +3,32 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use regex::Regex;
 use chrono::{NaiveTime, Timelike};
 use crate::types::datetime_utils;
+use once_cell::sync::Lazy;
+
+// Pre-compiled regex patterns
+static MONEY_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^[\$€£¥]?-?\d+(\.\d{1,2})?$|^-[\$€£¥]\d+(\.\d{1,2})?$").unwrap()
+});
+
+static RANGE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^[\[\(]-?\d+,-?\d+[\]\)]$").unwrap()
+});
+
+static TIMETZ_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)([-+]\d{2}:?\d{2})$").unwrap()
+});
+
+static TIMESTAMPTZ_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^(.+?)([-+]\d{2}:?\d{2})$").unwrap()
+});
+
+static INTERVAL_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?:(\d+)\s+days?\s*)?(?:(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?)?").unwrap()
+});
+
+static TIMEZONE_OFFSET_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"^([-+])(\d{2}):?(\d{2})$").unwrap()
+});
 
 pub struct ValueConverter;
 
@@ -53,8 +79,7 @@ impl ValueConverter {
         let trimmed = value.trim();
         
         // Check for currency symbols and valid decimal format
-        let money_regex = Regex::new(r"^[\$€£¥]?-?\d+(\.\d{1,2})?$|^-[\$€£¥]\d+(\.\d{1,2})?$").unwrap();
-        if money_regex.is_match(trimmed) {
+        if MONEY_REGEX.is_match(trimmed) {
             Ok(trimmed.to_string())
         } else {
             Err(format!("Invalid money format: {value}"))
@@ -64,8 +89,7 @@ impl ValueConverter {
     /// Validate and convert range values
     fn convert_range(value: &str) -> Result<String, String> {
         // Range format: [lower,upper) or (lower,upper] or [lower,upper] or (lower,upper)
-        let range_regex = Regex::new(r"^[\[\(]-?\d+,-?\d+[\]\)]$").unwrap();
-        if range_regex.is_match(value.trim()) {
+        if RANGE_REGEX.is_match(value.trim()) {
             Ok(value.trim().to_string())
         } else {
             Err(format!("Invalid range format: {value}"))
@@ -234,8 +258,7 @@ impl ValueConverter {
     /// Convert PostgreSQL TIMETZ to microseconds since midnight UTC (stored as INTEGER)
     fn convert_timetz_to_seconds(value: &str) -> Result<String, String> {
         // Parse time and timezone offset
-        let re = Regex::new(r"^(\d{2}:\d{2}:\d{2}(?:\.\d+)?)([-+]\d{2}:?\d{2})$").unwrap();
-        if let Some(caps) = re.captures(value.trim()) {
+        if let Some(caps) = TIMETZ_REGEX.captures(value.trim()) {
             let time_str = &caps[1];
             let offset_str = &caps[2];
             
@@ -285,9 +308,7 @@ impl ValueConverter {
     /// Convert PostgreSQL TIMESTAMPTZ to microseconds since epoch in UTC (stored as INTEGER)
     fn convert_timestamptz_to_unix(value: &str) -> Result<String, String> {
         // Try parsing with timezone offset
-        let re = Regex::new(r"^(.+?)([-+]\d{2}:?\d{2})$").unwrap();
-        
-        let (datetime_str, offset_seconds) = if let Some(caps) = re.captures(value.trim()) {
+        let (datetime_str, offset_seconds) = if let Some(caps) = TIMESTAMPTZ_REGEX.captures(value.trim()) {
             let dt_str = caps.get(1).unwrap().as_str();
             let offset_str = caps.get(2).unwrap().as_str();
             let offset = Self::parse_timezone_offset(offset_str)?;
@@ -340,8 +361,7 @@ impl ValueConverter {
         }
         
         // Handle verbose format (e.g., "1 day 02:30:00")
-        let re = Regex::new(r"(?:(\d+)\s+days?\s*)?(?:(\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?)?").unwrap();
-        if let Some(caps) = re.captures(trimmed) {
+        if let Some(caps) = INTERVAL_REGEX.captures(trimmed) {
             let days = caps.get(1).map(|m| m.as_str().parse::<i64>().unwrap_or(0)).unwrap_or(0);
             let hours = caps.get(2).map(|m| m.as_str().parse::<i64>().unwrap_or(0)).unwrap_or(0);
             let minutes = caps.get(3).map(|m| m.as_str().parse::<i64>().unwrap_or(0)).unwrap_or(0);
@@ -395,8 +415,7 @@ impl ValueConverter {
     
     /// Parse timezone offset string (±HH:MM or ±HHMM) to seconds
     fn parse_timezone_offset(offset: &str) -> Result<i32, String> {
-        let re = Regex::new(r"^([-+])(\d{2}):?(\d{2})$").unwrap();
-        if let Some(caps) = re.captures(offset) {
+        if let Some(caps) = TIMEZONE_OFFSET_REGEX.captures(offset) {
             let sign = if &caps[1] == "+" { 1 } else { -1 };
             let hours = caps[2].parse::<i32>()
                 .map_err(|e| format!("Invalid hours in offset: {} ({})", &caps[2], e))?;

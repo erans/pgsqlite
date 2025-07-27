@@ -821,12 +821,9 @@ impl<'a> DecimalQueryRewriter<'a> {
     
     /// Rewrite a table factor (including derived tables)
     fn rewrite_table_factor(&mut self, table_factor: &mut TableFactor) -> Result<(), String> {
-        match table_factor {
-            TableFactor::Derived { subquery, .. } => {
-                // Rewrite the subquery
-                self.rewrite_query(subquery)?;
-            }
-            _ => {} // Other table factors don't need rewriting
+        if let TableFactor::Derived { subquery, .. } = table_factor {
+            // Rewrite the subquery
+            self.rewrite_query(subquery)?;
         }
         Ok(())
     }
@@ -1182,6 +1179,7 @@ impl<'a> DecimalQueryRewriter<'a> {
     }
     
     /// Check if an expression contains arithmetic operations
+    #[allow(clippy::only_used_in_recursion)]
     fn contains_arithmetic(&self, expr: &Expr) -> bool {
         match expr {
             Expr::BinaryOp { op, left, right, .. } => {

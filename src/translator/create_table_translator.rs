@@ -4,6 +4,12 @@ use crate::metadata::{TypeMapping, EnumMetadata};
 use crate::types::TypeMapper;
 use rusqlite::Connection;
 use std::cell::RefCell;
+use once_cell::sync::Lazy;
+
+// Pre-compiled regex patterns
+static CREATE_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap()
+});
 
 #[derive(Debug)]
 pub struct CreateTableResult {
@@ -49,9 +55,7 @@ impl CreateTableTranslator {
         ARRAY_COLUMNS.with(|ac| ac.borrow_mut().clear());
         
         // Basic regex to match CREATE TABLE - use DOTALL flag to match newlines
-        let create_regex = Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap();
-        
-        if let Some(captures) = create_regex.captures(pg_sql) {
+        if let Some(captures) = CREATE_TABLE_REGEX.captures(pg_sql) {
             let table_name = captures.get(1).unwrap().as_str();
             let columns_str = captures.get(2).unwrap().as_str();
             

@@ -50,13 +50,6 @@ impl InsertTranslator {
                                    (query.contains("imp_sen") || query.contains("(p0, p1"));
         
         is_insert && (has_datetime_or_array || has_sqlalchemy_values)
-        
-        (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
-            query.contains('-') ||  // Date patterns like '2024-01-01'
-            query.contains(':') ||  // Time patterns like '14:30:00'
-            query.contains('{') ||  // Array patterns like '{1,2,3}'
-            query.contains("ARRAY[") // Array constructor like ARRAY[1,2,3]
-        )
     }
     
     /// Translate INSERT statement to convert datetime values to INTEGER format

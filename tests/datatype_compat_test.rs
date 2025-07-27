@@ -413,13 +413,13 @@ async fn test_parameter_type_inference() {
     // Test real parameter (REAL maps to FLOAT4, use f32)
     client.execute(
         "INSERT INTO type_test (id, real_col) VALUES ($1, $2)",
-        &[&3i32, &3.14f32]
+        &[&3i32, &std::f32::consts::PI]
     ).await.unwrap();
     
     // Test mixed parameters in single query (use f32 for REAL column)
     client.execute(
         "INSERT INTO type_test (id, int_col, text_col, real_col) VALUES ($1, $2, $3, $4)",
-        &[&4i32, &100i32, &"world", &2.718f32]
+        &[&4i32, &100i32, &"world", &std::f32::consts::E]
     ).await.unwrap();
     
     // Verify data (use f32 for REAL/FLOAT4 column)
@@ -430,7 +430,7 @@ async fn test_parameter_type_inference() {
     
     assert_eq!(int_val, 100);
     assert_eq!(text_val, "world");
-    assert!((real_val - 2.718).abs() < 0.001);
+    assert!((real_val - std::f32::consts::E).abs() < 0.001);
     
     server.abort();
 }

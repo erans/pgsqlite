@@ -183,17 +183,55 @@ impl TypeConverterTable {
                     },
                     rusqlite::types::Value::Real(r) => Ok(r.to_string().as_bytes().to_vec()),
                     rusqlite::types::Value::Null => Ok(Vec::new()),
-                    _ => Ok("".as_bytes().to_vec()),
+                    rusqlite::types::Value::Blob(b) => {
+                        // SQLite may return BLOB for some text values, convert to string
+                        match String::from_utf8(b.clone()) {
+                            Ok(s) => Ok(s.as_bytes().to_vec()),
+                            Err(_) => Ok(b.clone()), // If not valid UTF-8, return raw bytes
+                        }
+                    },
                 },
                 // 1: Integer converter  
-                |value| match value {
-                    rusqlite::types::Value::Integer(i) => {
-                        let mut buf = itoa::Buffer::new();
-                        Ok(buf.format(*i).as_bytes().to_vec())
-                    },
-                    rusqlite::types::Value::Text(s) => Ok(s.as_bytes().to_vec()),
-                    rusqlite::types::Value::Null => Ok(Vec::new()),
-                    _ => Ok("0".as_bytes().to_vec()),
+                |value| {
+                    match value {
+                        rusqlite::types::Value::Integer(i) => {
+                            let mut buf = itoa::Buffer::new();
+                            Ok(buf.format(*i).as_bytes().to_vec())
+                        },
+                        rusqlite::types::Value::Text(s) => {
+                            // Check if this looks like an enum value (non-numeric text)
+                            // If so, return it as-is rather than converting to 0
+                            match s.parse::<i64>() {
+                                Ok(i) => {
+                                    let mut buf = itoa::Buffer::new();
+                                    Ok(buf.format(i).as_bytes().to_vec())
+                                },
+                                Err(_) => {
+                                    // This might be an enum value, return as text
+                                    // This handles the case where enum queries incorrectly use integer converter
+                                    Ok(s.as_bytes().to_vec())
+                                }
+                            }
+                        },
+                        rusqlite::types::Value::Real(r) => Ok((*r as i64).to_string().as_bytes().to_vec()),
+                        rusqlite::types::Value::Null => Ok(Vec::new()),
+                        rusqlite::types::Value::Blob(b) => {
+                            // Try to convert blob to string first
+                            match String::from_utf8(b.clone()) {
+                                Ok(s) => {
+                                    // If it's valid UTF-8, treat as text
+                                    match s.parse::<i64>() {
+                                        Ok(i) => {
+                                            let mut buf = itoa::Buffer::new();
+                                            Ok(buf.format(i).as_bytes().to_vec())
+                                        },
+                                        Err(_) => Ok(s.as_bytes().to_vec()) // Return as text
+                                    }
+                                },
+                                Err(_) => Ok("0".as_bytes().to_vec()) // Only return 0 for non-UTF8 blobs
+                            }
+                        },
+                    }
                 },
                 // 2: Boolean converter (optimized for 0/1 -> f/t)
                 |value| match value {
@@ -235,6 +273,10 @@ impl TypeConverterTable {
                         buf.truncate(len);
                         Ok(buf)
                     },
+                    rusqlite::types::Value::Text(s) => {
+                        // CURRENT_DATE and similar functions return formatted strings, pass them through
+                        Ok(s.as_bytes().to_vec())
+                    },
                     rusqlite::types::Value::Null => Ok(Vec::new()),
                     _ => Ok(b"1970-01-01".to_vec()),
                 },
@@ -247,6 +289,10 @@ impl TypeConverterTable {
                         buf.truncate(len);
                         Ok(buf)
                     },
+                    rusqlite::types::Value::Text(s) => {
+                        // CURRENT_TIME and similar functions return formatted strings, pass them through
+                        Ok(s.as_bytes().to_vec())
+                    },
                     rusqlite::types::Value::Null => Ok(Vec::new()),
                     _ => Ok(b"00:00:00".to_vec()),
                 },
@@ -258,6 +304,10 @@ impl TypeConverterTable {
                         let len = format_microseconds_to_timestamp_buf(*micros, &mut buf);
                         buf.truncate(len);
                         Ok(buf)
+                    },
+                    rusqlite::types::Value::Text(s) => {
+                        // NOW() and similar functions return formatted strings, pass them through
+                        Ok(s.as_bytes().to_vec())
                     },
                     rusqlite::types::Value::Null => Ok(Vec::new()),
                     _ => Ok(b"1970-01-01 00:00:00".to_vec()),

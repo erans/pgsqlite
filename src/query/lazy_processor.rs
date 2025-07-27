@@ -108,6 +108,12 @@ impl<'a> LazyQueryProcessor<'a> {
         
         // Step 3: Cast translation if needed (after numeric cast translation)
         if self.needs_cast_translation {
+            // Debug enum cast issue
+            if current_query.contains("casted_status") {
+                eprintln!("DEBUG LazyQueryProcessor: Processing cast translation");
+                eprintln!("  Current query: {}", current_query);
+            }
+            
             // Check translation cache first
             if let Some(cached) = crate::cache::global_translation_cache().get(self.original_query) {
                 current_query = Cow::Owned(cached);
@@ -126,6 +132,11 @@ impl<'a> LazyQueryProcessor<'a> {
                     );
                 }
                 current_query = Cow::Owned(translated);
+            }
+            
+            // Debug enum cast issue
+            if self.original_query.contains("casted_status") {
+                eprintln!("  After cast translation: {}", current_query);
             }
         }
         

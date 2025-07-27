@@ -11,6 +11,8 @@ async fn test_text_to_enum_cast() {
         .await
         .expect("Failed to create ENUM type");
     
+    // Debug: Check if enum values were inserted (removed verbose output)
+    
     // Create a table with ENUM column
     client.simple_query("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT, status status)")
         .await
@@ -33,13 +35,19 @@ async fn test_text_to_enum_cast() {
         }
     }
     
+    // (Removed direct subquery test for cleaner output)
+    
     // Test CAST syntax
+    eprintln!("Test: About to execute CAST query");
     let results = client.simple_query("SELECT CAST('inactive' AS status) as casted_status")
         .await
         .expect("Failed to use CAST syntax");
+    eprintln!("Test: Got {} results", results.len());
     
-    for result in &results {
+    for (i, result) in results.iter().enumerate() {
+        eprintln!("Test: Result {}: {:?}", i, result);
         if let tokio_postgres::SimpleQueryMessage::Row(row) = result {
+            eprintln!("Test Debug: CAST result = {:?}", row.get("casted_status"));
             assert_eq!(row.get("casted_status"), Some("inactive"));
             break;
         }

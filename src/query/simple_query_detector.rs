@@ -1,6 +1,18 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 
+/// Check if a query contains non-deterministic functions that should not be cached
+pub fn contains_non_deterministic_functions(query: &str) -> bool {
+    let query_lower = query.to_lowercase();
+    query_lower.contains("gen_random_uuid") ||
+    query_lower.contains("uuid_generate_v4") ||
+    query_lower.contains("random()") ||
+    query_lower.contains("now()") ||
+    query_lower.contains("current_timestamp") ||
+    query_lower.contains("current_date") ||
+    query_lower.contains("current_time")
+}
+
 /// Regular expressions for detecting truly simple queries that need no processing
 static SIMPLE_SELECT_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)^\s*SELECT\s+(\*|[\w\s,]+)\s*FROM\s+\w+\s*(WHERE\s+\w+\s*=\s*('[^']*'|\d+))?\s*(LIMIT\s+\d+)?\s*;?\s*$").unwrap()
@@ -27,6 +39,8 @@ static SIMPLE_DELETE_REGEX: Lazy<Regex> = Lazy::new(|| {
 pub fn is_ultra_simple_query(query: &str) -> bool {
     // Quick checks to exclude complex queries
     if query.contains("::") || // PostgreSQL casts
+       query.contains("CAST") || // SQL standard casts (case-insensitive check below)
+       query.contains("cast") || // SQL standard casts
        query.contains("JOIN") ||
        query.contains("UNION") ||
        query.contains("(SELECT") || // Subqueries
@@ -46,6 +60,11 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
        query.contains("NUMERIC") ||
        query.contains("unnest") || // unnest function calls need translation
        query.contains("UNNEST") {
+        return false;
+    }
+    
+    // Check for non-deterministic functions - these should not be treated as ultra simple
+    if contains_non_deterministic_functions(query) {
         return false;
     }
     
@@ -136,6 +155,8 @@ mod tests {
         // Complex queries that should fail
         assert!(!is_ultra_simple_query("SELECT * FROM users WHERE created_at > NOW()"));
         assert!(!is_ultra_simple_query("SELECT id::text FROM users"));
+        assert!(!is_ultra_simple_query("SELECT CAST('inactive' AS status)"));
+        assert!(!is_ultra_simple_query("SELECT cast(id as text) FROM users"));
         assert!(!is_ultra_simple_query("SELECT * FROM users JOIN orders"));
         assert!(!is_ultra_simple_query("SELECT (SELECT COUNT(*) FROM orders)"));
         assert!(!is_ultra_simple_query("SELECT * FROM users WHERE name ~ 'test'"));

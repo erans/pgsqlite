@@ -74,40 +74,51 @@ pub struct ArrayTranslator;
 impl ArrayTranslator {
     /// Check if SQL contains any array functions or operators (early exit optimization)
     fn contains_array_functions(sql: &str) -> bool {
-        // Quick text scan for array-related keywords
-        let sql_lower = sql.to_lowercase();
+        // Optimized: avoid to_lowercase() on entire query - check directly
         
-        // Array operators
-        if sql_lower.contains("@>") || sql_lower.contains("<@") || sql_lower.contains("&&") || sql_lower.contains("||") {
+        // Array operators (case-sensitive)
+        if sql.contains("@>") || sql.contains("<@") || sql.contains("&&") || sql.contains("||") {
             return true;
         }
         
         // Array subscript/slice notation or ARRAY[...] literals
-        if sql_lower.contains("[") && sql_lower.contains("]") {
+        if sql.contains("[") && sql.contains("]") {
             return true;
         }
         
-        // ARRAY[...] literal syntax
-        if sql_lower.contains("array[") {
+        // ARRAY[...] literal syntax - check both cases without full string conversion
+        if sql.contains("ARRAY[") || sql.contains("array[") {
             return true;
         }
         
-        // ANY/ALL operators
-        if sql_lower.contains(" any(") || sql_lower.contains(" all(") {
+        // ANY/ALL operators - check common cases
+        if sql.contains(" ANY(") || sql.contains(" any(") || 
+           sql.contains(" ALL(") || sql.contains(" all(") {
             return true;
         }
         
-        // Array functions
+        // Array functions - check both cases for common patterns
+        // Optimized: check for the most common case-sensitive patterns first
+        if sql.contains("array_agg(") || sql.contains("ARRAY_AGG(") ||
+           sql.contains("unnest(") || sql.contains("UNNEST(") ||
+           sql.contains("array_length(") || sql.contains("ARRAY_LENGTH(") ||
+           sql.contains("array_to_string(") || sql.contains("ARRAY_TO_STRING(") {
+            return true;
+        }
+        
+        // Less common array functions - only check if we haven't matched yet
         const ARRAY_FUNCTIONS: &[&str] = &[
-            "array_agg", "array_append", "array_prepend", "array_cat", "array_remove",
+            "array_append", "array_prepend", "array_cat", "array_remove",
             "array_replace", "array_slice", "string_to_array", "array_positions",
-            "array_length", "array_upper", "array_lower", "array_ndims", "array_position",
-            "array_contains", "array_contained", "array_overlap", "array_to_string", "unnest",
-            "json_array_length"
+            "array_upper", "array_lower", "array_ndims", "array_position",
+            "array_contains", "array_contained", "array_overlap", "json_array_length"
         ];
         
+        // For less common functions, do a case-insensitive check on smaller string segments
         for func in ARRAY_FUNCTIONS {
-            if sql_lower.contains(func) {
+            // Check for function followed by '(' to avoid false positives
+            let pattern = format!("{}(", func);
+            if sql.contains(&pattern) || sql.contains(&pattern.to_uppercase()) {
                 return true;
             }
         }

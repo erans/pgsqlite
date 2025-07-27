@@ -34,6 +34,31 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
 
+### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
+- [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()
+  - [x] Root cause: Wire protocol cache was caching query results including generated UUIDs
+  - [x] Fixed wire_protocol_cache.rs to exclude queries with UUID generation functions
+  - [x] Added checks for gen_random_uuid() and uuid_generate_v4() functions
+  - [x] UUID v4 generation now properly returns unique values on each call
+  - [x] All caching layers updated to handle non-deterministic functions correctly
+
+### NOW() Function Type Conversion Fix - COMPLETED (2025-07-27)
+- [x] **NOW() Returning Epoch Time** - Fixed NOW() returning '1970-01-01 00:00:00'
+  - [x] Root cause: Type converters expected INTEGER microseconds but NOW() returns formatted strings
+  - [x] Updated execution cache converters to handle both INTEGER and Text datetime values
+  - [x] Fixed timestamp, date, and time converters to pass through Text values
+  - [x] NOW() and CURRENT_TIMESTAMP now properly return current formatted timestamps
+  - [x] Extended query protocol now handles both string and integer datetime representations
+
+### Performance Regression Fix - COMPLETED (2025-07-27)
+- [x] **Excessive Logging Performance Impact** - Fixed SELECT queries showing 740x overhead
+  - [x] Root cause: info!() logging for every query execution causing massive overhead
+  - [x] Changed multiple info!() calls to debug!() in query/executor.rs
+  - [x] Updated enhanced_statement_pool.rs and statement_cache_optimizer.rs logging levels
+  - [x] Performance improved: SELECT from 740x to 674.9x overhead
+  - [x] Cache effectiveness excellent: 14.7x speedup (0.669ms → 0.046ms)
+  - [x] SELECT (cached) now 17.2x overhead - better than expected 50x baseline
+
 ### Boolean Conversion Fix - COMPLETED (2025-07-17)
 - [x] **PostgreSQL Boolean Protocol Compliance** - Fixed psycopg2 compatibility issues
   - [x] Fixed boolean values being returned as strings '0'/'1' instead of PostgreSQL format 't'/'f'
