@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use crate::cache::SchemaCache;
 use crate::query::{QueryTypeDetector, QueryType};
+use crate::translator::BatchDeleteTranslator;
 use std::borrow::Cow;
 
 /// Lazy query processor that combines cast translation, decimal rewriting, regex translation,
@@ -14,6 +15,7 @@ pub struct LazyQueryProcessor<'a> {
     needs_schema_translation: bool,
     needs_numeric_cast_translation: bool,
     needs_array_translation: bool,
+    needs_delete_using_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -30,6 +32,7 @@ impl<'a> LazyQueryProcessor<'a> {
             needs_numeric_cast_translation: crate::translator::NumericCastTranslator::needs_translation(query),
             needs_array_translation: query.contains("[") || query.contains("ANY(") || query.contains("ALL(") ||
                                     query.contains("@>") || query.contains("<@") || query.contains("&&"),
+            needs_delete_using_translation: BatchDeleteTranslator::contains_batch_delete(query),
         }
     }
     
@@ -57,6 +60,10 @@ impl<'a> LazyQueryProcessor<'a> {
         }
         
         if self.needs_array_translation {
+            return true;
+        }
+        
+        if self.needs_delete_using_translation {
             return true;
         }
         
@@ -172,7 +179,21 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 6: Decimal rewriting if needed
+        // Step 6: DELETE USING translation if needed
+        if self.needs_delete_using_translation {
+            tracing::debug!("Before DELETE USING translation: {}", current_query);
+            use std::collections::HashMap;
+            use parking_lot::Mutex;
+            use std::sync::Arc;
+            
+            let cache = Arc::new(Mutex::new(HashMap::new()));
+            let translator = BatchDeleteTranslator::new(cache);
+            let translated = translator.translate(&current_query, &[]);
+            tracing::debug!("After DELETE USING translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+        
+        // Step 7: Decimal rewriting if needed
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
         
         // Check if we need decimal rewriting
@@ -223,3 +244,4 @@ fn extract_insert_table_name(query: &str) -> Option<String> {
 fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
     crate::session::db_handler::rewrite_query_for_decimal(query, conn)
 }
+

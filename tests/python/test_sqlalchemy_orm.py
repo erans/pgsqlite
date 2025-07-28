@@ -162,7 +162,10 @@ class SQLAlchemyTestSuite:
             self.engine = create_engine(
                 connection_string,
                 echo=True,  # Set to True for SQL debugging
-                poolclass=StaticPool,  # Use a single connection for all sessions
+                # Use proper connection pooling to test connection-per-session isolation
+                pool_size=5,  # Allow multiple connections
+                max_overflow=10,  # Allow connection overflow
+                pool_pre_ping=True,  # Verify connections before use
                 future=True,  # Enable SQLAlchemy 2.0 style
                 # Work around RETURNING issue
                 execution_options={"no_autoflush": False},
@@ -619,21 +622,34 @@ class SQLAlchemyTestSuite:
                 session.refresh(user)
                 print(f"  📍 After refresh from database: {user.full_name}")
             
-            # Check in completely new session
-            with self.Session() as session:
+            # Check in completely new session with new engine to force new connection
+            print("  🔄 Creating new engine to force new connection...")
+            new_engine = create_engine(
+                f"postgresql://postgres:postgres@localhost:{self.port}/main",
+                echo=False,  # Reduce noise for this test connection
+                pool_size=1,  # Force single connection per engine
+                max_overflow=0,  # No overflow
+                pool_pre_ping=True,
+                future=True,
+            )
+            NewSession = sessionmaker(bind=new_engine)
+            
+            with NewSession() as session:
                 user = session.query(User).filter(User.username == "transaction_test_user").first()
                 result_name = user.full_name if user else "NOT FOUND"
-                print(f"  📍 New session sees: {result_name}")
+                print(f"  📍 New session (new connection) sees: {result_name}")
                 
                 if user and user.full_name == "Updated Name":
                     print("✅ Transaction persistence verified!")
                     # Cleanup
                     session.delete(user)
                     session.commit()
+                    new_engine.dispose()
                     return True
                 else:
                     print("❌ Transaction update not persisted")
                     print(f"     Expected: 'Updated Name', Got: '{result_name}'")
+                    new_engine.dispose()
                     return False
             
         except Exception as e:

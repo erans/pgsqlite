@@ -244,7 +244,12 @@ impl DbHandler {
             // For file databases, create a temporary connection
             let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
             
-            let mut stmt = conn.prepare(query)?;
+            // Apply query translations using LazyQueryProcessor
+            let mut processor = LazyQueryProcessor::new(query);
+            let processed_query = processor.process(&conn, &self.schema_cache)?;
+            debug!("Execute translation (file db): {} -> {}", query, processed_query);
+            
+            let mut stmt = conn.prepare(processed_query)?;
             let column_count = stmt.column_count();
             let mut columns = Vec::with_capacity(column_count);
             for i in 0..column_count {
@@ -377,7 +382,13 @@ impl DbHandler {
             Ok(result)
         } else {
             let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
-            let rows_affected = conn.execute(query, [])?;
+            
+            // Apply query translations using LazyQueryProcessor
+            let mut processor = LazyQueryProcessor::new(query);
+            let processed_query = processor.process(&conn, &self.schema_cache)?;
+            debug!("Execute translation (file db DML): {} -> {}", query, processed_query);
+            
+            let rows_affected = conn.execute(processed_query, [])?;
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],
