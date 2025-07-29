@@ -19,39 +19,31 @@ async fn test_prepared_at_time_zone_with_alias() {
         &[&1i32, &timestamp]
     ).await.unwrap();
     
-    // Test 1: AT TIME ZONE with alias using simple query (avoids binary protocol issues)
-    println!("Test 1: AT TIME ZONE with alias using simple query");
-    let query = format!("SELECT event_time AT TIME ZONE 'UTC' as utc_time FROM events WHERE id = {}", 1);
-    let results = client.simple_query(&query).await.unwrap();
+    // Test 1: AT TIME ZONE with alias
+    println!("Test 1: AT TIME ZONE with alias");
     
-    let mut utc_time = 0.0;
-    for msg in results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            if let Some(utc_str) = row.get(0) {
-                utc_time = utc_str.parse::<f64>().unwrap();
-                println!("Got UTC time as string: {utc_str} -> {utc_time}");
-                break;
-            }
-        }
-    }
+    // Use prepared statement to get correct type handling
+    let rows = client.query(
+        "SELECT event_time AT TIME ZONE 'UTC' as utc_time FROM events WHERE id = $1",
+        &[&1i32]
+    ).await.unwrap();
+    
+    assert_eq!(rows.len(), 1, "Expected exactly one row");
+    let utc_time: f64 = rows[0].get(0);
+    println!("Got UTC time: {}", utc_time);
     
     assert!((utc_time - timestamp).abs() < 1.0, "UTC time should match original timestamp, got {utc_time} expected {timestamp}");
     
     // Test 2: Basic query to ensure the test framework works
     println!("\nTest 2: Basic query test");
-    let query = format!("SELECT event_time FROM events WHERE id = {}", 1);
-    let results = client.simple_query(&query).await.unwrap();
+    let rows = client.query(
+        "SELECT event_time FROM events WHERE id = $1",
+        &[&1i32]
+    ).await.unwrap();
     
-    let mut retrieved_time = 0.0;
-    for msg in results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            if let Some(time_str) = row.get(0) {
-                retrieved_time = time_str.parse::<f64>().unwrap();
-                println!("Got retrieved time as string: {time_str} -> {retrieved_time}");
-                break;
-            }
-        }
-    }
+    assert_eq!(rows.len(), 1, "Expected exactly one row");
+    let retrieved_time: f64 = rows[0].get(0);
+    println!("Got retrieved time: {}", retrieved_time);
     
     assert!((retrieved_time - timestamp).abs() < 1.0, "Retrieved time should match original timestamp, got {retrieved_time} expected {timestamp}");
 }

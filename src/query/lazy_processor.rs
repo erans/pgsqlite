@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use crate::cache::SchemaCache;
 use crate::query::{QueryTypeDetector, QueryType};
-use crate::translator::BatchDeleteTranslator;
+use crate::translator::{BatchDeleteTranslator, BatchUpdateTranslator};
 use std::borrow::Cow;
 
 /// Lazy query processor that combines cast translation, decimal rewriting, regex translation,
@@ -16,6 +16,8 @@ pub struct LazyQueryProcessor<'a> {
     needs_numeric_cast_translation: bool,
     needs_array_translation: bool,
     needs_delete_using_translation: bool,
+    needs_batch_update_translation: bool,
+    needs_datetime_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -33,6 +35,8 @@ impl<'a> LazyQueryProcessor<'a> {
             needs_array_translation: query.contains("[") || query.contains("ANY(") || query.contains("ALL(") ||
                                     query.contains("@>") || query.contains("<@") || query.contains("&&"),
             needs_delete_using_translation: BatchDeleteTranslator::contains_batch_delete(query),
+            needs_batch_update_translation: BatchUpdateTranslator::contains_batch_update(query),
+            needs_datetime_translation: crate::translator::DateTimeTranslator::needs_translation(query),
         }
     }
     
@@ -67,6 +71,14 @@ impl<'a> LazyQueryProcessor<'a> {
             return true;
         }
         
+        if self.needs_batch_update_translation {
+            return true;
+        }
+        
+        if self.needs_datetime_translation {
+            return true;
+        }
+        
         // Check decimal rewrite need if not already determined
         if let Some(needs_decimal) = self.needs_decimal_rewrite {
             return needs_decimal;
@@ -88,7 +100,11 @@ impl<'a> LazyQueryProcessor<'a> {
     }
     
     /// Process the query lazily - only do the work when needed
-    pub fn process(&mut self, conn: &Connection, schema_cache: &SchemaCache) -> Result<&str, rusqlite::Error> {
+    pub fn process(&mut self, conn: &Connection, _schema_cache: &SchemaCache) -> Result<&str, rusqlite::Error> {
+        // Re-enable translations now that wire protocol cache is disabled
+        // tracing::info!("TESTING: All query translations disabled - returning original query: {}", self.original_query);
+        // return Ok(self.original_query);
+        
         // If already processed, return the result
         if let Some(ref translated) = self.translated_query {
             return Ok(translated.as_ref());
@@ -118,7 +134,7 @@ impl<'a> LazyQueryProcessor<'a> {
             // Debug enum cast issue
             if current_query.contains("casted_status") {
                 eprintln!("DEBUG LazyQueryProcessor: Processing cast translation");
-                eprintln!("  Current query: {}", current_query);
+                eprintln!("  Current query: {current_query}");
             }
             
             // Check translation cache first
@@ -143,7 +159,7 @@ impl<'a> LazyQueryProcessor<'a> {
             
             // Debug enum cast issue
             if self.original_query.contains("casted_status") {
-                eprintln!("  After cast translation: {}", current_query);
+                eprintln!("  After cast translation: {current_query}");
             }
         }
         
@@ -193,35 +209,69 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 7: Decimal rewriting if needed
+        // Step 7: Batch UPDATE translation if needed
+        if self.needs_batch_update_translation {
+            tracing::debug!("Before batch UPDATE translation: {}", current_query);
+            use std::collections::HashMap;
+            use parking_lot::Mutex;
+            use std::sync::Arc;
+            
+            let cache = Arc::new(Mutex::new(HashMap::new()));
+            let translator = BatchUpdateTranslator::new(cache);
+            let translated = translator.translate(&current_query, &[]);
+            tracing::debug!("After batch UPDATE translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+        
+        // Step 8: DateTime translation if needed
+        if self.needs_datetime_translation {
+            tracing::debug!("Before datetime translation: {}", current_query);
+            let translated = crate::translator::DateTimeTranslator::translate_query(&current_query);
+            tracing::debug!("After datetime translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+        
+        // Step 9: Decimal rewriting if needed  
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
         
-        // Check if we need decimal rewriting
-        let needs_decimal = match query_type {
-            QueryType::Insert => {
-                if let Some(table_name) = extract_insert_table_name(&current_query) {
-                    schema_cache.has_decimal_columns(&table_name)
-                } else {
-                    true // Conservative default
+        // For performance, only rewrite when necessary
+        if matches!(query_type, QueryType::Insert | QueryType::Select) {
+            if let Some(table_name) = extract_insert_table_name(&current_query) {
+                if _schema_cache.has_decimal_columns(&table_name) {
+                    tracing::debug!("Before decimal rewriting: {}", current_query);
+                    match rewrite_query_for_decimal(&current_query, conn) {
+                        Ok(rewritten) => {
+                            if rewritten != current_query {
+                                tracing::debug!("After decimal rewriting: {}", rewritten);
+                                current_query = Cow::Owned(rewritten);
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to rewrite query for decimal: {}", e);
+                            // Continue with original query
+                        }
+                    }
+                }
+            } else if matches!(query_type, QueryType::Select) {
+                // For SELECT queries, be conservative and always try decimal rewriting
+                tracing::debug!("Before decimal rewriting (SELECT): {}", current_query);
+                match rewrite_query_for_decimal(&current_query, conn) {
+                    Ok(rewritten) => {
+                        if rewritten != current_query {
+                            tracing::debug!("After decimal rewriting (SELECT): {}", rewritten);
+                            current_query = Cow::Owned(rewritten);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to rewrite SELECT query for decimal: {}", e);
+                        // Continue with original query
+                    }
                 }
             }
-            QueryType::Select => true, // Always check for SELECT
-            QueryType::Update => true, // UPDATE queries also need decimal rewriting for NUMERIC columns
-            _ => false, // Other query types don't need decimal rewriting
-        };
-        
-        self.needs_decimal_rewrite = Some(needs_decimal);
-        
-        if needs_decimal {
-            // Apply decimal rewriting
-            tracing::debug!("Before decimal rewrite: {}", current_query);
-            let rewritten = rewrite_query_for_decimal(&current_query, conn)?;
-            tracing::debug!("After decimal rewrite: {}", rewritten);
-            // Check if the rewritten query might have parsing issues
-            if rewritten.contains(")) AS") || rewritten.contains(")) as") {
-                tracing::warn!("Potential parsing issue detected in rewritten query: {}", rewritten);
-            }
-            current_query = Cow::Owned(rewritten);
+            
+            self.needs_decimal_rewrite = Some(true);
+        } else {
+            self.needs_decimal_rewrite = Some(false);
         }
         
         // Store the processed query
