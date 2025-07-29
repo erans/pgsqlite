@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::Mutex;
+use parking_lot::{RwLock, Mutex};
 use rusqlite::{Connection, OpenFlags};
 use uuid::Uuid;
 use crate::config::Config;
@@ -9,8 +9,8 @@ use tracing::{warn, debug, info};
 
 /// Manages per-session SQLite connections for true isolation
 pub struct ConnectionManager {
-    /// Map of session_id to SQLite connection
-    connections: Arc<Mutex<HashMap<Uuid, Connection>>>,
+    /// Map of session_id to SQLite connection (each wrapped in its own Mutex for thread safety)
+    connections: Arc<RwLock<HashMap<Uuid, Arc<Mutex<Connection>>>>>,
     /// Database path
     db_path: String,
     /// Configuration
@@ -22,7 +22,7 @@ pub struct ConnectionManager {
 impl ConnectionManager {
     pub fn new(db_path: String, config: Arc<Config>) -> Self {
         Self {
-            connections: Arc::new(Mutex::new(HashMap::new())),
+            connections: Arc::new(RwLock::new(HashMap::new())),
             db_path,
             config,
             max_connections: 100, // TODO: Make configurable
@@ -31,7 +31,7 @@ impl ConnectionManager {
     
     /// Create a new connection for a session
     pub fn create_connection(&self, session_id: Uuid) -> Result<(), PgSqliteError> {
-        let mut connections = self.connections.lock();
+        let mut connections = self.connections.write();
         
         // Check connection limit
         if connections.len() >= self.max_connections {
@@ -80,7 +80,7 @@ impl ConnectionManager {
         crate::metadata::TypeMetadata::init(&conn)
             .map_err(PgSqliteError::Sqlite)?;
         
-        connections.insert(session_id, conn);
+        connections.insert(session_id, Arc::new(Mutex::new(conn)));
         info!("Created new connection for session {} (total connections: {})", session_id, connections.len());
         
         Ok(())
@@ -95,19 +95,42 @@ impl ConnectionManager {
     where
         F: FnOnce(&Connection) -> Result<R, rusqlite::Error>
     {
-        let mut connections = self.connections.lock();
+        // First, get a read lock on the connections map
+        let connections = self.connections.read();
         
-        let conn = connections.get_mut(session_id)
+        // Get the connection Arc
+        let conn_arc = connections.get(session_id)
             .ok_or_else(|| PgSqliteError::Protocol(
                 format!("No connection found for session {session_id}")
             ))?;
-            
-        f(conn).map_err(|e| PgSqliteError::Sqlite(e))
+        
+        // Clone the Arc to avoid holding the read lock while executing
+        let conn_arc = conn_arc.clone();
+        
+        // Drop the read lock early
+        drop(connections);
+        
+        // Now lock the individual connection
+        let conn = conn_arc.lock();
+        f(&*conn).map_err(|e| PgSqliteError::Sqlite(e))
+    }
+    
+    /// Execute a query with a cached connection Arc (avoids HashMap lookup)
+    pub fn execute_with_cached_connection<F, R>(
+        &self,
+        conn_arc: &Arc<Mutex<Connection>>,
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&Connection) -> Result<R, rusqlite::Error>
+    {
+        let conn = conn_arc.lock();
+        f(&*conn).map_err(PgSqliteError::Sqlite)
     }
     
     /// Remove a connection when session ends
     pub fn remove_connection(&self, session_id: &Uuid) {
-        let mut connections = self.connections.lock();
+        let mut connections = self.connections.write();
         if connections.remove(session_id).is_some() {
             info!("Removed connection for session {} (remaining connections: {})", session_id, connections.len());
         }
@@ -115,12 +138,12 @@ impl ConnectionManager {
     
     /// Get the number of active connections
     pub fn active_connections(&self) -> usize {
-        self.connections.lock().len()
+        self.connections.read().len()
     }
     
     /// Check if a session has a connection
     pub fn has_connection(&self, session_id: &Uuid) -> bool {
-        self.connections.lock().contains_key(session_id)
+        self.connections.read().contains_key(session_id)
     }
     
     /// Force WAL checkpoint on all connections except the specified one
@@ -131,15 +154,18 @@ impl ConnectionManager {
             return Ok(());
         }
         
-        let mut connections = self.connections.lock();
+        let connections = self.connections.read();
         let mut refresh_count = 0;
         let mut error_count = 0;
         
-        for (session_id, conn) in connections.iter_mut() {
+        for (session_id, conn_arc) in connections.iter() {
             // Skip the session that just committed
             if session_id == excluding_session {
                 continue;
             }
+            
+            // Lock the individual connection
+            let conn = conn_arc.lock();
             
             // Force this connection to read the latest WAL data
             match conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_row| Ok(())) {
@@ -169,11 +195,39 @@ impl ConnectionManager {
     where
         F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error>
     {
-        let mut connections = self.connections.lock();
+        // Get a read lock on the connections map
+        let connections = self.connections.read();
         
-        let conn = connections.get_mut(session_id)
+        // Get the connection Arc
+        let conn_arc = connections.get(session_id)
             .ok_or_else(|| PgSqliteError::Protocol(format!("No connection found for session {session_id}")))?;
         
-        f(conn).map_err(PgSqliteError::Sqlite)
+        // Clone the Arc to avoid holding the read lock
+        let conn_arc = conn_arc.clone();
+        
+        // Drop the read lock early
+        drop(connections);
+        
+        // Now lock the individual connection for mutable access
+        let mut conn = conn_arc.lock();
+        f(&mut *conn).map_err(PgSqliteError::Sqlite)
+    }
+    
+    /// Get the connection Arc for a session (for caching)
+    pub fn get_connection_arc(&self, session_id: &Uuid) -> Option<Arc<Mutex<Connection>>> {
+        self.connections.read().get(session_id).cloned()
+    }
+    
+    /// Execute a function with a mutable cached connection
+    pub fn execute_with_cached_connection_mut<F, R>(
+        &self,
+        conn_arc: &Arc<Mutex<Connection>>,
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error>
+    {
+        let mut conn = conn_arc.lock();
+        f(&mut *conn).map_err(PgSqliteError::Sqlite)
     }
 }

@@ -23,6 +23,32 @@ pub struct LazyQueryProcessor<'a> {
 impl<'a> LazyQueryProcessor<'a> {
     /// Create a new lazy query processor
     pub fn new(query: &'a str) -> Self {
+        // Fast path for simple queries - check if query contains any special characters
+        // that might require translation
+        let quick_check = query.contains("::") || query.contains(" ~ ") || query.contains("pg_catalog") ||
+                         query.contains("PG_CATALOG") || query.contains("[") || query.contains("ANY(") ||
+                         query.contains("ALL(") || query.contains("@>") || query.contains("<@") || 
+                         query.contains("&&") || query.contains("DELETE") || query.contains("UPDATE") ||
+                         query.contains("AT TIME ZONE");
+        
+        if !quick_check {
+            // Fast path - no translation needed
+            return Self {
+                original_query: query,
+                translated_query: None,
+                needs_cast_translation: false,
+                needs_decimal_rewrite: None,
+                needs_regex_translation: false,
+                needs_schema_translation: false,
+                needs_numeric_cast_translation: false,
+                needs_array_translation: false,
+                needs_delete_using_translation: false,
+                needs_batch_update_translation: false,
+                needs_datetime_translation: false,
+            };
+        }
+        
+        // Slow path - do detailed checks
         Self {
             original_query: query,
             translated_query: None,
@@ -108,6 +134,24 @@ impl<'a> LazyQueryProcessor<'a> {
         // If already processed, return the result
         if let Some(ref translated) = self.translated_query {
             return Ok(translated.as_ref());
+        }
+        
+        // Fast path - if no translation is needed, return original query directly
+        if !self.needs_cast_translation && !self.needs_regex_translation && 
+           !self.needs_schema_translation && !self.needs_numeric_cast_translation &&
+           !self.needs_array_translation && !self.needs_delete_using_translation &&
+           !self.needs_batch_update_translation && !self.needs_datetime_translation {
+            // Check if this is an INSERT that might need decimal rewrite
+            if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert) {
+                if let Some(table_name) = extract_insert_table_name(self.original_query) {
+                    if !_schema_cache.has_decimal_columns(&table_name) {
+                        return Ok(self.original_query);
+                    }
+                }
+            } else if !matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Select) {
+                // Not a SELECT or INSERT that needs decimal handling
+                return Ok(self.original_query);
+            }
         }
         
         let mut current_query = Cow::Borrowed(self.original_query);

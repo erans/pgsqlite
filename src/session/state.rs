@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use once_cell::sync::Lazy;
 use crate::session::DbHandler;
+use parking_lot::Mutex as ParkingMutex;
+use rusqlite::Connection;
 
 // Global query cache shared across all sessions
 pub static GLOBAL_QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| {
@@ -27,6 +29,7 @@ pub struct SessionState {
     pub portal_manager: Arc<super::PortalManager>,
     pub python_param_mapping: RwLock<HashMap<String, Vec<String>>>, // Maps statement name to Python parameter names
     pub db_handler: Mutex<Option<Arc<DbHandler>>>, // Reference to the database handler for session lifecycle management
+    pub cached_connection: ParkingMutex<Option<Arc<ParkingMutex<Connection>>>>, // Cached connection for fast access
 }
 
 pub struct PreparedStatement {
@@ -74,6 +77,7 @@ impl SessionState {
             portal_manager: Arc::new(super::PortalManager::new(100)), // Allow up to 100 concurrent portals
             python_param_mapping: RwLock::new(HashMap::new()),
             db_handler: Mutex::new(None), // Will be set after session is created
+            cached_connection: ParkingMutex::new(None), // Initialize as None
         }
     }
 
@@ -129,9 +133,22 @@ impl SessionState {
     /// Clean up the session connection
     /// This should be called when the session is being terminated
     pub async fn cleanup_connection(&self) {
+        // Clear the cached connection first
+        self.cached_connection.lock().take();
+        
         if let Some(ref db_handler) = *self.db_handler.lock().await {
             db_handler.remove_session_connection(&self.id);
         }
+    }
+    
+    /// Cache a connection for fast access
+    pub fn cache_connection(&self, connection: Arc<ParkingMutex<Connection>>) {
+        *self.cached_connection.lock() = Some(connection);
+    }
+    
+    /// Get the cached connection if available
+    pub fn get_cached_connection(&self) -> Option<Arc<ParkingMutex<Connection>>> {
+        self.cached_connection.lock().clone()
     }
 }
 

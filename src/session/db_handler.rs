@@ -237,7 +237,7 @@ impl DbHandler {
             // Apply query translations using LazyQueryProcessor
             let mut processor = LazyQueryProcessor::new(query);
             let processed_query = processor.process(conn, &self.schema_cache)?;
-            debug!("Execute with params translation: {} -> {}", query, processed_query);
+            // debug!("Execute with params translation: {} -> {}", query, processed_query);
             
             let mut stmt = conn.prepare(processed_query)?;
             
@@ -328,7 +328,7 @@ impl DbHandler {
             // Apply query translations using LazyQueryProcessor
             let mut processor = LazyQueryProcessor::new(query);
             let processed_query = processor.process(&conn, &self.schema_cache)?;
-            debug!("Execute translation (file db): {} -> {}", query, processed_query);
+            // debug!("Execute translation (file db): {} -> {}", query, processed_query);
             
             let mut stmt = conn.prepare(processed_query)?;
             let column_count = stmt.column_count();
@@ -357,6 +357,94 @@ impl DbHandler {
                 rows: rows?,
                 rows_affected: 0,
             })
+        }
+    }
+    
+    /// Query with session-specific connection (with optional cached connection)
+    pub async fn query_with_session_cached(
+        &self, 
+        query: &str, 
+        session_id: &Uuid,
+        cached_conn: Option<&Arc<parking_lot::Mutex<rusqlite::Connection>>>
+    ) -> Result<DbResponse, PgSqliteError> {
+        // Check if this is a catalog query that should be intercepted
+        // We need to do this before applying translations
+        let lower_query = query.to_lowercase();
+        
+        // Handle special system function queries
+        if lower_query.trim() == "select current_user()" {
+            return Ok(DbResponse {
+                columns: vec!["current_user".to_string()],
+                rows: vec![vec![Some("postgres".to_string().into_bytes())]],
+                rows_affected: 1,
+            });
+        }
+        
+        if lower_query.contains("information_schema") || lower_query.contains("pg_catalog") || 
+           lower_query.contains("pg_type") || lower_query.contains("pg_class") ||
+           lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") {
+            // For catalog queries, we need to use the catalog interceptor
+            // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
+            // Instead, let's handle specific queries directly for now
+            if lower_query.contains("information_schema.tables") {
+                return self.handle_information_schema_tables_query(query, session_id).await;
+            }
+            
+            // Handle SQLAlchemy table existence check with a simpler query
+            if lower_query.contains("pg_class.relname") && 
+               lower_query.contains("pg_namespace") && 
+               lower_query.contains("pg_table_is_visible") &&
+               lower_query.contains("any") && 
+               lower_query.contains("array") {
+                return self.handle_table_existence_query(query, session_id).await;
+            }
+            
+            // For other pg_catalog queries, let them go through LazyQueryProcessor
+            // which will strip the schema prefix and allow them to query the views
+        }
+        
+        // Use cached connection if available, otherwise fall back to lookup
+        match cached_conn {
+            Some(conn) => {
+                self.connection_manager.execute_with_cached_connection(conn, |conn| {
+                    // Apply query translations using LazyQueryProcessor
+                    let mut processor = LazyQueryProcessor::new(query);
+                    let processed_query = processor.process(conn, &self.schema_cache)?;
+                    // debug!("Query translation (cached): {} -> {}", query, processed_query);
+                    
+                    let mut stmt = conn.prepare(processed_query)?;
+                    let column_count = stmt.column_count();
+                    let mut columns = Vec::with_capacity(column_count);
+                    for i in 0..column_count {
+                        columns.push(stmt.column_name(i)?.to_string());
+                    }
+                    
+                    let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                        let mut row_data = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            let value: Option<rusqlite::types::Value> = row.get(i)?;
+                            row_data.push(match value {
+                                Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                Some(rusqlite::types::Value::Null) | None => None,
+                            });
+                        }
+                        Ok(row_data)
+                    })?.collect();
+                    
+                    Ok(DbResponse {
+                        columns,
+                        rows: rows?,
+                        rows_affected: 0,
+                    })
+                })
+            }
+            None => {
+                // Fall back to regular lookup
+                self.query_with_session(query, session_id).await
+            }
         }
     }
     
@@ -402,7 +490,7 @@ impl DbHandler {
             // Apply query translations using LazyQueryProcessor
             let mut processor = LazyQueryProcessor::new(query);
             let processed_query = processor.process(conn, &self.schema_cache)?;
-            debug!("Query translation: {} -> {}", query, processed_query);
+            // debug!("Query translation: {} -> {}", query, processed_query);
             
             let mut stmt = conn.prepare(processed_query)?;
             let column_count = stmt.column_count();
@@ -467,7 +555,7 @@ impl DbHandler {
             // Apply query translations using LazyQueryProcessor
             let mut processor = LazyQueryProcessor::new(query);
             let processed_query = processor.process(&conn, &self.schema_cache)?;
-            debug!("Execute translation (file db DML): {} -> {}", query, processed_query);
+            // debug!("Execute translation (file db DML): {} -> {}", query, processed_query);
             
             let rows_affected = conn.execute(processed_query, [])?;
             Ok(DbResponse {
@@ -478,13 +566,43 @@ impl DbHandler {
         }
     }
     
+    /// Execute with session-specific connection (with optional cached connection)
+    pub async fn execute_with_session_cached(
+        &self, 
+        query: &str, 
+        session_id: &Uuid,
+        cached_conn: Option<&Arc<parking_lot::Mutex<rusqlite::Connection>>>
+    ) -> Result<DbResponse, PgSqliteError> {
+        match cached_conn {
+            Some(conn) => {
+                self.connection_manager.execute_with_cached_connection(conn, |conn| {
+                    // Apply query translations using LazyQueryProcessor
+                    let mut processor = LazyQueryProcessor::new(query);
+                    let processed_query = processor.process(conn, &self.schema_cache)?;
+                    // debug!("Execute translation (cached): {} -> {}", query, processed_query);
+                    
+                    let rows_affected = conn.execute(processed_query, [])?;
+                    Ok(DbResponse {
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected,
+                    })
+                })
+            }
+            None => {
+                // Fall back to regular lookup
+                self.execute_with_session(query, session_id).await
+            }
+        }
+    }
+    
     /// Execute with session-specific connection
     pub async fn execute_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
         self.connection_manager.execute_with_session(session_id, |conn| {
             // Apply query translations using LazyQueryProcessor
             let mut processor = LazyQueryProcessor::new(query);
             let processed_query = processor.process(conn, &self.schema_cache)?;
-            debug!("Execute translation: {} -> {}", query, processed_query);
+            // debug!("Execute translation: {} -> {}", query, processed_query);
             
             let rows_affected = conn.execute(processed_query, [])?;
             Ok(DbResponse {
@@ -629,6 +747,35 @@ impl DbHandler {
         F: FnOnce(&mut rusqlite::Connection) -> Result<R, rusqlite::Error>
     {
         self.connection_manager.execute_with_session_mut(session_id, f)
+    }
+    
+    /// Execute with a cached connection (fast path - no HashMap lookup)
+    pub async fn with_cached_connection<F, R>(
+        &self,
+        cached_conn: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<R, rusqlite::Error>
+    {
+        self.connection_manager.execute_with_cached_connection(cached_conn, f)
+    }
+    
+    /// Execute with a mutable cached connection (fast path - no HashMap lookup)
+    pub async fn with_cached_connection_mut<F, R>(
+        &self,
+        cached_conn: &Arc<parking_lot::Mutex<rusqlite::Connection>>,
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&mut rusqlite::Connection) -> Result<R, rusqlite::Error>
+    {
+        self.connection_manager.execute_with_cached_connection_mut(cached_conn, f)
+    }
+    
+    /// Get the connection manager for caching purposes
+    pub fn connection_manager(&self) -> &Arc<ConnectionManager> {
+        &self.connection_manager
     }
     
     // Compatibility methods for existing code

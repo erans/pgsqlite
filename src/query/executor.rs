@@ -111,6 +111,28 @@ fn create_command_tag(operation: &str, rows_affected: usize) -> String {
 pub struct QueryExecutor;
 
 impl QueryExecutor {
+    /// Get cached connection or fetch and cache it
+    async fn get_or_cache_connection(
+        session: &Arc<SessionState>,
+        db: &Arc<DbHandler>
+    ) -> Option<Arc<parking_lot::Mutex<rusqlite::Connection>>> {
+        // First check if we have a cached connection
+        if let Some(cached) = session.get_cached_connection() {
+            // debug!("Using cached connection for session {}", session.id);
+            return Some(cached);
+        }
+        
+        // Try to get connection from manager and cache it
+        // debug!("Connection not cached for session {}, fetching from manager", session.id);
+        if let Some(conn_arc) = db.connection_manager().get_connection_arc(&session.id) {
+            session.cache_connection(conn_arc.clone());
+            // debug!("Cached connection for session {}", session.id);
+            Some(conn_arc)
+        } else {
+            // debug!("No connection found for session {}", session.id);
+            None
+        }
+    }
     pub async fn execute_query<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &Arc<DbHandler>,
@@ -130,7 +152,7 @@ impl QueryExecutor {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
         
-        debug!("Executing query: {}", query_to_execute);
+        // debug!("Executing query: {}", query_to_execute);
         
         // Check for Python-style parameters and provide helpful error
         use crate::query::parameter_parser::ParameterParser;
@@ -191,7 +213,7 @@ impl QueryExecutor {
         }
         // Ultra-fast path: Skip all translation if query is simple enough
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
-            debug!("Using ultra-fast path for query: {}", query);
+            // debug!("Using ultra-fast path for query: {}", query);
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
@@ -199,16 +221,27 @@ impl QueryExecutor {
                     let response = if let Some(router) = query_router {
                         router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
                     } else {
-                        db.query_with_session(query, &session.id).await?
+                        let cached_conn = Self::get_or_cache_connection(session, db).await;
+                        db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
                     };
                     
+                    // Fast path for queries without special types - skip schema lookup
+                    let needs_type_conversion = query.contains("::") || query.contains("CAST") || 
+                                               query.contains("cast") || query.contains("AT TIME ZONE");
+                    
                     // Extract table name once and get all schema information in one query
-                    let table_name = extract_table_name_from_select(query);
-                    let (boolean_columns, datetime_columns, column_types, column_mappings) = if let Some(ref table) = table_name {
+                    let table_name = if needs_type_conversion {
+                        extract_table_name_from_select(query)
+                    } else {
+                        None
+                    };
+                    
+                    let (boolean_columns, datetime_columns, column_types, column_mappings) = if needs_type_conversion && table_name.is_some() {
+                        let table = table_name.as_ref().unwrap();
                         let schema_info = get_table_schema_info(table, db, &session.id).await;
                         let mappings = extract_column_mappings_from_query(query, table);
-                        debug!("Column mappings for table '{}': {:?}", table, mappings);
-                        debug!("Datetime columns for table '{}': {:?}", table, schema_info.datetime_columns);
+                        // debug!("Column mappings for table '{}': {:?}", table, mappings);
+                        // debug!("Datetime columns for table '{}': {:?}", table, schema_info.datetime_columns);
                         (
                             schema_info.boolean_columns,
                             schema_info.datetime_columns,
@@ -252,6 +285,13 @@ impl QueryExecutor {
                     
                     // Send data rows with boolean and datetime conversion
                     for row in response.rows {
+                        // Fast path - if no special columns, send row as-is
+                        if boolean_columns.is_empty() && datetime_columns.is_empty() {
+                            framed.send(BackendMessage::DataRow(row)).await
+                                .map_err(PgSqliteError::Io)?;
+                            continue;
+                        }
+                        
                         // Debug enum cast issue
                         if query.contains("casted_status") {
                             eprintln!("DEBUG QueryExecutor: Processing row for enum cast query");
@@ -435,7 +475,8 @@ impl QueryExecutor {
                         // Execute all but the last query first
                         for (i, fts_query) in fts_queries.iter().take(fts_queries.len() - 1).enumerate() {
                             debug!("Executing FTS query {}: {}", i + 1, fts_query);
-                            db.execute_with_session(fts_query, &session.id).await?;
+                            let cached_conn = Self::get_or_cache_connection(session, db).await;
+                            db.execute_with_session_cached(fts_query, &session.id, cached_conn.as_ref()).await?;
                         }
                         
                         // Use the last query as the main query
@@ -662,7 +703,7 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         // SQLAlchemy manages transactions explicitly - don't start implicit transactions
-        debug!("=== EXECUTE_SELECT CALLED with query: {}", query);
+        // debug!("=== EXECUTE_SELECT CALLED with query: {}", query);
         
         // Check wire protocol cache first for cacheable queries
         if crate::cache::is_cacheable_for_wire_protocol(query) {
@@ -696,13 +737,14 @@ impl QueryExecutor {
             if let Some(router) = query_router {
                 router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
             } else {
-                db.query_with_session(query, &session.id).await?
+                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
             }
         };
         
         // Extract table name from query to look up schema
         let table_name = extract_table_name_from_select(query);
-        debug!("Table name extraction result: {:?} for query: {}", table_name, query);
+        // debug!("Table name extraction result: {:?} for query: {}", table_name, query);
         
         // For JOIN queries, extract all tables and build column mappings
         // Optimized: check for JOIN without converting entire query to uppercase
@@ -1147,7 +1189,8 @@ impl QueryExecutor {
         let response = if let Some(router) = query_router {
             router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
         } else {
-            db.execute_with_session(query, &session.id).await?
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
         };
         
         // Optimized tag creation with static strings for common cases and buffer pooling for larger counts
@@ -1181,7 +1224,8 @@ impl QueryExecutor {
         let returning_response = if let Some(router) = query_router {
             router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
         } else {
-            db.query_with_session(query, &session.id).await?
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
         };
         
         // Extract table name from query for type lookup
@@ -1380,7 +1424,8 @@ impl QueryExecutor {
         };
         
         // Execute the translated query
-        db.execute_with_session(&translated_query, &session.id).await?;
+        let cached_conn = Self::get_or_cache_connection(session, db).await;
+        db.execute_with_session_cached(&translated_query, &session.id, cached_conn.as_ref()).await?;
         
         // If we have type mappings, store them in the metadata table
         debug!("Type mappings count: {}", type_mappings.len());
@@ -1396,7 +1441,8 @@ impl QueryExecutor {
                     PRIMARY KEY (table_name, column_name)
                 )";
                 
-                match db.execute_with_session(init_query, &session.id).await {
+                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                match db.execute_with_session_cached(init_query, &session.id, cached_conn.as_ref()).await {
                     Ok(_) => debug!("Successfully created/verified __pgsqlite_schema table"),
                     Err(e) => debug!("Failed to create __pgsqlite_schema table: {}", e),
                 }
@@ -1411,7 +1457,8 @@ impl QueryExecutor {
                             table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
                         );
                         
-                        match db.execute_with_session(&insert_query, &session.id).await {
+                        let cached_conn = Self::get_or_cache_connection(session, db).await;
+                        match db.execute_with_session_cached(&insert_query, &session.id, cached_conn.as_ref()).await {
                             Ok(_) => debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
                             Err(e) => debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e),
                         }
@@ -1436,7 +1483,8 @@ impl QueryExecutor {
                                     table_name, parts[1], modifier, if is_char { 1 } else { 0 }
                                 );
                                 
-                                match db.execute_with_session(&constraint_query, &session.id).await {
+                                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                                match db.execute_with_session_cached(&constraint_query, &session.id, cached_conn.as_ref()).await {
                                     Ok(_) => debug!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
                                     Err(e) => debug!("Failed to store string constraint for {}.{}: {}", table_name, parts[1], e),
                                 }
@@ -1453,7 +1501,8 @@ impl QueryExecutor {
                                     table_name, parts[1], precision, scale
                                 );
                                 
-                                match db.execute_with_session(&constraint_query, &session.id).await {
+                                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                                match db.execute_with_session_cached(&constraint_query, &session.id, cached_conn.as_ref()).await {
                                     Ok(_) => {
                                         debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                     }
@@ -1679,7 +1728,8 @@ impl QueryExecutor {
         if let Some(router) = query_router {
             router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?;
         } else {
-            db.execute_with_session(query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
         }
         
         framed.send(BackendMessage::CommandComplete { tag: "OK".to_string() }).await
