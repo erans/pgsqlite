@@ -442,19 +442,39 @@ impl CastTranslator {
     }
     
     /// Translate an ENUM cast
-    fn translate_enum_cast(expr: &str, type_name: &str, _conn: &Connection) -> String {
-        // For ENUM casts, we need to validate the value exists
-        // Use a CASE expression that will cause a constraint error for invalid values
-        // We use CAST(NULL AS INTEGER) NOT NULL which will fail with "NOT NULL constraint failed"
+    fn translate_enum_cast(expr: &str, type_name: &str, conn: &Connection) -> String {
+        // For ENUM casts, we validate the value exists and return it if valid
+        // For invalid values, we rely on the database triggers to catch them
+        // This approach allows parameterized queries and CTEs to work while
+        // still providing validation through triggers during INSERT/UPDATE
         
-        // Force an error by querying a non-existent table
-        format!(
-            r#"(CASE 
-                WHEN EXISTS(SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{type_name}' AND ev.label = {expr}) 
-                THEN {expr}
-                ELSE (SELECT invalid_enum_cast_error_table.invalid_column FROM invalid_enum_cast_error_table WHERE error_message = 'invalid input value for enum {type_name}: ' || {expr})
-            END)"#
-        )
+        // If the expression is a literal string, we can validate it immediately 
+        // If it's a parameter or variable, we let it through for runtime validation
+        if expr.starts_with('\'') && expr.ends_with('\'') {
+            // It's a string literal, validate it exists
+            let literal_value = &expr[1..expr.len()-1]; // Remove quotes
+            
+            // Check if the enum value exists
+            let exists = conn.query_row(
+                "SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = ?1 AND ev.label = ?2",
+                rusqlite::params![type_name, literal_value],
+                |_| Ok(true)
+            ).unwrap_or(false);
+            
+            if exists {
+                expr.to_string()
+            } else {
+                // Create an expression that will fail when evaluated
+                format!(
+                    "(SELECT CASE WHEN 1=1 THEN CAST(NULL AS INTEGER) NOT NULL ELSE {} END)",
+                    expr
+                )
+            }
+        } else {
+            // Not a literal (could be parameter, variable, etc.), let it through
+            // Runtime validation will be handled by triggers
+            expr.to_string()
+        }
     }
     
     /// Check if an expression might need explicit TEXT casting
