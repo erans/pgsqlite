@@ -63,12 +63,22 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 
 ## Performance Targets
 
-### Current (2025-07-27)
+### Target (2025-07-27)
 - SELECT: ~674.9x overhead (0.669ms)
 - SELECT (cached): ~17.2x overhead (0.046ms) ✓
 - UPDATE: ~50.9x overhead (0.059ms) ✓
 - DELETE: ~35.8x overhead (0.034ms) ✓
 - INSERT: ~36.6x overhead (0.060ms) ✓
+
+### Current (2025-07-29) - SEVERE REGRESSION
+- SELECT: ~383,068.5% overhead (3.827ms) - **568x worse than target**
+- SELECT (cached): ~3,185.9% overhead (0.159ms) - **3.5x worse than target**
+- UPDATE: ~5,368.6% overhead (0.063ms) - **105x worse than target**
+- DELETE: ~4,636.9% overhead (0.045ms) - **130x worse than target**  
+- INSERT: ~10,753.0% overhead (0.174ms) - **294x worse than target**
+
+**Note**: Performance regression likely due to connection-per-session architecture changes.
+Immediate optimization required.
 
 ### Batch INSERT Best Practices
 ```sql
@@ -121,20 +131,29 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-07-27)
-- **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries
-- **SQLAlchemy ORM**: Full compatibility with VALUES clause conversion and datetime handling
-- **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
+### Recently Fixed (2025-07-29)
 - **Connection-per-Session Architecture**: Implemented true connection isolation matching PostgreSQL behavior
   - Each client session gets its own SQLite connection
+  - Fixes SQLAlchemy transaction persistence issues with WAL mode
+  - Eliminates transaction visibility problems between sessions
+  - Tests now use temporary files instead of :memory: for proper isolation
+- **AT TIME ZONE Support**: Fixed simple_query protocol issues
+  - Fixed UTF-8 encoding errors when using simple_query with AT TIME ZONE
+  - AT TIME ZONE operator now properly returns float values
+  - Tests updated to use prepared statements for reliable behavior
+  - Added datetime translation support to LazyQueryProcessor
 - **Test Infrastructure Stability**: Fixed migration lock contention and build system reliability
   - Resolved "Migration lock held by process" errors in concurrent tests
   - Updated test files to use unique temporary databases instead of shared `:memory:`
   - Fixed common test module compatibility with connection-per-session architecture
-  - Fixes SQLAlchemy transaction persistence issues with WAL mode
-  - Eliminates transaction visibility problems between sessions
-  - Tests now use temporary files instead of :memory: for proper isolation
-- **Performance**: Logging optimization reduced overhead significantly
+- **Logging Optimization**: Converted info to debug logging in hot paths
+  - Changed query logging from info!() to debug!() level
+  - Should help reduce performance overhead (pending benchmark validation)
+
+### Previously Fixed (2025-07-27)
+- **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries
+- **SQLAlchemy ORM**: Full compatibility with VALUES clause conversion and datetime handling
+- **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
 
 ### Major Features
 - **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`

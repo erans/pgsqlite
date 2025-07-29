@@ -32,7 +32,45 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ---
 
+## 🚨 CRITICAL PERFORMANCE REGRESSION - NEEDS IMMEDIATE ATTENTION
+
+### Performance Regression from Connection-Per-Session Architecture (2025-07-29)
+- [ ] **Fix Severe Performance Regression** - SELECT operations 568x worse than documented target
+  - Current: SELECT ~383,068.5% overhead (3.827ms) vs Target: 674.9x overhead (0.669ms)
+  - Current: SELECT (cached) ~3,185.9% overhead (0.159ms) vs Target: 17.2x overhead (0.046ms)
+  - Current: UPDATE ~5,368.6% overhead (0.063ms) vs Target: 50.9x overhead (0.059ms)
+  - Current: DELETE ~4,636.9% overhead (0.045ms) vs Target: 35.8x overhead (0.034ms)
+  - Current: INSERT ~10,753.0% overhead (0.174ms) vs Target: 36.6x overhead (0.060ms)
+- [ ] **Profile Connection-Per-Session Architecture** - Identify bottlenecks
+  - [ ] Profile connection creation/lookup overhead
+  - [ ] Analyze mutex contention in ConnectionManager
+  - [ ] Check for excessive allocations in hot paths
+  - [ ] Investigate session state management overhead
+- [ ] **Optimize Hot Paths** - Remove unnecessary overhead
+  - [x] Convert query logging from info to debug level (completed)
+  - [ ] Review and optimize LazyQueryProcessor allocations
+  - [ ] Cache session connections more efficiently
+  - [ ] Consider connection pooling within sessions
+
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
+
+### Connection-Per-Session Architecture - COMPLETED (2025-07-29)
+- [x] **Implement True Connection Isolation** - Match PostgreSQL behavior
+  - [x] Each client session gets its own SQLite connection
+  - [x] Fix SQLAlchemy transaction persistence issues with WAL mode
+  - [x] Eliminate transaction visibility problems between sessions
+  - [x] Update test infrastructure to use temporary files instead of :memory:
+  - [x] Fix migration lock contention in concurrent tests
+  - [x] Resolve "Migration lock held by process" errors
+  - [x] Fix common test module compatibility
+
+### AT TIME ZONE Support - COMPLETED (2025-07-29)
+- [x] **Fix AT TIME ZONE with simple_query Protocol** - Resolve UTF-8 encoding issues
+  - [x] Fixed test_simple_at_time_zone failure
+  - [x] Fixed test_prepared_at_time_zone_with_alias failure
+  - [x] Changed tests to use prepared statements to avoid text format issues
+  - [x] Added datetime translation support to LazyQueryProcessor
+  - [x] AT TIME ZONE operator now properly handles float return values
 
 ### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
 - [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()
