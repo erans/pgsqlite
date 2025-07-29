@@ -20,7 +20,7 @@ async fn test_arithmetic_aliasing_simple_protocol() {
         println!("Creating products table...");
         match db_handler.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, price REAL, quantity INTEGER, tax_rate DOUBLE PRECISION)").await {
             Ok(_) => println!("Created products table successfully"),
-            Err(e) => println!("Failed to create products table: {:?}", e),
+            Err(e) => println!("Failed to create products table: {e:?}"),
         }
         db_handler.execute("INSERT INTO products (id, price, quantity, tax_rate) VALUES (1, 99.99, 10, 0.08)").await.unwrap();
         db_handler.execute("INSERT INTO products (id, price, quantity, tax_rate) VALUES (2, 149.50, 5, 0.08)").await.unwrap();

@@ -5,7 +5,7 @@ use rusqlite::{Connection, OpenFlags};
 use uuid::Uuid;
 use crate::config::Config;
 use crate::PgSqliteError;
-use tracing::{warn, debug};
+use tracing::{warn, debug, info};
 
 /// Manages per-session SQLite connections for true isolation
 pub struct ConnectionManager {
@@ -51,16 +51,13 @@ impl ConnectionManager {
             | OpenFlags::SQLITE_OPEN_CREATE 
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX
             | OpenFlags::SQLITE_OPEN_URI;
-            
-        let conn = if self.db_path == ":memory:" {
-            // Use shared cache for memory databases to allow data sharing between connections
-            Connection::open_with_flags("file::memory:?cache=shared", flags)
-        } else {
-            // For named shared memory databases or regular files, use the path as-is
-            Connection::open_with_flags(&self.db_path, flags)
-        }.map_err(|e| PgSqliteError::Sqlite(e))?;
         
-        // Configure connection
+        debug!("Creating connection for session {} with path: {}", session_id, self.db_path);
+            
+        let conn = Connection::open_with_flags(&self.db_path, flags)
+            .map_err(PgSqliteError::Sqlite)?;
+        
+        // Set pragmas
         let pragma_sql = format!(
             "PRAGMA journal_mode = {};
              PRAGMA synchronous = {};
@@ -73,61 +70,18 @@ impl ConnectionManager {
             self.config.pragma_mmap_size
         );
         conn.execute_batch(&pragma_sql)
-            .map_err(|e| PgSqliteError::Sqlite(e))?;
+            .map_err(PgSqliteError::Sqlite)?;
         
         // Register functions
         crate::functions::register_all_functions(&conn)
-            .map_err(|e| PgSqliteError::Sqlite(e))?;
-        
-        // Force WAL checkpoint read to ensure this connection sees all committed data
-        // This is critical for connection-per-session architecture where each connection
-        // needs to see the latest state immediately upon creation
-        if self.config.pragma_journal_mode == "WAL" {
-            // Use RESTART mode for more aggressive checkpoint to ensure data visibility
-            match conn.execute("PRAGMA wal_checkpoint(RESTART)", []) {
-                Ok(_) => {
-                    debug!("WAL checkpoint(RESTART) completed for new session {}", session_id);
-                    
-                    // Force a read operation to ensure connection cache is updated
-                    match conn.prepare("SELECT COUNT(*) FROM sqlite_master WHERE type='table'") {
-                        Ok(mut stmt) => {
-                            match stmt.query_row([], |_| Ok(())) {
-                                Ok(_) => debug!("Cache refresh read completed for session {}", session_id),
-                                Err(e) => debug!("Cache refresh read failed for session {}: {}", session_id, e),
-                            }
-                        }
-                        Err(e) => debug!("Cache refresh statement prep failed for session {}: {}", session_id, e),
-                    }
-                }
-                Err(e) => debug!("WAL checkpoint(RESTART) failed for session {}: {}", session_id, e),
-            }
-        }
+            .map_err(PgSqliteError::Sqlite)?;
         
         // Initialize metadata
         crate::metadata::TypeMetadata::init(&conn)
-            .map_err(|e| PgSqliteError::Sqlite(e))?;
+            .map_err(PgSqliteError::Sqlite)?;
         
-        // Run migrations to ensure catalog tables exist
-        // Note: For shared memory databases, migrations should already be applied by the first connection
-        // But we still need to run them for file-based databases where each connection is separate
-        let mut runner = crate::migration::MigrationRunner::new(conn);
-        match runner.run_pending_migrations() {
-            Ok(applied) => {
-                if !applied.is_empty() {
-                    debug!("Applied {} migrations to session {} connection", applied.len(), session_id);
-                }
-                // Get the connection back from the runner
-                let conn = runner.into_connection();
-                connections.insert(session_id, conn);
-                debug!("Created new connection for session {}", session_id);
-            }
-            Err(e) => {
-                return Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(
-                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                    Some(format!("Migration failed for session {}: {}", session_id, e))
-                )));
-            }
-        }
+        connections.insert(session_id, conn);
+        info!("Created new connection for session {} (total connections: {})", session_id, connections.len());
         
         Ok(())
     }
@@ -145,7 +99,7 @@ impl ConnectionManager {
         
         let conn = connections.get_mut(session_id)
             .ok_or_else(|| PgSqliteError::Protocol(
-                format!("No connection found for session {}", session_id)
+                format!("No connection found for session {session_id}")
             ))?;
             
         f(conn).map_err(|e| PgSqliteError::Sqlite(e))
@@ -155,7 +109,7 @@ impl ConnectionManager {
     pub fn remove_connection(&self, session_id: &Uuid) {
         let mut connections = self.connections.lock();
         if connections.remove(session_id).is_some() {
-            debug!("Removed connection for session {}", session_id);
+            info!("Removed connection for session {} (remaining connections: {})", session_id, connections.len());
         }
     }
     
@@ -167,5 +121,59 @@ impl ConnectionManager {
     /// Check if a session has a connection
     pub fn has_connection(&self, session_id: &Uuid) -> bool {
         self.connections.lock().contains_key(session_id)
+    }
+    
+    /// Force WAL checkpoint on all connections except the specified one
+    /// This ensures all connections see committed data from other connections
+    pub fn refresh_all_other_connections(&self, excluding_session: &Uuid) -> Result<(), PgSqliteError> {
+        // Only do this in WAL mode
+        if self.config.pragma_journal_mode != "WAL" {
+            return Ok(());
+        }
+        
+        let mut connections = self.connections.lock();
+        let mut refresh_count = 0;
+        let mut error_count = 0;
+        
+        for (session_id, conn) in connections.iter_mut() {
+            // Skip the session that just committed
+            if session_id == excluding_session {
+                continue;
+            }
+            
+            // Force this connection to read the latest WAL data
+            match conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_row| Ok(())) {
+                Ok(_) => {
+                    refresh_count += 1;
+                    debug!("Refreshed WAL for session {}", session_id);
+                }
+                Err(e) => {
+                    error_count += 1;
+                    debug!("Failed to refresh WAL for session {}: {}", session_id, e);
+                }
+            }
+        }
+        
+        debug!("WAL refresh completed: {} success, {} errors, excluding session {}", 
+               refresh_count, error_count, excluding_session);
+        
+        Ok(())
+    }
+    
+    /// Execute a function with a mutable connection for a session
+    pub fn execute_with_session_mut<F, R>(
+        &self, 
+        session_id: &Uuid, 
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error>
+    {
+        let mut connections = self.connections.lock();
+        
+        let conn = connections.get_mut(session_id)
+            .ok_or_else(|| PgSqliteError::Protocol(format!("No connection found for session {session_id}")))?;
+        
+        f(conn).map_err(PgSqliteError::Sqlite)
     }
 }

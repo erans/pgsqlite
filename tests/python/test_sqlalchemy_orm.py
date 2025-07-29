@@ -13,8 +13,9 @@ Tests cover:
 
 import argparse
 import sys
+import time
 import traceback
-from datetime import datetime, date, time
+from datetime import datetime, date, time as dt_time
 from decimal import Decimal
 from typing import List, Optional
 
@@ -118,7 +119,7 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     customer_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     order_date = Column(Date, default=date.today)
-    order_time = Column(Time, default=time(12, 0))  # Test TIME type
+    order_time = Column(Time, default=dt_time(12, 0))  # Test TIME type
     total_amount = Column(Numeric(12, 2), default=Decimal('0.00'))
     status = Column(String(20), default='pending')
     notes = Column(Text)
@@ -200,6 +201,10 @@ class SQLAlchemyTestSuite:
         try:
             print("🏗️  Creating database tables...")
             
+            # Drop all tables first to ensure clean state
+            print("🧹 Dropping existing tables...")
+            Base.metadata.drop_all(self.engine)
+            
             # Create all tables
             Base.metadata.create_all(self.engine)
             
@@ -239,154 +244,181 @@ class SQLAlchemyTestSuite:
             print("📝 Inserting test data...")
             
             with self.Session() as session:
-                # Create categories
-                tech_category = Category(
-                    name="Technology",
-                    description="Posts about technology and programming"
-                )
-                lifestyle_category = Category(
-                    name="Lifestyle", 
-                    description="Posts about lifestyle and personal development"
-                )
-                session.add_all([tech_category, lifestyle_category])
+                # First, check if categories already exist
+                tech_category = session.query(Category).filter_by(name="Technology").first()
+                if not tech_category:
+                    tech_category = Category(
+                        name="Technology",
+                        description="Posts about technology and programming"
+                    )
+                    session.add(tech_category)
+                    
+                lifestyle_category = session.query(Category).filter_by(name="Lifestyle").first()
+                if not lifestyle_category:
+                    lifestyle_category = Category(
+                        name="Lifestyle", 
+                        description="Posts about lifestyle and personal development"
+                    )
+                    session.add(lifestyle_category)
+                    
                 session.flush()  # Get IDs without committing
                 
-                # Create users
-                alice = User(
-                    username="alice_dev",
-                    email="alice@example.com",
-                    full_name="Alice Johnson",
-                    birth_date=date(1990, 5, 15),
-                    is_active=True
-                )
-                bob = User(
-                    username="bob_writer",
-                    email="bob@example.com", 
-                    full_name="Bob Smith",
-                    birth_date=date(1985, 10, 22),
-                    is_active=True
-                )
-                charlie = User(
-                    username="charlie_inactive",
-                    email="charlie@example.com",
-                    full_name="Charlie Brown",
-                    birth_date=date(1995, 3, 8),
-                    is_active=False
-                )
-                session.add_all([alice, bob, charlie])
+                # Create users - check if they exist first
+                alice = session.query(User).filter_by(username="alice_dev").first()
+                if not alice:
+                    alice = User(
+                        username="alice_dev",
+                        email="alice@example.com",
+                        full_name="Alice Johnson",
+                        birth_date=date(1990, 5, 15),
+                        is_active=True
+                    )
+                    session.add(alice)
+                    
+                bob = session.query(User).filter_by(username="bob_writer").first()
+                if not bob:
+                    bob = User(
+                        username="bob_writer",
+                        email="bob@example.com", 
+                        full_name="Bob Smith",
+                        birth_date=date(1985, 10, 22),
+                        is_active=True
+                    )
+                    session.add(bob)
+                    
+                charlie = session.query(User).filter_by(username="charlie_inactive").first()
+                if not charlie:
+                    charlie = User(
+                        username="charlie_inactive",
+                        email="charlie@example.com",
+                        full_name="Charlie Brown",
+                        birth_date=date(1995, 3, 8),
+                        is_active=False
+                    )
+                    session.add(charlie)
+                    
                 session.flush()
                 
-                # Create posts
-                posts = [
-                    Post(
-                        title="Getting Started with SQLAlchemy",
-                        content="SQLAlchemy is a powerful Python ORM...",
-                        author=alice,
-                        category=tech_category,
-                        is_published=True,
-                        view_count=150
-                    ),
-                    Post(
-                        title="PostgreSQL vs SQLite",
-                        content="Comparing two popular database systems...",
-                        author=alice,
-                        category=tech_category,
-                        is_published=True,
-                        view_count=89
-                    ),
-                    Post(
-                        title="Work-Life Balance Tips",
-                        content="How to maintain a healthy work-life balance...",
-                        author=bob,
-                        category=lifestyle_category,
-                        is_published=True,
-                        view_count=245
-                    ),
-                    Post(
-                        title="Draft: Future of AI",
-                        content="This is a draft post about AI...",
-                        author=bob,
-                        category=tech_category,
-                        is_published=False,
-                        view_count=5
-                    ),
-                ]
-                session.add_all(posts)
-                session.flush()
+                # Create posts - only if they don't exist
+                existing_posts_count = session.query(Post).count()
+                if existing_posts_count == 0:
+                    posts = [
+                        Post(
+                            title="Getting Started with SQLAlchemy",
+                            content="SQLAlchemy is a powerful Python ORM...",
+                            author=alice,
+                            category=tech_category,
+                            is_published=True,
+                            view_count=150
+                        ),
+                        Post(
+                            title="PostgreSQL vs SQLite",
+                            content="Comparing two popular database systems...",
+                            author=alice,
+                            category=tech_category,
+                            is_published=True,
+                            view_count=89
+                        ),
+                        Post(
+                            title="Work-Life Balance Tips",
+                            content="How to maintain a healthy work-life balance...",
+                            author=bob,
+                            category=lifestyle_category,
+                            is_published=True,
+                            view_count=245
+                        ),
+                        Post(
+                            title="Draft: Future of AI",
+                            content="This is a draft post about AI...",
+                            author=bob,
+                            category=tech_category,
+                            is_published=False,
+                            view_count=5
+                        ),
+                    ]
+                    session.add_all(posts)
+                    session.flush()
                 
-                # Create products
-                products = [
-                    Product(
-                        name="Laptop Pro",
-                        description="High-performance laptop for developers",
-                        price=Decimal('1299.99'),
-                        stock_quantity=25,
-                        is_available=True
-                    ),
-                    Product(
-                        name="Wireless Mouse",
-                        description="Ergonomic wireless mouse",
-                        price=Decimal('49.99'),
-                        stock_quantity=100,
-                        is_available=True
-                    ),
-                    Product(
-                        name="Mechanical Keyboard",
-                        description="RGB mechanical keyboard",
-                        price=Decimal('129.50'),
-                        stock_quantity=0,  # Out of stock
-                        is_available=False
-                    ),
-                ]
-                session.add_all(products)
-                session.flush()
+                # Create products - only if they don't exist
+                existing_products_count = session.query(Product).count()
+                if existing_products_count == 0:
+                    products = [
+                        Product(
+                            name="Laptop Pro",
+                            description="High-performance laptop for developers",
+                            price=Decimal('1299.99'),
+                            stock_quantity=25,
+                            is_available=True
+                        ),
+                        Product(
+                            name="Wireless Mouse",
+                            description="Ergonomic wireless mouse",
+                            price=Decimal('49.99'),
+                            stock_quantity=100,
+                            is_available=True
+                        ),
+                        Product(
+                            name="Mechanical Keyboard",
+                            description="RGB mechanical keyboard",
+                            price=Decimal('129.50'),
+                            stock_quantity=0,  # Out of stock
+                            is_available=False
+                        ),
+                    ]
+                    session.add_all(products)
+                    session.flush()
+                else:
+                    # Load existing products for order creation
+                    products = session.query(Product).order_by(Product.id).all()
                 
-                # Create orders with items
-                order1 = Order(
-                    customer=alice,
-                    order_date=date(2024, 1, 15),
-                    order_time=time(14, 30),
-                    status='completed',
-                    notes='Express delivery requested'
-                )
-                
-                order2 = Order(
-                    customer=bob,
-                    order_date=date(2024, 1, 20),
-                    order_time=time(10, 15),
-                    status='pending',
-                    notes='Standard delivery'
-                )
-                
-                session.add_all([order1, order2])
-                session.flush()
-                
-                # Create order items
-                order_items = [
-                    OrderItem(
-                        order=order1,
-                        product=products[0],  # Laptop
-                        quantity=1,
-                        unit_price=Decimal('1299.99')
-                    ),
-                    OrderItem(
-                        order=order1,
-                        product=products[1],  # Mouse
-                        quantity=1,
-                        unit_price=Decimal('49.99')
-                    ),
-                    OrderItem(
-                        order=order2,
-                        product=products[1],  # Mouse
-                        quantity=2,
-                        unit_price=Decimal('49.99')
-                    ),
-                ]
-                session.add_all(order_items)
-                
-                # Update order totals
-                order1.total_amount = Decimal('1349.98')  # Laptop + Mouse
-                order2.total_amount = Decimal('99.98')    # 2 x Mouse
+                # Create orders with items - only if they don't exist
+                existing_orders_count = session.query(Order).count()
+                if existing_orders_count == 0:
+                    order1 = Order(
+                        customer=alice,
+                        order_date=date(2024, 1, 15),
+                        order_time=dt_time(14, 30),
+                        status='completed',
+                        notes='Express delivery requested'
+                    )
+                    
+                    order2 = Order(
+                        customer=bob,
+                        order_date=date(2024, 1, 20),
+                        order_time=dt_time(10, 15),
+                        status='pending',
+                        notes='Standard delivery'
+                    )
+                    
+                    session.add_all([order1, order2])
+                    session.flush()
+                    
+                    # Create order items
+                    order_items = [
+                        OrderItem(
+                            order=order1,
+                            product=products[0],  # Laptop
+                            quantity=1,
+                            unit_price=Decimal('1299.99')
+                        ),
+                        OrderItem(
+                            order=order1,
+                            product=products[1],  # Mouse
+                            quantity=1,
+                            unit_price=Decimal('49.99')
+                        ),
+                        OrderItem(
+                            order=order2,
+                            product=products[1],  # Mouse
+                            quantity=2,
+                            unit_price=Decimal('49.99')
+                        ),
+                    ]
+                    session.add_all(order_items)
+                    
+                    # Update order totals
+                    order1.total_amount = Decimal('1349.98')  # Laptop + Mouse
+                    order2.total_amount = Decimal('99.98')    # 2 x Mouse
                 
                 # Commit all changes
                 session.commit()
@@ -419,7 +451,8 @@ class SQLAlchemyTestSuite:
                 # Test UPDATE
                 alice = session.query(User).filter(User.username == "alice_dev").first()
                 if alice:
-                    alice.full_name = "Alice Johnson-Dev"
+                    # Use a timestamp to ensure each run has a unique update
+                    alice.full_name = f"Alice Johnson-Dev-{datetime.now().microsecond}"
                     session.commit()
                     print("✅ Updated Alice's full name")
                 
@@ -567,90 +600,90 @@ class SQLAlchemyTestSuite:
         """Test transaction handling and rollback scenarios."""
         try:
             print("💾 Testing transaction handling...")
+            print("  Testing proper SQLAlchemy ORM transaction flow...")
             
-            # Test: SQLAlchemy ORM transaction with explicit debugging
-            print("  Testing SQLAlchemy ORM transaction persistence...")
-            
-            # First, insert a test user
+            # Step 1: Create object and flush
             with self.Session() as session:
-                # Check if user already exists and delete
+                # Clean up any existing test user
                 existing = session.query(User).filter(User.username == "transaction_test_user").first()
                 if existing:
                     session.delete(existing)
                     session.commit()
                 
-                # Insert new test user
+                # Create new test user
                 test_user = User(
                     username="transaction_test_user",
                     email="test@transaction.com", 
                     full_name="Original Name"
                 )
                 session.add(test_user)
+                session.flush()  # Flush to get ID
                 session.commit()
-                print(f"  ✅ Inserted test user with name: {test_user.full_name}")
+                user_id = test_user.id
+                print(f"  ✅ Step 1: Created user with ID {user_id}, name: '{test_user.full_name}'")
             
-            # Now test transaction update
+            # Step 2: Fetch it again and update property
             with self.Session() as session:
-                # Load user
+                # Fetch user from database
                 user = session.query(User).filter(User.username == "transaction_test_user").first()
                 if not user:
-                    print("❌ Could not find test user")
+                    print("❌ Could not fetch test user")
                     return False
                     
-                print(f"  📍 Before update: {user.full_name}")
+                print(f"  📍 Step 2: Fetched user, name: '{user.full_name}'")
                 
-                # Modify user - this should mark object as dirty
+                # Update property
                 user.full_name = "Updated Name"
+                print(f"  📝 Step 2: Updated name to: '{user.full_name}'")
                 
-                # Check if SQLAlchemy thinks object is dirty
-                print(f"  🔍 Object is dirty: {user in session.dirty}")
-                print(f"  🔍 Session has pending changes: {session.dirty or session.new or session.deleted}")
-                
-                # Explicit flush to force UPDATE to database
-                print("  💾 Flushing changes...")
+                # Flush and commit
                 session.flush()
-                
-                # Commit transaction
-                print("  ✅ Committing transaction...")
                 session.commit()
+                print("  ✅ Step 2: Flushed and committed update")
                 
-                # Check in same session (should use identity map)
-                print(f"  📍 After commit (same session): {user.full_name}")
-                
-                # Force refresh from database
+                # Fetch it again from same connection
                 session.expire(user)
                 session.refresh(user)
-                print(f"  📍 After refresh from database: {user.full_name}")
+                print(f"  📍 Step 2: After refresh, same connection sees: '{user.full_name}'")
             
-            # Check in completely new session with new engine to force new connection
-            print("  🔄 Creating new engine to force new connection...")
-            new_engine = create_engine(
+            # Step 3: Fetch from completely separate engine to force new PostgreSQL connection 
+            print("  🔄 Step 3: Creating completely new engine and PostgreSQL connection...")
+            
+            # Create a completely separate engine with different connection parameters
+            separate_engine = create_engine(
                 f"postgresql://postgres:postgres@localhost:{self.port}/main",
-                echo=False,  # Reduce noise for this test connection
-                pool_size=1,  # Force single connection per engine
-                max_overflow=0,  # No overflow
+                echo=False,
+                pool_size=1,
+                max_overflow=0,
                 pool_pre_ping=True,
                 future=True,
+                # Force new connection by using different application name
+                connect_args={"application_name": f"test_separate_{time.time()}"}
             )
-            NewSession = sessionmaker(bind=new_engine)
             
-            with NewSession() as session:
-                user = session.query(User).filter(User.username == "transaction_test_user").first()
-                result_name = user.full_name if user else "NOT FOUND"
-                print(f"  📍 New session (new connection) sees: {result_name}")
-                
-                if user and user.full_name == "Updated Name":
-                    print("✅ Transaction persistence verified!")
+            try:
+                SeparateSession = sessionmaker(bind=separate_engine)
+                with SeparateSession() as session:
+                    user = session.query(User).filter(User.username == "transaction_test_user").first()
+                    result_name = user.full_name if user else "NOT FOUND"
+                    print(f"  📍 Step 3: Separate connection sees: '{result_name}'")
+                    
+                    success = user and user.full_name == "Updated Name"
+                    
                     # Cleanup
-                    session.delete(user)
-                    session.commit()
-                    new_engine.dispose()
-                    return True
-                else:
-                    print("❌ Transaction update not persisted")
-                    print(f"     Expected: 'Updated Name', Got: '{result_name}'")
-                    new_engine.dispose()
-                    return False
+                    if user:
+                        session.delete(user)
+                        session.commit()
+                    
+                    if success:
+                        print("✅ Transaction persistence verified!")
+                        return True
+                    else:
+                        print("❌ Transaction update not persisted")
+                        print(f"     Expected: 'Updated Name', Got: '{result_name}'")
+                        return False
+            finally:
+                separate_engine.dispose()
             
         except Exception as e:
             print(f"❌ Transaction test failed: {e}")

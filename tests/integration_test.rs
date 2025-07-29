@@ -14,9 +14,10 @@ async fn test_basic_protocol() {
     println!("Test server listening on port {port}");
     
     let server_handle = tokio::spawn(async move {
-        // Create database handler
+        // Create database handler with a temporary file database to ensure persistence
+        let temp_db_path = format!("/tmp/pgsqlite_test_{}.db", std::process::id());
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&temp_db_path).unwrap()
         );
         
         // Initialize test data
@@ -100,4 +101,10 @@ async fn test_basic_protocol() {
     }
     
     server_handle.abort();
+    
+    // Clean up temporary database file
+    let temp_db_path = format!("/tmp/pgsqlite_test_{}.db", std::process::id());
+    let _ = std::fs::remove_file(&temp_db_path);
+    let _ = std::fs::remove_file(format!("{temp_db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{temp_db_path}-shm"));
 }

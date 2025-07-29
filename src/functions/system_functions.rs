@@ -239,6 +239,19 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // pg_get_userbyid(user_oid) - Returns username for user OID
+    conn.create_scalar_function(
+        "pg_get_userbyid",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let _user_oid: i64 = ctx.get(0)?;
+            // SQLite doesn't have users, return a default user
+            // This matches what psql expects for the \d command
+            Ok("postgres".to_string())
+        },
+    )?;
+    
     debug!("System functions registered successfully");
     Ok(())
 }

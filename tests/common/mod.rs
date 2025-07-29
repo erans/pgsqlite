@@ -1,6 +1,7 @@
 use tokio::net::TcpListener;
 use tokio_postgres::{Client, NoTls};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub struct TestServer {
     pub client: Client,
@@ -8,12 +9,30 @@ pub struct TestServer {
     pub port: u16,
     #[allow(dead_code)]
     pub server_handle: tokio::task::JoinHandle<()>,
+    #[allow(dead_code)]
+    db_path: String,
 }
 
 impl TestServer {
     #[allow(dead_code)]
     pub fn abort(self) {
         self.server_handle.abort();
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        // Abort the server handle
+        self.server_handle.abort();
+        
+        // Clean up the database file if it exists
+        if !self.db_path.is_empty() && self.db_path != ":memory:" {
+            let _ = std::fs::remove_file(&self.db_path);
+            // Also try to remove journal and wal files
+            let _ = std::fs::remove_file(format!("{}-journal", self.db_path));
+            let _ = std::fs::remove_file(format!("{}-wal", self.db_path));
+            let _ = std::fs::remove_file(format!("{}-shm", self.db_path));
+        }
     }
 }
 
@@ -33,12 +52,13 @@ where
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path_clone = db_path.clone();
+    
     let server_handle = tokio::spawn(async move {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_server_{}.db", timestamp);
         let db_handler = Arc::new(
-            pgsqlite::session::DbHandler::new(&db_path).unwrap()
+            pgsqlite::session::DbHandler::new(&db_path_clone).unwrap()
         );
         
         // Run custom initialization
@@ -79,5 +99,6 @@ where
         client,
         port,
         server_handle,
+        db_path,
     }
 }

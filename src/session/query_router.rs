@@ -235,8 +235,8 @@ mod tests {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         let config = Arc::new(Config::load());
-        let write_db = format!("file::memory:?cache=shared&uri=true&test=classification_{}", timestamp);
-        let read_db = format!("file::memory:?cache=shared&uri=true&test=classification_ro_{}", timestamp);
+        let write_db = format!("file::memory:?cache=shared&uri=true&test=classification_{timestamp}");
+        let read_db = format!("file::memory:?cache=shared&uri=true&test=classification_ro_{timestamp}");
         let write_handler = Arc::new(DbHandler::new(&write_db).unwrap());
         let read_handler = Arc::new(ReadOnlyDbHandler::new(&read_db, config.clone()).unwrap());
         let router = QueryRouter::new(write_handler, read_handler, config);
@@ -265,8 +265,8 @@ mod tests {
         let config = Arc::new(Config::load());
         
         // Use completely unique temporary files instead of memory databases to avoid conflicts
-        let write_db = format!("/tmp/test_pragma_write_{}.db", timestamp);
-        let read_db = format!("/tmp/test_pragma_read_{}.db", timestamp);
+        let write_db = format!("/tmp/test_pragma_write_{timestamp}.db");
+        let read_db = format!("/tmp/test_pragma_read_{timestamp}.db");
         
         let write_handler = match DbHandler::new(&write_db) {
             Ok(h) => Arc::new(h),
@@ -307,8 +307,8 @@ mod tests {
         let config = Arc::new(Config::load());
         
         // Use temporary files to avoid migration conflicts
-        let write_db = format!("/tmp/test_route_write_{}.db", timestamp);
-        let read_db = format!("/tmp/test_route_read_{}.db", timestamp);
+        let write_db = format!("/tmp/test_route_write_{timestamp}.db");
+        let read_db = format!("/tmp/test_route_read_{timestamp}.db");
         
         let write_handler = match DbHandler::new(&write_db) {
             Ok(h) => Arc::new(h),

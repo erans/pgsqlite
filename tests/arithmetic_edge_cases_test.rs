@@ -10,7 +10,7 @@ async fn test_division_by_zero() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_division_by_zero_{}.db", timestamp);
+        let db_path = format!("/tmp/test_division_by_zero_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -61,7 +61,7 @@ async fn test_very_large_numbers() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_very_large_numbers_{}.db", timestamp);
+        let db_path = format!("/tmp/test_very_large_numbers_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -111,7 +111,7 @@ async fn test_negative_number_arithmetic() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_negative_number_arithmetic_{}.db", timestamp);
+        let db_path = format!("/tmp/test_negative_number_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -160,7 +160,7 @@ async fn test_case_sensitivity_in_aliases() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_case_sensitivity_in_aliases_{}.db", timestamp);
+        let db_path = format!("/tmp/test_case_sensitivity_in_aliases_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -214,7 +214,7 @@ async fn test_arithmetic_with_cast() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_arithmetic_with_cast_{}.db", timestamp);
+        let db_path = format!("/tmp/test_arithmetic_with_cast_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -269,7 +269,7 @@ async fn test_multiple_arithmetic_operators() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_multiple_arithmetic_operators_{}.db", timestamp);
+        let db_path = format!("/tmp/test_multiple_arithmetic_operators_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -328,7 +328,7 @@ async fn test_floating_point_precision() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_floating_point_precision_{}.db", timestamp);
+        let db_path = format!("/tmp/test_floating_point_precision_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );

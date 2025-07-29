@@ -7,7 +7,7 @@ async fn test_batch_delete_single_column() -> Result<(), Box<dyn std::error::Err
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     
@@ -56,7 +56,7 @@ async fn test_batch_delete_multi_column() -> Result<(), Box<dyn std::error::Erro
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     
@@ -113,7 +113,7 @@ async fn test_batch_delete_with_quotes() -> Result<(), Box<dyn std::error::Error
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     
@@ -166,7 +166,7 @@ async fn test_batch_delete_no_alias() -> Result<(), Box<dyn std::error::Error>> 
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     
@@ -210,7 +210,7 @@ async fn test_batch_delete_performance() -> Result<(), Box<dyn std::error::Error
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     
@@ -266,7 +266,7 @@ async fn test_regular_delete_still_works() -> Result<(), Box<dyn std::error::Err
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     
@@ -299,7 +299,7 @@ async fn test_batch_delete_edge_cases() -> Result<(), Box<dyn std::error::Error>
     let db_handler = {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{}.db", timestamp);
+        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
         Arc::new(DbHandler::new(&db_path)?)
     };
     

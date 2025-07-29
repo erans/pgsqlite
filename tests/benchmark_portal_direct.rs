@@ -1,6 +1,6 @@
 use pgsqlite::session::{DbHandler, SessionState, Portal, CachedQueryResult};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Direct Portal Management Performance Benchmark
 /// Tests portal performance using internal APIs to avoid network protocol issues
@@ -9,8 +9,10 @@ async fn benchmark_portal_performance_direct() {
     println!("\n🚀 === Direct Portal Performance Benchmark ===");
     println!("Testing portal management performance using internal APIs\n");
 
-    // Setup in-memory database
-    let db_handler = Arc::new(DbHandler::new(":memory:").expect("Failed to create database"));
+    // Setup temporary file database
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/benchmark_portal_direct_{}.db", timestamp);
+    let db_handler = Arc::new(DbHandler::new(&db_path).expect("Failed to create database"));
     let session = Arc::new(SessionState::new("bench_user".to_string(), "bench_db".to_string()));
 
     // Create test data
@@ -37,6 +39,11 @@ async fn benchmark_portal_performance_direct() {
     test_concurrent_portals(&session).await;
     
     println!("\n✅ === Direct Portal Benchmark Complete ===\n");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }
 
 async fn setup_test_data(db_handler: &DbHandler) {

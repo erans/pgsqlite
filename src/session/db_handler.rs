@@ -77,10 +77,10 @@ impl DbHandler {
             | OpenFlags::SQLITE_OPEN_URI;
             
         let conn = if db_path == ":memory:" {
-            // Use shared cache for memory databases to allow data sharing between connections
-            Connection::open_with_flags("file::memory:?cache=shared", flags)?
+            // For memory databases, each connection gets its own database
+            Connection::open_with_flags(db_path, flags)?
         } else {
-            // For named shared memory databases or regular files, use the path as-is
+            // For file databases, use the path as-is
             Connection::open_with_flags(db_path, flags)?
         };
         
@@ -102,14 +102,65 @@ impl DbHandler {
     }
     
     fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<(), rusqlite::Error> {
-        // Check if this is a new database
+        // Skip all checks for in-memory databases
+        if db_path.contains(":memory:") {
+            info!("Running initial migrations for in-memory database...");
+            
+            // Register functions before migrations
+            crate::functions::register_all_functions(&conn)?;
+            
+            let mut runner = MigrationRunner::new(conn);
+            match runner.run_pending_migrations() {
+                Ok(applied) => {
+                    if !applied.is_empty() {
+                        debug!("Applied {} migrations to new database", applied.len());
+                    }
+                }
+                Err(e) => {
+                    return Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Migration failed: {e}"))
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        
+        // For file-based databases, first check for schema drift
+        // This needs to happen before migration checks to catch incomplete setups
+        let schema_table_exists = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_schema'",
+            [],
+            |row| row.get::<_, i64>(0)
+        ).unwrap_or(0) > 0;
+        
+        if schema_table_exists {
+            // Database has pgsqlite schema - check for drift
+            use crate::schema_drift::SchemaDriftDetector;
+            match SchemaDriftDetector::detect_drift(&conn) {
+                Ok(drift) => {
+                    if !drift.is_empty() {
+                        return Err(rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Schema drift detected: {}", drift.format_report()))
+                        ));
+                    }
+                }
+                Err(e) => {
+                    // Don't fail on drift detection errors, just log them
+                    debug!("Failed to check schema drift: {e}");
+                }
+            }
+        }
+        
+        // Now check if migrations are needed
         let needs_migrations = conn.query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_migrations'",
             [],
             |row| row.get::<_, i64>(0)
         ).unwrap_or(0) == 0;
         
-        if needs_migrations || db_path.contains(":memory:") {
+        if needs_migrations {
             info!("Running initial migrations...");
             
             // Register functions before migrations
@@ -127,6 +178,36 @@ impl DbHandler {
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
                         Some(format!("Migration failed: {e}"))
                     ));
+                }
+            }
+        } else {
+            // Check if we need to run any pending migrations
+            // Register functions first
+            crate::functions::register_all_functions(&conn)?;
+            
+            let runner = MigrationRunner::new(conn);
+            match runner.check_schema_version() {
+                Ok(()) => {
+                    // Schema is up to date
+                    debug!("Schema version check passed");
+                }
+                Err(e) => {
+                    // Schema is outdated, run migrations
+                    debug!("Schema is outdated: {}", e);
+                    let mut runner = runner;
+                    match runner.run_pending_migrations() {
+                        Ok(applied) => {
+                            if !applied.is_empty() {
+                                debug!("Applied {} migrations", applied.len());
+                            }
+                        }
+                        Err(e) => {
+                            return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("Migration failed: {e}"))
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -225,7 +306,7 @@ impl DbHandler {
             if let Err(e) = self.create_session_connection(temp_session).await {
                 return Err(rusqlite::Error::SqliteFailure(
                     rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                    Some(format!("Failed to create temporary session: {}", e))
+                    Some(format!("Failed to create temporary session: {e}"))
                 ));
             }
             
@@ -234,7 +315,7 @@ impl DbHandler {
                     PgSqliteError::Sqlite(sqlite_err) => sqlite_err,
                     other => rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Query error: {}", other))
+                        Some(format!("Query error: {other}"))
                     )
                 })?;
             
@@ -365,7 +446,7 @@ impl DbHandler {
             if let Err(e) = self.create_session_connection(temp_session).await {
                 return Err(rusqlite::Error::SqliteFailure(
                     rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                    Some(format!("Failed to create temporary session: {}", e))
+                    Some(format!("Failed to create temporary session: {e}"))
                 ));
             }
             
@@ -374,7 +455,7 @@ impl DbHandler {
                     PgSqliteError::Sqlite(sqlite_err) => sqlite_err,
                     other => rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Execution error: {}", other))
+                        Some(format!("Execution error: {other}"))
                     )
                 })?;
             
@@ -423,30 +504,17 @@ impl DbHandler {
     }
     
     pub async fn commit(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
+        // Execute the commit on the current session
         self.connection_manager.execute_with_session(session_id, |conn| {
             conn.execute("COMMIT", [])?;
-            
-            // Force aggressive WAL checkpoint to ensure committed changes are immediately visible to new connections
-            // This is critical for connection-per-session architecture where each session has its own connection
-            // Use RESTART mode to force all WAL data to be written to the database file
-            match conn.execute("PRAGMA wal_checkpoint(RESTART)", []) {
-                Ok(_) => {
-                    debug!("WAL checkpoint(RESTART) completed after COMMIT for session {}", session_id);
-                    
-                    // Also force cache invalidation to ensure query planner sees latest data
-                    match conn.execute("PRAGMA optimize", []) {
-                        Ok(_) => debug!("PRAGMA optimize completed for session {}", session_id),
-                        Err(e) => debug!("PRAGMA optimize failed for session {}: {}", session_id, e),
-                    }
-                }
-                Err(e) => {
-                    // Don't fail the commit if checkpoint fails, but log a warning
-                    debug!("WAL checkpoint(RESTART) failed after COMMIT for session {}: {}", session_id, e);
-                }
-            }
-            
             Ok(())
-        })
+        })?;
+        
+        // Force all other connections to refresh their WAL view (WAL mode only)
+        // This ensures committed data is visible to all other sessions
+        self.connection_manager.refresh_all_other_connections(session_id)?;
+        
+        Ok(())
     }
     
     pub async fn commit_with_session(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
@@ -550,6 +618,17 @@ impl DbHandler {
         F: FnOnce(&rusqlite::Connection) -> Result<R, rusqlite::Error>
     {
         self.connection_manager.execute_with_session(session_id, f)
+    }
+    
+    pub async fn with_session_connection_mut<F, R>(
+        &self,
+        session_id: &Uuid,
+        f: F
+    ) -> Result<R, PgSqliteError>
+    where
+        F: FnOnce(&mut rusqlite::Connection) -> Result<R, rusqlite::Error>
+    {
+        self.connection_manager.execute_with_session_mut(session_id, f)
     }
     
     // Compatibility methods for existing code

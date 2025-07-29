@@ -1,4 +1,5 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
+use crate::session::SessionState;
 use crate::PgSqliteError;
 use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
@@ -16,7 +17,7 @@ pub struct CatalogInterceptor;
 
 impl CatalogInterceptor {
     /// Check if a query is targeting pg_catalog and handle it
-    pub async fn intercept_query(query: &str, db: Arc<DbHandler>) -> Option<Result<DbResponse, PgSqliteError>> {
+    pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<Result<DbResponse, PgSqliteError>> {
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
         
@@ -103,7 +104,7 @@ impl CatalogInterceptor {
                         }
                         
                         // Normal catalog table handling
-                        if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone()).await {
+                        if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone(), session.clone()).await {
                             return Some(Ok(response));
                         }
                     }
@@ -124,7 +125,7 @@ impl CatalogInterceptor {
         None
     }
 
-    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>) -> Option<DbResponse> {
+    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
             // Check if this is a JOIN query involving catalog tables
@@ -150,13 +151,13 @@ impl CatalogInterceptor {
             // For simple queries, check each table
             for table_ref in &select.from {
                 // Check main table
-                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db.clone()).await {
+                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db.clone(), session.clone()).await {
                     return Some(response);
                 }
                 
                 // Check joined tables
                 for join in &table_ref.joins {
-                    if let Some(response) = Self::check_table_factor(&join.relation, select, db.clone()).await {
+                    if let Some(response) = Self::check_table_factor(&join.relation, select, db.clone(), session.clone()).await {
                         return Some(response);
                     }
                 }
@@ -166,13 +167,13 @@ impl CatalogInterceptor {
         None
     }
     
-    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: Arc<DbHandler>) -> Option<DbResponse> {
+    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         if let TableFactor::Table { name, .. } = table_factor {
             let table_name = name.to_string().to_lowercase();
             
             // Handle pg_type queries
             if table_name.contains("pg_type") || table_name.contains("pg_catalog.pg_type") {
-                return Some(Self::handle_pg_type_query(select, db.clone()));
+                return Some(Self::handle_pg_type_query(select, db.clone(), session.clone()).await);
             }
             
             // Handle pg_namespace queries
@@ -218,7 +219,7 @@ impl CatalogInterceptor {
         None
     }
 
-    fn handle_pg_type_query(select: &Select, db: Arc<DbHandler>) -> DbResponse {
+    async fn handle_pg_type_query(select: &Select, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> DbResponse {
         // Extract which columns are being selected
         let mut columns = Vec::new();
         let mut column_indices = Vec::new();
@@ -384,10 +385,24 @@ impl CatalogInterceptor {
         
         // Add ENUM types from metadata only if typtype filter allows it
         if filter_typtype.is_none() || filter_typtype.as_ref() == Some(&"e".to_string()) {
-            if let Ok(conn) = db.get_mut_connection() {
-                if let Ok(enum_types) = crate::metadata::EnumMetadata::get_all_enum_types(&conn) {
-                    debug!("Found {} enum types in metadata", enum_types.len());
-                    for enum_type in enum_types {
+            // Use session connection if available, otherwise fall back to get_mut_connection
+            let enum_types_result = if let Some(ref session) = session {
+                db.with_session_connection(&session.id, |conn| {
+                    crate::metadata::EnumMetadata::get_all_enum_types(conn)
+                        .map_err(|e| rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Failed to get enum types: {e}"))
+                        ))
+                }).await
+            } else {
+                db.get_mut_connection()
+                    .and_then(|conn| crate::metadata::EnumMetadata::get_all_enum_types(&conn))
+                    .map_err(|e| PgSqliteError::Sqlite(e))
+            };
+            
+            if let Ok(enum_types) = enum_types_result {
+                debug!("Found {} enum types in metadata", enum_types.len());
+                for enum_type in enum_types {
                         debug!("Processing enum type: {} (OID: {})", enum_type.type_name, enum_type.type_oid);
                         // Apply OID filter if specified
                         if let Some(filter) = filter_oid {
@@ -417,7 +432,6 @@ impl CatalogInterceptor {
                             rows.push(row);
                         }
                     }
-                }
             }
         }
 

@@ -141,14 +141,13 @@ impl ImplicitCastDetector {
                     });
                 }
             }
-            "POW" | "POWER" | "SQRT" | "EXP" | "LN" | "LOG" => {
-                // Math functions that work with decimals
-                if !Self::is_numeric_type(arg_type) {
-                    return Some(ImplicitCast::ToDecimal {
-                        expr: arg_expr.clone(),
-                        source_type: arg_type,
-                    });
-                }
+            // These math functions return floats and don't need decimal arguments
+            // They can work with regular numeric types without conversion
+            "POW" | "POWER" | "SQRT" | "EXP" | "LN" | "LOG" | 
+            "SIN" | "COS" | "TAN" | "ASIN" | "ACOS" | "ATAN" => {
+                // Don't apply implicit casts for float-returning math functions
+                // They work fine with integer/float/decimal inputs
+                // and always return float values
             }
             _ => {}
         }

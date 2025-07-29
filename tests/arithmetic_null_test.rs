@@ -10,7 +10,7 @@ async fn test_null_arithmetic_propagation() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_null_arithmetic_propagation_{}.db", timestamp);
+        let db_path = format!("/tmp/test_null_arithmetic_propagation_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -76,7 +76,7 @@ async fn test_null_with_constants() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_null_with_constants_{}.db", timestamp);
+        let db_path = format!("/tmp/test_null_with_constants_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -126,7 +126,7 @@ async fn test_null_in_complex_expressions() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_null_in_complex_expressions_{}.db", timestamp);
+        let db_path = format!("/tmp/test_null_in_complex_expressions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -184,7 +184,7 @@ async fn test_coalesce_with_arithmetic() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_coalesce_with_arithmetic_{}.db", timestamp);
+        let db_path = format!("/tmp/test_coalesce_with_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -240,7 +240,7 @@ async fn test_null_handling_extended_protocol() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_null_handling_extended_protocol_{}.db", timestamp);
+        let db_path = format!("/tmp/test_null_handling_extended_protocol_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );

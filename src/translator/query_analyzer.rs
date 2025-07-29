@@ -207,4 +207,10 @@ mod tests {
         assert!(flags.contains(TranslationFlags::JSON));
         assert!(flags.contains(TranslationFlags::ARRAY));
     }
+    
+    #[test]
+    fn test_insert_array_detection() {
+        let flags = QueryAnalyzer::analyze("INSERT INTO test_arrays (int_array) VALUES ('{1,2,3}')");
+        assert!(flags.contains(TranslationFlags::INSERT_DATETIME));
+    }
 }

@@ -1,5 +1,6 @@
 use pgsqlite::session::DbHandler;
 use std::time::Instant;
+use std::sync::Arc;
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -7,7 +8,11 @@ use uuid::Uuid;
 async fn test_protocol_overhead_breakdown() {
     println!("\n=== PROTOCOL OVERHEAD BREAKDOWN ===\n");
     
-    let db = DbHandler::new(":memory:").expect("Failed to create database");
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    
+    let db = std::sync::Arc::new(DbHandler::new(&db_path).expect("Failed to create database"));
     
     // Create a session for testing
     let session_id = Uuid::new_v4();
@@ -111,6 +116,13 @@ async fn test_protocol_overhead_breakdown() {
     
     // Clean up session
     db.remove_session_connection(&session_id);
+    
+    // Clean up database file
+    drop(db);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }
 
 #[tokio::test]
@@ -128,7 +140,10 @@ async fn test_connection_handling_overhead() {
     println!("Database creation overhead: {create_time:?}");
     
     // Test mutex contention with concurrent access
-    let db = std::sync::Arc::new(DbHandler::new(":memory:").expect("Failed to create database"));
+    // Use a temporary file instead of in-memory database for shared access
+    let test_id2 = Uuid::new_v4().to_string().replace("-", "");
+    let db_path2 = format!("/tmp/pgsqlite_test_concurrent_{}.db", test_id2);
+    let db = std::sync::Arc::new(DbHandler::new(&db_path2).expect("Failed to create database"));
     
     // Create session for single-threaded test
     let session_id = Uuid::new_v4();
@@ -154,7 +169,7 @@ async fn test_connection_handling_overhead() {
     let mut handles = vec![];
     
     for i in 0..10 {
-        let db = db.clone();
+        let db = Arc::clone(&db);
         let handle = tokio::spawn(async move {
             // Each thread needs its own session
             let thread_session_id = Uuid::new_v4();
@@ -183,4 +198,11 @@ async fn test_connection_handling_overhead() {
     
     // Clean up session
     db.remove_session_connection(&session_id);
+    
+    // Clean up database file
+    drop(db);
+    let _ = std::fs::remove_file(&db_path2);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path2));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path2));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path2));
 }

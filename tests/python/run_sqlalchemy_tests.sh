@@ -122,9 +122,11 @@ start_pgsqlite() {
     # Clean up any existing test database
     rm -f "$TEST_DB"
     
-    # Start pgsqlite in background with connection pooling enabled
+    # Start pgsqlite in background WITHOUT pooling for proper SQLAlchemy transaction isolation
+    # SQLAlchemy expects connection-per-session behavior for transaction persistence
+    # Use WAL mode with synchronous=FULL for better durability
     cd "$PROJECT_ROOT"
-    PGSQLITE_USE_POOLING=true ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
+    PGSQLITE_JOURNAL_MODE=WAL PGSQLITE_SYNCHRONOUS=FULL ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
     PGSQLITE_PID=$!
     
     # Wait for server to start

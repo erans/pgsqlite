@@ -36,6 +36,33 @@ async fn test_pg_attribute_enum_types() {
         eprintln!("SQLite table definition: {sql}");
     }
     
+    // Debug: Check __pgsqlite_schema
+    let schema_info = client.query(
+        "SELECT table_name, column_name, pg_type FROM __pgsqlite_schema WHERE table_name = 'test_enum_table'",
+        &[]
+    ).await.unwrap();
+    
+    eprintln!("__pgsqlite_schema entries for test_enum_table:");
+    for row in &schema_info {
+        let table: &str = row.get(0);
+        let col: &str = row.get(1);
+        let pg_type: &str = row.get(2);
+        eprintln!("  {}.{} -> {}", table, col, pg_type);
+    }
+    
+    // Debug: Check __pgsqlite_enum_types
+    let enum_info = client.query(
+        "SELECT type_oid, type_name FROM __pgsqlite_enum_types",
+        &[]
+    ).await.unwrap();
+    
+    eprintln!("__pgsqlite_enum_types entries:");
+    for row in &enum_info {
+        let oid: i32 = row.get(0);
+        let name: &str = row.get(1);
+        eprintln!("  {} -> {}", oid, name);
+    }
+    
     // Debug: Check what tables exist in pg_class
     let all_tables = client.query(
         "SELECT relname FROM pg_catalog.pg_class WHERE relkind = 'r'",
@@ -118,10 +145,9 @@ async fn test_pg_attribute_enum_types() {
     }
     
     // Verify the type is in pg_type
-    let atttypid_str = atttypid.to_string();
     let type_rows = client.query(
         "SELECT typname, typtype FROM pg_catalog.pg_type WHERE oid = $1",
-        &[&atttypid_str]
+        &[&(atttypid as i32)]
     ).await.unwrap();
     
     assert_eq!(type_rows.len(), 1, "Should find the ENUM type in pg_type");
@@ -135,7 +161,7 @@ async fn test_pg_attribute_enum_types() {
     // Verify pg_enum has the values
     let enum_rows = client.query(
         "SELECT enumlabel FROM pg_catalog.pg_enum WHERE enumtypid = $1 ORDER BY enumsortorder",
-        &[&atttypid_str]
+        &[&(atttypid as i32)]
     ).await.unwrap();
     
     assert_eq!(enum_rows.len(), 3, "Should find 3 enum values");
@@ -195,11 +221,12 @@ async fn test_pg_enum_filtering() {
     
     assert_eq!(our_types.len(), 2, "Should find 2 enum types");
     
-    let color_oid: &str = if our_types[0].get::<_, &str>(1) == "color" {
+    let color_oid_str: &str = if our_types[0].get::<_, &str>(1) == "color" {
         our_types[0].get(0)
     } else {
         our_types[1].get(0)
     };
+    let color_oid: i32 = color_oid_str.parse().expect("Failed to parse OID as i32");
     
     // Test filtering pg_enum by type OID
     let color_values = client.query(

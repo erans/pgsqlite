@@ -49,6 +49,9 @@ pub enum PgSqliteError {
     
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+    
+    #[error("Validation error: {0}")]
+    Validation(#[from] error::PgError),
 }
 
 pub type Result<T> = std::result::Result<T, PgSqliteError>;
@@ -65,6 +68,14 @@ impl PgSqliteError {
             PgSqliteError::AuthenticationFailed => "28000", // invalid_authorization_specification
             PgSqliteError::InvalidParameter(_) => "22023", // invalid_parameter_value
             PgSqliteError::Io(_) => "58030", // io_error
+            PgSqliteError::Validation(pg_err) => match pg_err {
+                error::PgError::NumericValueOutOfRange { .. } => "22003", // numeric_value_out_of_range
+                error::PgError::StringDataRightTruncation { .. } => "22001", // string_data_right_truncation
+                error::PgError::UniqueViolation { .. } => "23505", // unique_violation
+                error::PgError::ForeignKeyViolation { .. } => "23503", // foreign_key_violation
+                error::PgError::SyntaxError { .. } => "42601", // syntax_error
+                error::PgError::Generic { code, .. } => code,
+            },
         }
     }
 }

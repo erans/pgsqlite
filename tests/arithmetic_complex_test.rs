@@ -10,7 +10,7 @@ async fn test_nested_parentheses() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_nested_parentheses_{}.db", timestamp);
+        let db_path = format!("/tmp/test_nested_parentheses_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -66,7 +66,7 @@ async fn test_multiple_columns_arithmetic() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_multiple_columns_arithmetic_{}.db", timestamp);
+        let db_path = format!("/tmp/test_multiple_columns_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -126,7 +126,7 @@ async fn test_arithmetic_with_functions() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_arithmetic_with_functions_{}.db", timestamp);
+        let db_path = format!("/tmp/test_arithmetic_with_functions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -182,7 +182,7 @@ async fn test_mixed_type_arithmetic() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_mixed_type_arithmetic_{}.db", timestamp);
+        let db_path = format!("/tmp/test_mixed_type_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -236,7 +236,7 @@ async fn test_very_long_expressions() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_very_long_expressions_{}.db", timestamp);
+        let db_path = format!("/tmp/test_very_long_expressions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
@@ -293,7 +293,7 @@ async fn test_arithmetic_with_case_expressions() {
     let server_handle = tokio::spawn(async move {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_arithmetic_with_case_expressions_{}.db", timestamp);
+        let db_path = format!("/tmp/test_arithmetic_with_case_expressions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
             pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );

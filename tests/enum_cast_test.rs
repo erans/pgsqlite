@@ -45,7 +45,7 @@ async fn test_text_to_enum_cast() {
     eprintln!("Test: Got {} results", results.len());
     
     for (i, result) in results.iter().enumerate() {
-        eprintln!("Test: Result {}: {:?}", i, result);
+        eprintln!("Test: Result {i}: {result:?}");
         if let tokio_postgres::SimpleQueryMessage::Row(row) = result {
             eprintln!("Test Debug: CAST result = {:?}", row.get("casted_status"));
             assert_eq!(row.get("casted_status"), Some("inactive"));

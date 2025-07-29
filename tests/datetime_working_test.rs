@@ -47,38 +47,76 @@ async fn test_datetime_functions_with_table() {
     let client = &server.client;
     
     // Create a table with a REAL column to store timestamps
+    // Use DOUBLE PRECISION to be more explicit about the type
     client.execute(
-        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts REAL)",
+        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts DOUBLE PRECISION)",
         &[]
     ).await.unwrap();
     
     // Insert a test timestamp
-    let test_timestamp = 1686839445.0f32; // 2023-06-15 14:30:45 UTC
+    let test_timestamp = 1686839445.0f64; // 2023-06-15 14:30:45 UTC
     client.execute(
         "INSERT INTO timestamps (id, ts) VALUES ($1, $2)",
         &[&1i32, &test_timestamp]
     ).await.unwrap();
     
-    // Test EXTRACT function on the column - convert seconds to microseconds first
+    // First convert the timestamp column to microseconds using CAST
+    // Also debug the raw ts value
+    // First check if to_timestamp works
+    let to_timestamp_test = client.simple_query(
+        "SELECT to_timestamp(ts) FROM timestamps WHERE id = 1"
+    ).await;
+    
+    match to_timestamp_test {
+        Ok(results) => {
+            for msg in results {
+                if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
+                    eprintln!("to_timestamp(ts) returned: {:?}", row.get(0));
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("ERROR: to_timestamp failed: {}", e);
+        }
+    }
+    
+    // Test with to_timestamp directly - this should work
+    eprintln!("Testing EXTRACT with to_timestamp(ts)...");
     let results = client.simple_query(
-        "SELECT EXTRACT(YEAR FROM to_timestamp(ts)) as year, 
+        "SELECT EXTRACT(YEAR FROM to_timestamp(ts)) as year,
                 EXTRACT(MONTH FROM to_timestamp(ts)) as month,
                 EXTRACT(DAY FROM to_timestamp(ts)) as day,
                 EXTRACT(HOUR FROM to_timestamp(ts)) as hour,
                 EXTRACT(MINUTE FROM to_timestamp(ts)) as minute
          FROM timestamps WHERE id = 1"
-    ).await.unwrap();
+    ).await;
     
-    // Verify results using simple query protocol
-    for msg in results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            assert_eq!(row.get(0), Some("2023"));
-            assert_eq!(row.get(1), Some("6"));
-            assert_eq!(row.get(2), Some("15"));
-            assert_eq!(row.get(3), Some("14"));
-            assert_eq!(row.get(4), Some("30"), "minute should be 30, got {:?}", row.get(4));
+    match results {
+        Ok(msgs) => {
+            for msg in msgs {
+                if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
+                    eprintln!("SUCCESS: EXTRACT with to_timestamp returned year={:?}, month={:?}, day={:?}, hour={:?}, minute={:?}", 
+                             row.get(0), row.get(1), row.get(2), row.get(3), row.get(4));
+                    
+                    // Verify results
+                    assert_eq!(row.get(0), Some("2023"));
+                    assert_eq!(row.get(1), Some("6"));
+                    assert_eq!(row.get(2), Some("15"));
+                    assert_eq!(row.get(3), Some("14"));
+                    assert_eq!(row.get(4), Some("30"));
+                    
+                    // Test passed!
+                    return;
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("ERROR: EXTRACT with to_timestamp failed: {}", e);
         }
     }
+    
+    // If we get here, the direct to_timestamp approach failed
+    panic!("EXTRACT with to_timestamp(ts) failed");
 }
 
 #[tokio::test]
@@ -87,62 +125,47 @@ async fn test_date_trunc_with_table() {
     let client = &server.client;
     
     // Create a table with a REAL column to store timestamps
+    // Use DOUBLE PRECISION to be more explicit about the type
     client.execute(
-        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts REAL)",
+        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts DOUBLE PRECISION)",
         &[]
     ).await.unwrap();
     
     // Insert a test timestamp
-    let test_timestamp = 1686839445.123456f32; // 2023-06-15 14:30:45.123456 UTC
+    let test_timestamp = 1686839445.123456f64; // 2023-06-15 14:30:45.123456 UTC
     client.execute(
         "INSERT INTO timestamps (id, ts) VALUES ($1, $2)",
         &[&1i32, &test_timestamp]
     ).await.unwrap();
     
-    // First check what type the column is being detected as
-    let debug_results = client.simple_query(
-        "SELECT typeof(ts), ts FROM timestamps WHERE id = 1"
-    ).await.unwrap();
-    
-    for msg in debug_results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            eprintln!("DEBUG: ts typeof: {:?}, value: {:?}", row.get(0), row.get(1));
-        }
-    }
-    
-    // Test DATE_TRUNC function - convert seconds to microseconds first
-    let results = client.simple_query(
+    // Test DATE_TRUNC function - use regular query to handle binary results
+    let rows = client.query(
         "SELECT DATE_TRUNC('hour', to_timestamp(ts)) as hour_trunc,
                 DATE_TRUNC('day', to_timestamp(ts)) as day_trunc,
                 DATE_TRUNC('month', to_timestamp(ts)) as month_trunc
-         FROM timestamps WHERE id = 1"
+         FROM timestamps WHERE id = 1",
+        &[]
     ).await.unwrap();
     
     // Verify results
-    for msg in results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            // Values as strings
-            let hour_str = row.get(0).unwrap();
-            let day_str = row.get(1).unwrap();
-            let month_str = row.get(2).unwrap();
-            
-            // Parse and verify - values are now in microseconds since epoch
-            let hour_val: i64 = hour_str.parse().unwrap();
-            let day_val: i64 = day_str.parse().unwrap();
-            let month_val: i64 = month_str.parse().unwrap();
-            
-            // Convert expected values from seconds to microseconds
-            // 2023-06-15 14:00:00
-            let expected_hour = 1686837600i64 * 1_000_000;
-            assert!((hour_val - expected_hour).abs() < 1_000_000, "hour_trunc: expected {expected_hour}, got {hour_val}");
-            // 2023-06-15 00:00:00  
-            let expected_day = 1686787200i64 * 1_000_000;
-            assert!((day_val - expected_day).abs() < 1_000_000, "day_trunc: expected {expected_day}, got {day_val}");
-            // 2023-06-01 00:00:00
-            let expected_month = 1685577600i64 * 1_000_000;
-            assert!((month_val - expected_month).abs() < 1_000_000, "month_trunc: expected {expected_month}, got {month_val}");
-        }
-    }
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    
+    // Values are i64 microseconds since epoch
+    let hour_val: i64 = row.get(0);
+    let day_val: i64 = row.get(1);
+    let month_val: i64 = row.get(2);
+    
+    // Convert expected values from seconds to microseconds
+    // 2023-06-15 14:00:00
+    let expected_hour = 1686837600i64 * 1_000_000;
+    assert!((hour_val - expected_hour).abs() < 1_000_000, "hour_trunc: expected {expected_hour}, got {hour_val}");
+    // 2023-06-15 00:00:00  
+    let expected_day = 1686787200i64 * 1_000_000;
+    assert!((day_val - expected_day).abs() < 1_000_000, "day_trunc: expected {expected_day}, got {day_val}");
+    // 2023-06-01 00:00:00
+    let expected_month = 1685577600i64 * 1_000_000;
+    assert!((month_val - expected_month).abs() < 1_000_000, "month_trunc: expected {expected_month}, got {month_val}");
 }
 
 #[tokio::test]
@@ -151,39 +174,43 @@ async fn test_interval_arithmetic_with_table() {
     let client = &server.client;
     
     // Create a table with a REAL column to store timestamps
+    // Use DOUBLE PRECISION to be more explicit about the type
     client.execute(
-        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts REAL)",
+        "CREATE TABLE timestamps (id INTEGER PRIMARY KEY, ts DOUBLE PRECISION)",
         &[]
     ).await.unwrap();
     
     // Insert a test timestamp
-    let test_timestamp = 1686839445.0f32; // 2023-06-15 14:30:45 UTC
+    let test_timestamp = 1686839445.0f64; // 2023-06-15 14:30:45 UTC
     client.execute(
         "INSERT INTO timestamps (id, ts) VALUES ($1, $2)",
         &[&1i32, &test_timestamp]
     ).await.unwrap();
     
-    // Test interval arithmetic - cast results to text to avoid binary data
-    let results = client.simple_query(
-        "SELECT CAST(ts + 86400 AS TEXT) as tomorrow,
-                CAST(ts - 3600 AS TEXT) as hour_ago
-         FROM timestamps WHERE id = 1"
+    // Test interval arithmetic - convert to microseconds first
+    let rows = client.query(
+        "SELECT to_timestamp(ts) + 86400000000 as tomorrow,
+                to_timestamp(ts) - 3600000000 as hour_ago
+         FROM timestamps WHERE id = 1",
+        &[]
     ).await.unwrap();
     
-    // Verify results
-    for msg in results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            let tomorrow_str = row.get(0).unwrap();
-            let hour_ago_str = row.get(1).unwrap();
-            
-            let tomorrow: f64 = tomorrow_str.parse().unwrap();
-            let hour_ago: f64 = hour_ago_str.parse().unwrap();
-            
-            // Verify the calculations
-            assert!((tomorrow - (test_timestamp as f64 + 86400.0)).abs() < 1.0, 
-                    "tomorrow: expected {}, got {}", test_timestamp as f64 + 86400.0, tomorrow);
-            assert!((hour_ago - (test_timestamp as f64 - 3600.0)).abs() < 1.0, 
-                    "hour_ago: expected {}, got {}", test_timestamp as f64 - 3600.0, hour_ago);
-        }
-    }
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    
+    // Values are i64 microseconds
+    let tomorrow: i64 = row.get(0);
+    let hour_ago: i64 = row.get(1);
+    
+    // Convert test_timestamp to microseconds
+    let test_timestamp_micros = (test_timestamp * 1_000_000.0) as i64;
+    
+    // Verify the calculations
+    let expected_tomorrow = test_timestamp_micros + 86400 * 1_000_000;
+    let expected_hour_ago = test_timestamp_micros - 3600 * 1_000_000;
+    
+    assert_eq!(tomorrow, expected_tomorrow, 
+               "tomorrow: expected {}, got {}", expected_tomorrow, tomorrow);
+    assert_eq!(hour_ago, expected_hour_ago,
+               "hour_ago: expected {}, got {}", expected_hour_ago, hour_ago);
 }

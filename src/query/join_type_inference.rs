@@ -80,7 +80,7 @@ pub fn build_column_to_table_mapping(query: &str) -> HashMap<String, String> {
             
             // Also add a special mapping for SQLAlchemy patterns like "order_items_unit_price"
             // where the alias is "table_column" format
-            if alias_str == format!("{}_{}", table, column) {
+            if alias_str == format!("{table}_{column}") {
                 // This helps the type inference find the right table for the alias
                 mapping.insert(alias_str.to_string(), table.clone());
                 info!("JOIN mapping: SQLAlchemy pattern detected '{}' for {}.{}", alias_str, table, column);
@@ -88,7 +88,7 @@ pub fn build_column_to_table_mapping(query: &str) -> HashMap<String, String> {
         }
         
         // Also add table.column format
-        mapping.insert(format!("{}.{}", table, column), table.clone());
+        mapping.insert(format!("{table}.{column}"), table.clone());
     }
     
     info!("JOIN mapping: Built {} mappings from query", mapping.len());
@@ -112,7 +112,7 @@ mod tests {
         
         // Debug print
         for (i, (table, alias)) in tables.iter().enumerate() {
-            println!("Table {}: name='{}', alias={:?}", i, table, alias);
+            println!("Table {i}: name='{table}', alias={alias:?}");
         }
         
         assert_eq!(tables.len(), 3);

@@ -1,15 +1,21 @@
 use tokio::net::TcpListener;
 use tokio_postgres::NoTls;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_multirow_insert_returning() {
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path_clone = db_path.clone();
+    
     // Start test server
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path_clone).unwrap()
         );
         
         // Create test table
@@ -30,13 +36,13 @@ async fn test_multirow_insert_returning() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -55,7 +61,7 @@ async fn test_multirow_insert_returning() {
             let id = row.get("id").unwrap();
             let name = row.get("name").unwrap();
             returned_rows.push((id.to_string(), name.to_string()));
-            println!("Inserted user: id={}, name={}", id, name);
+            println!("Inserted user: id={id}, name={name}");
         }
     }
     
@@ -90,7 +96,7 @@ async fn test_multirow_insert_returning() {
             let name = row.get("name").unwrap();
             let email = row.get("email").unwrap();
             select_returned_rows.push((id.to_string(), name.to_string(), email.to_string()));
-            println!("Inserted via SELECT: id={}, name={}, email={}", id, name, email);
+            println!("Inserted via SELECT: id={id}, name={name}, email={email}");
         }
     }
     
@@ -107,17 +113,28 @@ async fn test_multirow_insert_returning() {
     println!("All multi-row INSERT RETURNING tests passed!");
     
     server_handle.abort();
+
+    // Clean up
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }
 
 #[tokio::test]
 async fn test_sqlalchemy_style_insert_returning() {
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path_clone = db_path.clone();
+    
     // Start test server
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path_clone).unwrap()
         );
         
         // Create test table
@@ -139,13 +156,13 @@ async fn test_sqlalchemy_style_insert_returning() {
     
     // Connect with tokio-postgres
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=testuser", port),
+        &format!("host=localhost port={port} dbname=test user=testuser"),
         NoTls,
     ).await.unwrap();
     
     tokio::spawn(async move {
         if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
+            eprintln!("Connection error: {e}");
         }
     });
     
@@ -167,7 +184,7 @@ async fn test_sqlalchemy_style_insert_returning() {
             let id = row.get("id").unwrap();
             let id_alias = row.get("id__1").unwrap();
             returned_rows.push((id.to_string(), id_alias.to_string()));
-            println!("Inserted category: id={}, id__1={}", id, id_alias);
+            println!("Inserted category: id={id}, id__1={id_alias}");
         }
     }
     
@@ -182,4 +199,10 @@ async fn test_sqlalchemy_style_insert_returning() {
     println!("SQLAlchemy-style INSERT RETURNING test passed!");
     
     server_handle.abort();
+
+    // Clean up
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }

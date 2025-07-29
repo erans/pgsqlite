@@ -137,8 +137,7 @@ impl QueryExecutor {
         let python_params = ParameterParser::find_python_parameters(query_to_execute);
         if !python_params.is_empty() {
             let error_msg = format!(
-                "Python-style parameters detected: {:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query.",
-                python_params
+                "Python-style parameters detected: {python_params:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query."
             );
             info!("⚠️  {}", error_msg);
             debug!("Query: {}", query_to_execute);
@@ -256,7 +255,7 @@ impl QueryExecutor {
                         // Debug enum cast issue
                         if query.contains("casted_status") {
                             eprintln!("DEBUG QueryExecutor: Processing row for enum cast query");
-                            eprintln!("  Row data: {:?}", row);
+                            eprintln!("  Row data: {row:?}");
                         }
                         let converted_row: Vec<Option<Vec<u8>>> = row.into_iter()
                             .enumerate()
@@ -269,7 +268,7 @@ impl QueryExecutor {
                                         // Debug enum cast
                                         if col_name == "casted_status" {
                                             eprintln!("DEBUG: Processing casted_status column");
-                                            eprintln!("  Raw data: {:?}", data);
+                                            eprintln!("  Raw data: {data:?}");
                                             eprintln!("  As string: {:?}", std::str::from_utf8(&data));
                                         }
                                         
@@ -739,7 +738,7 @@ impl QueryExecutor {
                     // First check if we have a direct mapping from the query
                     if let Some(table) = column_to_table_map.get(col_name) {
                         // Try to find the actual column name (strip alias prefix if needed)
-                        let actual_column = if col_name.starts_with(&format!("{}_", table)) {
+                        let actual_column = if col_name.starts_with(&format!("{table}_")) {
                             &col_name[table.len() + 1..]
                         } else {
                             col_name
@@ -781,7 +780,7 @@ impl QueryExecutor {
                         }
                     } else {
                         // Try stripping table name prefix from column alias
-                        let potential_column = if col_name.starts_with(&format!("{}_", table)) {
+                        let potential_column = if col_name.starts_with(&format!("{table}_")) {
                             let after_table = &col_name[table.len() + 1..];
                             // Handle SQLAlchemy patterns like "products_name_1" -> "name"
                             if let Some(underscore_pos) = after_table.rfind('_') {
@@ -1046,14 +1045,27 @@ impl QueryExecutor {
                     match db.with_session_connection(&session.id, |conn| {
                         match NumericValidator::validate_insert(conn, query, &table_name) {
                             Ok(()) => Ok(()),
+                            Err(crate::error::PgError::NumericValueOutOfRange { .. }) => {
+                                Err(rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some("NUMERIC_VALUE_OUT_OF_RANGE".to_string())
+                                ))
+                            },
                             Err(e) => Err(rusqlite::Error::SqliteFailure(
                                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                                Some(format!("Numeric validation failed: {}", e))
+                                Some(format!("Numeric validation failed: {e}"))
                             ))
                         }
                     }).await {
                         Ok(()) => None,
-                        Err(PgSqliteError::Sqlite(e)) => Some(PgSqliteError::Sqlite(e)),
+                        Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(_, Some(msg)))) if msg == "NUMERIC_VALUE_OUT_OF_RANGE" => {
+                            // Create a numeric value out of range error
+                            Some(PgSqliteError::Validation(crate::error::PgError::NumericValueOutOfRange {
+                                type_name: "numeric".to_string(),
+                                column_name: String::new(),
+                                value: String::new(),
+                            }))
+                        },
                         Err(e) => Some(e),
                     }
                 } else {
@@ -1066,14 +1078,27 @@ impl QueryExecutor {
                     match db.with_session_connection(&session.id, |conn| {
                         match NumericValidator::validate_update(conn, query, &table_name) {
                             Ok(()) => Ok(()),
+                            Err(crate::error::PgError::NumericValueOutOfRange { .. }) => {
+                                Err(rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some("NUMERIC_VALUE_OUT_OF_RANGE".to_string())
+                                ))
+                            },
                             Err(e) => Err(rusqlite::Error::SqliteFailure(
                                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                                Some(format!("Numeric validation failed: {}", e))
+                                Some(format!("Numeric validation failed: {e}"))
                             ))
                         }
                     }).await {
                         Ok(()) => None,
-                        Err(PgSqliteError::Sqlite(e)) => Some(PgSqliteError::Sqlite(e)),
+                        Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(_, Some(msg)))) if msg == "NUMERIC_VALUE_OUT_OF_RANGE" => {
+                            // Create a numeric value out of range error
+                            Some(PgSqliteError::Validation(crate::error::PgError::NumericValueOutOfRange {
+                                type_name: "numeric".to_string(),
+                                column_name: String::new(),
+                                value: String::new(),
+                            }))
+                        },
                         Err(e) => Some(e),
                     }
                 } else {
@@ -1085,24 +1110,33 @@ impl QueryExecutor {
         
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
-            let error_response = crate::protocol::ErrorResponse {
-                severity: "ERROR".to_string(),
-                code: "23514".to_string(), // check_violation
-                message: e.to_string(),
-                detail: None,
-                hint: None,
-                position: None,
-                internal_position: None,
-                internal_query: None,
-                where_: None,
-                schema: None,
-                table: None,
-                column: None,
-                datatype: None,
-                constraint: None,
-                file: None,
-                line: None,
-                routine: None,
+            let error_response = match &e {
+                PgSqliteError::Validation(pg_err) => {
+                    // Convert PgError to ErrorResponse directly
+                    pg_err.to_error_response()
+                }
+                _ => {
+                    // Default error response for other errors
+                    crate::protocol::ErrorResponse {
+                        severity: "ERROR".to_string(),
+                        code: "23514".to_string(), // check_violation
+                        message: e.to_string(),
+                        detail: None,
+                        hint: None,
+                        position: None,
+                        internal_position: None,
+                        internal_query: None,
+                        where_: None,
+                        schema: None,
+                        table: None,
+                        column: None,
+                        datatype: None,
+                        constraint: None,
+                        file: None,
+                        line: None,
+                        routine: None,
+                    }
+                }
             };
             framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(PgSqliteError::Io)?;
@@ -1268,10 +1302,10 @@ impl QueryExecutor {
         // Determine the command tag based on query type
         let query_type = QueryTypeDetector::detect_query_type(query);
         let tag = match query_type {
-            QueryType::Insert => format!("INSERT 0 {}", row_count),
-            QueryType::Update => format!("UPDATE {}", row_count),
-            QueryType::Delete => format!("DELETE {}", row_count),
-            _ => format!("OK {}", row_count),
+            QueryType::Insert => format!("INSERT 0 {row_count}"),
+            QueryType::Update => format!("UPDATE {row_count}"),
+            QueryType::Delete => format!("DELETE {row_count}"),
+            _ => format!("OK {row_count}"),
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
@@ -1296,8 +1330,15 @@ impl QueryExecutor {
         
         // Check if this is an ENUM DDL statement
         if EnumDdlHandler::is_enum_ddl(query) {
-            // TODO: Handle ENUM DDL with session connections
-            // For now, just return a success response
+            // Handle ENUM DDL with session connections
+            db.with_session_connection_mut(&session.id, |conn| {
+                EnumDdlHandler::handle_enum_ddl(conn, query)
+                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("ENUM DDL failed: {e}"))
+                    ))
+            }).await?;
+            
             let command_tag = if query.trim().to_uppercase().starts_with("CREATE TYPE") {
                 "CREATE TYPE"
             } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {

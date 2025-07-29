@@ -117,6 +117,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v7: NUMERIC/DECIMAL constraints
 - v8: Array support
 - v9: Full-Text Search support
+- v10: typcategory column in pg_type view
 
 ## Key Features & Fixes
 

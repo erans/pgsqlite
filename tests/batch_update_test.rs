@@ -1,10 +1,13 @@
 use pgsqlite::session::DbHandler;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Integration tests for batch UPDATE operations
 #[tokio::test]
 async fn test_batch_update_with_values() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/batch_update_test_{timestamp}_1.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)").await?;
@@ -53,12 +56,20 @@ async fn test_batch_update_with_values() -> Result<(), Box<dyn std::error::Error
     }
     
     println!("✅ Batch UPDATE with VALUES test passed");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    
     Ok(())
 }
 
 #[tokio::test]
 async fn test_batch_update_single_column() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/batch_update_test_{timestamp}_2.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create test table
     db_handler.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price DECIMAL(10,2))").await?;
@@ -95,12 +106,20 @@ async fn test_batch_update_single_column() -> Result<(), Box<dyn std::error::Err
     }
     
     println!("✅ Single column batch UPDATE test passed");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    
     Ok(())
 }
 
 #[tokio::test]
 async fn test_batch_update_with_quotes() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/batch_update_test_{timestamp}_3.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create test table
     db_handler.execute("CREATE TABLE quotes_test (id INTEGER PRIMARY KEY, description TEXT)").await?;
@@ -136,12 +155,20 @@ async fn test_batch_update_with_quotes() -> Result<(), Box<dyn std::error::Error
     }
     
     println!("✅ Quoted string batch UPDATE test passed");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    
     Ok(())
 }
 
 #[tokio::test]
 async fn test_batch_update_no_alias() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/batch_update_test_{timestamp}_4.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create test table
     db_handler.execute("CREATE TABLE simple_table (id INTEGER PRIMARY KEY, value INTEGER)").await?;
@@ -170,12 +197,20 @@ async fn test_batch_update_no_alias() -> Result<(), Box<dyn std::error::Error>> 
     }
     
     println!("✅ No alias batch UPDATE test passed");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    
     Ok(())
 }
 
 #[tokio::test]
 async fn test_batch_update_performance() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/batch_update_test_{timestamp}_5.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create test table
     db_handler.execute("CREATE TABLE perf_test (id INTEGER PRIMARY KEY, value INTEGER)").await?;
@@ -219,12 +254,20 @@ async fn test_batch_update_performance() -> Result<(), Box<dyn std::error::Error
     }
     
     println!("✅ Performance batch UPDATE test passed");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    
     Ok(())
 }
 
 #[tokio::test] 
 async fn test_regular_update_still_works() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/batch_update_test_{timestamp}_6.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create test table
     db_handler.execute("CREATE TABLE regular_test (id INTEGER PRIMARY KEY, name TEXT)").await?;
@@ -243,5 +286,11 @@ async fn test_regular_update_still_works() -> Result<(), Box<dyn std::error::Err
     assert_eq!(name, "Updated");
     
     println!("✅ Regular UPDATE still works test passed");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
+    
     Ok(())
 }

@@ -23,13 +23,13 @@ impl CastTranslator {
         let result = Self::translate_query_with_depth(query, conn, 0);
         if query.contains("inactive") && query.contains("status") {
             eprintln!("CastTranslator: Translating enum cast query");
-            eprintln!("  Original: {}", query);
-            eprintln!("  Result: {}", result);
+            eprintln!("  Original: {query}");
+            eprintln!("  Result: {result}");
         }
         if query.contains("::mood::text") || query.contains("::text") {
             eprintln!("CastTranslator: Translating double cast query");
-            eprintln!("  Original: {}", query);
-            eprintln!("  Result: {}", result);
+            eprintln!("  Original: {query}");
+            eprintln!("  Result: {result}");
         }
         result
     }
@@ -212,31 +212,31 @@ impl CastTranslator {
             };
             
             // Build the original cast expression to replace
-            let original_cast = format!("{}::{}", expr, type_name);
+            let original_cast = format!("{expr}::{type_name}");
             
             // Debug log for RETURNING issue
             if query.contains("RETURNING") {
                 eprintln!("DEBUG CastTranslator: Processing query with RETURNING");
-                eprintln!("  Original: {}", query);
-                eprintln!("  Current result: {}", result);
-                eprintln!("  Looking to replace '{}' with '{}'", original_cast, final_replacement);
+                eprintln!("  Original: {query}");
+                eprintln!("  Current result: {result}");
+                eprintln!("  Looking to replace '{original_cast}' with '{final_replacement}'");
             }
             
             // Find and replace the exact cast expression
             if let Some(pos) = result.find(&original_cast) {
                 if query.contains("RETURNING") {
-                    eprintln!("DEBUG: Found exact match at position {}", pos);
-                    eprintln!("  Replacing '{}' with '{}'", original_cast, final_replacement);
+                    eprintln!("DEBUG: Found exact match at position {pos}");
+                    eprintln!("  Replacing '{original_cast}' with '{final_replacement}'");
                 }
                 result.replace_range(pos..pos + original_cast.len(), &final_replacement);
                 if query.contains("RETURNING") {
-                    eprintln!("  Result after replacement: {}", result);
+                    eprintln!("  Result after replacement: {result}");
                 }
             } else {
                 // Fallback to the old method if exact match fails
                 if query.contains("RETURNING") {
                     eprintln!("DEBUG: Fallback replacement");
-                    eprintln!("  expr_start: {}, cast_pos: {}, type_end: {}", expr_start, cast_pos, type_end);
+                    eprintln!("  expr_start: {expr_start}, cast_pos: {cast_pos}, type_end: {type_end}");
                     eprintln!("  Replacing range {}..{}", expr_start, cast_pos + 2 + type_end);
                     eprintln!("  Substring being replaced: '{}'", &result[expr_start..cast_pos + 2 + type_end]);
                 }
@@ -341,7 +341,7 @@ impl CastTranslator {
         
         // Debug for RETURNING issue
         if after.contains("RETURNING") {
-            eprintln!("DEBUG find_type_end: after = '{}'", after);
+            eprintln!("DEBUG find_type_end: after = '{after}'");
         }
         
         // Check if this starts with a multi-word type pattern
@@ -388,7 +388,7 @@ impl CastTranslator {
                 // Make sure this is followed by a word boundary
                 if after.len() == len {
                     if after.contains("RETURNING") {
-                        eprintln!("DEBUG: Exact match for type '{}', returning {}", type_name, len);
+                        eprintln!("DEBUG: Exact match for type '{type_name}', returning {len}");
                     }
                     return len;
                 } else if let Some(next_char) = after.as_bytes().get(len) {
@@ -454,11 +454,10 @@ impl CastTranslator {
         
         format!(
             r#"(CASE 
-                WHEN EXISTS(SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{}' AND ev.label = {}) 
-                THEN (SELECT label FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{}' AND ev.label = {})
-                ELSE (SELECT CASE WHEN 1=0 THEN 'dummy' ELSE CAST('invalid input value for enum {}: ' || {} AS INTEGER) END)
-            END)"#,
-            type_name, expr, type_name, expr, type_name, expr
+                WHEN EXISTS(SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{type_name}' AND ev.label = {expr}) 
+                THEN (SELECT label FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{type_name}' AND ev.label = {expr})
+                ELSE (SELECT CASE WHEN 1=0 THEN 'dummy' ELSE CAST('invalid input value for enum {type_name}: ' || {expr} AS INTEGER) END)
+            END)"#
         )
     }
     

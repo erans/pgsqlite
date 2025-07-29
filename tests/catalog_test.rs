@@ -1,6 +1,8 @@
 use pgsqlite::catalog::CatalogInterceptor;
 use pgsqlite::session::db_handler::DbHandler;
+use pgsqlite::session::SessionState;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn test_catalog_interceptor() {
@@ -9,7 +11,7 @@ async fn test_catalog_interceptor() {
     
     // Test simple pg_type query
     let query = "SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = 25";
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), None).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -20,7 +22,7 @@ async fn test_catalog_interceptor() {
     
     // Test pg_type query with parameter placeholder
     let query = "SELECT oid, typname FROM pg_catalog.pg_type WHERE oid = $1";
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), None).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -32,7 +34,7 @@ async fn test_catalog_interceptor() {
                  FROM pg_catalog.pg_type t 
                  INNER JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid 
                  WHERE t.oid = $1";
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), None).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -40,7 +42,7 @@ async fn test_catalog_interceptor() {
     
     // Test non-catalog query
     let query = "SELECT * FROM users";
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), None).await;
     assert!(result.is_none());
 }
 
@@ -55,7 +57,7 @@ async fn test_catalog_with_joins() {
                  INNER JOIN pg_catalog.pg_namespace n ON t.typnamespace = n.oid
                  WHERE t.oid = $1";
     
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), None).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -74,15 +76,23 @@ async fn test_catalog_with_joins() {
 
 #[tokio::test]
 async fn test_pg_class_queries() {
-    // Create a test database handler
-    let db = Arc::new(DbHandler::new(":memory:").unwrap());
+    // Create a test database handler with temporary file
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/catalog_test_pg_class_{}.db", timestamp);
+    let db = Arc::new(DbHandler::new(&db_path).unwrap());
     
-    // Create a test table
-    db.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
+    // Create a session
+    let session = Arc::new(SessionState::new("test_user".to_string(), "test_db".to_string()));
+    
+    // Create a connection for the session
+    db.create_session_connection(session.id).await.unwrap();
+    
+    // Create a test table in the session
+    db.execute_with_session("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)", &session.id).await.unwrap();
     
     // Test pg_class query
     let query = "SELECT relname, relkind FROM pg_catalog.pg_class";
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -106,19 +116,32 @@ async fn test_pg_class_queries() {
         }
     }
     assert!(found_table, "test_table should be in pg_class");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }
 
 #[tokio::test]
 async fn test_pg_attribute_queries() {
-    // Create a test database handler
-    let db = Arc::new(DbHandler::new(":memory:").unwrap());
+    // Create a test database handler with temporary file
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/catalog_test_pg_attr_{}.db", timestamp);
+    let db = Arc::new(DbHandler::new(&db_path).unwrap());
     
-    // Create a test table
-    db.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)").await.unwrap();
+    // Create a session
+    let session = Arc::new(SessionState::new("test_user".to_string(), "test_db".to_string()));
+    
+    // Create a connection for the session
+    db.create_session_connection(session.id).await.unwrap();
+    
+    // Create a test table in the session
+    db.execute_with_session("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)", &session.id).await.unwrap();
     
     // Test pg_attribute query
     let query = "SELECT attname, atttypid, attnotnull FROM pg_catalog.pg_attribute";
-    let result = CatalogInterceptor::intercept_query(query, db.clone()).await;
+    let result = CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await;
     assert!(result.is_some());
     
     let response = result.unwrap().unwrap();
@@ -152,4 +175,9 @@ async fn test_pg_attribute_queries() {
     assert!(found_id, "id column should be in pg_attribute");
     assert!(found_name, "name column should be in pg_attribute");
     assert!(column_count >= 3, "Should have at least 3 columns for test_table");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }

@@ -379,15 +379,8 @@ mod integration_tests {
         let sql = "SELECT amount * tax_rate / 100 FROM transactions";
         let rewritten = rewrite_query(&conn, sql).unwrap();
         
-        // The result is a BLOB containing the decimal value
-        let result: Vec<u8> = conn.query_row(&rewritten, [], |row| row.get(0)).unwrap();
-        
-        // Convert back to text to verify precision
-        let text_result = conn.query_row(
-            "SELECT decimal_to_text(?)",
-            [result],
-            |row| row.get::<_, String>(0)
-        ).unwrap();
+        // The result is already text from decimal functions
+        let text_result: String = conn.query_row(&rewritten, [], |row| row.get(0)).unwrap();
         
         // Verify precision is maintained (123.456789 * 8.375 / 100)
         println!("Precision test result: {text_result}");

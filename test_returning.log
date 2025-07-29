@@ -1,4 +1,0 @@
-[2m2025-07-27T04:12:59.831562Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.11
-[2m2025-07-27T04:12:59.832360Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with mutex-based implementation
-[2m2025-07-27T04:12:59.832487Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.5435
-Error: Address already in use (os error 98)

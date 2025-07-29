@@ -308,12 +308,11 @@ impl CreateTableTranslator {
                 ));
             });
             
-            // Add CHECK constraint for JSON validation
-            // Note: json_valid() doesn't accept NULL, so we check for NULL first
-            let constraint_name = format!("chk_{}_{}_{}", table_name, column_name, "json");
-            check_constraints.push(format!(
-                "CONSTRAINT {constraint_name} CHECK ({column_name} IS NULL OR json_valid({column_name}))"
-            ));
+            // Note: We don't add JSON validation constraints for arrays because:
+            // 1. PostgreSQL array syntax {1,2,3} is not valid JSON
+            // 2. INSERT translator converts PostgreSQL syntax to JSON format
+            // 3. The conversion happens after constraint validation
+            // 4. Array parsing provides sufficient validation
             
             (sqlite_type, pg_type.clone())
         } else if let Some(conn) = conn {
@@ -677,8 +676,9 @@ mod tests {
         assert_eq!(result.type_mappings["array_test.text_array"].sqlite_type, "TEXT");
         assert_eq!(result.type_mappings["array_test.matrix"].sqlite_type, "TEXT");
         
-        // Check that JSON validation constraints were added
-        assert!(result.sql.contains("json_valid"));
+        // Check that NO JSON validation constraints were added
+        // (we removed them because PostgreSQL array syntax is not valid JSON)
+        assert!(!result.sql.contains("json_valid"));
     }
     
     #[test]

@@ -61,30 +61,11 @@ pub static WIRE_PROTOCOL_CACHE: Lazy<WireProtocolCache> = Lazy::new(|| {
 });
 
 /// Check if a query is suitable for wire protocol caching
-pub fn is_cacheable_for_wire_protocol(query: &str) -> bool {
-    // Simple heuristics for now - cache simple SELECT queries
-    let query_lower = query.to_lowercase();
-    
-    // Must be a SELECT query
-    if !query_lower.starts_with("select") {
-        return false;
-    }
-    
-    // Skip queries with parameters (for now)
-    if query.contains('$') {
-        return false;
-    }
-    
-    // Skip queries that might return different results
-    if query_lower.contains("random()") || 
-       query_lower.contains("now()") ||
-       query_lower.contains("current_") ||
-       query_lower.contains("gen_random_uuid") ||
-       query_lower.contains("uuid_generate_v4") {
-        return false;
-    }
-    
-    true
+pub fn is_cacheable_for_wire_protocol(_query: &str) -> bool {
+    // Wire protocol caching is currently disabled to prevent transaction visibility issues.
+    // The cache was returning stale SELECT results across sessions after COMMIT.
+    // TODO: Implement cache invalidation on COMMIT or per-session caching.
+    false
 }
 
 /// Encode a data row for wire protocol
@@ -144,8 +125,9 @@ mod tests {
     
     #[test]
     fn test_is_cacheable() {
-        assert!(is_cacheable_for_wire_protocol("SELECT * FROM users"));
-        assert!(is_cacheable_for_wire_protocol("select id, name from products"));
+        // Wire protocol caching is currently disabled
+        assert!(!is_cacheable_for_wire_protocol("SELECT * FROM users"));
+        assert!(!is_cacheable_for_wire_protocol("select id, name from products"));
         assert!(!is_cacheable_for_wire_protocol("INSERT INTO users VALUES (1)"));
         assert!(!is_cacheable_for_wire_protocol("SELECT * FROM users WHERE id = $1"));
         assert!(!is_cacheable_for_wire_protocol("SELECT NOW()"));

@@ -91,8 +91,8 @@ impl ExtendedQueryHandler {
             // Convert %(name)s parameters to $1, $2, $3, etc.
             let mut param_counter = 1;
             for param_name in &python_params {
-                let placeholder = format!("%({})s", param_name);
-                let numbered_placeholder = format!("${}", param_counter);
+                let placeholder = format!("%({param_name})s");
+                let numbered_placeholder = format!("${param_counter}");
                 cleaned_query = cleaned_query.replace(&placeholder, &numbered_placeholder);
                 param_counter += 1;
             }
@@ -873,14 +873,27 @@ impl ExtendedQueryHandler {
                 match db.with_session_connection(&session.id, |conn| {
                     match NumericValidator::validate_insert(conn, &validation_query, &table_name) {
                         Ok(()) => Ok(()),
+                        Err(crate::error::PgError::NumericValueOutOfRange { .. }) => {
+                            Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some("NUMERIC_VALUE_OUT_OF_RANGE".to_string())
+                            ))
+                        },
                         Err(e) => Err(rusqlite::Error::SqliteFailure(
                             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                            Some(format!("Numeric validation failed: {}", e))
+                            Some(format!("Numeric validation failed: {e}"))
                         ))
                     }
                 }).await {
                     Ok(()) => None,
-                    Err(PgSqliteError::Sqlite(e)) => Some(PgSqliteError::Sqlite(e)),
+                    Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(_, Some(msg)))) if msg == "NUMERIC_VALUE_OUT_OF_RANGE" => {
+                        // Create a numeric value out of range error
+                        Some(PgSqliteError::Validation(crate::error::PgError::NumericValueOutOfRange {
+                            type_name: "numeric".to_string(),
+                            column_name: String::new(),
+                            value: String::new(),
+                        }))
+                    },
                     Err(e) => Some(e),
                 }
             } else {
@@ -895,14 +908,27 @@ impl ExtendedQueryHandler {
                 match db.with_session_connection(&session.id, |conn| {
                     match NumericValidator::validate_update(conn, &validation_query, &table_name) {
                         Ok(()) => Ok(()),
+                        Err(crate::error::PgError::NumericValueOutOfRange { .. }) => {
+                            Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some("NUMERIC_VALUE_OUT_OF_RANGE".to_string())
+                            ))
+                        },
                         Err(e) => Err(rusqlite::Error::SqliteFailure(
                             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                            Some(format!("Numeric validation failed: {}", e))
+                            Some(format!("Numeric validation failed: {e}"))
                         ))
                     }
                 }).await {
                     Ok(()) => None,
-                    Err(PgSqliteError::Sqlite(e)) => Some(PgSqliteError::Sqlite(e)),
+                    Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(_, Some(msg)))) if msg == "NUMERIC_VALUE_OUT_OF_RANGE" => {
+                        // Create a numeric value out of range error
+                        Some(PgSqliteError::Validation(crate::error::PgError::NumericValueOutOfRange {
+                            type_name: "numeric".to_string(),
+                            column_name: String::new(),
+                            value: String::new(),
+                        }))
+                    },
                     Err(e) => Some(e),
                 }
             } else {
@@ -914,24 +940,33 @@ impl ExtendedQueryHandler {
         
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
-            let error_response = crate::protocol::ErrorResponse {
-                severity: "ERROR".to_string(),
-                code: "23514".to_string(), // check_violation
-                message: e.to_string(),
-                detail: None,
-                hint: None,
-                position: None,
-                internal_position: None,
-                internal_query: None,
-                where_: None,
-                schema: None,
-                table: None,
-                column: None,
-                datatype: None,
-                constraint: None,
-                file: None,
-                line: None,
-                routine: None,
+            let error_response = match &e {
+                PgSqliteError::Validation(pg_err) => {
+                    // Convert PgError to ErrorResponse directly
+                    pg_err.to_error_response()
+                }
+                _ => {
+                    // Default error response for other errors
+                    crate::protocol::ErrorResponse {
+                        severity: "ERROR".to_string(),
+                        code: "23514".to_string(), // check_violation
+                        message: e.to_string(),
+                        detail: None,
+                        hint: None,
+                        position: None,
+                        internal_position: None,
+                        internal_query: None,
+                        where_: None,
+                        schema: None,
+                        table: None,
+                        column: None,
+                        datatype: None,
+                        constraint: None,
+                        file: None,
+                        line: None,
+                        routine: None,
+                    }
+                }
             };
             framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(PgSqliteError::Io)?;
@@ -2587,7 +2622,7 @@ impl ExtendedQueryHandler {
     {
         // Check if this is a catalog query first
         info!("execute_select: Checking if query is catalog query: {}", query);
-        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db.clone()).await {
+        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
             info!("execute_select: Query intercepted by catalog handler");
             let mut catalog_response = catalog_result?;
             

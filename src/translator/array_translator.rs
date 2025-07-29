@@ -117,7 +117,7 @@ impl ArrayTranslator {
         // For less common functions, do a case-insensitive check on smaller string segments
         for func in ARRAY_FUNCTIONS {
             // Check for function followed by '(' to avoid false positives
-            let pattern = format!("{}(", func);
+            let pattern = format!("{func}(");
             if sql.contains(&pattern) || sql.contains(&pattern.to_uppercase()) {
                 return true;
             }

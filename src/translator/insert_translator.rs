@@ -10,12 +10,12 @@ pub struct InsertTranslator;
 
 // Pattern to match INSERT INTO table (...) VALUES (...)
 static INSERT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:\s+RETURNING|;?\s*$)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:\s+RETURNING\s+|;\s*$|$)").unwrap()
 });
 
 // Pattern to match INSERT INTO table VALUES (...) without column list
 static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:\s+RETURNING|;?\s*$)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:\s+RETURNING\s+|;\s*$|$)").unwrap()
 });
 
 // Pattern to match INSERT INTO table (...) SELECT ...
@@ -179,9 +179,9 @@ impl InsertTranslator {
             // Check if this is the SQLAlchemy VALUES pattern FIRST
             let final_select = if Self::is_sqlalchemy_values_pattern(select_clause) {
                 eprintln!("🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL");
-                eprintln!("   Table: {}", table_name);
-                eprintln!("   Columns: {:?}", columns);
-                eprintln!("   Select clause: {}", select_clause);
+                eprintln!("   Table: {table_name}");
+                eprintln!("   Columns: {columns:?}");
+                eprintln!("   Select clause: {select_clause}");
                 // Convert VALUES pattern to UNION ALL
                 Self::convert_sqlalchemy_values_to_union(select_clause, &columns, &column_types)?
             } else {
@@ -191,18 +191,15 @@ impl InsertTranslator {
                     &columns,
                     &column_types
                 )?;
-                eprintln!("   Converted SELECT: {}", converted_select);
+                eprintln!("   Converted SELECT: {converted_select}");
                 converted_select
             };
             
-            eprintln!("   Final SELECT: {}", final_select);
+            eprintln!("   Final SELECT: {final_select}");
             
             // Reconstruct the INSERT query
             Ok(format!(
-                "INSERT INTO {} ({}) SELECT {}",
-                table_name,
-                columns_str,
-                final_select
+                "INSERT INTO {table_name} ({columns_str}) SELECT {final_select}"
             ))
         } else if let Some(caps) = INSERT_SELECT_NO_COLUMNS_PATTERN.captures(query) {
             // Handle INSERT INTO table SELECT ... (without column list)
@@ -222,9 +219,7 @@ impl InsertTranslator {
             
             // Reconstruct the INSERT query  
             Ok(format!(
-                "INSERT INTO {} SELECT {}",
-                table_name,
-                converted_select
+                "INSERT INTO {table_name} SELECT {converted_select}"
             ))
         } else {
             // Not a recognized INSERT pattern, return as-is
@@ -743,7 +738,7 @@ impl InsertTranslator {
         
         // Parse the SELECT expressions to get the type casts
         let type_casts = Self::parse_sqlalchemy_type_casts(select_expressions)?;
-        eprintln!("   🔍 Type casts: {:?}", type_casts);
+        eprintln!("   🔍 Type casts: {type_casts:?}");
         
         // Find the VALUES clause
         let values_start = select_clause.find("VALUES").ok_or("VALUES not found")?;
@@ -790,7 +785,7 @@ impl InsertTranslator {
                 let converted_value = if col_idx < type_casts.len() {
                     if let Some(ref cast_type) = type_casts[col_idx] {
                         // Apply the CAST
-                        format!("CAST({} AS {})", value, cast_type)
+                        format!("CAST({value} AS {cast_type})")
                     } else {
                         // No cast found in query, just use the value
                         // For NUMERIC columns, we don't need special handling since SQLite stores them as-is
@@ -820,9 +815,9 @@ impl InsertTranslator {
         // Add ORDER BY if we need to preserve row order (but skip sen_counter)
         let final_query = if !order_by.is_empty() && order_by.contains("sen_counter") {
             // Skip ORDER BY sen_counter as it doesn't exist in UNION ALL
-            format!("{}{}", union_query, returning)
+            format!("{union_query}{returning}")
         } else {
-            format!("{}{}{}", union_query, order_by, returning)
+            format!("{union_query}{order_by}{returning}")
         };
         
         Ok(final_query)
@@ -1040,24 +1035,24 @@ impl InsertTranslator {
             "date" => {
                 match ValueConverter::convert_date_to_unix(literal) {
                     Ok(days) => Ok(days),
-                    Err(e) => Err(format!("Invalid date value '{}': {}", literal, e))
+                    Err(e) => Err(format!("Invalid date value '{literal}': {e}"))
                 }
             }
             "time" => {
                 match ValueConverter::convert_time_to_seconds(literal) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Invalid time value '{}': {}", literal, e))
+                    Err(e) => Err(format!("Invalid time value '{literal}': {e}"))
                 }
             }
             "timestamp" => {
                 match ValueConverter::convert_timestamp_to_unix(literal) {
                     Ok(micros) => Ok(micros),
-                    Err(e) => Err(format!("Invalid timestamp value '{}': {}", literal, e))
+                    Err(e) => Err(format!("Invalid timestamp value '{literal}': {e}"))
                 }
             }
             _ => {
                 // For other types (timestamptz, timetz, interval), keep as quoted string for now
-                Ok(format!("'{}'", literal))
+                Ok(format!("'{literal}'"))
             }
         }
     }
@@ -1084,10 +1079,28 @@ mod tests {
         assert!(InsertTranslator::needs_translation("INSERT INTO test (date_col) VALUES ('2024-01-15')"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (time_col) VALUES ('14:30:00')"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES ('{1,2,3}')"));
+    }
+    
+    #[test]
+    fn test_regex_matches_multiline_insert() {
+        let query = r#"INSERT INTO test_arrays (int_array, text_array, bool_array) VALUES
+    ('{1,2,3,4,5}', '{"apple","banana","cherry"}', '{true,false,true}'),
+    ('{}', '{}', '{}'),
+    (NULL, NULL, NULL);"#;
+        
+        assert!(INSERT_PATTERN.is_match(query), "Regex should match multi-line INSERT");
+        
+        if let Some(caps) = INSERT_PATTERN.captures(query) {
+            assert_eq!(&caps[1], "test_arrays");
+            assert_eq!(&caps[2], "int_array, text_array, bool_array");
+            assert!(caps[3].contains("('{1,2,3,4,5}'"));
+        }
+    }
+    
+    #[test]
+    fn test_needs_translation_array_types() {
         assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES (ARRAY[1,2,3])"));
         assert!(!InsertTranslator::needs_translation("INSERT INTO test (id) VALUES (1)"));
-        
-        // Test INSERT SELECT patterns
         assert!(InsertTranslator::needs_translation("INSERT INTO test (date_col) SELECT '2024-01-15' FROM source"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test SELECT '2024-01-15', NOW() FROM source"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (time_col) SELECT CURRENT_TIME FROM source"));
