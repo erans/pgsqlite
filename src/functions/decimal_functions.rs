@@ -231,44 +231,44 @@ fn get_decimal(ctx: &Context<'_>, idx: usize) -> Result<Option<Decimal>> {
 
 // Arithmetic functions
 
-fn decimal_add(ctx: &Context<'_>) -> Result<Option<Vec<u8>>> {
+fn decimal_add(ctx: &Context<'_>) -> Result<Option<String>> {
     match (get_decimal(ctx, 0)?, get_decimal(ctx, 1)?) {
         (Some(a), Some(b)) => {
             let result = a + b;
-            Ok(Some(result.serialize().to_vec()))
+            Ok(Some(result.to_string()))
         }
         _ => Ok(None)
     }
 }
 
-fn decimal_sub(ctx: &Context<'_>) -> Result<Option<Vec<u8>>> {
+fn decimal_sub(ctx: &Context<'_>) -> Result<Option<String>> {
     match (get_decimal(ctx, 0)?, get_decimal(ctx, 1)?) {
         (Some(a), Some(b)) => {
             let result = a - b;
-            Ok(Some(result.serialize().to_vec()))
+            Ok(Some(result.to_string()))
         }
         _ => Ok(None)
     }
 }
 
-fn decimal_mul(ctx: &Context<'_>) -> Result<Option<Vec<u8>>> {
+fn decimal_mul(ctx: &Context<'_>) -> Result<Option<String>> {
     match (get_decimal(ctx, 0)?, get_decimal(ctx, 1)?) {
         (Some(a), Some(b)) => {
             let result = a * b;
-            Ok(Some(result.serialize().to_vec()))
+            Ok(Some(result.to_string()))
         }
         _ => Ok(None)
     }
 }
 
-fn decimal_div(ctx: &Context<'_>) -> Result<Option<Vec<u8>>> {
+fn decimal_div(ctx: &Context<'_>) -> Result<Option<String>> {
     match (get_decimal(ctx, 0)?, get_decimal(ctx, 1)?) {
         (Some(a), Some(b)) => {
             if b.is_zero() {
                 Err(rusqlite::Error::UserFunctionError("Division by zero".into()))
             } else {
                 let result = a / b;
-                Ok(Some(result.serialize().to_vec()))
+                Ok(Some(result.to_string()))
             }
         }
         _ => Ok(None)
@@ -449,28 +449,28 @@ mod tests {
 
         // Test basic arithmetic
         let result: String = conn.query_row(
-            "SELECT decimal_to_text(decimal_add(decimal_from_text('123.45'), decimal_from_text('67.89')))",
+            "SELECT decimal_add(decimal_from_text('123.45'), decimal_from_text('67.89'))",
             [],
             |row| row.get(0)
         )?;
         assert_eq!(result, "191.34");
 
         let result: String = conn.query_row(
-            "SELECT decimal_to_text(decimal_sub(decimal_from_text('100.00'), decimal_from_text('25.50')))",
+            "SELECT decimal_sub(decimal_from_text('100.00'), decimal_from_text('25.50'))",
             [],
             |row| row.get(0)
         )?;
         assert_eq!(result, "74.50");
 
         let result: String = conn.query_row(
-            "SELECT decimal_to_text(decimal_mul(decimal_from_text('10.5'), decimal_from_text('2')))",
+            "SELECT decimal_mul(decimal_from_text('10.5'), decimal_from_text('2'))",
             [],
             |row| row.get(0)
         )?;
         assert_eq!(result, "21.0");
 
         let result: String = conn.query_row(
-            "SELECT decimal_to_text(decimal_div(decimal_from_text('100'), decimal_from_text('3')))",
+            "SELECT decimal_div(decimal_from_text('100'), decimal_from_text('3'))",
             [],
             |row| row.get(0)
         )?;

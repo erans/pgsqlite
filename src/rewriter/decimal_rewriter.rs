@@ -540,6 +540,9 @@ impl<'a> DecimalQueryRewriter<'a> {
                     }
                 }
                 
+                // Check if this is a float-returning math function
+                let is_float_returning = self.is_float_returning_math_function(&func.name);
+                
                 // Rewrite function arguments with implicit cast detection
                 if let FunctionArguments::List(list) = &mut func.args {
                     for (arg_pos, arg) in list.args.iter_mut().enumerate() {
@@ -552,9 +555,14 @@ impl<'a> DecimalQueryRewriter<'a> {
                                 *e = cast.apply();
                                 has_implicit_cast = true;
                                 has_decimal_arg = true; // Implicit cast means we're dealing with decimals
-                            } else {
-                                // Then do regular expression rewriting
+                            } else if !is_float_returning {
+                                // Only do regular expression rewriting if NOT a float-returning function
+                                // Float-returning functions should not use decimal arithmetic in their args
                                 self.rewrite_expression(e, context)?;
+                            } else {
+                                // For float-returning functions, we still need to process subqueries
+                                // but should not apply decimal arithmetic
+                                self.rewrite_expression_without_decimal_arithmetic(e, context)?;
                             }
                         }
                     }
@@ -637,6 +645,19 @@ impl<'a> DecimalQueryRewriter<'a> {
         context: &QueryContext,
     ) -> Result<Expr, String> {
         use BinaryOperator::*;
+        
+        // Check if either operand contains float-returning math functions recursively
+        let left_contains_float_func = self.contains_float_returning_function(&left);
+        let right_contains_float_func = self.contains_float_returning_function(&right);
+        
+        // If either operand contains a float-returning function, don't use decimal arithmetic
+        if left_contains_float_func || right_contains_float_func {
+            return Ok(Expr::BinaryOp { 
+                left: Box::new(left), 
+                op, 
+                right: Box::new(right) 
+            });
+        }
         
         let func_name = match op {
             Plus => "decimal_add",
@@ -761,6 +782,13 @@ impl<'a> DecimalQueryRewriter<'a> {
     
     /// Wrap expression in decimal_from_text function
     fn wrap_in_decimal_from_text(&mut self, expr: Expr, context: &QueryContext) -> Expr {
+        // Check if this is a float-returning math function - don't wrap these
+        if let Expr::Function(func) = &expr {
+            if self.is_float_returning_math_function(&func.name) {
+                return expr; // Return as-is, don't wrap
+            }
+        }
+        
         // If this is a nested expression, check the inner expression
         if let Expr::Nested(inner) = &expr {
             // If the inner expression contains arithmetic, unwrap it so it can be processed
@@ -821,12 +849,9 @@ impl<'a> DecimalQueryRewriter<'a> {
     
     /// Rewrite a table factor (including derived tables)
     fn rewrite_table_factor(&mut self, table_factor: &mut TableFactor) -> Result<(), String> {
-        match table_factor {
-            TableFactor::Derived { subquery, .. } => {
-                // Rewrite the subquery
-                self.rewrite_query(subquery)?;
-            }
-            _ => {} // Other table factors don't need rewriting
+        if let TableFactor::Derived { subquery, .. } = table_factor {
+            // Rewrite the subquery
+            self.rewrite_query(subquery)?;
         }
         Ok(())
     }
@@ -910,6 +935,16 @@ impl<'a> DecimalQueryRewriter<'a> {
         matches!(func_name.as_str(), "ROUND" | "ABS")
     }
     
+    /// Check if function is a math function that returns float (not decimal)
+    fn is_float_returning_math_function(&self, name: &ObjectName) -> bool {
+        let func_name = name.to_string().to_uppercase();
+        matches!(func_name.as_str(), 
+            "SQRT" | "POWER" | "POW" | "EXP" | "LN" | "LOG" | 
+            "SIN" | "COS" | "TAN" | "ASIN" | "ACOS" | "ATAN" | "ATAN2" |
+            "RADIANS" | "DEGREES" | "PI" | "RANDOM"
+        )
+    }
+    
     /// Rewrite math function to use decimal equivalent
     fn rewrite_math_function_to_decimal(&self, func: &mut Function) -> Result<(), String> {
         let func_name = func.name.to_string().to_uppercase();
@@ -917,6 +952,21 @@ impl<'a> DecimalQueryRewriter<'a> {
         match func_name.as_str() {
             "ROUND" => {
                 func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_round"))]);
+                // PostgreSQL ROUND() has an optional second argument (scale) that defaults to 0
+                // decimal_round() always requires 2 arguments, so add default if missing
+                if let FunctionArguments::List(ref mut list) = func.args {
+                    if list.args.len() == 1 {
+                        list.args.push(FunctionArg::Unnamed(FunctionArgExpr::Expr(
+                            Expr::Value(sqlparser::ast::ValueWithSpan { 
+                                value: sqlparser::ast::Value::Number("0".to_string(), false), 
+                                span: sqlparser::tokenizer::Span {
+                                    start: sqlparser::tokenizer::Location { line: 1, column: 1 },
+                                    end: sqlparser::tokenizer::Location { line: 1, column: 1 },
+                                }
+                            })
+                        )));
+                    }
+                }
             }
             "ABS" => {
                 func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_abs"))]);
@@ -1182,6 +1232,7 @@ impl<'a> DecimalQueryRewriter<'a> {
     }
     
     /// Check if an expression contains arithmetic operations
+    #[allow(clippy::only_used_in_recursion)]
     fn contains_arithmetic(&self, expr: &Expr) -> bool {
         match expr {
             Expr::BinaryOp { op, left, right, .. } => {
@@ -1213,6 +1264,81 @@ impl<'a> DecimalQueryRewriter<'a> {
             }
             _ => false,
         }
+    }
+    
+    /// Check if an expression contains or results in a float-returning function
+    fn contains_float_returning_function(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::Function(func) => {
+                self.is_float_returning_math_function(&func.name)
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                self.contains_float_returning_function(left) || 
+                self.contains_float_returning_function(right)
+            }
+            Expr::Nested(inner) => self.contains_float_returning_function(inner),
+            _ => false,
+        }
+    }
+    
+    /// Rewrite expression without applying decimal arithmetic (for float-returning function args)
+    fn rewrite_expression_without_decimal_arithmetic(&mut self, expr: &mut Expr, context: &QueryContext) -> Result<(), String> {
+        match expr {
+            Expr::Function(func) => {
+                // Process function arguments recursively
+                if let FunctionArguments::List(list) = &mut func.args {
+                    for arg in list.args.iter_mut() {
+                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) = arg {
+                            self.rewrite_expression_without_decimal_arithmetic(e, context)?;
+                        }
+                    }
+                }
+            }
+            Expr::Nested(inner) => {
+                self.rewrite_expression_without_decimal_arithmetic(inner, context)?;
+            }
+            Expr::BinaryOp { left, right, .. } => {
+                // Process children but don't convert to decimal arithmetic
+                self.rewrite_expression_without_decimal_arithmetic(left, context)?;
+                self.rewrite_expression_without_decimal_arithmetic(right, context)?;
+            }
+            Expr::InList { expr, list, .. } => {
+                self.rewrite_expression_without_decimal_arithmetic(expr, context)?;
+                for item in list {
+                    self.rewrite_expression_without_decimal_arithmetic(item, context)?;
+                }
+            }
+            Expr::Between { expr, low, high, .. } => {
+                self.rewrite_expression_without_decimal_arithmetic(expr, context)?;
+                self.rewrite_expression_without_decimal_arithmetic(low, context)?;
+                self.rewrite_expression_without_decimal_arithmetic(high, context)?;
+            }
+            Expr::Subquery(subquery) => {
+                self.rewrite_query_with_context(subquery, Some(context))?;
+            }
+            Expr::Exists { subquery, .. } => {
+                self.rewrite_query_with_context(subquery, Some(context))?;
+            }
+            Expr::InSubquery { expr, subquery, .. } => {
+                self.rewrite_expression_without_decimal_arithmetic(expr, context)?;
+                let temp_query = Query {
+                    with: None,
+                    body: subquery.clone(),
+                    order_by: None,
+                    limit_clause: None,
+                    fetch: None,
+                    for_clause: None,
+                    settings: None,
+                    format_clause: None,
+                    pipe_operators: vec![],
+                    locks: vec![],
+                };
+                let subquery_context = self.resolver.build_context(&temp_query);
+                self.rewrite_set_expr(subquery, &subquery_context)?;
+            }
+            _ => {}
+        }
+        Ok(())
     }
     
     /// Force decimal processing of arithmetic expressions

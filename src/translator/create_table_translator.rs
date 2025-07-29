@@ -4,6 +4,12 @@ use crate::metadata::{TypeMapping, EnumMetadata};
 use crate::types::TypeMapper;
 use rusqlite::Connection;
 use std::cell::RefCell;
+use once_cell::sync::Lazy;
+
+// Pre-compiled regex patterns
+static CREATE_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap()
+});
 
 #[derive(Debug)]
 pub struct CreateTableResult {
@@ -49,9 +55,7 @@ impl CreateTableTranslator {
         ARRAY_COLUMNS.with(|ac| ac.borrow_mut().clear());
         
         // Basic regex to match CREATE TABLE - use DOTALL flag to match newlines
-        let create_regex = Regex::new(r"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)\s*\((.*)\)").unwrap();
-        
-        if let Some(captures) = create_regex.captures(pg_sql) {
+        if let Some(captures) = CREATE_TABLE_REGEX.captures(pg_sql) {
             let table_name = captures.get(1).unwrap().as_str();
             let columns_str = captures.get(2).unwrap().as_str();
             
@@ -105,7 +109,10 @@ impl CreateTableTranslator {
         let mut sqlite_columns = Vec::new();
         let mut paren_depth = 0;
         let mut current_column = String::new();
+        let mut column_definitions = Vec::new();
+        let mut serial_columns = std::collections::HashSet::new();
         
+        // First pass: collect all column definitions
         for ch in columns_str.chars() {
             match ch {
                 '(' => {
@@ -118,14 +125,7 @@ impl CreateTableTranslator {
                 }
                 ',' if paren_depth == 0 => {
                     // End of column definition
-                    let translated = Self::translate_column_definition(
-                        current_column.trim(),
-                        table_name,
-                        type_mapping,
-                        check_constraints,
-                        conn
-                    )?;
-                    sqlite_columns.push(translated);
+                    column_definitions.push(current_column.trim().to_string());
                     current_column.clear();
                 }
                 _ => {
@@ -136,8 +136,25 @@ impl CreateTableTranslator {
         
         // Don't forget the last column
         if !current_column.trim().is_empty() {
+            column_definitions.push(current_column.trim().to_string());
+        }
+        
+        // Identify SERIAL columns
+        for column_def in &column_definitions {
+            if let Some(column_name) = Self::extract_serial_column_name(column_def) {
+                serial_columns.insert(column_name);
+            }
+        }
+        
+        // Second pass: translate columns, filtering out redundant PRIMARY KEY constraints
+        for column_def in column_definitions {
+            if Self::is_redundant_primary_key(&column_def, &serial_columns) {
+                // Skip this PRIMARY KEY constraint as it's already handled by SERIAL
+                continue;
+            }
+            
             let translated = Self::translate_column_definition(
-                current_column.trim(),
+                &column_def,
                 table_name,
                 type_mapping,
                 check_constraints,
@@ -147,6 +164,35 @@ impl CreateTableTranslator {
         }
         
         Ok(sqlite_columns.join(", "))
+    }
+    
+    /// Extract column name if this is a SERIAL column definition
+    fn extract_serial_column_name(column_def: &str) -> Option<String> {
+        let parts: Vec<&str> = column_def.split_whitespace().collect();
+        if parts.len() >= 2 {
+            let pg_type = parts[1].to_uppercase();
+            if pg_type == "SERIAL" || pg_type == "BIGSERIAL" {
+                return Some(parts[0].to_string());
+            }
+        }
+        None
+    }
+    
+    /// Check if this is a PRIMARY KEY constraint that references a SERIAL column
+    fn is_redundant_primary_key(column_def: &str, serial_columns: &std::collections::HashSet<String>) -> bool {
+        let upper_def = column_def.to_uppercase();
+        if upper_def.trim().starts_with("PRIMARY KEY") {
+            // Parse PRIMARY KEY (column_name) format
+            if let Some(start) = column_def.find('(') {
+                if let Some(end) = column_def.find(')') {
+                    let column_list = &column_def[start + 1..end];
+                    let column_name = column_list.trim();
+                    // Check if this references a SERIAL column (case-insensitive)
+                    return serial_columns.iter().any(|serial_col| serial_col.eq_ignore_ascii_case(column_name));
+                }
+            }
+        }
+        false
     }
     
     fn translate_column_definition(
@@ -209,11 +255,23 @@ impl CreateTableTranslator {
         }
         
         // Handle types with parameters like VARCHAR(255) or NUMERIC(10,2)
-        if parts.len() > type_end_idx && parts[type_end_idx].starts_with('(') {
+        // Check if type already contains '(' (from splitting "NUMERIC(10," + "2)")
+        if pg_type.contains('(') && !pg_type.contains(')') {
+            // Need to continue collecting parts until we find the closing ')'
             let mut combined = pg_type.clone();
             for (i, part) in parts[type_end_idx..].iter().enumerate() {
-                combined.push(' ');
-                combined.push_str(part);
+                combined.push_str(part);  // Don't add space for comma-separated parameters
+                if part.contains(')') {
+                    type_end_idx = type_end_idx + i + 1;
+                    break;
+                }
+            }
+            pg_type = combined;
+        } else if parts.len() > type_end_idx && parts[type_end_idx].starts_with('(') {
+            // Handle case where type and parameters are separate: "NUMERIC" + "(255)"
+            let mut combined = pg_type.clone();
+            for (i, part) in parts[type_end_idx..].iter().enumerate() {
+                combined.push_str(part);  // Don't add space
                 if part.contains(')') {
                     type_end_idx = type_end_idx + i + 1;
                     break;
@@ -250,12 +308,11 @@ impl CreateTableTranslator {
                 ));
             });
             
-            // Add CHECK constraint for JSON validation
-            // Note: json_valid() doesn't accept NULL, so we check for NULL first
-            let constraint_name = format!("chk_{}_{}_{}", table_name, column_name, "json");
-            check_constraints.push(format!(
-                "CONSTRAINT {constraint_name} CHECK ({column_name} IS NULL OR json_valid({column_name}))"
-            ));
+            // Note: We don't add JSON validation constraints for arrays because:
+            // 1. PostgreSQL array syntax {1,2,3} is not valid JSON
+            // 2. INSERT translator converts PostgreSQL syntax to JSON format
+            // 3. The conversion happens after constraint validation
+            // 4. Array parsing provides sufficient validation
             
             (sqlite_type, pg_type.clone())
         } else if let Some(conn) = conn {
@@ -619,8 +676,9 @@ mod tests {
         assert_eq!(result.type_mappings["array_test.text_array"].sqlite_type, "TEXT");
         assert_eq!(result.type_mappings["array_test.matrix"].sqlite_type, "TEXT");
         
-        // Check that JSON validation constraints were added
-        assert!(result.sql.contains("json_valid"));
+        // Check that NO JSON validation constraints were added
+        // (we removed them because PostgreSQL array syntax is not valid JSON)
+        assert!(!result.sql.contains("json_valid"));
     }
     
     #[test]

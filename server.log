@@ -1,0 +1,1362 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.19s
+     Running `target/debug/pgsqlite --database /tmp/test.db --port 5433`
+[2m2025-07-24T05:19:26.747972Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.11
+[2m2025-07-24T05:19:26.752770Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, running initial migrations...
+[2m2025-07-24T05:19:26.756092Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-07-24T05:19:26.757042Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-07-24T05:19:26.757131Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-07-24T05:19:26.758218Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-07-24T05:19:26.758291Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-07-24T05:19:26.759620Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 1ms
+[2m2025-07-24T05:19:26.759696Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-07-24T05:19:26.760011Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-07-24T05:19:26.760078Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-07-24T05:19:27.062370Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 301ms
+[2m2025-07-24T05:19:27.062481Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-07-24T05:19:27.064072Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 1ms
+[2m2025-07-24T05:19:27.064151Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-07-24T05:19:27.064762Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-07-24T05:19:27.064879Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-07-24T05:19:27.066562Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 1ms
+[2m2025-07-24T05:19:27.066656Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Applied 8 migrations to new database
+[2m2025-07-24T05:19:27.067356Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with mutex-based implementation
+[2m2025-07-24T05:19:27.067833Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.5433
+[2m2025-07-24T05:19:27.067944Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 5433
+[2m2025-07-24T05:19:27.067957Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: /tmp/test.db
+[2m2025-07-24T05:19:27.067967Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-07-24T05:19:27.071289Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-07-24T05:19:50.432373Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:53564
+[2m2025-07-24T05:19:50.432595Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:53564
+[2m2025-07-24T05:19:50.432746Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:53564 (SSL disabled)
+[2m2025-07-24T05:19:50.432818Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:53564: StartupMessage { protocol_version: 196608, parameters: {"user": "postgres", "database": "main"} }
+[2m2025-07-24T05:19:50.433129Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:53564
+[2m2025-07-24T05:19:50.433420Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:50.433490Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:50.492438Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:50.507690Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+
+[2m2025-07-24T05:19:50.507747Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-24T05:19:50.510756Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-24T05:19:50.510774Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-24T05:19:50.510783Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-24T05:19:50.510793Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-24T05:19:50.512746Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_type") for query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-24T05:19:50.512769Z[0m [32m INFO[0m [2mpgsqlite::cache::row_description[0m[2m:[0m Initializing RowDescription cache with capacity 1000 and TTL 10 minutes
+[2m2025-07-24T05:19:50.512780Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_type', looking up schema for 2 columns
+[2m2025-07-24T05:19:50.517574Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_type.oid'
+[2m2025-07-24T05:19:50.517600Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_type.typarray'
+[2m2025-07-24T05:19:50.535023Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 36 rows
+[2m2025-07-24T05:19:50.535057Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25, 25]
+[2m2025-07-24T05:19:50.535064Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.535079Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.535436Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:50.535468Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:50.535543Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:50.536085Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:50.536096Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:50.536155Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:50.536283Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: select pg_catalog.version()
+[2m2025-07-24T05:19:50.536291Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: select pg_catalog.version()
+[2m2025-07-24T05:19:50.537311Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: select pg_catalog.version()
+[2m2025-07-24T05:19:50.537318Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: select pg_catalog.version()
+[2m2025-07-24T05:19:50.537322Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: select pg_catalog.version()
+[2m2025-07-24T05:19:50.537329Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: select pg_catalog.version()
+[2m2025-07-24T05:19:50.537459Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: select version()
+[2m2025-07-24T05:19:50.537656Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'select version()': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.537718Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.537725Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: select version()
+[2m2025-07-24T05:19:50.538959Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: select pg_catalog.version()
+[2m2025-07-24T05:19:50.539007Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.539013Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.539017Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.539022Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.539730Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: select current_schema()
+[2m2025-07-24T05:19:50.539739Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: select current_schema()
+[2m2025-07-24T05:19:50.540202Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: select current_schema()
+[2m2025-07-24T05:19:50.540206Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: select current_schema()
+[2m2025-07-24T05:19:50.540209Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: select current_schema()
+[2m2025-07-24T05:19:50.540218Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: select current_schema()
+[2m2025-07-24T05:19:50.540768Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'select current_schema()': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.540798Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.540801Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: select current_schema()
+[2m2025-07-24T05:19:50.541996Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: select current_schema()
+[2m2025-07-24T05:19:50.542060Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.542071Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.542074Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.542079Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.542281Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: show transaction isolation level
+[2m2025-07-24T05:19:50.542307Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: show transaction isolation level
+[2m2025-07-24T05:19:50.542514Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Other for query: show transaction isolation level
+[2m2025-07-24T05:19:50.546093Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: TRANSACTION ISOLATION LEVEL
+[2m2025-07-24T05:19:50.546106Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter TRANSACTION ISOLATION LEVEL = read committed
+[2m2025-07-24T05:19:50.546304Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: show standard_conforming_strings
+[2m2025-07-24T05:19:50.546336Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: show standard_conforming_strings
+[2m2025-07-24T05:19:50.546403Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Other for query: show standard_conforming_strings
+[2m2025-07-24T05:19:50.546429Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: STANDARD_CONFORMING_STRINGS
+[2m2025-07-24T05:19:50.546433Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter STANDARD_CONFORMING_STRINGS = on
+[2m2025-07-24T05:19:50.546653Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:50.546682Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:50.546712Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:50.547608Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:50.547622Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:50.547672Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:50.547782Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT version()
+[2m2025-07-24T05:19:50.547801Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT version()
+[2m2025-07-24T05:19:50.547929Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT version()
+[2m2025-07-24T05:19:50.547933Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT version()
+[2m2025-07-24T05:19:50.547937Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT version()
+[2m2025-07-24T05:19:50.547945Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT version()
+[2m2025-07-24T05:19:50.548004Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT version()': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.548031Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.548035Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT version()
+[2m2025-07-24T05:19:50.549244Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT version()
+[2m2025-07-24T05:19:50.549309Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.549316Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.549320Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.549327Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.549662Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT current_database()
+[2m2025-07-24T05:19:50.549674Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT current_database()
+[2m2025-07-24T05:19:50.549883Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT current_database()
+[2m2025-07-24T05:19:50.549891Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT current_database()
+[2m2025-07-24T05:19:50.549896Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT current_database()
+[2m2025-07-24T05:19:50.549916Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT current_database()
+[2m2025-07-24T05:19:50.550067Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT current_database()': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.550113Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.550118Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT current_database()
+[2m2025-07-24T05:19:50.551327Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT current_database()
+[2m2025-07-24T05:19:50.551378Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.551383Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.551386Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.551392Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.551688Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT current_user()
+[2m2025-07-24T05:19:50.551713Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT current_user()
+[2m2025-07-24T05:19:50.551830Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT current_user()
+[2m2025-07-24T05:19:50.551834Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT current_user()
+[2m2025-07-24T05:19:50.551838Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT current_user()
+[2m2025-07-24T05:19:50.551846Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT current_user()
+[2m2025-07-24T05:19:50.551910Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT current_user()': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.551935Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.551938Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT current_user()
+[2m2025-07-24T05:19:50.553084Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT current_user()
+[2m2025-07-24T05:19:50.553125Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.553130Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.553134Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.553138Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.553396Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT current_schema()
+[2m2025-07-24T05:19:50.553406Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT current_schema()
+[2m2025-07-24T05:19:50.553485Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT current_schema()
+[2m2025-07-24T05:19:50.553488Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT current_schema()
+[2m2025-07-24T05:19:50.553491Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT current_schema()
+[2m2025-07-24T05:19:50.553499Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT current_schema()
+[2m2025-07-24T05:19:50.553560Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT current_schema()': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.553583Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.553586Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT current_schema()
+[2m2025-07-24T05:19:50.554712Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT current_schema()
+[2m2025-07-24T05:19:50.554759Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.554767Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.554771Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.554778Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.554984Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:50.555006Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:50.555037Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:50.555668Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT 1
+[2m2025-07-24T05:19:50.555698Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT 1
+[2m2025-07-24T05:19:50.555735Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT 1
+[2m2025-07-24T05:19:50.555741Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT 1
+[2m2025-07-24T05:19:50.555744Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT 1
+[2m2025-07-24T05:19:50.555750Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT 1
+[2m2025-07-24T05:19:50.555787Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT 1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.555817Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:50.555821Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT 1
+[2m2025-07-24T05:19:50.556961Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT 1
+[2m2025-07-24T05:19:50.564237Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:50.564249Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.564252Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.564257Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.567192Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:50.567225Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:50.567291Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:50.567446Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.567481Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.686403Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query after array operator translation: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.696389Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.696402Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.696408Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.696426Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.698829Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.699431Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.699655Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 0 rows
+[2m2025-07-24T05:19:50.699662Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.701250Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_catalog.pg_class") for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.701274Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_catalog.pg_class', looking up schema for 1 columns
+[2m2025-07-24T05:19:50.706045Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_catalog.pg_class.relname'
+[2m2025-07-24T05:19:50.714386Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:50.714401Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.714407Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.714412Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.715043Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.715080Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.723630Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query after array operator translation: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.733155Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.733169Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.733174Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.733182Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.733614Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.733753Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.733990Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 0 rows
+[2m2025-07-24T05:19:50.733996Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.735504Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_catalog.pg_class") for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.735527Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_catalog.pg_class', looking up schema for 1 columns
+[2m2025-07-24T05:19:50.740363Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_catalog.pg_class.relname'
+[2m2025-07-24T05:19:50.748732Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:50.748747Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.748753Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.748758Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.749194Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.749217Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.757764Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query after array operator translation: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.767335Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.767365Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.767370Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.767378Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.767817Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.767957Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.768175Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 0 rows
+[2m2025-07-24T05:19:50.768182Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.769684Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_catalog.pg_class") for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.769721Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_catalog.pg_class', looking up schema for 1 columns
+[2m2025-07-24T05:19:50.774643Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_catalog.pg_class.relname'
+[2m2025-07-24T05:19:50.783036Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:50.783057Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.783063Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.783068Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.783509Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.783533Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.792094Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query after array operator translation: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.801735Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.801751Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.801756Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.801767Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.802227Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.802358Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.802589Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 0 rows
+[2m2025-07-24T05:19:50.802595Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.804094Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_catalog.pg_class") for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.804116Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_catalog.pg_class', looking up schema for 1 columns
+[2m2025-07-24T05:19:50.808974Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_catalog.pg_class.relname'
+[2m2025-07-24T05:19:50.817392Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:50.817416Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.817422Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.817427Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.817905Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.817931Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.826493Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query after array operator translation: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.836109Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.836123Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.836128Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.836136Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.836575Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.836703Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.836952Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 0 rows
+[2m2025-07-24T05:19:50.836961Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.838447Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_catalog.pg_class") for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.838468Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_catalog.pg_class', looking up schema for 1 columns
+[2m2025-07-24T05:19:50.843261Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_catalog.pg_class.relname'
+[2m2025-07-24T05:19:50.851498Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:50.851513Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.851519Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.851523Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.851952Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.851977Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm']) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.860559Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query after array operator translation: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.870098Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.870111Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.870127Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.870134Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.870529Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.870662Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:50.870882Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 0 rows
+[2m2025-07-24T05:19:50.870890Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT pg_class.relname FROM pg_class JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace WHERE pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_class.relkind) AND '1' AND pg_namespace.nspname <> 'pg_catalog'
+[2m2025-07-24T05:19:50.872360Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("pg_catalog.pg_class") for query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-24T05:19:50.872381Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'pg_catalog.pg_class', looking up schema for 1 columns
+[2m2025-07-24T05:19:50.877163Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'pg_catalog.pg_class.relname'
+[2m2025-07-24T05:19:50.885770Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:50.885794Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:50.885805Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:50.885810Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:50.886599Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+CREATE TABLE users (
+	id SERIAL NOT NULL, 
+	username VARCHAR(50) NOT NULL, 
+	email VARCHAR(100) NOT NULL, 
+	full_name VARCHAR(100), 
+	is_active BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	birth_date DATE, 
+	PRIMARY KEY (id), 
+	UNIQUE (username), 
+	UNIQUE (email)
+)
+
+
+[2m2025-07-24T05:19:50.886619Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: CREATE TABLE users (
+	id SERIAL NOT NULL, 
+	username VARCHAR(50) NOT NULL, 
+	email VARCHAR(100) NOT NULL, 
+	full_name VARCHAR(100), 
+	is_active BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	birth_date DATE, 
+	PRIMARY KEY (id), 
+	UNIQUE (username), 
+	UNIQUE (email)
+)
+[2m2025-07-24T05:19:50.887368Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Create for query: CREATE TABLE users (
+	id SERIAL NOT NULL, 
+	username VARCHAR(50) NOT NULL, 
+	email VARCHAR(100) NOT NULL, 
+	full_name VARCHAR(100), 
+	is_active BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	birth_date DATE, 
+	PRIMARY KEY (id), 
+	UNIQUE (username), 
+	UNIQUE (email)
+)
+[2m2025-07-24T05:19:50.895634Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 7
+[2m2025-07-24T05:19:50.895953Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-24T05:19:50.896273Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.birth_date -> DATE (INTEGER)
+[2m2025-07-24T05:19:50.896451Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.full_name -> VARCHAR(100) (TEXT)
+[2m2025-07-24T05:19:50.896669Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: users.full_name max_length=100
+[2m2025-07-24T05:19:50.896847Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.is_active -> BOOLEAN (INTEGER)
+[2m2025-07-24T05:19:50.897027Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-24T05:19:50.897191Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.email -> VARCHAR(100) (TEXT)
+[2m2025-07-24T05:19:50.897388Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: users.email max_length=100
+[2m2025-07-24T05:19:50.897558Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.username -> VARCHAR(50) (TEXT)
+[2m2025-07-24T05:19:50.897760Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: users.username max_length=50
+[2m2025-07-24T05:19:50.897962Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-24T05:19:50.897968Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table users (simple query protocol)
+[2m2025-07-24T05:19:50.897977Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: users
+[2m2025-07-24T05:19:50.928316Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: users
+[2m2025-07-24T05:19:50.928346Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: users
+[2m2025-07-24T05:19:50.928995Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+CREATE TABLE categories (
+	id SERIAL NOT NULL, 
+	name VARCHAR(50) NOT NULL, 
+	description TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	UNIQUE (name)
+)
+
+
+[2m2025-07-24T05:19:50.929024Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: CREATE TABLE categories (
+	id SERIAL NOT NULL, 
+	name VARCHAR(50) NOT NULL, 
+	description TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	UNIQUE (name)
+)
+[2m2025-07-24T05:19:50.929340Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Create for query: CREATE TABLE categories (
+	id SERIAL NOT NULL, 
+	name VARCHAR(50) NOT NULL, 
+	description TEXT, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id), 
+	UNIQUE (name)
+)
+[2m2025-07-24T05:19:50.937862Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 4
+[2m2025-07-24T05:19:50.937913Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-24T05:19:50.938132Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-24T05:19:50.938302Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.name -> VARCHAR(50) (TEXT)
+[2m2025-07-24T05:19:50.938518Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: categories.name max_length=50
+[2m2025-07-24T05:19:50.938708Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-24T05:19:50.938881Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.description -> TEXT (TEXT)
+[2m2025-07-24T05:19:50.938887Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table categories (simple query protocol)
+[2m2025-07-24T05:19:50.938893Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: categories
+[2m2025-07-24T05:19:50.968749Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: categories
+[2m2025-07-24T05:19:50.968778Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: categories
+[2m2025-07-24T05:19:50.969447Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+CREATE TABLE products (
+	id SERIAL NOT NULL, 
+	name VARCHAR(100) NOT NULL, 
+	description TEXT, 
+	price NUMERIC(10, 2) NOT NULL, 
+	stock_quantity INTEGER, 
+	is_available BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id)
+)
+
+
+[2m2025-07-24T05:19:50.969466Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: CREATE TABLE products (
+	id SERIAL NOT NULL, 
+	name VARCHAR(100) NOT NULL, 
+	description TEXT, 
+	price NUMERIC(10, 2) NOT NULL, 
+	stock_quantity INTEGER, 
+	is_available BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id)
+)
+[2m2025-07-24T05:19:50.969833Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Create for query: CREATE TABLE products (
+	id SERIAL NOT NULL, 
+	name VARCHAR(100) NOT NULL, 
+	description TEXT, 
+	price NUMERIC(10, 2) NOT NULL, 
+	stock_quantity INTEGER, 
+	is_available BOOLEAN, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	PRIMARY KEY (id)
+)
+[2m2025-07-24T05:19:50.978316Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 7
+[2m2025-07-24T05:19:50.978363Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-24T05:19:50.978560Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.name -> VARCHAR(100) (TEXT)
+[2m2025-07-24T05:19:50.978783Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: products.name max_length=100
+[2m2025-07-24T05:19:50.978960Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.description -> TEXT (TEXT)
+[2m2025-07-24T05:19:50.979141Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.stock_quantity -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:50.979326Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-24T05:19:50.979507Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-24T05:19:50.979674Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.is_available -> BOOLEAN (INTEGER)
+[2m2025-07-24T05:19:50.979823Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.price -> NUMERIC(10,2) (DECIMAL)
+[2m2025-07-24T05:19:50.980031Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored numeric constraint: products.price precision=10 scale=2
+[2m2025-07-24T05:19:50.980035Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table products (simple query protocol)
+[2m2025-07-24T05:19:50.980042Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: products
+[2m2025-07-24T05:19:51.009768Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: products
+[2m2025-07-24T05:19:51.009818Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: products
+[2m2025-07-24T05:19:51.010702Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+CREATE TABLE posts (
+	id SERIAL NOT NULL, 
+	title VARCHAR(200) NOT NULL, 
+	content TEXT, 
+	author_id INTEGER NOT NULL, 
+	category_id INTEGER, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	view_count INTEGER, 
+	is_published BOOLEAN, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(author_id) REFERENCES users (id), 
+	FOREIGN KEY(category_id) REFERENCES categories (id)
+)
+
+
+[2m2025-07-24T05:19:51.010733Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: CREATE TABLE posts (
+	id SERIAL NOT NULL, 
+	title VARCHAR(200) NOT NULL, 
+	content TEXT, 
+	author_id INTEGER NOT NULL, 
+	category_id INTEGER, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	view_count INTEGER, 
+	is_published BOOLEAN, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(author_id) REFERENCES users (id), 
+	FOREIGN KEY(category_id) REFERENCES categories (id)
+)
+[2m2025-07-24T05:19:51.011398Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Create for query: CREATE TABLE posts (
+	id SERIAL NOT NULL, 
+	title VARCHAR(200) NOT NULL, 
+	content TEXT, 
+	author_id INTEGER NOT NULL, 
+	category_id INTEGER, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	view_count INTEGER, 
+	is_published BOOLEAN, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(author_id) REFERENCES users (id), 
+	FOREIGN KEY(category_id) REFERENCES categories (id)
+)
+[2m2025-07-24T05:19:51.020298Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 9
+[2m2025-07-24T05:19:51.020351Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-24T05:19:51.020556Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.is_published -> BOOLEAN (INTEGER)
+[2m2025-07-24T05:19:51.020734Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.author_id -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.020914Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.category_id -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.021089Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-24T05:19:51.021264Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.title -> VARCHAR(200) (TEXT)
+[2m2025-07-24T05:19:51.021470Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: posts.title max_length=200
+[2m2025-07-24T05:19:51.021650Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.updated_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-24T05:19:51.021833Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.view_count -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.022020Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-24T05:19:51.022177Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.content -> TEXT (TEXT)
+[2m2025-07-24T05:19:51.022181Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table posts (simple query protocol)
+[2m2025-07-24T05:19:51.022188Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: posts
+[2m2025-07-24T05:19:51.051756Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: posts
+[2m2025-07-24T05:19:51.051784Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: posts
+[2m2025-07-24T05:19:51.052441Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+CREATE TABLE orders (
+	id SERIAL NOT NULL, 
+	customer_id INTEGER NOT NULL, 
+	order_date DATE, 
+	order_time TIME WITHOUT TIME ZONE, 
+	total_amount NUMERIC(12, 2), 
+	status VARCHAR(20), 
+	notes TEXT, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(customer_id) REFERENCES users (id)
+)
+
+
+[2m2025-07-24T05:19:51.052461Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: CREATE TABLE orders (
+	id SERIAL NOT NULL, 
+	customer_id INTEGER NOT NULL, 
+	order_date DATE, 
+	order_time TIME WITHOUT TIME ZONE, 
+	total_amount NUMERIC(12, 2), 
+	status VARCHAR(20), 
+	notes TEXT, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(customer_id) REFERENCES users (id)
+)
+[2m2025-07-24T05:19:51.052897Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Create for query: CREATE TABLE orders (
+	id SERIAL NOT NULL, 
+	customer_id INTEGER NOT NULL, 
+	order_date DATE, 
+	order_time TIME WITHOUT TIME ZONE, 
+	total_amount NUMERIC(12, 2), 
+	status VARCHAR(20), 
+	notes TEXT, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(customer_id) REFERENCES users (id)
+)
+[2m2025-07-24T05:19:51.061218Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 7
+[2m2025-07-24T05:19:51.061265Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-24T05:19:51.061438Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.total_amount -> NUMERIC(12,2) (DECIMAL)
+[2m2025-07-24T05:19:51.061684Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored numeric constraint: orders.total_amount precision=12 scale=2
+[2m2025-07-24T05:19:51.061866Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.status -> VARCHAR(20) (TEXT)
+[2m2025-07-24T05:19:51.062074Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: orders.status max_length=20
+[2m2025-07-24T05:19:51.062265Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.order_time -> TIME WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-24T05:19:51.062415Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.notes -> TEXT (TEXT)
+[2m2025-07-24T05:19:51.062581Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.customer_id -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.062773Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-24T05:19:51.062954Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.order_date -> DATE (INTEGER)
+[2m2025-07-24T05:19:51.062958Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table orders (simple query protocol)
+[2m2025-07-24T05:19:51.062965Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: orders
+[2m2025-07-24T05:19:51.092702Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: orders
+[2m2025-07-24T05:19:51.092743Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: orders
+[2m2025-07-24T05:19:51.093398Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+CREATE TABLE order_items (
+	id SERIAL NOT NULL, 
+	order_id INTEGER NOT NULL, 
+	product_id INTEGER NOT NULL, 
+	quantity INTEGER NOT NULL, 
+	unit_price NUMERIC(10, 2) NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(order_id) REFERENCES orders (id), 
+	FOREIGN KEY(product_id) REFERENCES products (id)
+)
+
+
+[2m2025-07-24T05:19:51.093418Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: CREATE TABLE order_items (
+	id SERIAL NOT NULL, 
+	order_id INTEGER NOT NULL, 
+	product_id INTEGER NOT NULL, 
+	quantity INTEGER NOT NULL, 
+	unit_price NUMERIC(10, 2) NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(order_id) REFERENCES orders (id), 
+	FOREIGN KEY(product_id) REFERENCES products (id)
+)
+[2m2025-07-24T05:19:51.093845Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Create for query: CREATE TABLE order_items (
+	id SERIAL NOT NULL, 
+	order_id INTEGER NOT NULL, 
+	product_id INTEGER NOT NULL, 
+	quantity INTEGER NOT NULL, 
+	unit_price NUMERIC(10, 2) NOT NULL, 
+	PRIMARY KEY (id), 
+	FOREIGN KEY(order_id) REFERENCES orders (id), 
+	FOREIGN KEY(product_id) REFERENCES products (id)
+)
+[2m2025-07-24T05:19:51.102206Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 5
+[2m2025-07-24T05:19:51.102256Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-24T05:19:51.102487Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-24T05:19:51.102665Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.order_id -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.102828Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.unit_price -> NUMERIC(10,2) (DECIMAL)
+[2m2025-07-24T05:19:51.103036Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored numeric constraint: order_items.unit_price precision=10 scale=2
+[2m2025-07-24T05:19:51.103207Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.quantity -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.103379Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.product_id -> INTEGER (INTEGER)
+[2m2025-07-24T05:19:51.103383Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table order_items (simple query protocol)
+[2m2025-07-24T05:19:51.103390Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: order_items
+[2m2025-07-24T05:19:51.133292Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: order_items
+[2m2025-07-24T05:19:51.133324Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: order_items
+[2m2025-07-24T05:19:51.133609Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: COMMIT
+[2m2025-07-24T05:19:51.133632Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: COMMIT
+[2m2025-07-24T05:19:51.133700Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Commit for query: COMMIT
+[2m2025-07-24T05:19:51.134160Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT 1
+[2m2025-07-24T05:19:51.134173Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT 1
+[2m2025-07-24T05:19:51.134211Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT 1
+[2m2025-07-24T05:19:51.134215Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT 1
+[2m2025-07-24T05:19:51.134219Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT 1
+[2m2025-07-24T05:19:51.134232Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT 1
+[2m2025-07-24T05:19:51.134258Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT 1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.134292Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.134296Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT 1
+[2m2025-07-24T05:19:51.135480Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT 1
+[2m2025-07-24T05:19:51.135527Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.135538Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:51.135544Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.135553Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.135823Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:51.135835Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:51.135859Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:51.135925Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: 
+                    SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+                
+[2m2025-07-24T05:19:51.135939Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-24T05:19:51.136457Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-24T05:19:51.136462Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-24T05:19:51.136465Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-24T05:19:51.136488Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-24T05:19:51.137075Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'
+[2m2025-07-24T05:19:51.137205Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Read-only optimizer succeeded for query: SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'
+[2m2025-07-24T05:19:51.137210Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'
+[2m2025-07-24T05:19:51.138729Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("information_schema.tables") for query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-24T05:19:51.138745Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'information_schema.tables', looking up schema for 1 columns
+[2m2025-07-24T05:19:51.143912Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'information_schema.tables.table_name'
+[2m2025-07-24T05:19:51.152342Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 9 rows
+[2m2025-07-24T05:19:51.152367Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:51.152373Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.152382Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.152664Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:51.152678Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:51.152742Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:51.158981Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT 1
+[2m2025-07-24T05:19:51.158997Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT 1
+[2m2025-07-24T05:19:51.159039Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT 1
+[2m2025-07-24T05:19:51.159043Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT 1
+[2m2025-07-24T05:19:51.159047Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT 1
+[2m2025-07-24T05:19:51.159059Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT 1
+[2m2025-07-24T05:19:51.159084Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT 1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.159129Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.159142Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT 1
+[2m2025-07-24T05:19:51.160368Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT 1
+[2m2025-07-24T05:19:51.160409Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.160417Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:51.160422Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.160429Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.161537Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:51.161551Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:51.161580Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:51.161653Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: INSERT INTO categories (name, description, created_at) SELECT p0::VARCHAR, p1::TEXT, p2::TIMESTAMP WITHOUT TIME ZONE FROM (VALUES ('Technology', 'Posts about technology and programming', '2025-07-24T05:19:51.161409'::timestamp, 0), ('Lifestyle', 'Posts about lifestyle and personal development', '2025-07-24T05:19:51.161413'::timestamp, 1)) AS imp_sen(p0, p1, p2, sen_counter) ORDER BY sen_counter RETURNING categories.id, categories.id AS id__1
+[2m2025-07-24T05:19:51.161669Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: INSERT INTO categories (name, description, created_at) SELECT p0::VARCHAR, p1::TEXT, p2::TIMESTAMP WITHOUT TIME ZONE FROM (VALUES ('Technology', 'Posts about technology and programming', '2025-07-24T05:19:51.161409'::timestamp, 0), ('Lifestyle', 'Posts about lifestyle and personal development', '2025-07-24T05:19:51.161413'::timestamp, 1)) AS imp_sen(p0, p1, p2, sen_counter) ORDER BY sen_counter RETURNING categories.id, categories.id AS id__1
+[2m2025-07-24T05:19:51.176074Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = 'categories'
+[2m2025-07-24T05:19:51.176179Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Read-only optimizer succeeded for query: SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = 'categories'
+[2m2025-07-24T05:19:51.176185Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = 'categories'
+[2m2025-07-24T05:19:51.176401Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Insert for query: INSERT INTO categories (name, description, created_at) SELECT CAST(p0 AS TEXT), CAST(p1 AS TEXT), p2
+[2m2025-07-24T05:19:51.178999Z[0m [31mERROR[0m [2mpgsqlite[0m[2m:[0m Query execution error: SQLite error: no such column: p0 in INSERT INTO categories (name, description, created_at) SELECT CAST(p0 AS TEXT), CAST(p1 AS TEXT), p2 at offset 67
+[2m2025-07-24T05:19:51.179219Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:51.179229Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:51.179262Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:51.183222Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT 1
+[2m2025-07-24T05:19:51.183248Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT 1
+[2m2025-07-24T05:19:51.183312Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT 1
+[2m2025-07-24T05:19:51.183316Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT 1
+[2m2025-07-24T05:19:51.183321Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT 1
+[2m2025-07-24T05:19:51.183335Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT 1
+[2m2025-07-24T05:19:51.183359Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT 1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.183406Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.183410Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT 1
+[2m2025-07-24T05:19:51.184768Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT 1
+[2m2025-07-24T05:19:51.184826Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.184835Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:51.184841Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.184850Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.187229Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:51.187245Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:51.187282Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:51.187370Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.187383Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.202827Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-24T05:19:51.203980Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.203991Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.203996Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.204039Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.204323Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.204411Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.204415Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.205814Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("users") for query: SELECT count(*) AS count_1 
+FROM (SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users) AS anon_1
+[2m2025-07-24T05:19:51.205835Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'users', looking up schema for 1 columns
+[2m2025-07-24T05:19:51.218503Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'users.count_1'
+[2m2025-07-24T05:19:51.224443Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.224461Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [20]
+[2m2025-07-24T05:19:51.224467Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.224478Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.226631Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.226655Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.227234Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-24T05:19:51.228406Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.228417Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.228421Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.228459Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.228708Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.228773Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.228780Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.230195Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("posts") for query: SELECT count(*) AS count_1 
+FROM (SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts) AS anon_1
+[2m2025-07-24T05:19:51.230216Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'posts', looking up schema for 1 columns
+[2m2025-07-24T05:19:51.242697Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'posts.count_1'
+[2m2025-07-24T05:19:51.248813Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.248855Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [20]
+[2m2025-07-24T05:19:51.248863Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.248876Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.250868Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.250912Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.251528Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-24T05:19:51.253053Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.253070Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.253075Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.253118Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.253379Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.253493Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.253499Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.254961Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("products") for query: SELECT count(*) AS count_1 
+FROM (SELECT products.id AS products_id, products.name AS products_name, products.description AS products_description, products.price AS products_price, products.stock_quantity AS products_stock_quantity, products.is_available AS products_is_available, products.created_at AS products_created_at 
+FROM products) AS anon_1
+[2m2025-07-24T05:19:51.254984Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'products', looking up schema for 1 columns
+[2m2025-07-24T05:19:51.270022Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'products.count_1'
+[2m2025-07-24T05:19:51.275775Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.275795Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [20]
+[2m2025-07-24T05:19:51.275802Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.275812Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.277028Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.277052Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.277737Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.277747Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.277751Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.277791Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.278145Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.278207Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 7 columns and 0 rows
+[2m2025-07-24T05:19:51.278212Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.279656Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("users") for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.is_active = true
+[2m2025-07-24T05:19:51.279675Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'users', looking up schema for 7 columns
+[2m2025-07-24T05:19:51.292186Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.id' (via SELECT mapping users_id) -> SERIAL
+[2m2025-07-24T05:19:51.292229Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.username' (via SELECT mapping users_username) -> VARCHAR(50)
+[2m2025-07-24T05:19:51.292248Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.email' (via SELECT mapping users_email) -> VARCHAR(100)
+[2m2025-07-24T05:19:51.292266Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.full_name' (via SELECT mapping users_full_name) -> VARCHAR(100)
+[2m2025-07-24T05:19:51.292285Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.is_active' (via SELECT mapping users_is_active) -> BOOLEAN
+[2m2025-07-24T05:19:51.292302Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.created_at' (via SELECT mapping users_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.292320Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.birth_date' (via SELECT mapping users_birth_date) -> DATE
+[2m2025-07-24T05:19:51.292481Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.292493Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 1043, 1043, 16, 1114, 1082]
+[2m2025-07-24T05:19:51.292500Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.292506Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.293977Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.294011Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.294648Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.294655Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.294660Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.294694Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.295086Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.295159Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 7 columns and 0 rows
+[2m2025-07-24T05:19:51.295163Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.296769Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("users") for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.296800Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'users', looking up schema for 7 columns
+[2m2025-07-24T05:19:51.309467Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.id' (via SELECT mapping users_id) -> SERIAL
+[2m2025-07-24T05:19:51.309516Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.username' (via SELECT mapping users_username) -> VARCHAR(50)
+[2m2025-07-24T05:19:51.309536Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.email' (via SELECT mapping users_email) -> VARCHAR(100)
+[2m2025-07-24T05:19:51.309554Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.full_name' (via SELECT mapping users_full_name) -> VARCHAR(100)
+[2m2025-07-24T05:19:51.309573Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.is_active' (via SELECT mapping users_is_active) -> BOOLEAN
+[2m2025-07-24T05:19:51.309591Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.created_at' (via SELECT mapping users_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.309609Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.birth_date' (via SELECT mapping users_birth_date) -> DATE
+[2m2025-07-24T05:19:51.309735Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.309751Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 1043, 1043, 16, 1114, 1082]
+[2m2025-07-24T05:19:51.309758Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.309768Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.311528Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.311587Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.312449Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.312462Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.312475Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.312520Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.312699Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200': pattern=JoinWithWhere, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.312802Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 9 columns and 0 rows
+[2m2025-07-24T05:19:51.312809Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.314355Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("posts") for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts JOIN categories ON categories.id = posts.category_id 
+WHERE categories.name = 'Technology' OR posts.view_count > 200
+[2m2025-07-24T05:19:51.314377Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'posts', looking up schema for 9 columns
+[2m2025-07-24T05:19:51.326105Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.id' (via SELECT mapping posts_id) -> SERIAL
+[2m2025-07-24T05:19:51.326135Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.title' (via SELECT mapping posts_title) -> VARCHAR(200)
+[2m2025-07-24T05:19:51.326155Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.content' (via SELECT mapping posts_content) -> TEXT
+[2m2025-07-24T05:19:51.326173Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.author_id' (via SELECT mapping posts_author_id) -> INTEGER
+[2m2025-07-24T05:19:51.326198Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.category_id' (via SELECT mapping posts_category_id) -> INTEGER
+[2m2025-07-24T05:19:51.326216Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.created_at' (via SELECT mapping posts_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.326234Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.updated_at' (via SELECT mapping posts_updated_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.326251Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.view_count' (via SELECT mapping posts_view_count) -> INTEGER
+[2m2025-07-24T05:19:51.326271Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.is_published' (via SELECT mapping posts_is_published) -> BOOLEAN
+[2m2025-07-24T05:19:51.326368Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.326376Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 25, 23, 23, 1114, 1114, 23, 16]
+[2m2025-07-24T05:19:51.326381Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.326385Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.327819Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.327840Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.328338Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.328343Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.328347Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.328375Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.328727Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.328789Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 7 columns and 0 rows
+[2m2025-07-24T05:19:51.328796Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.330197Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("users") for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username LIKE '%dev%'
+[2m2025-07-24T05:19:51.330214Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'users', looking up schema for 7 columns
+[2m2025-07-24T05:19:51.342593Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.id' (via SELECT mapping users_id) -> SERIAL
+[2m2025-07-24T05:19:51.342628Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.username' (via SELECT mapping users_username) -> VARCHAR(50)
+[2m2025-07-24T05:19:51.342646Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.email' (via SELECT mapping users_email) -> VARCHAR(100)
+[2m2025-07-24T05:19:51.342664Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.full_name' (via SELECT mapping users_full_name) -> VARCHAR(100)
+[2m2025-07-24T05:19:51.342683Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.is_active' (via SELECT mapping users_is_active) -> BOOLEAN
+[2m2025-07-24T05:19:51.342701Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.created_at' (via SELECT mapping users_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.342725Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.birth_date' (via SELECT mapping users_birth_date) -> DATE
+[2m2025-07-24T05:19:51.342809Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.342819Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 1043, 1043, 16, 1114, 1082]
+[2m2025-07-24T05:19:51.342823Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.342828Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.343343Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:51.343358Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:51.343424Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:51.344079Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT 1
+[2m2025-07-24T05:19:51.344117Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT 1
+[2m2025-07-24T05:19:51.344149Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT 1
+[2m2025-07-24T05:19:51.344152Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT 1
+[2m2025-07-24T05:19:51.344156Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT 1
+[2m2025-07-24T05:19:51.344167Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT 1
+[2m2025-07-24T05:19:51.344186Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT 1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.344214Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.344218Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT 1
+[2m2025-07-24T05:19:51.345386Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT 1
+[2m2025-07-24T05:19:51.345422Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.345427Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:51.345430Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.345438Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.345687Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:51.345698Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:51.345727Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:51.345888Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.345922Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.346411Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.346416Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.346419Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.346450Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.346512Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.346561Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 7 columns and 0 rows
+[2m2025-07-24T05:19:51.346564Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.347969Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("users") for query: SELECT users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date 
+FROM users 
+WHERE users.username = 'alice_dev' 
+ LIMIT 1
+[2m2025-07-24T05:19:51.348008Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.348013Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 1043, 1043, 16, 1114, 1082]
+[2m2025-07-24T05:19:51.348017Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.348020Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.349693Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.349729Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.350866Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.350876Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.350880Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.350941Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.351191Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id': pattern=JoinWithWhere, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.351283Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 20 columns and 0 rows
+[2m2025-07-24T05:19:51.351287Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.352724Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("posts") for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published, users.id AS users_id, users.username AS users_username, users.email AS users_email, users.full_name AS users_full_name, users.is_active AS users_is_active, users.created_at AS users_created_at, users.birth_date AS users_birth_date, categories.id AS categories_id, categories.name AS categories_name, categories.description AS categories_description, categories.created_at AS categories_created_at 
+FROM posts JOIN users ON posts.author_id = users.id JOIN categories ON posts.category_id = categories.id
+[2m2025-07-24T05:19:51.352746Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'posts', looking up schema for 20 columns
+[2m2025-07-24T05:19:51.367338Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.id' (via SELECT mapping posts_id) -> SERIAL
+[2m2025-07-24T05:19:51.367380Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.title' (via SELECT mapping posts_title) -> VARCHAR(200)
+[2m2025-07-24T05:19:51.367400Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.content' (via SELECT mapping posts_content) -> TEXT
+[2m2025-07-24T05:19:51.367433Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.author_id' (via SELECT mapping posts_author_id) -> INTEGER
+[2m2025-07-24T05:19:51.367453Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.category_id' (via SELECT mapping posts_category_id) -> INTEGER
+[2m2025-07-24T05:19:51.367471Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.created_at' (via SELECT mapping posts_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.367488Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.updated_at' (via SELECT mapping posts_updated_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.367506Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.view_count' (via SELECT mapping posts_view_count) -> INTEGER
+[2m2025-07-24T05:19:51.367525Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.is_published' (via SELECT mapping posts_is_published) -> BOOLEAN
+[2m2025-07-24T05:19:51.367543Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.id' (via SELECT mapping users_id) -> SERIAL
+[2m2025-07-24T05:19:51.367614Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.created_at' (via SELECT mapping users_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.367645Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.id' (via SELECT mapping categories_id) -> SERIAL
+[2m2025-07-24T05:19:51.367690Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.created_at' (via SELECT mapping categories_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.428733Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.428782Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 25, 23, 23, 1114, 1114, 23, 16, 23, 25, 25, 25, 25, 1114, 25, 23, 25, 25, 1114]
+[2m2025-07-24T05:19:51.428789Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.428800Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.432728Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.432782Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.433297Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.433305Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.433310Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.433351Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.433489Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.433631Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 3 columns and 0 rows
+[2m2025-07-24T05:19:51.433635Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.435291Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("users") for query: SELECT users.username AS users_username, count(posts.id) AS post_count, avg(posts.view_count) AS avg_views 
+FROM users JOIN posts ON users.id = posts.author_id GROUP BY users.username
+[2m2025-07-24T05:19:51.435318Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'users', looking up schema for 3 columns
+[2m2025-07-24T05:19:51.444402Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'users.username' (via SELECT mapping users_username) -> VARCHAR(50)
+[2m2025-07-24T05:19:51.444426Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'users.post_count'
+[2m2025-07-24T05:19:51.444437Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'users.avg_views'
+[2m2025-07-24T05:19:51.455288Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.455303Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [1043, 20, 1700]
+[2m2025-07-24T05:19:51.455309Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.455315Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.457002Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.457025Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.464518Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["order_items.quantity", "order_items.unit_price"] aliased as 'item_total', using 'order_items.quantity' as source
+[2m2025-07-24T05:19:51.465823Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.465836Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.465842Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.465889Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.466081Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id': pattern=JoinWithWhere, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.466174Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 6 columns and 0 rows
+[2m2025-07-24T05:19:51.466178Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.467623Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("orders") for query: SELECT orders.id AS orders_id, users.username AS users_username, products.name AS products_name, order_items.quantity AS order_items_quantity, order_items.unit_price AS order_items_unit_price, order_items.quantity * order_items.unit_price AS item_total 
+FROM orders JOIN users ON orders.customer_id = users.id JOIN order_items ON orders.id = order_items.order_id JOIN products ON order_items.product_id = products.id
+[2m2025-07-24T05:19:51.467662Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'orders', looking up schema for 6 columns
+[2m2025-07-24T05:19:51.479457Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'orders.id' (via SELECT mapping orders_id) -> SERIAL
+[2m2025-07-24T05:19:51.522952Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.522994Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 25, 25, 25, 25, 701]
+[2m2025-07-24T05:19:51.523000Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.523006Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.523467Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:51.523484Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:51.523562Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:51.526468Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT 1
+[2m2025-07-24T05:19:51.526502Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT 1
+[2m2025-07-24T05:19:51.526588Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT 1
+[2m2025-07-24T05:19:51.526596Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT 1
+[2m2025-07-24T05:19:51.526604Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT 1
+[2m2025-07-24T05:19:51.526628Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT 1
+[2m2025-07-24T05:19:51.526672Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT 1': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.526764Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 1 columns and 1 rows
+[2m2025-07-24T05:19:51.526785Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT 1
+[2m2025-07-24T05:19:51.528792Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: None for query: SELECT 1
+[2m2025-07-24T05:19:51.528836Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 1 rows
+[2m2025-07-24T05:19:51.528842Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25]
+[2m2025-07-24T05:19:51.528846Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.528855Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.549607Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: BEGIN
+[2m2025-07-24T05:19:51.549662Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: BEGIN
+[2m2025-07-24T05:19:51.549787Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Begin for query: BEGIN
+[2m2025-07-24T05:19:51.549946Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.549980Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.550650Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.550656Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.550660Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.550704Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.551056Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)': pattern=ComplexQuery, cache_result=false, supports_binary=false
+[2m2025-07-24T05:19:51.551183Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 9 columns and 0 rows
+[2m2025-07-24T05:19:51.551188Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.552817Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("posts") for query: SELECT posts.id AS posts_id, posts.title AS posts_title, posts.content AS posts_content, posts.author_id AS posts_author_id, posts.category_id AS posts_category_id, posts.created_at AS posts_created_at, posts.updated_at AS posts_updated_at, posts.view_count AS posts_view_count, posts.is_published AS posts_is_published 
+FROM posts 
+WHERE posts.view_count > (SELECT avg(posts.view_count) AS avg_1 
+FROM posts 
+WHERE posts.is_published = true)
+[2m2025-07-24T05:19:51.552844Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'posts', looking up schema for 9 columns
+[2m2025-07-24T05:19:51.565846Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.id' (via SELECT mapping posts_id) -> SERIAL
+[2m2025-07-24T05:19:51.565895Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.title' (via SELECT mapping posts_title) -> VARCHAR(200)
+[2m2025-07-24T05:19:51.565918Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.content' (via SELECT mapping posts_content) -> TEXT
+[2m2025-07-24T05:19:51.565936Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.author_id' (via SELECT mapping posts_author_id) -> INTEGER
+[2m2025-07-24T05:19:51.565955Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.category_id' (via SELECT mapping posts_category_id) -> INTEGER
+[2m2025-07-24T05:19:51.565973Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.created_at' (via SELECT mapping posts_created_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.565991Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.updated_at' (via SELECT mapping posts_updated_at) -> TIMESTAMP WITHOUT TIME ZONE
+[2m2025-07-24T05:19:51.566009Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.view_count' (via SELECT mapping posts_view_count) -> INTEGER
+[2m2025-07-24T05:19:51.566031Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.is_published' (via SELECT mapping posts_is_published) -> BOOLEAN
+[2m2025-07-24T05:19:51.566186Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.566197Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [23, 1043, 25, 23, 23, 1114, 1114, 23, 16]
+[2m2025-07-24T05:19:51.566206Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.566214Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.567970Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.567992Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.568460Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.568474Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.568478Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m === EXECUTE_SELECT CALLED with query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.568504Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Trying enhanced cache for query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.568886Z[0m [32m INFO[0m [2mpgsqlite::optimization::statement_cache_optimizer[0m[2m:[0m Query analysis result for 'SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true': pattern=ComplexQuery, cache_result=false, supports_binary=true
+[2m2025-07-24T05:19:51.568999Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache returned 3 columns and 0 rows
+[2m2025-07-24T05:19:51.569005Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Enhanced cache succeeded for query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.570577Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Table name extraction result: Some("posts") for query: SELECT posts.title AS posts_title, posts.view_count AS posts_view_count, rank() OVER (ORDER BY posts.view_count DESC) AS rank 
+FROM posts 
+WHERE posts.is_published = true
+[2m2025-07-24T05:19:51.570597Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found table name 'posts', looking up schema for 3 columns
+[2m2025-07-24T05:19:51.577065Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.title' (via SELECT mapping posts_title) -> VARCHAR(200)
+[2m2025-07-24T05:19:51.577095Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: Found schema type for 'posts.view_count' (via SELECT mapping posts_view_count) -> INTEGER
+[2m2025-07-24T05:19:51.577108Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type inference: No schema type found for 'posts.rank'
+[2m2025-07-24T05:19:51.582600Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 0 rows
+[2m2025-07-24T05:19:51.582615Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [1043, 23, 25]
+[2m2025-07-24T05:19:51.582620Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-07-24T05:19:51.582625Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+[2m2025-07-24T05:19:51.583096Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received query from 127.0.0.1:53564: ROLLBACK
+[2m2025-07-24T05:19:51.583110Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing query: ROLLBACK
+[2m2025-07-24T05:19:51.583169Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Rollback for query: ROLLBACK
+[2m2025-07-24T05:19:51.593144Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:53564 requested termination
+[2m2025-07-24T05:19:51.593195Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:53564 closed

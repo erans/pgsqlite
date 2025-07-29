@@ -31,7 +31,7 @@ static ARRAY_SLICE_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static ANY_OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r#"('[^']+'|"[^"]+"|[^\s=]+)\s*=\s*ANY\s*\((\b\w+(?:\.\w+)*)\)"#).unwrap()
+    Regex::new(r#"('[^']+'|"[^"]+"|[^\s=]+)\s*=\s*ANY\s*\(('[^']+'|"[^"]+"|[\w\.]+)\)"#).unwrap()
 });
 
 static ALL_OPERATOR_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -74,40 +74,51 @@ pub struct ArrayTranslator;
 impl ArrayTranslator {
     /// Check if SQL contains any array functions or operators (early exit optimization)
     fn contains_array_functions(sql: &str) -> bool {
-        // Quick text scan for array-related keywords
-        let sql_lower = sql.to_lowercase();
+        // Optimized: avoid to_lowercase() on entire query - check directly
         
-        // Array operators
-        if sql_lower.contains("@>") || sql_lower.contains("<@") || sql_lower.contains("&&") || sql_lower.contains("||") {
+        // Array operators (case-sensitive)
+        if sql.contains("@>") || sql.contains("<@") || sql.contains("&&") || sql.contains("||") {
             return true;
         }
         
         // Array subscript/slice notation or ARRAY[...] literals
-        if sql_lower.contains("[") && sql_lower.contains("]") {
+        if sql.contains("[") && sql.contains("]") {
             return true;
         }
         
-        // ARRAY[...] literal syntax
-        if sql_lower.contains("array[") {
+        // ARRAY[...] literal syntax - check both cases without full string conversion
+        if sql.contains("ARRAY[") || sql.contains("array[") {
             return true;
         }
         
-        // ANY/ALL operators
-        if sql_lower.contains(" any(") || sql_lower.contains(" all(") {
+        // ANY/ALL operators - check common cases
+        if sql.contains(" ANY(") || sql.contains(" any(") || 
+           sql.contains(" ALL(") || sql.contains(" all(") {
             return true;
         }
         
-        // Array functions
+        // Array functions - check both cases for common patterns
+        // Optimized: check for the most common case-sensitive patterns first
+        if sql.contains("array_agg(") || sql.contains("ARRAY_AGG(") ||
+           sql.contains("unnest(") || sql.contains("UNNEST(") ||
+           sql.contains("array_length(") || sql.contains("ARRAY_LENGTH(") ||
+           sql.contains("array_to_string(") || sql.contains("ARRAY_TO_STRING(") {
+            return true;
+        }
+        
+        // Less common array functions - only check if we haven't matched yet
         const ARRAY_FUNCTIONS: &[&str] = &[
-            "array_agg", "array_append", "array_prepend", "array_cat", "array_remove",
+            "array_append", "array_prepend", "array_cat", "array_remove",
             "array_replace", "array_slice", "string_to_array", "array_positions",
-            "array_length", "array_upper", "array_lower", "array_ndims", "array_position",
-            "array_contains", "array_contained", "array_overlap", "array_to_string", "unnest",
-            "json_array_length"
+            "array_upper", "array_lower", "array_ndims", "array_position",
+            "array_contains", "array_contained", "array_overlap", "json_array_length"
         ];
         
+        // For less common functions, do a case-insensitive check on smaller string segments
         for func in ARRAY_FUNCTIONS {
-            if sql_lower.contains(func) {
+            // Check for function followed by '(' to avoid false positives
+            let pattern = format!("{func}(");
+            if sql.contains(&pattern) || sql.contains(&pattern.to_uppercase()) {
                 return true;
             }
         }
@@ -276,6 +287,21 @@ impl ArrayTranslator {
     fn translate_any_operator(sql: &str) -> Result<String, PgSqliteError> {
         let mut result = sql.to_string();
         
+        // First handle ANY(ARRAY[...]) patterns - common in catalog queries
+        // Example: pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm'])
+        // Also handle parameter placeholders like $1, $2, etc (already converted from %(param)s)
+        let any_array_regex = Regex::new(r#"(\w+(?:\.\w+)*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[((?:'[^']*'(?:\s*,\s*'[^']*')*)|(?:\$\d+(?:\s*,\s*\$\d+)*)|(?:%\([^)]+\)s(?:\s*,\s*%\([^)]+\)s)*))\]\s*\)"#).unwrap();
+        while let Some(captures) = any_array_regex.captures(&result) {
+            let column = &captures[1];
+            let values = &captures[2];
+            
+            // Convert to IN clause for better performance
+            let replacement = format!("{column} IN ({values})");
+            debug!("ArrayTranslator: Converting ANY(ARRAY[...]) to IN: {} -> {}", &captures[0], &replacement);
+            result = result.replace(&captures[0], &replacement);
+        }
+        
+        // Then handle regular ANY(column) patterns
         while let Some(captures) = ANY_OPERATOR_REGEX.captures(&result) {
             let value = &captures[1];
             let array_col = &captures[2];

@@ -1,5 +1,6 @@
 use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_extended_protocol() {
@@ -7,6 +8,11 @@ async fn test_extended_protocol() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("debug")
         .try_init();
+    
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path_clone = db_path.clone();
     
     // Start test server
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -16,10 +22,10 @@ async fn test_extended_protocol() {
     let server_handle = tokio::spawn(async move {
         // Create database handler
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path_clone).unwrap()
         );
         
-        // Initialize test data
+        // Initialize test data - this will be persisted to the file
         db_handler.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)").await.unwrap();
         db_handler.execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)").await.unwrap();
         db_handler.execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)").await.unwrap();
@@ -146,4 +152,10 @@ async fn test_extended_protocol() {
     }
     
     server_handle.abort();
+    
+    // Clean up the database file
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }

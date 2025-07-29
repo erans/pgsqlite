@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio_util::codec::Framed;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tokio_rustls::TlsAcceptor;
 
 use pgsqlite::config::Config;
@@ -340,7 +340,21 @@ where
     }
 
     let session = Arc::new(SessionState::new(database, user));
-    let _session_id = uuid::Uuid::new_v4();
+    let session_id = session.id;
+
+    // Set the database handler for this session for proper lifecycle management
+    session.set_db_handler(db_handler.clone()).await;
+
+    // Create a connection for this session
+    if let Err(e) = session.initialize_connection().await {
+        error!("Failed to create session connection: {}", e);
+        return Err(anyhow::anyhow!("Failed to create session connection: {}", e));
+    }
+    
+    // Note: cleanup is now handled by SessionState Drop implementation
+    // when the session Arc is dropped
+    
+    // We'll handle cleanup at the end of the function
 
     // Send authentication OK
     framed
@@ -378,7 +392,7 @@ where
     while let Some(msg) = framed.next().await {
         match msg? {
             FrontendMessage::Query(sql) => {
-                info!("Received query from {}: {}", connection_info, sql);
+                debug!("Received query from {}: {}", connection_info, sql);
 
                 // Execute the query
                 match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, None).await {
@@ -387,6 +401,13 @@ where
                     }
                     Err(e) => {
                         error!("Query execution error: {}", e);
+                        
+                        // If we're in a transaction, mark it as failed
+                        // Let SQLAlchemy handle its own rollback to avoid double-rollback issues
+                        if session.in_transaction().await {
+                            session.set_transaction_status(TransactionStatus::InFailedTransaction).await;
+                        }
+                        
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
@@ -410,6 +431,7 @@ where
                 query,
                 param_types,
             } => {
+                info!("Received Parse from {}: query={}, name={}", connection_info, query, name);
                 match ExtendedQueryHandler::handle_parse(
                     &mut framed,
                     &db_handler,
@@ -473,6 +495,7 @@ where
                 }
             }
             FrontendMessage::Execute { portal, max_rows } => {
+                info!("Received Execute from {}: portal={}, max_rows={}", connection_info, portal, max_rows);
                 match ExtendedQueryHandler::handle_execute(
                     &mut framed,
                     &db_handler,
@@ -552,6 +575,16 @@ where
             }
             FrontendMessage::Terminate => {
                 info!("Client {} requested termination", connection_info);
+                
+                // Clean up any active transaction before closing
+                if session.in_transaction().await {
+                    info!("Rolling back active transaction before client disconnect");
+                    if let Err(e) = db_handler.rollback_with_session(&session_id).await {
+                        error!("Failed to rollback transaction on disconnect: {}", e);
+                    }
+                    session.set_transaction_status(TransactionStatus::Idle).await;
+                }
+                
                 break;
             }
             other => {
@@ -560,6 +593,9 @@ where
         }
     }
 
+    // Clean up session connection explicitly
+    session.cleanup_connection().await;
+    
     info!("Connection from {} closed", connection_info);
     Ok(())
 }

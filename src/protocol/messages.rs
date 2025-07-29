@@ -68,7 +68,7 @@ pub enum AuthenticationMessage {
     // Add more authentication types as needed
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TransactionStatus {
     Idle,
     InTransaction,

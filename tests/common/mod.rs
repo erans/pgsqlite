@@ -1,6 +1,7 @@
 use tokio::net::TcpListener;
 use tokio_postgres::{Client, NoTls};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub struct TestServer {
     pub client: Client,
@@ -8,12 +9,30 @@ pub struct TestServer {
     pub port: u16,
     #[allow(dead_code)]
     pub server_handle: tokio::task::JoinHandle<()>,
+    #[allow(dead_code)]
+    db_path: String,
 }
 
 impl TestServer {
     #[allow(dead_code)]
     pub fn abort(self) {
         self.server_handle.abort();
+    }
+}
+
+impl Drop for TestServer {
+    fn drop(&mut self) {
+        // Abort the server handle
+        self.server_handle.abort();
+        
+        // Clean up the database file if it exists
+        if !self.db_path.is_empty() && self.db_path != ":memory:" {
+            let _ = std::fs::remove_file(&self.db_path);
+            // Also try to remove journal and wal files
+            let _ = std::fs::remove_file(format!("{}-journal", self.db_path));
+            let _ = std::fs::remove_file(format!("{}-wal", self.db_path));
+            let _ = std::fs::remove_file(format!("{}-shm", self.db_path));
+        }
     }
 }
 
@@ -33,9 +52,13 @@ where
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path_clone = db_path.clone();
+    
     let server_handle = tokio::spawn(async move {
         let db_handler = Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path_clone).unwrap()
         );
         
         // Run custom initialization
@@ -46,16 +69,9 @@ where
         
         // Force a comprehensive cache refresh after initialization
         // This ensures that tables created during init are visible to catalog queries
-        {
-            let conn = db_handler.get_mut_connection().unwrap();
-            // Force a transaction commit to ensure changes are persisted
-            let _ = conn.execute_batch("BEGIN; COMMIT;");
-            // Force SQLite to refresh its schema cache by querying sqlite_master
-            let _ = conn.execute_batch("SELECT name FROM sqlite_master WHERE type='table'");
-            // Explicitly refresh SQLite's internal schema
-            let _ = conn.execute_batch("PRAGMA schema_version; PRAGMA table_list;");
-            drop(conn);
-        }
+        // In connection-per-session mode, we use execute method instead of direct connection access
+        let _ = db_handler.execute("PRAGMA schema_version").await;
+        let _ = db_handler.execute("PRAGMA table_list").await;
         
         // Add a small delay to ensure changes propagate
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -83,5 +99,6 @@ where
         client,
         port,
         server_handle,
+        db_path,
     }
 }

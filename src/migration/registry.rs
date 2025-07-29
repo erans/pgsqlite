@@ -16,6 +16,7 @@ lazy_static! {
         register_v7_numeric_constraints(&mut registry);
         register_v8_array_support(&mut registry);
         register_v9_fts_support(&mut registry);
+        register_v10_typcategory_support(&mut registry);
         
         registry
     };
@@ -1095,5 +1096,203 @@ fn register_v9_fts_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![8],
+    });
+}
+
+/// Version 10: Add typcategory column to pg_type view
+fn register_v10_typcategory_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(10, Migration {
+        version: 10,
+        name: "typcategory_support",
+        description: "Add typcategory column to pg_type view for PostgreSQL compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Drop the old pg_type view
+            r#"
+            DROP VIEW IF EXISTS pg_type;
+            "#,
+            
+            // Recreate pg_type view with typcategory field
+            r#"
+            CREATE VIEW pg_type AS
+            SELECT 
+                oid,
+                typname,
+                typtype,
+                typelem,
+                typarray,
+                typbasetype,
+                typnamespace,
+                typcategory
+            FROM (
+                -- Basic types with their array types and categories
+                SELECT 16 as oid, 'bool' as typname, 'b' as typtype, 0 as typelem, 1000 as typarray, 0 as typbasetype, 11 as typnamespace, 'B' as typcategory
+                UNION ALL SELECT 17, 'bytea', 'b', 0, 1001, 0, 11, 'U'
+                UNION ALL SELECT 20, 'int8', 'b', 0, 1016, 0, 11, 'N'
+                UNION ALL SELECT 21, 'int2', 'b', 0, 1005, 0, 11, 'N'
+                UNION ALL SELECT 23, 'int4', 'b', 0, 1007, 0, 11, 'N'
+                UNION ALL SELECT 25, 'text', 'b', 0, 1009, 0, 11, 'S'
+                UNION ALL SELECT 114, 'json', 'b', 0, 199, 0, 11, 'U'
+                UNION ALL SELECT 700, 'float4', 'b', 0, 1021, 0, 11, 'N'
+                UNION ALL SELECT 701, 'float8', 'b', 0, 1022, 0, 11, 'N'
+                UNION ALL SELECT 1042, 'char', 'b', 0, 1014, 0, 11, 'S'
+                UNION ALL SELECT 1043, 'varchar', 'b', 0, 1015, 0, 11, 'S'
+                UNION ALL SELECT 1082, 'date', 'b', 0, 1182, 0, 11, 'D'
+                UNION ALL SELECT 1083, 'time', 'b', 0, 1183, 0, 11, 'D'
+                UNION ALL SELECT 1114, 'timestamp', 'b', 0, 1115, 0, 11, 'D'
+                UNION ALL SELECT 1184, 'timestamptz', 'b', 0, 1185, 0, 11, 'D'
+                UNION ALL SELECT 1186, 'interval', 'b', 0, 1187, 0, 11, 'T'
+                UNION ALL SELECT 1266, 'timetz', 'b', 0, 1270, 0, 11, 'D'
+                UNION ALL SELECT 1560, 'bit', 'b', 0, 1561, 0, 11, 'V'
+                UNION ALL SELECT 1562, 'varbit', 'b', 0, 1563, 0, 11, 'V'
+                UNION ALL SELECT 1700, 'numeric', 'b', 0, 1231, 0, 11, 'N'
+                UNION ALL SELECT 2950, 'uuid', 'b', 0, 2951, 0, 11, 'U'
+                UNION ALL SELECT 3614, 'tsvector', 'b', 0, 3643, 0, 11, 'U'
+                UNION ALL SELECT 3615, 'tsquery', 'b', 0, 3645, 0, 11, 'U'
+                UNION ALL SELECT 3734, 'regconfig', 'b', 0, 3735, 0, 11, 'U'
+                UNION ALL SELECT 3802, 'jsonb', 'b', 0, 3807, 0, 11, 'U'
+                -- Array types (all have category 'A')
+                UNION ALL SELECT 1000, '_bool', 'b', 16, 0, 0, 11, 'A'
+                UNION ALL SELECT 1001, '_bytea', 'b', 17, 0, 0, 11, 'A'
+                UNION ALL SELECT 1005, '_int2', 'b', 21, 0, 0, 11, 'A'
+                UNION ALL SELECT 1007, '_int4', 'b', 23, 0, 0, 11, 'A'
+                UNION ALL SELECT 1009, '_text', 'b', 25, 0, 0, 11, 'A'
+                UNION ALL SELECT 1014, '_char', 'b', 1042, 0, 0, 11, 'A'
+                UNION ALL SELECT 1015, '_varchar', 'b', 1043, 0, 0, 11, 'A'
+                UNION ALL SELECT 1016, '_int8', 'b', 20, 0, 0, 11, 'A'
+                UNION ALL SELECT 1021, '_float4', 'b', 700, 0, 0, 11, 'A'
+                UNION ALL SELECT 1022, '_float8', 'b', 701, 0, 0, 11, 'A'
+                UNION ALL SELECT 1115, '_timestamp', 'b', 1114, 0, 0, 11, 'A'
+                UNION ALL SELECT 1182, '_date', 'b', 1082, 0, 0, 11, 'A'
+                UNION ALL SELECT 1183, '_time', 'b', 1083, 0, 0, 11, 'A'
+                UNION ALL SELECT 1185, '_timestamptz', 'b', 1184, 0, 0, 11, 'A'
+                UNION ALL SELECT 1187, '_interval', 'b', 1186, 0, 0, 11, 'A'
+                UNION ALL SELECT 1231, '_numeric', 'b', 1700, 0, 0, 11, 'A'
+                UNION ALL SELECT 1270, '_timetz', 'b', 1266, 0, 0, 11, 'A'
+                UNION ALL SELECT 1561, '_bit', 'b', 1560, 0, 0, 11, 'A'
+                UNION ALL SELECT 1563, '_varbit', 'b', 1562, 0, 0, 11, 'A'
+                UNION ALL SELECT 2951, '_uuid', 'b', 2950, 0, 0, 11, 'A'
+                UNION ALL SELECT 3643, '_tsvector', 'b', 3614, 0, 0, 11, 'A'
+                UNION ALL SELECT 3645, '_tsquery', 'b', 3615, 0, 0, 11, 'A'
+                UNION ALL SELECT 3735, '_regconfig', 'b', 3734, 0, 0, 11, 'A'
+                UNION ALL SELECT 3807, '_jsonb', 'b', 3802, 0, 0, 11, 'A'
+                UNION ALL SELECT 199, '_json', 'b', 114, 0, 0, 11, 'A'
+                -- ENUM types from __pgsqlite_enum_types (category 'E')
+                UNION ALL
+                SELECT 
+                    e.type_oid as oid,
+                    e.type_name as typname,
+                    'e' as typtype,
+                    0 as typelem,
+                    0 as typarray,  -- ENUMs don't have array types in our schema
+                    0 as typbasetype,
+                    e.namespace_oid as typnamespace,
+                    'E' as typcategory
+                FROM __pgsqlite_enum_types e
+            );
+            "#,
+            
+            // Create pg_enum view for ENUM values
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_enum AS
+            SELECT 
+                v.type_oid as enumtypid,
+                v.sort_order as enumsortorder,
+                v.label as enumlabel
+            FROM __pgsqlite_enum_values v;
+            "#,
+            
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata 
+            SET value = '10', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Drop pg_enum view
+            DROP VIEW IF EXISTS pg_enum;
+            
+            -- Restore v8 pg_type view without typcategory
+            DROP VIEW IF EXISTS pg_type;
+            CREATE VIEW pg_type AS
+            SELECT 
+                oid,
+                typname,
+                typtype,
+                typelem,
+                typarray,
+                typbasetype,
+                typnamespace
+            FROM (
+                -- Basic types with their array types
+                SELECT 16 as oid, 'bool' as typname, 'b' as typtype, 0 as typelem, 1000 as typarray, 0 as typbasetype, 11 as typnamespace
+                UNION ALL SELECT 17, 'bytea', 'b', 0, 1001, 0, 11
+                UNION ALL SELECT 20, 'int8', 'b', 0, 1016, 0, 11
+                UNION ALL SELECT 21, 'int2', 'b', 0, 1005, 0, 11
+                UNION ALL SELECT 23, 'int4', 'b', 0, 1007, 0, 11
+                UNION ALL SELECT 25, 'text', 'b', 0, 1009, 0, 11
+                UNION ALL SELECT 114, 'json', 'b', 0, 199, 0, 11
+                UNION ALL SELECT 700, 'float4', 'b', 0, 1021, 0, 11
+                UNION ALL SELECT 701, 'float8', 'b', 0, 1022, 0, 11
+                UNION ALL SELECT 1042, 'char', 'b', 0, 1014, 0, 11
+                UNION ALL SELECT 1043, 'varchar', 'b', 0, 1015, 0, 11
+                UNION ALL SELECT 1082, 'date', 'b', 0, 1182, 0, 11
+                UNION ALL SELECT 1083, 'time', 'b', 0, 1183, 0, 11
+                UNION ALL SELECT 1114, 'timestamp', 'b', 0, 1115, 0, 11
+                UNION ALL SELECT 1184, 'timestamptz', 'b', 0, 1185, 0, 11
+                UNION ALL SELECT 1186, 'interval', 'b', 0, 1187, 0, 11
+                UNION ALL SELECT 1266, 'timetz', 'b', 0, 1270, 0, 11
+                UNION ALL SELECT 1560, 'bit', 'b', 0, 1561, 0, 11
+                UNION ALL SELECT 1562, 'varbit', 'b', 0, 1563, 0, 11
+                UNION ALL SELECT 1700, 'numeric', 'b', 0, 1231, 0, 11
+                UNION ALL SELECT 2950, 'uuid', 'b', 0, 2951, 0, 11
+                UNION ALL SELECT 3614, 'tsvector', 'b', 0, 3643, 0, 11
+                UNION ALL SELECT 3615, 'tsquery', 'b', 0, 3645, 0, 11
+                UNION ALL SELECT 3734, 'regconfig', 'b', 0, 3735, 0, 11
+                UNION ALL SELECT 3802, 'jsonb', 'b', 0, 3807, 0, 11
+                -- Array types
+                UNION ALL SELECT 1000, '_bool', 'b', 16, 0, 0, 11
+                UNION ALL SELECT 1001, '_bytea', 'b', 17, 0, 0, 11
+                UNION ALL SELECT 1005, '_int2', 'b', 21, 0, 0, 11
+                UNION ALL SELECT 1007, '_int4', 'b', 23, 0, 0, 11
+                UNION ALL SELECT 1009, '_text', 'b', 25, 0, 0, 11
+                UNION ALL SELECT 1014, '_char', 'b', 1042, 0, 0, 11
+                UNION ALL SELECT 1015, '_varchar', 'b', 1043, 0, 0, 11
+                UNION ALL SELECT 1016, '_int8', 'b', 20, 0, 0, 11
+                UNION ALL SELECT 1021, '_float4', 'b', 700, 0, 0, 11
+                UNION ALL SELECT 1022, '_float8', 'b', 701, 0, 0, 11
+                UNION ALL SELECT 1115, '_timestamp', 'b', 1114, 0, 0, 11
+                UNION ALL SELECT 1182, '_date', 'b', 1082, 0, 0, 11
+                UNION ALL SELECT 1183, '_time', 'b', 1083, 0, 0, 11
+                UNION ALL SELECT 1185, '_timestamptz', 'b', 1184, 0, 0, 11
+                UNION ALL SELECT 1187, '_interval', 'b', 1186, 0, 0, 11
+                UNION ALL SELECT 1231, '_numeric', 'b', 1700, 0, 0, 11
+                UNION ALL SELECT 1270, '_timetz', 'b', 1266, 0, 0, 11
+                UNION ALL SELECT 1561, '_bit', 'b', 1560, 0, 0, 11
+                UNION ALL SELECT 1563, '_varbit', 'b', 1562, 0, 0, 11
+                UNION ALL SELECT 2951, '_uuid', 'b', 2950, 0, 0, 11
+                UNION ALL SELECT 3643, '_tsvector', 'b', 3614, 0, 0, 11
+                UNION ALL SELECT 3645, '_tsquery', 'b', 3615, 0, 0, 11
+                UNION ALL SELECT 3735, '_regconfig', 'b', 3734, 0, 0, 11
+                UNION ALL SELECT 3807, '_jsonb', 'b', 3802, 0, 0, 11
+                UNION ALL SELECT 199, '_json', 'b', 114, 0, 0, 11
+                -- ENUM types from __pgsqlite_enum_types
+                UNION ALL
+                SELECT 
+                    e.type_oid as oid,
+                    e.type_name as typname,
+                    'e' as typtype,
+                    0 as typelem,
+                    0 as typarray,  -- ENUMs don't have array types in our schema
+                    0 as typbasetype,
+                    e.namespace_oid as typnamespace
+                FROM __pgsqlite_enum_types e
+            );
+            
+            UPDATE __pgsqlite_metadata 
+            SET value = '9', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![9],
     });
 }

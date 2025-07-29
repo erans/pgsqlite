@@ -225,8 +225,10 @@ async fn add_table_attributes(
                 // If it's TEXT (default for unknown types), check if it's an ENUM
                 if oid == PgType::Text.to_oid() && !matches!(base_type, "TEXT" | "VARCHAR" | "CHAR") {
                     // Query the ENUM metadata to see if this is an ENUM type
+                    // Try the lowercase version of the type name since ENUM types are stored in lowercase
                     let enum_query = format!(
-                        "SELECT type_oid FROM __pgsqlite_enum_types WHERE UPPER(type_name) = '{base_type}'"
+                        "SELECT type_oid FROM __pgsqlite_enum_types WHERE type_name = '{}'",
+                        pg_type_str.to_lowercase()
                     );
                     
                     // Check if the enum types table exists first

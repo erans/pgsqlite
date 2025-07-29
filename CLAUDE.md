@@ -1,531 +1,235 @@
 # pgsqlite Project Context
 
 ## Overview
-pgsqlite is a PostgreSQL protocol adapter for SQLite databases. It allows PostgreSQL clients to connect to and query SQLite databases using the PostgreSQL wire protocol.
+pgsqlite is a PostgreSQL protocol adapter for SQLite databases, allowing PostgreSQL clients to connect to and query SQLite databases using the PostgreSQL wire protocol.
 
-## Project Structure
-- `src/` - Main source code directory
-  - `lib.rs` - Main library entry point
-  - `protocol/` - PostgreSQL wire protocol implementation
-  - `session/` - Session state management
-  - `query/` - Query execution handlers
-- `tests/` - Test files and infrastructure
-  - `runner/` - Test runner scripts
-    - `run_ssl_tests.sh` - Main integration test runner
-  - `sql/` - SQL test files organized by category
-    - `core/` - Core functionality tests (`test_queries.sql`)
-    - `meta/` - Meta-command tests (`test_meta_commands*.sql`)
-    - `features/` - Feature-specific tests (JSON, arrays, datetime)
-    - `debug/` - Debug and diagnostic tests
-  - `output/` - Test output files (logs, temporary databases)
-- `Cargo.toml` - Rust project configuration
-- `TODO.md` - Comprehensive task list for future development
+## Quick Reference
 
-## Build Commands
-- `cargo build` - Build the project
-- `cargo test` - Run unit tests
-- `cargo run` - Run the project
-- `tests/runner/run_ssl_tests.sh` - Run integration tests (must be executed from project root)
-
-## Development Workflow
-- After implementing any feature, always run the full test suite with `cargo test` to ensure nothing is broken
-- **ALWAYS update TODO.md when completing work or discovering new tasks**:
-  - Mark completed tasks with `[x]`
-  - Add new discovered tasks or subtasks
-  - Document partial progress with detailed notes
-  - Update task descriptions if implementation reveals complexity
-- Check TODO.md for prioritized tasks when planning development work
-- Use TODO.md as the authoritative source for tracking all future work
-- **NEVER commit code before ensuring ALL of the following pass**:
-  - `cargo check` - No compilation errors or warnings
-  - `cargo build` - Successfully builds the project
-  - `cargo test` - All tests pass
-  - If any of these fail, fix the issues before committing
-
-## Code Style
-- Follow Rust conventions
-- Use existing imports and patterns
-- Avoid adding comments unless necessary
-- Keep code concise and idiomatic
-
-## Schema Migration System
-- **In-memory databases**: Migrations are run automatically on startup (since they always start fresh)
-- **New file-based databases**: Migrations are run automatically when creating a new database file
-- **Existing file-based databases**: Schema version is checked on startup
-- **Error on outdated schema**: If an existing database schema is outdated, pgsqlite will exit with an error message
-- **Explicit migration**: Use `--migrate` command line flag to run pending migrations and exit
-
-### Usage
+### Build & Test Commands
 ```bash
-# In-memory databases (auto-migrate on startup)
-pgsqlite --in-memory
-
-# New database file (auto-migrate on first run)
-pgsqlite --database newdb.db
-
-# Run migrations on an existing file-based database
-pgsqlite --database existingdb.db --migrate
-
-# Normal operation with existing database (will fail if schema is outdated)
-pgsqlite --database existingdb.db
+cargo build              # Build project
+cargo test              # Run unit tests
+cargo check             # Check for errors/warnings
+./tests/runner/run_ssl_tests.sh  # Run integration tests (from project root)
 ```
 
-### Current Migrations
-- **v1**: Initial schema (creates __pgsqlite_schema, metadata tables)
-- **v2**: ENUM support (creates enum types, values, and usage tracking tables)
-- **v3**: DateTime support (adds datetime_format and timezone_offset columns to __pgsqlite_schema, creates datetime cache and session settings tables)
-- **v4**: DateTime INTEGER storage (converts all datetime types to INTEGER microseconds/days for perfect precision)
-- **v5**: PostgreSQL catalog tables (creates pg_class, pg_namespace, pg_am, pg_type, pg_attribute views; pg_constraint, pg_attrdef, pg_index tables)
-- **v6**: VARCHAR/CHAR constraints (adds type_modifier to __pgsqlite_schema, creates __pgsqlite_string_constraints table)
-- **v7**: NUMERIC/DECIMAL constraints (creates __pgsqlite_numeric_constraints table for precision/scale validation)
-- **v8**: Array support (creates __pgsqlite_array_types table, updates pg_type view with typarray field)
-- **v9**: Full-Text Search support (creates __pgsqlite_fts_tables, __pgsqlite_fts_columns tables for PostgreSQL tsvector/tsquery with SQLite FTS5 backend)
+**Pre-commit checklist**: Run ALL of these before committing:
+1. `cargo check` - No errors or warnings
+2. `cargo build` - Successful build
+3. `cargo test` - All tests pass
 
-### Creating New Migrations
-**IMPORTANT**: When modifying internal pgsqlite tables (any table starting with `__pgsqlite_`), you MUST create a new migration:
+### Development Workflow
+1. Check TODO.md for prioritized tasks
+2. Run full test suite after implementing features
+3. Update TODO.md: mark completed tasks `[x]`, add new discoveries
+4. Follow pre-commit checklist above
 
-1. **Add migration to registry** in `src/migration/registry.rs`:
-   ```rust
-   register_vX_your_feature(&mut registry);
-   ```
+## Project Structure
+```
+src/
+├── lib.rs              # Main library entry
+├── protocol/           # PostgreSQL wire protocol
+├── session/           # Session state management
+├── query/             # Query execution handlers
+└── migration/         # Schema migration system
 
-2. **Define the migration function**:
-   ```rust
-   fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
-       registry.insert(X, Migration {
-           version: X,
-           name: "your_feature_name",
-           description: "Description of what this migration does",
-           up: MigrationAction::Sql(r#"
-               ALTER TABLE __pgsqlite_schema ADD COLUMN new_column TEXT;
-               -- Other schema changes
-           "#),
-           down: Some(MigrationAction::Sql(r#"
-               -- Rollback SQL if possible
-           "#)),
-           dependencies: vec![X-1], // Previous migration version
-       });
-   }
-   ```
+tests/
+├── runner/            # Test runner scripts
+├── sql/               # SQL test files by category
+└── output/            # Test outputs, temp databases
+```
 
-3. **For complex migrations** that need data transformation, use `MigrationAction::Combined` or `MigrationAction::Function`
+## Core Design Principles
 
-4. **Update this file** to list the new migration in the "Current Migrations" section above
+### Type Inference
+NEVER use column names to infer types. Use only:
+- Explicit PostgreSQL type declarations in CREATE TABLE
+- SQLite schema info via PRAGMA table_info
+- Explicit type casts in queries (e.g., $1::int4)
+- Value-based inference as last resort
 
-## Important Design Decisions
-- **Type Inference**: NEVER use column names to infer types. Types should be determined from:
-  - Explicit PostgreSQL type declarations in CREATE TABLE statements
-  - SQLite schema information via PRAGMA table_info
-  - Explicit type casts in queries (e.g., $1::int4)
-  - Value-based inference only when schema information is unavailable
+### DateTime Storage
+All datetime types use INTEGER storage (microseconds/days since epoch):
+- DATE: INTEGER days since 1970-01-01
+- TIME/TIMETZ: INTEGER microseconds since midnight
+- TIMESTAMP/TIMESTAMPTZ: INTEGER microseconds since epoch
+- INTERVAL: INTEGER microseconds
 
-- **Decimal Query Rewriting**: 
-  - Only NUMERIC types (stored as DECIMAL in SQLite) require decimal_from_text wrapping for aggregates
-  - FLOAT types (REAL, DOUBLE PRECISION, FLOAT4, FLOAT8) should NOT be wrapped as they're already decimal-compatible
-  - Correlated subqueries must inherit outer context to recognize outer table columns
-  - Context merging is essential for proper type resolution in nested queries
+### Query Translation
+- Full INSERT SELECT support with datetime/array translation
+- Decimal aggregates: Only NUMERIC types need decimal_from_text wrapping
+- FLOAT types (REAL, DOUBLE PRECISION) don't need wrapping
+- Zero performance impact design for all translations
 
-- **DateTime Storage (INTEGER Microseconds)**:
-  - All datetime types use INTEGER storage for perfect precision (no floating point errors)
-  - Storage formats:
-    - DATE: INTEGER days since epoch (1970-01-01)
-    - TIME/TIMETZ: INTEGER microseconds since midnight
-    - TIMESTAMP/TIMESTAMPTZ: INTEGER microseconds since epoch
-    - INTERVAL: INTEGER microseconds
-  - Microsecond precision matches PostgreSQL's maximum precision
-  - Conversion implementation:
-    - InsertTranslator converts datetime literals to INTEGER during INSERT/UPDATE
-    - Fast path value converters transform INTEGER back to datetime strings during SELECT
-    - Supports both single-row and multi-row INSERT statements
-    - No triggers needed - all conversion happens in the query pipeline
-  - Clients see proper PostgreSQL datetime formats via wire protocol
+## Performance Targets
 
-## Quality Standards
-- Write tests that actually verify functionality, not tests that are designed to pass easily
-- Only mark tasks as complete when they are actually finished and working
-- Test edge cases and error conditions, not just happy paths
-- Verify implementations work end-to-end, not just in isolation
-- Don't claim something works without actually testing it
+### Target (2025-07-27)
+- SELECT: ~674.9x overhead (0.669ms)
+- SELECT (cached): ~17.2x overhead (0.046ms) ✓
+- UPDATE: ~50.9x overhead (0.059ms) ✓
+- DELETE: ~35.8x overhead (0.034ms) ✓
+- INSERT: ~36.6x overhead (0.060ms) ✓
 
-## Performance Characteristics
-### Current Performance (as of 2025-07-19) - POST POSTGRESQL COMPATIBILITY ENHANCEMENTS
-- **✅ COMPREHENSIVE QUERY OPTIMIZATION SYSTEM**: Complete optimization infrastructure with read-only optimizer
-- **SELECT**: ~291x overhead (0.288ms) - 21% improvement from previous ~369x
-- **SELECT (cached)**: ~50x overhead (0.184ms) - good cache performance maintained
-- **UPDATE**: ~56x overhead (0.064ms) - excellent performance maintained
-- **DELETE**: ~44x overhead (0.042ms) - excellent performance maintained  
-- **INSERT**: ~193x overhead (0.301ms) - within acceptable range
-- **Cache Effectiveness**: 1.6x speedup for cached queries (0.288ms → 0.184ms)
-- **Overall Operations**: 5,251 total operations with advanced optimization active
-- **Read-Only Optimizer**: Successfully intercepting SELECT queries as confirmed by benchmarks
-- **Enhanced Statement Caching**: 200+ cached query plans with priority-based eviction
+### Current (2025-07-29) - SEVERE REGRESSION
+- SELECT: ~383,068.5% overhead (3.827ms) - **568x worse than target**
+- SELECT (cached): ~3,185.9% overhead (0.159ms) - **3.5x worse than target**
+- UPDATE: ~5,368.6% overhead (0.063ms) - **105x worse than target**
+- DELETE: ~4,636.9% overhead (0.045ms) - **130x worse than target**  
+- INSERT: ~10,753.0% overhead (0.174ms) - **294x worse than target**
 
-### Key Optimizations Implemented
-- **Phase 5 - Connection Pooling Infrastructure (2025-07-20)**: Read/write separation foundation
-  - **ReadOnlyDbHandler**: Connection pool for SELECT queries using SQLite WAL mode
-  - **QueryRouter**: Intelligent query classification and routing (SELECT vs DML)
-  - **Transaction Affinity**: Ensures transactions stay on single connection for consistency
-  - **Performance Baseline**: 95,961 QPS single-thread, 124,380 QPS with 8 concurrent tasks
-  - **Architecture Ready**: Infrastructure complete, integration with main pipeline pending
-  - **Test Coverage**: 300/300 unit tests passing, extended protocol timeout issues fixed
-- **Phase 4 - Comprehensive Query Optimization System (2025-07-18)**: Complete optimization infrastructure
-  - **Read-Only Optimizer**: Direct execution path for SELECT queries with query plan caching
-  - **Enhanced Statement Caching**: Intelligent caching with priority-based eviction (200+ cached plans)
-  - **Query Plan Caching**: Complexity classification (Simple/Medium/Complex) and type conversion caching
-  - **Type Conversion Caching**: Optimized boolean, datetime, and numeric type handling
-  - **LRU Eviction**: Priority scoring based on access patterns and success rates
-  - **Performance Validation**: 2.4x speedup for cached queries, all 279 tests passing with zero warnings
-- **Phase 3 - Query Optimization System (2025-07-17)**: Comprehensive optimization infrastructure
-  - **Context Merging Optimization**: Efficient context handling for deeply nested subqueries with TTL-based caching
-  - **Lazy Schema Loading**: Deferred schema loading until needed with thread-safe duplicate work prevention
-  - **Query Pattern Recognition**: 14 distinct query patterns with pre-compiled regex and optimization hints
-  - **Integrated Management**: OptimizationManager coordinates all optimization features with effectiveness metrics
-  - **Zero Performance Impact**: All benchmarks maintained or improved, 706 tests passing with zero warnings
-- **Phase 2 - Regex Caching**: Pre-compiled regex patterns in array translator
-  - 20 pre-compiled patterns for array function detection
-  - Eliminated runtime regex compilation overhead
-  - Simplified type inference with match expressions
-- **Phase 1 - Logging Fix**: Changed high-volume info!() to debug!() level
-  - Fixed 2,842+ excessive log calls per benchmark in query executor
-  - Array translation metadata, type hints, and conversion logging
+**Note**: Performance regression likely due to connection-per-session architecture changes.
+Immediate optimization required.
 
-### Historical Baseline (2025-07-08)
-- **Overall System**: ~134x overhead vs raw SQLite (comprehensive benchmark results)
-- **SELECT**: ~294x overhead (protocol translation overhead)
-- **SELECT (cached)**: ~39x overhead (excellent caching performance)
-- **INSERT (single-row)**: ~332x overhead (use batch INSERTs for better performance)
-- **UPDATE**: ~48x overhead (excellent)
-- **DELETE**: ~44x overhead (excellent)
-
-### Performance Optimization Results (2025-07-08)
-- **Cached SELECT performance**: 39x overhead (0.156ms) - excellent caching effectiveness
-- **UPDATE/DELETE performance**: 44-48x overhead (0.044-0.048ms) - excellent
-- **Cache effectiveness**: 1.9x speedup for repeated queries (0.294ms → 0.156ms)
-- **Multi-row INSERT**: Dramatic performance improvements with batch operations
-- **DateTime conversion**: Complete bidirectional conversion with minimal performance impact
-- **Detection**: Regex-based patterns identify simple SELECT/INSERT/UPDATE/DELETE queries
-- **Coverage**: Queries without PostgreSQL casts (::), datetime functions, JOINs, or complex expressions
-
-### Batch INSERT Performance
-Multi-row INSERT syntax provides dramatic improvements:
+### Batch INSERT Best Practices
 ```sql
 INSERT INTO table (col1, col2) VALUES 
   (val1, val2),
-  (val3, val4),
-  (val5, val6);
+  (val3, val4);  -- 10-row: 11.5x speedup, 100-row: 51.3x speedup
 ```
-- 10-row batches: 11.5x speedup over single-row
-- 100-row batches: 51.3x speedup
-- 1000-row batch: 76.4x speedup
 
-#### Best Practices for Batch INSERTs
-1. **Optimal Batch Size**: 100-1000 rows per INSERT statement provides best performance
-2. **Fast Path Optimization**: Simple batch INSERTs without datetime/decimal values use the ultra-fast path
-3. **Prepared Statement Caching**: Batch INSERTs with same column structure share cached metadata
-4. **Error Handling**: Batch operations are atomic - all rows succeed or all fail
-5. **DateTime Values**: Use standard formats (YYYY-MM-DD, HH:MM:SS) to avoid conversion errors
-6. **Memory Usage**: Very large batches (>10,000 rows) may require more memory
-7. **Network Efficiency**: Reduces round trips between client and server
+## Schema Migrations
 
-## Recent Major Features
-- **PostgreSQL Full-Text Search Support (2025-07-23)**: Complete tsvector/tsquery implementation with SQLite FTS5 backend
-  - **Migration v9**: FTS schema tables (__pgsqlite_fts_tables, __pgsqlite_fts_columns) for metadata tracking
-  - **Type System**: Full tsvector and tsquery type support with proper PostgreSQL wire protocol integration
-  - **CREATE TABLE**: Automatic FTS5 virtual table creation for tsvector columns with SQLite FTS5 backend
-  - **Search Functions**: to_tsvector(), to_tsquery(), plainto_tsquery() with comprehensive text processing
-  - **Query Operations**: @@ operator translation to SQLite FTS5 MATCH with complex query support
-  - **Data Operations**: INSERT, UPDATE, DELETE with automatic tsvector population and FTS index maintenance
-  - **Advanced Query Support**: Complex tsquery to FTS5 syntax conversion (AND, OR, NOT, phrase matching)
-  - **Table Alias Resolution**: Proper handling of table aliases in FTS queries (d.search_vector @@ query)
-  - **SQL Parser Compatibility**: Custom pgsqlite_fts_match() function to avoid MATCH syntax parser conflicts
-  - **Comprehensive Testing**: Full integration test suite covering all FTS operations and edge cases
-  - **Production Ready**: Zero performance impact on non-FTS queries, full PostgreSQL FTS compatibility
-- **CREATE TABLE DEFAULT now() Fix (2025-07-23)**: Fixed CREATE TABLE statements with DEFAULT NOW() clauses
-  - **CreateTableTranslator Enhancement**: Added datetime translation support for DEFAULT clauses
-  - **SQLite Compatibility**: Proper translation of DEFAULT NOW() to DEFAULT datetime('now') for SQLite
-  - **Parser Integration**: Fixed SQL syntax errors in CREATE TABLE statements with datetime defaults
-  - **Unit Test Coverage**: Added test_translate_default_now() to validate translation works correctly
-  - **Code Quality**: Fixed all compilation warnings (6 warnings across benchmark test files)
-- **Portal Management Support (2025-01-22)**: Complete Extended Query Protocol enhancement with proven performance benefits
-  - **Enhanced Portal Architecture**: PortalManager with configurable limits (default: 100 concurrent portals)
-  - **Partial Result Fetching**: Execute messages respect max_rows parameter with portal suspension/resumption
-  - **Resource Management**: LRU eviction, stale portal cleanup, and memory-efficient result caching
-  - **Extended Protocol Integration**: Enhanced Bind/Execute/Close message handling with state tracking
-  - **Thread-Safe Implementation**: parking_lot::RwLock for concurrent access across multiple portals
-  - **Comprehensive Testing**: 6 integration tests covering lifecycle, concurrency, limits, and cleanup
-  - **Production Ready**: Zero performance impact, all 324 tests passing with full PostgreSQL compatibility
-  - **Performance Validation**: 90% memory reduction (1.50MB → 0.15MB), 439K portals/sec creation, 1.8M lookups/sec
-  - **Benchmarks**: Direct API validation shows 5% throughput overhead for massive memory efficiency gains
-- **Connection Pooling with Read/Write Separation (2025-07-20)**: Complete production-ready implementation
-  - **Architecture Components**: ReadOnlyDbHandler with connection pool, QueryRouter for intelligent routing
-  - **SQLite WAL Mode**: Enabled for multi-reader support with single writer
-  - **Query Classification**: Automatic routing of SELECT to pool, DML to single connection
-  - **Transaction Safety**: Transaction affinity ensures consistency across operations
-  - **QueryExecutor Integration**: Complete integration with all query execution paths
-  - **Health Checks & Recovery**: Background monitoring, automatic stale connection cleanup, failure recovery
-  - **Configuration**: Pool size, timeouts, and health check intervals configurable via environment variables
-  - **Environment Control**: Enable via PGSQLITE_USE_POOLING=true environment variable (opt-in by default)
-  - **Performance Benchmarks**: Baseline metrics established (3,402 QPS reads, 2,197 mixed ops/sec)
-  - **Concurrent Testing**: 100% transaction consistency, comprehensive benchmark suite
-  - **Production Status**: Ready for deployment with comprehensive testing, health monitoring, and zero regressions
-- **BIT Type Cast Performance Fix (2025-07-20)**: Major prepared statement compatibility improvement
-  - **PostgreSQL BIT Type Support**: Fixed prepared statements with BIT type casts returning empty strings
-  - **SQL Parser Enhancement**: Fixed SQL parser errors with parameterized BIT types like `::bit(8)`, `::varbit(10)`
-  - **Performance Optimization**: Eliminated 34% performance regression through fast-path optimizations
-  - **Cast Translator Enhancement**: Enhanced `find_type_end()` function to properly handle parentheses in type names
-  - **Type Recognition**: Added explicit BIT and VARBIT type recognition in PostgreSQL-to-SQLite type mapping
-  - **Comprehensive Testing**: All 706+ tests passing, 5,251 benchmark operations validated
-  - **Performance Results**: SELECT ~283x overhead (4% better than baseline), cache effectiveness maintained
-  - **Zero Regressions**: BIT cast functionality preserved across all query types with no performance impact
-- **PostgreSQL Function Completions (2025-07-19)**: Major PostgreSQL compatibility milestone
-  - **String Functions**: Implemented 11 PostgreSQL string functions including split_part(), string_agg(), translate(), ascii(), chr(), repeat(), reverse(), left(), right(), lpad(), rpad()
-  - **Math Functions**: Implemented 25+ PostgreSQL math functions including trunc() with precision, round() with precision, trigonometric functions, logarithms, and random()
-  - **Rust 2024 Compatibility**: Fixed random() function to use new rand::rng() API instead of deprecated thread_rng()
-  - **Test Suite Fixes**: Fixed all commented-out tests including string_agg, array operators (@>, <@, &&), ANY/ALL operators, and array concatenation
-  - All functions have comprehensive unit tests and integration test coverage
-  - Zero performance impact - maintains existing optimization levels
-- **Constraint Tables Population (2025-07-19)**: Enhanced psql \d tablename support
-  - **pg_constraint**: Populated with PRIMARY KEY, UNIQUE, NOT NULL constraints with proper conkey arrays
-  - **pg_attrdef**: Populated with column default expressions from SQLite schema
-  - **pg_index**: Populated with all index metadata including proper indkey arrays
-  - **psql Compatibility**: \d tablename command now works perfectly, showing full table descriptions
-  - Constraint information properly integrated with catalog query system
-- **DateTime Roundtrip Fixes (2025-07-18)**: Complete wire protocol datetime compatibility
-  - Fixed TIME value binary encoding where microseconds were incorrectly treated as seconds
-  - Enhanced BinaryEncoder::encode_time() and encode_timestamp() for proper microsecond precision
-  - Fixed NOW() and CURRENT_TIMESTAMP() type inference from TEXT to TIMESTAMPTZ
-  - Updated extended query protocol to handle both string and integer datetime representations
-  - Resolved "time not drained" error in GitHub Actions tests
-  - All datetime roundtrip tests now pass with proper PostgreSQL protocol compliance
-  - Zero performance impact - maintains system performance characteristics
-- **Boolean Conversion Fix (2025-07-17)**: Complete PostgreSQL boolean protocol compliance
-  - Fixed psycopg2 compatibility issue where boolean values were returned as strings '0'/'1' instead of 't'/'f'
-  - Root cause: Ultra-fast path in simple query protocol was not converting boolean values
-  - Implemented schema-aware boolean conversion with performance optimization
-  - Added boolean column cache (`BOOLEAN_COLUMNS_CACHE`) to avoid repeated database queries
-  - Boolean conversion now works correctly across all query types and protocols
-  - Performance maintained: SELECT ~417x overhead, cached SELECT ~77x overhead
-  - Fixed all release build warnings for clean compilation
-- **Comprehensive Query Optimization System (2025-07-17)**: Advanced query optimization infrastructure implemented
-  - **Context Merging Optimization**: ContextOptimizer with 300s TTL caching for deeply nested subqueries
-  - **Lazy Schema Loading**: LazySchemaLoader with 600s TTL, thread-safe duplicate work prevention, and PostgreSQL type inference
-  - **Query Pattern Recognition**: QueryPatternOptimizer with 14 distinct patterns, pre-compiled regex, and complexity analysis
-  - **Integrated Optimization Manager**: OptimizationManager coordinates all optimization features with effectiveness metrics
-  - **Performance Impact**: Zero regression - SELECT ~337x overhead, cached SELECT ~37x overhead, 706 tests passing
-- **Array Enhancement Completion (2025-07-16)**: Final array support features implemented
-  - ARRAY[1,2,3] literal syntax translation to JSON format
-  - ALL operator syntax fixes with proper balanced parentheses parser
-  - Enhanced unnest() WITH ORDINALITY support (PostgreSQL-compatible 1-based indexing)
-  - Simple query detector fixes to ensure array queries use translation pipeline
-  - Complete unit test coverage (228/228 tests passing)
-  - Zero performance impact - all benchmarks maintained or improved
-- **PostgreSQL Type Support**: 40+ types including ranges, network types, binary types
-- **ENUM Types**: Full PostgreSQL ENUM implementation with CREATE/ALTER/DROP TYPE
-- **Zero-Copy Architecture**: Achieved 67% improvement in cached SELECT queries
-- **System Catalog Support**: Full pg_class, pg_namespace, pg_am views and catalog tables for psql compatibility
-- **SSL/TLS Support**: Available for TCP connections with automatic certificate management
-- **Ultra-Fast Path Optimization (2025-07-08)**: 19% SELECT performance improvement via translation bypass
-- **DateTime/Timezone Support (2025-07-07)**: INTEGER microsecond storage with full PostgreSQL compatibility
-- **DateTime Value Conversion (2025-07-08)**: Complete bidirectional conversion between text and INTEGER storage
-- **Multi-row INSERT Support (2025-07-08)**: Enhanced InsertTranslator to handle multi-row VALUES with datetime conversion
-- **Comprehensive Performance Profiling (2025-07-08)**: Detailed pipeline metrics and optimization monitoring
-- **Arithmetic Type Inference (2025-07-08)**: Smart type propagation for aliased arithmetic expressions
-  - Enhanced to handle complex nested parentheses expressions like ((a + b) * c) / d
-  - Improved regex patterns to properly match complex arithmetic operations
-  - Fixed type inference for float columns in arithmetic operations
-- **Performance Optimization (2025-07-14)**: Major performance restoration and improvements
-  - Phase 1: Fixed high-volume logging causing 2,842+ calls per benchmark
-  - Phase 2: Implemented regex compilation caching in array translator
-  - Restored SELECT performance to 272x overhead (exceeds 294x baseline target)
-  - Enhanced array translator with early exit optimization
-- **psql \d Command Support (2025-07-08)**: Full support for psql meta-commands \d and \dt through enhanced catalog system
-- **Array Type Support (2025-07-16)**: Complete PostgreSQL array implementation with JSON storage
-  - Support for 30+ array types (INTEGER[], TEXT[][], BOOLEAN[], etc.)
-  - JSON-based storage with automatic validation constraints
-  - Array literal conversion (ARRAY[1,2,3] and '{1,2,3}' formats) - COMPLETED
-  - Wire protocol array support with proper type OIDs
-  - Multi-row INSERT with array values fully supported
-  - Comprehensive test coverage in CI/CD pipeline
-  - Fixed wire protocol conversion: JSON arrays now properly convert to PostgreSQL format
-  - ALL operator fixes with proper nested parentheses handling - COMPLETED
-  - Enhanced unnest() WITH ORDINALITY support - COMPLETED
-  - Array support now 95% complete for common PostgreSQL use cases
-- **JSON/JSONB Support (2025-07-12)**: Complete operator and function support with robust error handling
-  - All major operators: ->, ->>, @>, <@, #>, #>>
-  - Core functions: json_valid, json_typeof, json_array_length, jsonb_object_keys
-  - Manipulation functions: jsonb_set, json_extract_path, json_strip_nulls
-  - **JSON Path Operator Fix**: Resolved SQL parser $ character conflicts in path expressions
-  - Custom SQLite functions eliminate json_extract dependency and $ character issues
-  - Enhanced type handling supports chained operations (data->'items'->1->>'name')
-  - Automatic operator translation in query pipeline
-  - Full test coverage for operators, functions, and edge cases
-- **JSON Key Existence Operators (2025-07-15)**: Complete implementation of PostgreSQL ? operators
-  - ? operator: json_col ? 'key' - checks if key exists in JSON object
-  - ?| operator: json_col ?| ARRAY['key1', 'key2'] - checks if any key exists
-  - ?& operator: json_col ?& ARRAY['key1', 'key2'] - checks if all keys exist
-  - Custom SQLite functions: pgsqlite_json_has_key, pgsqlite_json_has_any_key, pgsqlite_json_has_all_keys
-  - Unit tests pass completely, integration tests have known SQL parser limitations
-- **JSON Aggregation Functions (2025-07-15)**: Complete json_agg and jsonb_agg implementation
-  - json_agg(expression): aggregates values into JSON array
-  - jsonb_agg(expression): identical to json_agg for PostgreSQL compatibility
-  - Proper NULL handling and empty result set behavior (returns "[]")
-  - Uses SQLite's Aggregate trait for efficient aggregation
-  - Comprehensive test coverage including multi-row scenarios and NULL values
-- **JSON Object Aggregation Functions (2025-07-15)**: Complete json_object_agg and jsonb_object_agg implementation
-  - json_object_agg(key, value): aggregates key-value pairs into JSON object
-  - jsonb_object_agg(key, value): attempts JSON parsing of text values, otherwise treats as strings
-  - HashMap-based accumulation for optimal performance
-  - Handles all SQLite data types (NULL, INTEGER, REAL, TEXT, BLOB)
-  - Returns empty object "{}" for empty result sets
-  - Duplicate key handling with last-value-wins semantics
-  - Enhanced schema type mapper for PostgreSQL wire protocol compatibility
-- **JSON Table-Valued Functions (2025-07-15)**: Complete json_each/jsonb_each implementation
-  - json_each(json_data): expands JSON object to key-value pairs as table rows
-  - jsonb_each(json_data): identical behavior to json_each
-  - JsonEachTranslator converts PostgreSQL calls to SQLite json_each() equivalents
-  - Handles both FROM clause and SELECT clause patterns
-  - PostgreSQL-compatible column selection (key, value only, hides SQLite's type column)
-  - Integrated into query execution pipeline with metadata support
-- **Decimal Query Rewriting Enhancements (2025-07-14)**: Complete nested arithmetic decomposition
-  - Fixed complex nested arithmetic expressions like `(quantity * 2 + 5) * price / 100`
-  - Added performance regression fix with SchemaCache optimization
-  - Fixed arithmetic aliasing test failures for float vs decimal handling
-  - Resolved arithmetic edge case with int * float literal operations
-  - All implicit cast tests (9/9), arithmetic aliasing tests (5/5), and edge case tests (7/7) now pass
-  - Maintained backwards compatibility with existing decimal functionality
-- **Array Function Completion (2025-07-14)**: Full unnest() and enhanced array_agg support
-  - unnest() function translates PostgreSQL unnest() calls to SQLite json_each() equivalents
-  - Enhanced array_agg with DISTINCT support via array_agg_distinct() function
-  - ArrayAggTranslator handles ORDER BY and DISTINCT clauses in array_agg
-  - Performance optimization: fast-path checks eliminate expensive string operations for non-array queries
-  - Results: SELECT performance improved from 318x to 305x overhead, cached SELECT exceeds baseline by 44%
-- **Array Concatenation Operator Enhancement (2025-07-14)**: Improved || operator with ARRAY[] syntax detection
-  - Enhanced to detect ARRAY[] syntax patterns (e.g., ARRAY[1,2] || ARRAY[3,4])
-  - Custom character-based parser for proper balanced bracket matching
-  - Fixed early exit optimization bug by detecting || operator in contains_array_functions
-  - All 6 integration tests and 23 unit tests pass
-  - Note: ARRAY literal translation (ARRAY[1,2,3] → JSON) requires separate implementation
-- **JSON Record Conversion Functions (2025-07-16)**: Complete json_populate_record and json_to_record implementation
-  - json_populate_record(base_record, json_data): populates record from JSON object with PostgreSQL semantics
-  - json_to_record(json_data): converts JSON objects to record-like string representations
-  - Simplified implementations acknowledging SQLite's lack of native RECORD type support
-  - Comprehensive error handling for invalid JSON and non-object inputs
-  - Full integration with PostgreSQL wire protocol and CI/CD test suite
-  - Brings pgsqlite JSON functionality to 100% completion for common PostgreSQL use cases
-- **JSON Each Text Functions (2025-07-15)**: Complete json_each_text() and jsonb_each_text() implementation
-  - Implemented json_each_text_value() custom SQLite function for proper text conversion
-  - Enhanced JsonEachTranslator to handle both regular and _text variants
-  - Comprehensive text conversion: booleans to "true"/"false", numbers to text, arrays/objects to JSON strings
-  - Supports both FROM clause and cross join patterns with proper PostgreSQL compatibility
-  - 5 integration tests and 6 unit tests with comprehensive coverage
-  - Zero performance impact - maintains system performance characteristics
-- **JSON Manipulation Functions (2025-07-15)**: Complete jsonb_delete, jsonb_insert, and jsonb_pretty implementation
-  - jsonb_insert(target, path, new_value, insert_after): inserts values into JSON objects/arrays
-  - jsonb_delete(target, path): deletes values from JSON objects/arrays by path
-  - jsonb_delete_path(target, path): alias for jsonb_delete for PostgreSQL compatibility
-  - jsonb_pretty(jsonb): pretty-prints JSON with 2-space indentation for readability
-  - Supports nested JSON operations with PostgreSQL-compatible path syntax ({key1,key2})
-  - Handles object key insertion/deletion and array element insertion/deletion
-  - Error handling for invalid paths and non-existent keys (returns original JSON)
-  - Comprehensive unit tests (26 test cases) and integration tests (11 test cases)
-  - Zero performance impact on system - all benchmarks maintained or improved
-- **Row to JSON Conversion (2025-07-16)**: Complete row_to_json() function implementation
-  - RowToJsonTranslator converts PostgreSQL subquery patterns to SQLite json_object() calls
-  - Pattern matching for `SELECT row_to_json(t) FROM (SELECT ...) t` syntax with alias validation
-  - Column extraction supporting both explicit (AS) and implicit aliases from SELECT clauses
-  - SQLite function registration for simple value conversion cases
-  - Integration with both simple and extended query protocols with proper type inference
-  - Comprehensive test coverage across all scenarios (subqueries, aliases, multiple rows)
-- **Complete JSON Function Test Coverage (2025-07-16)**: Comprehensive CI/CD validation suite
-  - All JSON functions included in test_queries.sql for CI/CD pipeline validation
-  - Test coverage: aggregation (json_agg, json_object_agg), table functions (json_each), manipulation (jsonb_insert, jsonb_delete, jsonb_pretty), existence checks
-  - Fixed compatibility issues with row_to_json subquery patterns and JSON existence operators
-  - 100% test success rate across all connection modes (TCP+SSL, TCP-only, Unix sockets, file databases)
-  - Production-ready validation ensures reliable deployment across all supported configurations
-  - Comprehensive test coverage: basic subqueries, multiple data types, column aliases, multiple rows
-  - Full PostgreSQL compatibility for converting table rows to JSON objects
+### Creating New Migrations
+When modifying `__pgsqlite_*` tables:
 
-## Known Issues
-- **Array function limitations**: 
-  - ORDER BY in array_agg relies on outer query ORDER BY
-  - Multi-array unnest support (advanced edge case)
+1. Add to `src/migration/registry.rs`:
+```rust
+register_vX_your_feature(&mut registry);
+```
 
-## Database Handler Architecture
-Uses a Mutex-based implementation for thread safety:
-- Single `rusqlite::Connection` with `SQLITE_OPEN_FULL_MUTEX`
-- `parking_lot::Mutex` for efficient synchronization
-- Schema cache for performance
-- Fast path optimization for simple queries
+2. Define migration:
+```rust
+fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(X, Migration {
+        version: X,
+        name: "feature_name",
+        description: "What this does",
+        up: MigrationAction::Sql(r#"
+            ALTER TABLE __pgsqlite_schema ADD COLUMN new_column TEXT;
+        "#),
+        down: Some(MigrationAction::Sql(r#"
+            -- Rollback SQL
+        "#)),
+        dependencies: vec![X-1],
+    });
+}
+```
 
-## Connection Pooling Configuration
+3. Update Current Migrations list in this file
 
-Connection pooling provides improved performance for concurrent workloads by maintaining a pool of reusable SQLite connections. The system automatically routes read-only queries (SELECT, EXPLAIN) to the read pool while directing write operations to the primary connection.
+### Current Migrations
+- v1: Initial schema
+- v2: ENUM support
+- v3: DateTime support
+- v4: DateTime INTEGER storage
+- v5: PostgreSQL catalog tables
+- v6: VARCHAR/CHAR constraints
+- v7: NUMERIC/DECIMAL constraints
+- v8: Array support
+- v9: Full-Text Search support
+- v10: typcategory column in pg_type view
 
-### Features
-- **Read/Write Separation**: Automatic query routing based on operation type
-- **Health Checks & Recovery**: Background monitoring, automatic stale connection cleanup, failure recovery  
-- **Transaction Affinity**: Ensures all operations within a transaction use the same connection for consistency
-- **Configuration**: Pool size, timeouts, and health check intervals configurable via environment variables
-- **Environment Control**: Enable via PGSQLITE_USE_POOLING=true environment variable (opt-in by default)
+## Key Features & Fixes
 
-### Environment Variables
-- `PGSQLITE_USE_POOLING=true` - Enable connection pooling (default: false)
-- `PGSQLITE_POOL_SIZE=N` - Maximum connections in read pool (default: 5)
-- `PGSQLITE_POOL_TIMEOUT=N` - Connection acquisition timeout in seconds (default: 30)
-- `PGSQLITE_POOL_IDLE_TIMEOUT=N` - Idle connection timeout in seconds (default: 300)
-- `PGSQLITE_POOL_HEALTH_INTERVAL=N` - Health check interval in seconds (default: 60)
+### Recently Fixed (2025-07-29)
+- **Connection-per-Session Architecture**: Implemented true connection isolation matching PostgreSQL behavior
+  - Each client session gets its own SQLite connection
+  - Fixes SQLAlchemy transaction persistence issues with WAL mode
+  - Eliminates transaction visibility problems between sessions
+  - Tests now use temporary files instead of :memory: for proper isolation
+- **AT TIME ZONE Support**: Fixed simple_query protocol issues
+  - Fixed UTF-8 encoding errors when using simple_query with AT TIME ZONE
+  - AT TIME ZONE operator now properly returns float values
+  - Tests updated to use prepared statements for reliable behavior
+  - Added datetime translation support to LazyQueryProcessor
+- **Test Infrastructure Stability**: Fixed migration lock contention and build system reliability
+  - Resolved "Migration lock held by process" errors in concurrent tests
+  - Updated test files to use unique temporary databases instead of shared `:memory:`
+  - Fixed common test module compatibility with connection-per-session architecture
+- **Logging Optimization**: Converted info to debug logging in hot paths
+  - Changed query logging from info!() to debug!() level
+  - Should help reduce performance overhead (pending benchmark validation)
 
-### Usage Examples
+### Previously Fixed (2025-07-27)
+- **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries
+- **SQLAlchemy ORM**: Full compatibility with VALUES clause conversion and datetime handling
+- **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
+
+### Major Features
+- **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`
+- **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
+- **40+ PostgreSQL Types**: Including arrays, JSON/JSONB, ENUMs
+- **Full-Text Search**: PostgreSQL tsvector/tsquery with SQLite FTS5
+- **psql Compatibility**: \d commands work via catalog tables
+
+### JSON/JSONB Support
+- All operators: `->`, `->>`, `@>`, `<@`, `#>`, `#>>`, `?`, `?|`, `?&`
+- Functions: json_agg, json_object_agg, json_each, jsonb_set, jsonb_delete
+- Row conversions: row_to_json, json_populate_record
+
+### Array Support
+- 30+ array types with JSON storage
+- Operators: `@>`, `<@`, `&&`, `||`
+- Functions: unnest(), array_agg() with DISTINCT/ORDER BY
+
+## SQLAlchemy Compatibility
+
+**Full SQLAlchemy ORM support** with transaction persistence and datetime handling:
+
+```python
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+engine = create_engine('postgresql://postgres@localhost:5432/main')
+Session = sessionmaker(bind=engine)
+
+# All SQLAlchemy operations work correctly:
+# - Table creation, INSERT, UPDATE, DELETE with RETURNING
+# - Complex JOINs with proper type inference  
+# - Transaction management and persistence
+# - Datetime operations with proper formatting
+```
+
+**Production Configuration**:
 ```bash
-# Enable pooling with default settings
-PGSQLITE_USE_POOLING=true pgsqlite --database mydb.db
-
-# Custom pool configuration
-PGSQLITE_USE_POOLING=true \
-PGSQLITE_POOL_SIZE=10 \
-PGSQLITE_POOL_TIMEOUT=60 \
+# Default configuration with connection-per-session architecture
+# Each PostgreSQL client session gets its own SQLite connection
+# Full SQLAlchemy compatibility with proper transaction isolation
 pgsqlite --database mydb.db
 
-# Production configuration with health monitoring
-PGSQLITE_USE_POOLING=true \
-PGSQLITE_POOL_SIZE=8 \
-PGSQLITE_POOL_IDLE_TIMEOUT=600 \
-PGSQLITE_POOL_HEALTH_INTERVAL=30 \
-pgsqlite --database production.db
+# Journal mode options (both work with connection-per-session):
+PGSQLITE_JOURNAL_MODE=WAL pgsqlite --database mydb.db    # Better performance
+PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db  # More conservative
 ```
 
-### Query Routing Rules
-- **SELECT, EXPLAIN**: Routed to read-only connection pool
-- **INSERT, UPDATE, DELETE**: Routed to primary write connection
-- **DDL (CREATE, ALTER, DROP)**: Routed to primary write connection
-- **Transaction blocks**: All queries routed to write connection for consistency
-- **Read-only PRAGMA**: Routed to read pool (e.g., `PRAGMA table_info`)
-- **Write PRAGMA**: Routed to write connection (e.g., `PRAGMA journal_mode=WAL`)
+## Connection Pooling
 
-### Performance Characteristics
-- **Best for**: Concurrent read-heavy workloads, multiple client connections
-- **Resource overhead**: Additional memory per pooled connection (~1-2MB each)
-- **Latency**: Slight increase for connection acquisition (~0.1ms)
-- **Throughput**: Significant improvement for concurrent SELECT operations
+Enable for concurrent workloads:
+```bash
+PGSQLITE_USE_POOLING=true \
+PGSQLITE_POOL_SIZE=10 \
+pgsqlite --database mydb.db
+```
 
-### When to Use Connection Pooling
-- **Enable for**: TCP connections with multiple concurrent clients
-- **Enable for**: Read-heavy workloads with frequent SELECT queries
-- **Enable for**: Applications with sustained connection patterns
-- **Disable for**: Single-client applications or simple scripts
-- **Disable for**: Memory-constrained environments
-- **Disable for**: Unix socket connections with low concurrency
+Environment variables:
+- `PGSQLITE_USE_POOLING`: Enable pooling (default: false)
+- `PGSQLITE_POOL_SIZE`: Max read connections (default: 5)
+- `PGSQLITE_POOL_TIMEOUT`: Acquisition timeout seconds (default: 30)
 
-## SSL/TLS Configuration
-Enable via command line or environment variables:
-- `--ssl` / `PGSQLITE_SSL=true` - Enable SSL support
-- `--ssl-cert` / `PGSQLITE_SSL_CERT` - Path to SSL certificate
-- `--ssl-key` / `PGSQLITE_SSL_KEY` - Path to SSL private key
-- `--ssl-ca` / `PGSQLITE_SSL_CA` - Path to CA certificate (optional)
-- `--ssl-ephemeral` / `PGSQLITE_SSL_EPHEMERAL` - Generate ephemeral certificates
+## Quality Standards
+- Test edge cases, not just happy paths
+- Verify end-to-end functionality
+- Only mark tasks complete when fully working
+- No assumptions - test everything
 
-# important-instruction-reminders
-Do what has been asked; nothing more, nothing less.
-NEVER create files unless they're absolutely necessary for achieving your goal.
-ALWAYS prefer editing an existing file to creating a new one.
-NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested by the User.
+## Known Limitations
+- Array ORDER BY in array_agg relies on outer query ORDER BY
+- Multi-array unnest (edge case)
+- Some catalog queries and CAST operations still use get_mut_connection (needs update for per-session)
+
+## Code Style
+- Follow Rust conventions
+- Use existing patterns
+- Avoid comments unless necessary
+- Keep code concise and idiomatic

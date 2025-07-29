@@ -1,5 +1,18 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
+use tracing::debug;
+
+/// Check if a query contains non-deterministic functions that should not be cached
+pub fn contains_non_deterministic_functions(query: &str) -> bool {
+    let query_lower = query.to_lowercase();
+    query_lower.contains("gen_random_uuid") ||
+    query_lower.contains("uuid_generate_v4") ||
+    query_lower.contains("random()") ||
+    query_lower.contains("now()") ||
+    query_lower.contains("current_timestamp") ||
+    query_lower.contains("current_date") ||
+    query_lower.contains("current_time")
+}
 
 /// Regular expressions for detecting truly simple queries that need no processing
 static SIMPLE_SELECT_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -25,8 +38,11 @@ static SIMPLE_DELETE_REGEX: Lazy<Regex> = Lazy::new(|| {
 
 /// Detects if a query is simple enough to bypass all translation and processing
 pub fn is_ultra_simple_query(query: &str) -> bool {
+    debug!("Checking if ultra-simple: {}", query);
     // Quick checks to exclude complex queries
     if query.contains("::") || // PostgreSQL casts
+       query.contains("CAST") || // SQL standard casts (case-insensitive check below)
+       query.contains("cast") || // SQL standard casts
        query.contains("JOIN") ||
        query.contains("UNION") ||
        query.contains("(SELECT") || // Subqueries
@@ -49,6 +65,11 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
         return false;
     }
     
+    // Check for non-deterministic functions - these should not be treated as ultra simple
+    if contains_non_deterministic_functions(query) {
+        return false;
+    }
+    
     // Additional check for INSERT statements with datetime or array patterns
     if query.to_uppercase().starts_with("INSERT") {
         // Exclude if it contains date/time patterns that need conversion
@@ -56,6 +77,7 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
            (query.contains("'") && query.contains(':')) ||  // Time patterns like '14:30:00'
            query.contains('{') ||                           // Array patterns like '{1,2,3}'
            query.contains("ARRAY[") {                       // Array constructor like ARRAY[1,2,3]
+            debug!("INSERT query detected with special patterns - NOT ultra-simple: {}", query);
             return false;
         }
     }
@@ -136,6 +158,8 @@ mod tests {
         // Complex queries that should fail
         assert!(!is_ultra_simple_query("SELECT * FROM users WHERE created_at > NOW()"));
         assert!(!is_ultra_simple_query("SELECT id::text FROM users"));
+        assert!(!is_ultra_simple_query("SELECT CAST('inactive' AS status)"));
+        assert!(!is_ultra_simple_query("SELECT cast(id as text) FROM users"));
         assert!(!is_ultra_simple_query("SELECT * FROM users JOIN orders"));
         assert!(!is_ultra_simple_query("SELECT (SELECT COUNT(*) FROM orders)"));
         assert!(!is_ultra_simple_query("SELECT * FROM users WHERE name ~ 'test'"));
@@ -169,5 +193,16 @@ mod tests {
         assert!(is_simple_batch_insert("INSERT INTO users (id, name) VALUES (1, 'test'), (2, 'test2')"));
         assert!(!is_simple_batch_insert("INSERT INTO orders (id, date) VALUES (1, '2024-01-01'), (2, '2024-01-02')"));
         assert!(!is_simple_batch_insert("INSERT INTO users (id, name) VALUES (1, 'test')")); // Not a batch
+    }
+    
+    #[test]
+    fn test_array_insert_detection() {
+        // Array INSERTs should NOT be ultra-simple
+        assert!(!is_ultra_simple_query("INSERT INTO test_arrays (int_array) VALUES ('{1,2,3}')"));
+        assert!(!is_ultra_simple_query("INSERT INTO test_arrays (int_array, text_array) VALUES ('{1,2,3}', '{\"a\",\"b\"}')"));
+        
+        // The exact query from the failing test
+        let failing_query = "INSERT INTO test_arrays (int_array, text_array, bool_array) VALUES\n    ('{1,2,3,4,5}', '{\"apple\",\"banana\",\"cherry\"}', '{true,false,true}'),\n    ('{}', '{}', '{}'),\n    (NULL, NULL, NULL);";
+        assert!(!is_ultra_simple_query(failing_query));
     }
 }

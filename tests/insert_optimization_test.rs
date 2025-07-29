@@ -1,4 +1,5 @@
 use pgsqlite::query::fast_path::{can_use_fast_path_enhanced, FastPathOperation};
+use uuid::Uuid;
 
 #[test]
 fn test_insert_fast_path_detection() {
@@ -54,15 +55,19 @@ async fn test_insert_performance_improvement() {
 
     // Create in-memory database
     let db = DbHandler::new(":memory:").expect("Failed to create database");
+    
+    // Create a session
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.expect("Failed to create session connection");
 
     // Create test table without decimal columns (should use fast path)
-    db.execute("CREATE TABLE test_table (id INTEGER, name TEXT)").await.expect("Failed to create table");
+    db.execute_with_session("CREATE TABLE test_table (id INTEGER, name TEXT)", &session_id).await.expect("Failed to create table");
 
     // Test fast path INSERT performance
     let start = Instant::now();
     for i in 0..100 {
         let query = format!("INSERT INTO test_table (id, name) VALUES ({i}, 'test{i}')");
-        db.execute(&query).await.expect("Failed to execute INSERT");
+        db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
     }
     let duration = start.elapsed();
     
@@ -70,7 +75,7 @@ async fn test_insert_performance_improvement() {
     println!("Average per INSERT: {:?}", duration / 100);
     
     // Verify data was inserted
-    let result = db.query("SELECT COUNT(*) FROM test_table").await.expect("Failed to count rows");
+    let result = db.query_with_session("SELECT COUNT(*) FROM test_table", &session_id).await.expect("Failed to count rows");
     assert_eq!(result.rows.len(), 1);
     
     // The actual count should be 100
@@ -78,6 +83,9 @@ async fn test_insert_performance_improvement() {
         let count_str = String::from_utf8_lossy(count_bytes);
         assert_eq!(count_str, "100");
     }
+    
+    // Clean up
+    db.remove_session_connection(&session_id);
 }
 
 #[tokio::test]
@@ -87,15 +95,19 @@ async fn test_insert_with_decimal_columns_fallback() {
 
     // Create in-memory database
     let db = DbHandler::new(":memory:").expect("Failed to create database");
+    
+    // Create a session
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.expect("Failed to create session connection");
 
     // Create test table WITH decimal columns (should fall back to slow path)
-    db.execute("CREATE TABLE decimal_table (id INTEGER, price DECIMAL(10,2), name TEXT)").await.expect("Failed to create table");
+    db.execute_with_session("CREATE TABLE decimal_table (id INTEGER, price DECIMAL(10,2), name TEXT)", &session_id).await.expect("Failed to create table");
 
     // Test slow path INSERT performance (with decimal columns)
     let start = Instant::now();
     for i in 0..100 {
         let query = format!("INSERT INTO decimal_table (id, price, name) VALUES ({i}, {i}.99, 'test{i}')");
-        db.execute(&query).await.expect("Failed to execute INSERT");
+        db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
     }
     let duration = start.elapsed();
     
@@ -103,7 +115,7 @@ async fn test_insert_with_decimal_columns_fallback() {
     println!("Average per INSERT: {:?}", duration / 100);
     
     // Verify data was inserted
-    let result = db.query("SELECT COUNT(*) FROM decimal_table").await.expect("Failed to count rows");
+    let result = db.query_with_session("SELECT COUNT(*) FROM decimal_table", &session_id).await.expect("Failed to count rows");
     assert_eq!(result.rows.len(), 1);
     
     // The actual count should be 100
@@ -111,6 +123,9 @@ async fn test_insert_with_decimal_columns_fallback() {
         let count_str = String::from_utf8_lossy(count_bytes);
         assert_eq!(count_str, "100");
     }
+    
+    // Clean up
+    db.remove_session_connection(&session_id);
 }
 
 #[tokio::test]
@@ -123,12 +138,16 @@ async fn test_insert_bottleneck_analysis() {
     
     // Create in-memory database
     let db = DbHandler::new(":memory:").expect("Failed to create database");
+    
+    // Create a session
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.expect("Failed to create session connection");
 
     // Create test table without decimal columns
-    db.execute("CREATE TABLE perf_test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)").await.expect("Failed to create table");
+    db.execute_with_session("CREATE TABLE perf_test (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)", &session_id).await.expect("Failed to create table");
     
     // Warm up the connection and caches
-    db.execute("INSERT INTO perf_test (name, value) VALUES ('warmup', 1)").await.expect("Failed to warm up");
+    db.execute_with_session("INSERT INTO perf_test (name, value) VALUES ('warmup', 1)", &session_id).await.expect("Failed to warm up");
     
     let test_query = "INSERT INTO perf_test (name, value) VALUES ('test', 42)";
     
@@ -153,7 +172,7 @@ async fn test_insert_bottleneck_analysis() {
     
     // Measure total time
     let start_total = Instant::now();
-    db.execute("INSERT INTO perf_test (name, value) VALUES ('single', 100)").await.expect("Failed to execute INSERT");
+    db.execute_with_session("INSERT INTO perf_test (name, value) VALUES ('single', 100)", &session_id).await.expect("Failed to execute INSERT");
     let total_time = start_total.elapsed();
     println!("Total INSERT time: {total_time:?}");
     
@@ -165,7 +184,7 @@ async fn test_insert_bottleneck_analysis() {
         let start = Instant::now();
         for i in 0..batch_size {
             let query = format!("INSERT INTO perf_test (name, value) VALUES ('batch{i}', {i})");
-            db.execute(&query).await.expect("Failed to execute INSERT");
+            db.execute_with_session(&query, &session_id).await.expect("Failed to execute INSERT");
         }
         let duration = start.elapsed();
         println!("{} INSERTs: {:?}, avg: {:?}", batch_size, duration, duration / batch_size as u32);
@@ -192,10 +211,16 @@ async fn test_insert_bottleneck_analysis() {
         let query = "INSERT INTO perf_test (name, value) VALUES ($1, $2)";
         db.execute_with_statement_pool_params(
             query,
-            &[rusqlite::types::Value::Text(format!("pooled{i}")), 
-              rusqlite::types::Value::Integer(i as i64)]
+            &[
+                Some(format!("pooled{i}").into_bytes()),
+                Some(i.to_string().into_bytes()),
+            ],
+            &session_id
         ).await.expect("Failed to execute INSERT");
     }
     let pool_time = start.elapsed();
     println!("100 statement pool INSERTs: {:?}, avg: {:?}", pool_time, pool_time / 100);
+    
+    // Clean up
+    db.remove_session_connection(&session_id);
 }

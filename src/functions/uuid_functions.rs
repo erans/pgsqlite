@@ -5,6 +5,7 @@ use crate::types::{UuidHandler, generate_uuid_v4};
 /// Register UUID-related functions in SQLite
 pub fn register_uuid_functions(conn: &Connection) -> Result<()> {
     // gen_random_uuid() - PostgreSQL compatible UUID v4 generator
+    // Note: SQLite may cache function results in certain contexts, but each call generates a new UUID
     conn.create_scalar_function(
         "gen_random_uuid",
         0,

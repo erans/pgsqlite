@@ -518,7 +518,7 @@ impl<'a> ExpressionTypeResolver<'a> {
                     PgType::Text
                 }
             }
-            // Math functions
+            // Math functions that preserve type
             "ABS" | "CEIL" | "FLOOR" | "ROUND" => {
                 if let FunctionArguments::List(list) = &func.args {
                     if !list.args.is_empty() {
@@ -534,6 +534,10 @@ impl<'a> ExpressionTypeResolver<'a> {
                     PgType::Float8
                 }
             }
+            // Math functions that always return float
+            "SQRT" | "POWER" | "POW" | "EXP" | "LN" | "LOG" |
+            "SIN" | "COS" | "TAN" | "ASIN" | "ACOS" | "ATAN" | "ATAN2" |
+            "RADIANS" | "DEGREES" | "PI" | "RANDOM" | "SIGN" | "TRUNC" | "MOD" => PgType::Float8,
             // String functions
             "LENGTH" | "CHAR_LENGTH" => PgType::Int4,
             "LOWER" | "UPPER" | "TRIM" | "SUBSTR" => PgType::Text,

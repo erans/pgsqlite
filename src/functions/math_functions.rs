@@ -1,5 +1,51 @@
-use rusqlite::{Connection, Result, functions::FunctionFlags};
+use rusqlite::{Connection, Result, functions::{FunctionFlags, Context}};
 use tracing::debug;
+use rust_decimal::Decimal;
+
+/// Helper function to get a numeric value from context, handling both numeric and text inputs
+fn get_numeric_value(ctx: &Context<'_>, idx: usize) -> Result<f64> {
+    match ctx.get_raw(idx) {
+        rusqlite::types::ValueRef::Real(f) => Ok(f),
+        rusqlite::types::ValueRef::Integer(i) => Ok(i as f64),
+        rusqlite::types::ValueRef::Text(s) => {
+            let text = std::str::from_utf8(s).map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+            text.trim().parse::<f64>()
+                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Failed to parse '{}' as number: {}", text, e).into()))
+        }
+        rusqlite::types::ValueRef::Null => {
+            // For NULL input, we should propagate it (most SQL functions return NULL for NULL input)
+            Err(rusqlite::Error::UserFunctionError("NULL input".into()))
+        }
+        rusqlite::types::ValueRef::Blob(b) => {
+            // Decimal values are stored as 16-byte blobs
+            if b.len() == 16 {
+                let mut array = [0u8; 16];
+                array.copy_from_slice(b);
+                let decimal = Decimal::deserialize(array);
+                // Convert to f64 - note this may lose precision for very large decimals
+                use std::str::FromStr;
+                let decimal_str = decimal.to_string();
+                f64::from_str(&decimal_str)
+                    .map_err(|e| rusqlite::Error::UserFunctionError(
+                        format!("Failed to convert decimal to f64: {}", e).into()
+                    ))
+            } else {
+                // Try to parse blob as UTF-8 text as fallback
+                match std::str::from_utf8(b) {
+                    Ok(text) => {
+                        text.trim().parse::<f64>()
+                            .map_err(|e| rusqlite::Error::UserFunctionError(
+                                format!("Failed to parse blob as number: {}", e).into()
+                            ))
+                    }
+                    Err(_) => Err(rusqlite::Error::UserFunctionError(
+                        format!("Invalid blob size for numeric function: {} bytes", b.len()).into()
+                    ))
+                }
+            }
+        }
+    }
+}
 
 /// Register all PostgreSQL math functions
 pub fn register_math_functions(conn: &Connection) -> Result<()> {
@@ -11,7 +57,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             Ok(value.trunc())
         },
     )?;
@@ -22,7 +68,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             let precision = ctx.get::<i64>(1)?;
             
             if precision == 0 {
@@ -40,7 +86,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             let precision = ctx.get::<i64>(1)?;
             
             if precision == 0 {
@@ -91,7 +137,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             if value > 0.0 {
                 Ok(1.0)
             } else if value < 0.0 {
@@ -108,7 +154,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             Ok(value.abs())
         },
     )?;
@@ -136,8 +182,8 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let base = ctx.get::<f64>(0)?;
-            let exponent = ctx.get::<f64>(1)?;
+            let base = get_numeric_value(ctx, 0)?;
+            let exponent = get_numeric_value(ctx, 1)?;
             Ok(base.powf(exponent))
         },
     )?;
@@ -148,8 +194,8 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let base = ctx.get::<f64>(0)?;
-            let exponent = ctx.get::<f64>(1)?;
+            let base = get_numeric_value(ctx, 0)?;
+            let exponent = get_numeric_value(ctx, 1)?;
             Ok(base.powf(exponent))
         },
     )?;
@@ -160,7 +206,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             if value < 0.0 {
                 return Err(rusqlite::Error::UserFunctionError("square root of negative number".into()));
             }
@@ -174,7 +220,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             Ok(value.exp())
         },
     )?;
@@ -185,7 +231,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             if value <= 0.0 {
                 return Err(rusqlite::Error::UserFunctionError("logarithm of non-positive number".into()));
             }
@@ -199,7 +245,7 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let value = ctx.get::<f64>(0)?;
+            let value = get_numeric_value(ctx, 0)?;
             if value <= 0.0 {
                 return Err(rusqlite::Error::UserFunctionError("logarithm of non-positive number".into()));
             }
@@ -213,8 +259,8 @@ pub fn register_math_functions(conn: &Connection) -> Result<()> {
         2,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let base = ctx.get::<f64>(0)?;
-            let value = ctx.get::<f64>(1)?;
+            let base = get_numeric_value(ctx, 0)?;
+            let value = get_numeric_value(ctx, 1)?;
             
             if base <= 0.0 || base == 1.0 {
                 return Err(rusqlite::Error::UserFunctionError("invalid logarithm base".into()));

@@ -1,13 +1,14 @@
 use crate::protocol::{BackendMessage, FieldDescription};
 use crate::session::{DbHandler, SessionState, QueryRouter};
-use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator, BatchUpdateTranslator, BatchDeleteTranslator, FtsTranslator};
 use crate::types::PgType;
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::metadata::EnumTriggers;
 use crate::PgSqliteError;
+use crate::query::join_type_inference::build_column_to_table_mapping;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
+use tokio::io::AsyncWriteExt;
 use tracing::{info, debug};
 use std::sync::Arc;
 use rusqlite::params;
@@ -15,69 +16,41 @@ use serde_json;
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use once_cell::sync::Lazy;
+use uuid::Uuid;
 
-/// Cache for boolean column information to avoid repeated database queries
-static BOOLEAN_COLUMNS_CACHE: Lazy<RwLock<HashMap<String, std::collections::HashSet<String>>>> = 
-    Lazy::new(|| RwLock::new(HashMap::new()));
-
-/// Get boolean columns for a table, using cache for performance
-fn get_boolean_columns(table_name: &str, db: &DbHandler) -> std::collections::HashSet<String> {
-    // Check cache first
-    {
-        let cache = BOOLEAN_COLUMNS_CACHE.read();
-        if let Some(cached_columns) = cache.get(table_name) {
-            return cached_columns.clone();
-        }
-    }
-    
-    // Cache miss - query the database
-    let mut boolean_columns = std::collections::HashSet::new();
-    
-    if let Ok(conn) = db.get_mut_connection() {
-        if let Ok(mut stmt) = conn.prepare("SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1") {
-            if let Ok(rows) = stmt.query_map([table_name], |row| {
-                let col_name: String = row.get(0)?;
-                let pg_type: String = row.get(1)?;
-                Ok((col_name, pg_type))
-            }) {
-                for row in rows.flatten() {
-                    let (col_name, pg_type) = row;
-                    if pg_type.eq_ignore_ascii_case("boolean") || pg_type.eq_ignore_ascii_case("bool") {
-                        boolean_columns.insert(col_name);
-                    }
-                }
-            }
-        }
-    }
-    
-    // Cache the result
-    {
-        let mut cache = BOOLEAN_COLUMNS_CACHE.write();
-        cache.insert(table_name.to_string(), boolean_columns.clone());
-    }
-    
-    boolean_columns
+/// Combined schema information for a table
+#[derive(Clone)]
+struct TableSchemaInfo {
+    boolean_columns: std::collections::HashSet<String>,
+    datetime_columns: std::collections::HashMap<String, String>,
+    column_types: std::collections::HashMap<String, String>,
+    enum_columns: std::collections::HashMap<String, String>, // column_name -> enum_type
 }
 
-/// Cache for datetime column information to avoid repeated database queries
-static DATETIME_COLUMNS_CACHE: Lazy<RwLock<HashMap<String, std::collections::HashMap<String, String>>>> = 
+/// Cache for table schema information to avoid repeated database queries
+static TABLE_SCHEMA_CACHE: Lazy<RwLock<HashMap<String, TableSchemaInfo>>> = 
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// Get datetime columns for a table, using cache for performance
-/// Returns a HashMap mapping column names to their datetime types ("date", "time", "timestamp", etc.)
-fn get_datetime_columns(table_name: &str, db: &DbHandler) -> std::collections::HashMap<String, String> {
+/// Get all schema information for a table in one query
+async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id: &Uuid) -> TableSchemaInfo {
     // Check cache first
     {
-        let cache = DATETIME_COLUMNS_CACHE.read();
-        if let Some(cached_columns) = cache.get(table_name) {
-            return cached_columns.clone();
+        let cache = TABLE_SCHEMA_CACHE.read();
+        if let Some(cached_info) = cache.get(table_name) {
+            return cached_info.clone();
         }
     }
     
-    // Cache miss - query the database
-    let mut datetime_columns = std::collections::HashMap::new();
+    // Cache miss - query the database once for all info
+    let mut schema_info = TableSchemaInfo {
+        boolean_columns: std::collections::HashSet::new(),
+        datetime_columns: std::collections::HashMap::new(),
+        column_types: std::collections::HashMap::new(),
+        enum_columns: std::collections::HashMap::new(),
+    };
     
-    if let Ok(conn) = db.get_mut_connection() {
+    // Use session connection to query schema information
+    if let Ok(()) = db.with_session_connection(session_id, |conn| {
         if let Ok(mut stmt) = conn.prepare("SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1") {
             if let Ok(rows) = stmt.query_map([table_name], |row| {
                 let col_name: String = row.get(0)?;
@@ -86,26 +59,55 @@ fn get_datetime_columns(table_name: &str, db: &DbHandler) -> std::collections::H
             }) {
                 for row in rows.flatten() {
                     let (col_name, pg_type) = row;
+                    
+                    // Store all column types
+                    schema_info.column_types.insert(col_name.clone(), pg_type.clone());
+                    
+                    // Check if boolean
+                    if pg_type.eq_ignore_ascii_case("boolean") || pg_type.eq_ignore_ascii_case("bool") {
+                        schema_info.boolean_columns.insert(col_name.clone());
+                    }
+                    
+                    // Check if datetime
                     let pg_type_lower = pg_type.to_lowercase();
                     if pg_type_lower == "date" || pg_type_lower == "time" || pg_type_lower == "timetz" ||
                        pg_type_lower == "timestamp" || pg_type_lower == "timestamptz" ||
                        pg_type_lower == "time without time zone" || pg_type_lower == "time with time zone" ||
                        pg_type_lower == "timestamp without time zone" || pg_type_lower == "timestamp with time zone" {
-                        datetime_columns.insert(col_name, pg_type_lower);
+                        schema_info.datetime_columns.insert(col_name.clone(), pg_type_lower.clone());
+                    }
+                    
+                    // Check if enum - enum types are stored with their actual type name (e.g., "status", "priority")
+                    // not as standard PostgreSQL types
+                    if !matches!(pg_type_lower.as_str(), 
+                        "integer" | "int" | "int4" | "int8" | "bigint" | "smallint" | "int2" |
+                        "real" | "float4" | "double precision" | "float8" | 
+                        "text" | "varchar" | "char" | "character varying" | "character" |
+                        "boolean" | "bool" |
+                        "date" | "time" | "timetz" | "timestamp" | "timestamptz" |
+                        "time without time zone" | "time with time zone" |
+                        "timestamp without time zone" | "timestamp with time zone" |
+                        "numeric" | "decimal" | "uuid" | "json" | "jsonb" | "bytea" | "blob") {
+                        // This is likely an enum type
+                        schema_info.enum_columns.insert(col_name, pg_type);
                     }
                 }
             }
         }
+        Ok::<(), rusqlite::Error>(())
+    }).await {
+        // Successfully populated schema info
     }
     
     // Cache the result
     {
-        let mut cache = DATETIME_COLUMNS_CACHE.write();
-        cache.insert(table_name.to_string(), datetime_columns.clone());
+        let mut cache = TABLE_SCHEMA_CACHE.write();
+        cache.insert(table_name.to_string(), schema_info.clone());
     }
     
-    datetime_columns
+    schema_info
 }
+
 
 /// Create a command complete tag with optimized static strings for common cases
 fn create_command_tag(operation: &str, rows_affected: usize) -> String {
@@ -126,9 +128,31 @@ fn create_command_tag(operation: &str, rows_affected: usize) -> String {
 pub struct QueryExecutor;
 
 impl QueryExecutor {
+    /// Get cached connection or fetch and cache it
+    async fn get_or_cache_connection(
+        session: &Arc<SessionState>,
+        db: &Arc<DbHandler>
+    ) -> Option<Arc<parking_lot::Mutex<rusqlite::Connection>>> {
+        // First check if we have a cached connection
+        if let Some(cached) = session.get_cached_connection() {
+            // debug!("Using cached connection for session {}", session.id);
+            return Some(cached);
+        }
+        
+        // Try to get connection from manager and cache it
+        // debug!("Connection not cached for session {}, fetching from manager", session.id);
+        if let Some(conn_arc) = db.connection_manager().get_connection_arc(&session.id) {
+            session.cache_connection(conn_arc.clone());
+            // debug!("Cached connection for session {}", session.id);
+            Some(conn_arc)
+        } else {
+            // debug!("No connection found for session {}", session.id);
+            None
+        }
+    }
     pub async fn execute_query<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         query: &str,
         query_router: Option<&Arc<QueryRouter>>,
@@ -145,7 +169,19 @@ impl QueryExecutor {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
         
-        info!("Executing query: {}", query_to_execute);
+        // debug!("Executing query: {}", query_to_execute);
+        
+        // Check for Python-style parameters and provide helpful error
+        use crate::query::parameter_parser::ParameterParser;
+        let python_params = ParameterParser::find_python_parameters(query_to_execute);
+        if !python_params.is_empty() {
+            let error_msg = format!(
+                "Python-style parameters detected: {python_params:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query."
+            );
+            info!("⚠️  {}", error_msg);
+            debug!("Query: {}", query_to_execute);
+            return Err(PgSqliteError::Protocol(error_msg));
+        }
         
         // Check if query contains multiple statements
         let trimmed = query_to_execute.trim();
@@ -157,9 +193,9 @@ impl QueryExecutor {
                 .collect();
             
             if statements.len() > 1 {
-                info!("Query contains {} statements", statements.len());
+                debug!("Query contains {} statements", statements.len());
                 for (i, stmt) in statements.iter().enumerate() {
-                    info!("Executing statement {}: {}", i + 1, stmt);
+                    debug!("Executing statement {}: {}", i + 1, stmt);
                     Self::execute_single_statement(framed, db, session, stmt, query_router).await?;
                 }
                 return Ok(());
@@ -172,7 +208,7 @@ impl QueryExecutor {
     
     async fn execute_single_statement<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         query: &str,
         query_router: Option<&Arc<QueryRouter>>,
@@ -180,9 +216,21 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        use crate::protocol::TransactionStatus;
+        
+        // Check if we're in a failed transaction
+        if session.get_transaction_status().await == TransactionStatus::InFailedTransaction {
+            // Only ROLLBACK is allowed in a failed transaction
+            use crate::query::{QueryTypeDetector, QueryType};
+            if !matches!(QueryTypeDetector::detect_query_type(query), QueryType::Rollback) {
+                return Err(PgSqliteError::Protocol(
+                    "current transaction is aborted, commands ignored until end of transaction block".to_string()
+                ));
+            }
+        }
         // Ultra-fast path: Skip all translation if query is simple enough
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
-            debug!("Using ultra-fast path for query: {}", query);
+            // debug!("Using ultra-fast path for query: {}", query);
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
@@ -190,35 +238,114 @@ impl QueryExecutor {
                     let response = if let Some(router) = query_router {
                         router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
                     } else {
-                        db.query(query).await?
+                        let cached_conn = Self::get_or_cache_connection(session, db).await;
+                        db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
                     };
                     
-                    // Get boolean and datetime columns for proper conversion (cached for performance)
-                    let (boolean_columns, datetime_columns) = if let Some(table_name) = extract_table_name_from_select(query) {
-                        (get_boolean_columns(&table_name, db), get_datetime_columns(&table_name, db))
+                    // Always check for type conversion to handle datetime columns
+                    let needs_type_conversion = true;
+                    
+                    // Extract table name once and get all schema information in one query
+                    let table_name = if needs_type_conversion {
+                        extract_table_name_from_select(query)
                     } else {
-                        (std::collections::HashSet::new(), std::collections::HashMap::new())
+                        None
                     };
                     
-                    // Send minimal row description with all TEXT types
+                    let (boolean_columns, datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
+                        let table = table_name.as_ref().unwrap();
+                        let schema_info = get_table_schema_info(table, db, &session.id).await;
+                        let mappings = extract_column_mappings_from_query(query, table);
+                        // debug!("Column mappings for table '{}': {:?}", table, mappings);
+                        // debug!("Datetime columns for table '{}': {:?}", table, schema_info.datetime_columns);
+                        (
+                            schema_info.boolean_columns,
+                            schema_info.datetime_columns,
+                            schema_info.column_types,
+                            mappings,
+                            schema_info.enum_columns
+                        )
+                    } else {
+                        (
+                            std::collections::HashSet::new(),
+                            std::collections::HashMap::new(),
+                            std::collections::HashMap::new(),
+                            std::collections::HashMap::new(),
+                            std::collections::HashMap::new()
+                        )
+                    };
+                    
                     let fields: Vec<FieldDescription> = response.columns.iter()
                         .enumerate()
-                        .map(|(i, name)| FieldDescription {
-                            name: name.clone(),
-                            table_oid: 0,
-                            column_id: (i + 1) as i16,
-                            type_oid: PgType::Text.to_oid(), // Default to text for ultra-fast path
-                            type_size: -1,
-                            type_modifier: -1,
-                            format: 0,
+                        .map(|(i, name)| {
+                            // We need to determine type OID before creating the closure
+                            let type_oid = if let Some(pg_type) = column_types.get(name) {
+                                // Try to get enum-aware type OID, fall back to basic type if fails
+                                crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
+                            } else {
+                                PgType::Text.to_oid() // Fallback to TEXT
+                            };
+                            
+                            FieldDescription {
+                                name: name.clone(),
+                                table_oid: 0,
+                                column_id: (i + 1) as i16,
+                                type_oid,
+                                type_size: -1,
+                                type_modifier: -1,
+                                format: 0,
+                            }
                         })
                         .collect();
                     
                     framed.send(BackendMessage::RowDescription(fields)).await
                         .map_err(PgSqliteError::Io)?;
                     
-                    // Send data rows with boolean and datetime conversion
+                    // Pre-fetch enum mappings if needed
+                    let enum_mappings: std::collections::HashMap<String, std::collections::HashMap<i32, String>> = 
+                        if !enum_columns.is_empty() {
+                            let mut mappings = std::collections::HashMap::new();
+                            
+                            // Use session connection to fetch enum values
+                            let _ = db.with_session_connection(&session.id, |conn| {
+                                for enum_type in enum_columns.values() {
+                                    if !mappings.contains_key(enum_type) {
+                                        if let Ok(mut stmt) = conn.prepare(
+                                            "SELECT sort_order, label FROM __pgsqlite_enum_values ev 
+                                             JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid 
+                                             WHERE et.type_name = ?1 
+                                             ORDER BY ev.sort_order"
+                                        ) {
+                                            if let Ok(values) = stmt.query_map([enum_type], |row| {
+                                                // sort_order is a REAL, but we need to map it to integers 0, 1, 2...
+                                                let sort_order: f64 = row.get(0)?;
+                                                let ordinal = (sort_order as i32) - 1; // Convert 1-based to 0-based
+                                                let label: String = row.get(1)?;
+                                                Ok((ordinal, label))
+                                            }) {
+                                                let enum_values: std::collections::HashMap<i32, String> = 
+                                                    values.flatten().collect();
+                                                mappings.insert(enum_type.clone(), enum_values);
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok::<(), rusqlite::Error>(())
+                            }).await;
+                            mappings
+                        } else {
+                            std::collections::HashMap::new()
+                        };
+                    
+                    // Send data rows with boolean, datetime, and enum conversion
                     for row in response.rows {
+                        // Fast path - if no special columns, send row as-is
+                        if boolean_columns.is_empty() && datetime_columns.is_empty() && enum_columns.is_empty() {
+                            framed.send(BackendMessage::DataRow(row)).await
+                                .map_err(PgSqliteError::Io)?;
+                            continue;
+                        }
+                        
                         let converted_row: Vec<Option<Vec<u8>>> = row.into_iter()
                             .enumerate()
                             .map(|(col_idx, cell)| {
@@ -226,6 +353,13 @@ impl QueryExecutor {
                                     // Convert based on column type
                                     if col_idx < response.columns.len() {
                                         let col_name = &response.columns[col_idx];
+                                        
+                                        // Debug enum cast
+                                        if col_name == "casted_status" {
+                                            eprintln!("DEBUG: Processing casted_status column");
+                                            eprintln!("  Raw data: {data:?}");
+                                            eprintln!("  As string: {:?}", std::str::from_utf8(&data));
+                                        }
                                         
                                         // Check for boolean columns
                                         if boolean_columns.contains(col_name) {
@@ -240,7 +374,16 @@ impl QueryExecutor {
                                             }
                                         }
                                         // Check for datetime columns
-                                        else if let Some(dt_type) = datetime_columns.get(col_name) {
+                                        // First try exact match, then check column mappings
+                                        else if let Some(dt_type) = datetime_columns.get(col_name)
+                                            .or_else(|| {
+                                                // Check if this is an alias mapped to a real column
+                                                if let Some(real_column) = column_mappings.get(col_name) {
+                                                    datetime_columns.get(real_column)
+                                                } else {
+                                                    None
+                                                }
+                                            }) {
                                             match std::str::from_utf8(&data) {
                                                 Ok(s) => {
                                                     // Try to parse as integer (days/microseconds)
@@ -278,8 +421,39 @@ impl QueryExecutor {
                                                 }
                                                 Err(_) => Some(data), // Keep original data if not valid UTF-8
                                             }
+                                        }
+                                        // Check for enum columns
+                                        else if let Some(enum_type) = enum_columns.get(col_name)
+                                            .or_else(|| {
+                                                // Check if this is an alias mapped to a real column
+                                                if let Some(real_column) = column_mappings.get(col_name) {
+                                                    enum_columns.get(real_column)
+                                                } else {
+                                                    None
+                                                }
+                                            }) {
+                                            match std::str::from_utf8(&data) {
+                                                Ok(s) => {
+                                                    // Try to parse as integer (ordinal value)
+                                                    if let Ok(ordinal) = s.parse::<i32>() {
+                                                        // Look up enum value from pre-fetched mappings
+                                                        if let Some(type_mappings) = enum_mappings.get(enum_type) {
+                                                            if let Some(label) = type_mappings.get(&ordinal) {
+                                                                Some(label.as_bytes().to_vec())
+                                                            } else {
+                                                                Some(data) // Keep original if ordinal not found
+                                                            }
+                                                        } else {
+                                                            Some(data) // Keep original if type not found
+                                                        }
+                                                    } else {
+                                                        Some(data) // Keep original if not an integer
+                                                    }
+                                                }
+                                                Err(_) => Some(data), // Keep original data if not valid UTF-8
+                                            }
                                         } else {
-                                            Some(data) // Keep original data for non-boolean/datetime columns
+                                            Some(data) // Keep original data for non-boolean/datetime/enum columns
                                         }
                                     } else {
                                         Some(data) // Keep original data if column index is out of bounds
@@ -310,40 +484,39 @@ impl QueryExecutor {
             }
         }
         
+        // Analyze query once to determine which translators are needed
+        let translation_flags = crate::translator::QueryAnalyzer::analyze(query);
+        debug!("Query analysis flags: {:?}", translation_flags);
+        
         // Translate PostgreSQL cast syntax if present
-        let mut translated_query = if crate::translator::CastTranslator::needs_translation(query) {
+        let mut translated_query = if translation_flags.contains(crate::translator::TranslationFlags::CAST) {
             if crate::profiling::is_profiling_enabled() {
                 crate::time_cast_translation!({
                     use crate::translator::CastTranslator;
-                    let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-                    let translated = CastTranslator::translate_query(query, Some(&conn));
-                    drop(conn); // Release the connection
-                    translated
+                    db.with_session_connection(&session.id, |conn| {
+                        Ok(CastTranslator::translate_query(query, Some(conn)))
+                    }).await?
                 })
             } else {
                 use crate::translator::CastTranslator;
-                let conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-                let translated = CastTranslator::translate_query(query, Some(&conn));
-                drop(conn); // Release the connection
-                translated
+                db.with_session_connection(&session.id, |conn| {
+                    Ok(CastTranslator::translate_query(query, Some(conn)))
+                }).await?
             }
         } else {
             query.to_string()
         };
         
         // Translate NUMERIC to TEXT casts with proper formatting
-        if crate::translator::NumericFormatTranslator::needs_translation(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::NUMERIC_FORMAT) {
             use crate::translator::NumericFormatTranslator;
-            let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-            translated_query = NumericFormatTranslator::translate_query(&translated_query, &conn);
-            drop(conn); // Release the connection
+            translated_query = db.with_session_connection(&session.id, |conn| {
+                Ok(NumericFormatTranslator::translate_query(&translated_query, conn))
+            }).await?
         }
         
         // Translate batch UPDATE operations if needed
-        if BatchUpdateTranslator::contains_batch_update(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::BATCH_UPDATE) {
             use std::collections::HashMap;
             use parking_lot::Mutex;
             let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
@@ -353,7 +526,7 @@ impl QueryExecutor {
         }
         
         // Translate batch DELETE operations if needed
-        if BatchDeleteTranslator::contains_batch_delete(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::BATCH_DELETE) {
             use std::collections::HashMap;
             use parking_lot::Mutex;
             let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
@@ -363,21 +536,18 @@ impl QueryExecutor {
         }
         
         // Translate FTS operations if needed
-        if FtsTranslator::contains_fts_operations(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::FTS) {
             debug!("Query contains FTS operations: {}", translated_query);
             let fts_translator = FtsTranslator::new();
             
             // Get connection, do translation, and immediately drop it to avoid Send issues
-            let fts_queries = {
-                let conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-                let result = fts_translator.translate(&translated_query, Some(&conn));
-                drop(conn); // Release the connection immediately
-                result
-            };
+            let fts_result = db.with_session_connection(&session.id, |conn| {
+                let result = fts_translator.translate(&translated_query, Some(conn));
+                Ok::<_, rusqlite::Error>(result)
+            }).await;
             
-            match fts_queries {
-                Ok(fts_queries) => {
+            match fts_result {
+                Ok(Ok(fts_queries)) => {
                     // For multiple queries (like CREATE TABLE with shadow tables), execute them all
                     if fts_queries.len() > 1 {
                         debug!("FTS translation produced {} queries", fts_queries.len());
@@ -385,7 +555,8 @@ impl QueryExecutor {
                         // Execute all but the last query first
                         for (i, fts_query) in fts_queries.iter().take(fts_queries.len() - 1).enumerate() {
                             debug!("Executing FTS query {}: {}", i + 1, fts_query);
-                            db.execute(fts_query).await?;
+                            let cached_conn = Self::get_or_cache_connection(session, db).await;
+                            db.execute_with_session_cached(fts_query, &session.id, cached_conn.as_ref()).await?;
                         }
                         
                         // Use the last query as the main query
@@ -398,15 +569,19 @@ impl QueryExecutor {
                         debug!("Query after FTS translation: {}", translated_query);
                     }
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     debug!("FTS translation failed: {}", e);
                     return Err(PgSqliteError::Protocol(format!("FTS translation error: {e}")));
+                }
+                Err(e) => {
+                    debug!("FTS connection failed: {}", e);
+                    return Err(PgSqliteError::Protocol(format!("Failed to translate FTS: {e}")));
                 }
             }
         }
         
         // Translate INSERT statements with datetime values if needed
-        if crate::translator::InsertTranslator::needs_translation(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::INSERT_DATETIME) {
             use crate::translator::InsertTranslator;
             debug!("Query needs INSERT datetime translation: {}", translated_query);
             match InsertTranslator::translate_query(&translated_query, db).await {
@@ -424,7 +599,7 @@ impl QueryExecutor {
         
         // Translate PostgreSQL datetime functions if present and capture metadata
         let mut translation_metadata = crate::translator::TranslationMetadata::new();
-        if crate::translator::DateTimeTranslator::needs_translation(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::DATETIME) {
             if crate::profiling::is_profiling_enabled() {
                 crate::time_datetime_translation!({
                     use crate::translator::DateTimeTranslator;
@@ -445,7 +620,7 @@ impl QueryExecutor {
         }
         
         // Translate JSON operators if present
-        if crate::translator::JsonTranslator::contains_json_operations(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::JSON) {
             use crate::translator::JsonTranslator;
             debug!("Query needs JSON operator translation: {}", translated_query);
             match JsonTranslator::translate_json_operators(&translated_query) {
@@ -464,11 +639,12 @@ impl QueryExecutor {
         }
         
         // Translate array operators with metadata
-        use crate::translator::ArrayTranslator;
-        match ArrayTranslator::translate_with_metadata(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::ARRAY) {
+            use crate::translator::ArrayTranslator;
+            match ArrayTranslator::translate_with_metadata(&translated_query) {
             Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    info!("Query after array operator translation: {}", translated);
+                    debug!("Query after array operator translation: {}", translated);
                     translated_query = translated;
                 }
                 debug!("Array translation metadata: {} hints", metadata.column_mappings.len());
@@ -481,14 +657,16 @@ impl QueryExecutor {
                 debug!("Array operator translation failed: {}", e);
                 // Continue with original query
             }
+            }
         }
         
         // Translate array_agg functions with ORDER BY/DISTINCT support
-        use crate::translator::ArrayAggTranslator;
-        match ArrayAggTranslator::translate_with_metadata(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::ARRAY_AGG) {
+            use crate::translator::ArrayAggTranslator;
+            match ArrayAggTranslator::translate_with_metadata(&translated_query) {
             Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    info!("Query after array_agg translation: {}", translated);
+                    debug!("Query after array_agg translation: {}", translated);
                     translated_query = translated;
                 }
                 debug!("Array_agg translation metadata: {} hints", metadata.column_mappings.len());
@@ -498,14 +676,16 @@ impl QueryExecutor {
                 debug!("Array_agg translation failed: {}", e);
                 // Continue with original query
             }
+            }
         }
         
         // Translate unnest() functions to json_each() equivalents
-        use crate::translator::UnnestTranslator;
-        match UnnestTranslator::translate_with_metadata(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::UNNEST) {
+            use crate::translator::UnnestTranslator;
+            match UnnestTranslator::translate_with_metadata(&translated_query) {
             Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    info!("Query after unnest translation: {}", translated);
+                    debug!("Query after unnest translation: {}", translated);
                     translated_query = translated;
                 }
                 debug!("Unnest translation metadata: {} hints", metadata.column_mappings.len());
@@ -515,14 +695,16 @@ impl QueryExecutor {
                 debug!("Unnest translation failed: {}", e);
                 // Continue with original query
             }
+            }
         }
         
         // Translate json_each()/jsonb_each() functions for PostgreSQL compatibility
-        use crate::translator::JsonEachTranslator;
-        match JsonEachTranslator::translate_with_metadata(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::JSON_EACH) {
+            use crate::translator::JsonEachTranslator;
+            match JsonEachTranslator::translate_with_metadata(&translated_query) {
             Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    info!("Query after json_each translation: {}", translated);
+                    debug!("Query after json_each translation: {}", translated);
                     translated_query = translated;
                 }
                 debug!("JsonEach translation metadata: {} hints", metadata.column_mappings.len());
@@ -532,23 +714,28 @@ impl QueryExecutor {
                 debug!("JsonEach translation failed: {}", e);
                 // Continue with original query
             }
+            }
         }
         
         // Translate row_to_json() functions for PostgreSQL compatibility
-        use crate::translator::RowToJsonTranslator;
-        let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_query);
-        if translated != translated_query {
-            info!("Query after row_to_json translation: {}", translated);
+        if translation_flags.contains(crate::translator::TranslationFlags::ROW_TO_JSON) {
+            use crate::translator::RowToJsonTranslator;
+            let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_query);
+            if translated != translated_query {
+            debug!("Query after row_to_json translation: {}", translated);
             translated_query = translated;
+            }
+            debug!("RowToJson translation metadata: {} hints", metadata.column_mappings.len());
+            translation_metadata.merge(metadata);
         }
-        debug!("RowToJson translation metadata: {} hints", metadata.column_mappings.len());
-        translation_metadata.merge(metadata);
         
         // Analyze arithmetic expressions for type metadata
-        if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_query) {
+        if translation_flags.contains(crate::translator::TranslationFlags::ARITHMETIC) {
+            debug!("Analyzing arithmetic expressions in query");
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
+            debug!("ArithmeticAnalyzer found {} hints", arithmetic_metadata.column_mappings.len());
             translation_metadata.merge(arithmetic_metadata);
-            debug!("Found {} type hints from translation", translation_metadata.column_mappings.len());
+            debug!("Total translation metadata after merge: {} hints", translation_metadata.column_mappings.len());
         }
         
         let query_to_execute = translated_query.as_str();
@@ -556,8 +743,13 @@ impl QueryExecutor {
         // Simple query routing using optimized detection
         use crate::query::{QueryTypeDetector, QueryType};
         
-        match QueryTypeDetector::detect_query_type(query_to_execute) {
-            QueryType::Select => Self::execute_select(framed, db, session, query_to_execute, &translation_metadata, query_router).await,
+        let query_type = QueryTypeDetector::detect_query_type(query_to_execute);
+        debug!("Query type detected: {:?} for query: {}", query_type, query_to_execute);
+        match query_type {
+            QueryType::Select => {
+                debug!("Calling execute_select for query: {}", query_to_execute);
+                Self::execute_select(framed, db, session, query_to_execute, &translation_metadata, query_router).await
+            },
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
                 Self::execute_dml(framed, db, session, query_to_execute, query_router).await
             }
@@ -581,7 +773,7 @@ impl QueryExecutor {
     
     async fn execute_select<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         query: &str,
         translation_metadata: &crate::translator::TranslationMetadata,
@@ -590,20 +782,60 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // SQLAlchemy manages transactions explicitly - don't start implicit transactions
+        // debug!("=== EXECUTE_SELECT CALLED with query: {}", query);
+        
+        // Check wire protocol cache first for cacheable queries
+        if crate::cache::is_cacheable_for_wire_protocol(query) {
+            if let Some(cached_response) = crate::cache::WIRE_PROTOCOL_CACHE.get(query) {
+                debug!("Wire protocol cache hit for query: {}", query);
+                
+                // Send cached row description
+                framed.send(BackendMessage::RowDescription(cached_response.row_description.clone())).await
+                    .map_err(PgSqliteError::Io)?;
+                
+                // Send cached data rows (already encoded)
+                for encoded_row in &cached_response.encoded_rows {
+                    // Send pre-encoded data directly
+                    framed.get_mut().write_all(encoded_row).await
+                        .map_err(PgSqliteError::Io)?;
+                }
+                
+                // Send command complete
+                let tag = format!("SELECT {}", cached_response.row_count);
+                framed.send(BackendMessage::CommandComplete { tag }).await
+                    .map_err(PgSqliteError::Io)?;
+                
+                return Ok(());
+            }
+        }
+        
         // Check if this is a catalog query first
-        let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, Arc::new(db.clone())).await {
-            catalog_result?
-        } else {
+        // TODO: Fix CatalogInterceptor to accept &DbHandler instead of Arc<DbHandler>
+        let response = {
             // Route query through query router if available
             if let Some(router) = query_router {
                 router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
             } else {
-                db.query(query).await?
+                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
             }
         };
         
         // Extract table name from query to look up schema
         let table_name = extract_table_name_from_select(query);
+        // debug!("Table name extraction result: {:?} for query: {}", table_name, query);
+        
+        // For JOIN queries, extract all tables and build column mappings
+        // Optimized: check for JOIN without converting entire query to uppercase
+        let is_join_query = query.contains(" JOIN ") || query.contains(" join ") || 
+                           query.contains(" Join ") || query.contains(" JoIn ");
+        let column_to_table_map = if is_join_query {
+            debug!("Type inference: Detected JOIN query, building column-to-table mappings");
+            build_column_to_table_mapping(query)
+        } else {
+            std::collections::HashMap::new()
+        };
         
         // Create cache key
         let cache_key = RowDescriptionKey {
@@ -620,15 +852,119 @@ impl QueryExecutor {
             let mut schema_types = std::collections::HashMap::new();
             let mut hint_source_types = std::collections::HashMap::new();
             
-            if let Some(ref table) = table_name {
-                // Fetch types for actual columns
+            // For JOIN queries, use column-to-table mapping
+            if is_join_query && !column_to_table_map.is_empty() {
+                debug!("Type inference: Using JOIN column mappings for {} columns", response.columns.len());
+                
                 for col_name in &response.columns {
-                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
-                        schema_types.insert(col_name.clone(), pg_type);
+                    // First check if we have a direct mapping from the query
+                    if let Some(table) = column_to_table_map.get(col_name) {
+                        // Try to find the actual column name (strip alias prefix if needed)
+                        let actual_column = if col_name.starts_with(&format!("{table}_")) {
+                            &col_name[table.len() + 1..]
+                        } else {
+                            col_name
+                        };
+                        
+                        debug!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
+                              col_name, table, actual_column);
+                        
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, actual_column).await {
+                            debug!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
+                            schema_types.insert(col_name.clone(), pg_type);
+                        } else {
+                            debug!("Type inference: No schema type found for '{}.{}'", table, actual_column);
+                        }
+                    } else {
+                        debug!("Type inference: No table mapping found for column '{}'", col_name);
                     }
                 }
+            }
+            
+            if let Some(ref table) = table_name {
+                debug!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
                 
-                // Fetch types for source columns referenced in translation hints
+                // Extract column mappings from query if possible
+                let column_mappings = extract_column_mappings_from_query(query, table);
+                
+                // Fetch types for actual columns
+                for col_name in &response.columns {
+                    // Try direct lookup first
+                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                        debug!("Type inference: Found schema type for '{}.{}' -> {}", table, col_name, pg_type);
+                        schema_types.insert(col_name.clone(), pg_type);
+                    } else if let Some(source_column) = column_mappings.get(col_name) {
+                        // Try using the column mapping from SELECT clause
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, source_column).await {
+                            debug!("Type inference: Found schema type for '{}.{}' (via SELECT mapping {}) -> {}", table, source_column, col_name, pg_type);
+                            schema_types.insert(col_name.clone(), pg_type);
+                            continue;
+                        }
+                    } else {
+                        // Try stripping table name prefix from column alias
+                        let potential_column = if col_name.starts_with(&format!("{table}_")) {
+                            let after_table = &col_name[table.len() + 1..];
+                            // Handle SQLAlchemy patterns like "products_name_1" -> "name"
+                            if let Some(underscore_pos) = after_table.rfind('_') {
+                                if after_table[underscore_pos + 1..].chars().all(|c| c.is_ascii_digit()) {
+                                    // Strip numeric suffix: "name_1" -> "name"
+                                    &after_table[..underscore_pos]
+                                } else {
+                                    after_table
+                                }
+                            } else {
+                                after_table
+                            }
+                        } else {
+                            col_name
+                        };
+                        
+                        // Special handling for JOIN queries with table prefixes
+                        // Check if this is a column from a different table (e.g., "order_items_unit_price")
+                        if potential_column == col_name && col_name.contains('_') {
+                            // Try to extract table and column from patterns like "order_items_unit_price"
+                            let parts: Vec<&str> = col_name.split('_').collect();
+                            if parts.len() >= 3 {
+                                // Try common patterns: table_name_column_name
+                                let potential_table_single = parts[0];
+                                let potential_table_double = format!("{}_{}", parts[0], parts[1]);
+                                let potential_col_single = parts[parts.len() - 1];
+                                let potential_col_double = format!("{}_{}", parts[parts.len() - 2], parts[parts.len() - 1]);
+                                
+                                // Try different combinations
+                                debug!("Type inference: Trying pattern matching for '{}' with parts: {:?}", col_name, parts);
+                                for (try_table, try_col) in [
+                                    (potential_table_double.as_str(), potential_col_double.as_str()),
+                                    (potential_table_double.as_str(), potential_col_single),
+                                    (potential_table_single, potential_col_double.as_str()),
+                                ] {
+                                    debug!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
+                                    if let Ok(Some(pg_type)) = db.get_schema_type(try_table, try_col).await {
+                                        debug!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
+                                        schema_types.insert(col_name.clone(), pg_type);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if potential_column != col_name {
+                            if let Ok(Some(pg_type)) = db.get_schema_type(table, potential_column).await {
+                                debug!("Type inference: Found schema type for '{}.{}' (via alias {}) -> {}", table, potential_column, col_name, pg_type);
+                                schema_types.insert(col_name.clone(), pg_type);
+                                continue;
+                            }
+                        }
+                        
+                        debug!("Type inference: No schema type found for '{}.{}'", table, col_name);
+                    }
+                }
+            } else {
+                debug!("Type inference: No table name extracted from query, using fallback logic");
+            }
+                
+            // Fetch types for source columns referenced in translation hints
+            if let Some(ref table) = table_name {
                 for col_name in &response.columns {
                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                         if let Some(ref source_col) = hint.source_column {
@@ -646,30 +982,34 @@ impl QueryExecutor {
                 .map(|(i, name)| {
                     // First priority: Check schema table for stored type mappings
                     let type_oid = if let Some(pg_type) = schema_types.get(name) {
-                        // Need to check if this is an ENUM type
-                        // Get a connection to check ENUM metadata
-                        if let Ok(conn) = db.get_mut_connection() {
-                            crate::types::SchemaTypeMapper::pg_type_string_to_oid_with_enum_check(pg_type, &conn)
-                        } else {
-                            crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
-                        }
+                        // Use basic type OID mapping (enum checking would require async which isn't allowed in closure)
+                        crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, Some(query)) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
                     } else if let Some(hint) = translation_metadata.get_hint(name) {
                         // Third priority: Check translation metadata (datetime or arithmetic)
-                        debug!("Found translation hint for column '{}': {:?}", name, hint.suggested_type);
+                        debug!("Found translation hint for column '{}': {:?}", name, hint);
+                        debug!("  Expression type: {:?}", hint.expression_type);
+                        debug!("  Source column: {:?}", hint.source_column);
                         
                         // Check if we pre-fetched the source type
                         if let Some(source_type) = hint_source_types.get(name) {
                             debug!("Found source column type for '{}' -> '{}': {}", name, hint.source_column.as_ref().unwrap_or(&"<none>".to_string()), source_type);
-                            // For arithmetic on float columns, the result is float
+                            // For arithmetic on numeric columns, preserve the type
                             if hint.expression_type == Some(crate::translator::ExpressionType::ArithmeticOnFloat) {
-                                if source_type.contains("REAL") || source_type.contains("FLOAT") || source_type.contains("DOUBLE") {
+                                if source_type.contains("NUMERIC") || source_type.contains("DECIMAL") {
+                                    // For NUMERIC/DECIMAL types, arithmetic returns NUMERIC
+                                    PgType::Numeric.to_oid()
+                                } else if source_type.contains("REAL") || source_type.contains("FLOAT") || source_type.contains("DOUBLE") {
+                                    // For floating point types, return FLOAT8
                                     PgType::Float8.to_oid()
+                                } else if source_type.contains("INT") || source_type.contains("BIGINT") || source_type.contains("SMALLINT") {
+                                    // For integer types in arithmetic with potential decimal results, return NUMERIC
+                                    PgType::Numeric.to_oid()
                                 } else {
-                                    // For other numeric types in arithmetic, still return float
-                                    PgType::Float8.to_oid()
+                                    // Default to NUMERIC for unknown numeric types
+                                    PgType::Numeric.to_oid()
                                 }
                             } else {
                                 // For other expression types, use the source column type
@@ -679,7 +1019,8 @@ impl QueryExecutor {
                             // Fall back to suggested type if source lookup fails
                             suggested_type.to_oid()
                         } else {
-                            PgType::Float8.to_oid() // Default for arithmetic
+                            // Default to NUMERIC for arithmetic operations
+                            PgType::Numeric.to_oid()
                         }
                     } else if Self::is_datetime_expression(query, name) {
                         // Fourth priority: Legacy datetime expression detection
@@ -704,6 +1045,8 @@ impl QueryExecutor {
                         PgType::Text.to_oid()
                     };
                     
+                    debug!("Column '{}' final type OID: {} ({})", name, type_oid, 
+                        crate::types::SchemaTypeMapper::pg_oid_to_type_name(type_oid));
                     
                     FieldDescription {
                         name: name.clone(),
@@ -730,24 +1073,59 @@ impl QueryExecutor {
         
         // Convert array data before sending rows
         debug!("Converting array data for {} rows", response.rows.len());
-        info!("About to convert array data for {} rows", response.rows.len());
+        debug!("About to convert array data for {} rows", response.rows.len());
         let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
-        info!("Completed array data conversion");
+        debug!("Completed array data conversion");
+        
+        // Store row count before potential move
+        let row_count = converted_rows.len();
+        
+        // Prepare wire protocol cache if this query is cacheable
+        let mut encoded_rows = Vec::new();
+        let should_cache = crate::cache::is_cacheable_for_wire_protocol(query) && row_count <= 1000; // Don't cache huge results
         
         // Optimized data row sending for better SELECT performance
         if converted_rows.len() > 5 {
             // Use batch sending for larger result sets
-            Self::send_data_rows_batched(framed, converted_rows).await?;
+            if should_cache {
+                // Encode rows for caching while sending
+                for row in &converted_rows {
+                    let encoded = crate::cache::encode_data_row(row);
+                    encoded_rows.push(encoded.clone());
+                    framed.get_mut().write_all(&encoded).await
+                        .map_err(PgSqliteError::Io)?;
+                }
+            } else {
+                Self::send_data_rows_batched(framed, converted_rows).await?;
+            }
         } else {
             // Use individual sending for small result sets
-            for row in converted_rows {
-                framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(PgSqliteError::Io)?;
+            for row in &converted_rows {
+                if should_cache {
+                    let encoded = crate::cache::encode_data_row(row);
+                    encoded_rows.push(encoded.clone());
+                    framed.get_mut().write_all(&encoded).await
+                        .map_err(PgSqliteError::Io)?;
+                } else {
+                    framed.send(BackendMessage::DataRow(row.clone())).await
+                        .map_err(PgSqliteError::Io)?;
+                }
             }
         }
         
+        // Cache the response if appropriate
+        if should_cache && !encoded_rows.is_empty() {
+            let cached_response = crate::cache::CachedWireResponse {
+                row_description: fields.clone(),
+                encoded_rows,
+                row_count,
+            };
+            crate::cache::WIRE_PROTOCOL_CACHE.put(query.to_string(), cached_response);
+            debug!("Cached wire protocol response for query: {}", query);
+        }
+        
         // Send CommandComplete with optimized tag creation
-        let tag = create_command_tag("SELECT", response.rows_affected);
+        let tag = create_command_tag("SELECT", row_count);
         framed.send(BackendMessage::CommandComplete { tag }).await
             .map_err(PgSqliteError::Io)?;
         
@@ -756,7 +1134,7 @@ impl QueryExecutor {
     
     async fn execute_dml<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         query: &str,
         query_router: Option<&Arc<QueryRouter>>,
@@ -764,9 +1142,17 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // SQLAlchemy manages transactions explicitly - don't start implicit transactions
+        // This was interfering with SQLAlchemy's unit-of-work dirty detection
+        
+        debug!("execute_dml called with query: {}", query);
+        
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
+            debug!("Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             return Self::execute_dml_with_returning(framed, db, session, query, query_router).await;
+        } else {
+            debug!("Query does NOT have RETURNING clause: {}", query);
         }
         
         // Validate numeric constraints for INSERT/UPDATE before execution
@@ -777,30 +1163,66 @@ impl QueryExecutor {
         let validation_error = match QueryTypeDetector::detect_query_type(query) {
             QueryType::Insert => {
                 if let Some(table_name) = extract_table_name_from_insert(query) {
-                    // Get a connection to check constraints
-                    let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-                    
-                    // Validate numeric constraints
-                    let validation_result = NumericValidator::validate_insert(&conn, query, &table_name);
-                    drop(conn); // Release connection before any await
-                    
-                    validation_result.err()
+                    // Validate numeric constraints using session connection
+                    match db.with_session_connection(&session.id, |conn| {
+                        match NumericValidator::validate_insert(conn, query, &table_name) {
+                            Ok(()) => Ok(()),
+                            Err(crate::error::PgError::NumericValueOutOfRange { .. }) => {
+                                Err(rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some("NUMERIC_VALUE_OUT_OF_RANGE".to_string())
+                                ))
+                            },
+                            Err(e) => Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("Numeric validation failed: {e}"))
+                            ))
+                        }
+                    }).await {
+                        Ok(()) => None,
+                        Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(_, Some(msg)))) if msg == "NUMERIC_VALUE_OUT_OF_RANGE" => {
+                            // Create a numeric value out of range error
+                            Some(PgSqliteError::Validation(crate::error::PgError::NumericValueOutOfRange {
+                                type_name: "numeric".to_string(),
+                                column_name: String::new(),
+                                value: String::new(),
+                            }))
+                        },
+                        Err(e) => Some(e),
+                    }
                 } else {
                     None
                 }
             }
             QueryType::Update => {
                 if let Some(table_name) = extract_table_name_from_update(query) {
-                    // Get a connection to check constraints
-                    let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-                    
-                    // Validate numeric constraints
-                    let validation_result = NumericValidator::validate_update(&conn, query, &table_name);
-                    drop(conn); // Release connection before any await
-                    
-                    validation_result.err()
+                    // Validate numeric constraints using session connection
+                    match db.with_session_connection(&session.id, |conn| {
+                        match NumericValidator::validate_update(conn, query, &table_name) {
+                            Ok(()) => Ok(()),
+                            Err(crate::error::PgError::NumericValueOutOfRange { .. }) => {
+                                Err(rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some("NUMERIC_VALUE_OUT_OF_RANGE".to_string())
+                                ))
+                            },
+                            Err(e) => Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("Numeric validation failed: {e}"))
+                            ))
+                        }
+                    }).await {
+                        Ok(()) => None,
+                        Err(PgSqliteError::Sqlite(rusqlite::Error::SqliteFailure(_, Some(msg)))) if msg == "NUMERIC_VALUE_OUT_OF_RANGE" => {
+                            // Create a numeric value out of range error
+                            Some(PgSqliteError::Validation(crate::error::PgError::NumericValueOutOfRange {
+                                type_name: "numeric".to_string(),
+                                column_name: String::new(),
+                                value: String::new(),
+                            }))
+                        },
+                        Err(e) => Some(e),
+                    }
                 } else {
                     None
                 }
@@ -810,7 +1232,34 @@ impl QueryExecutor {
         
         // If there was a validation error, send it and return
         if let Some(e) = validation_error {
-            let error_response = e.to_error_response();
+            let error_response = match &e {
+                PgSqliteError::Validation(pg_err) => {
+                    // Convert PgError to ErrorResponse directly
+                    pg_err.to_error_response()
+                }
+                _ => {
+                    // Default error response for other errors
+                    crate::protocol::ErrorResponse {
+                        severity: "ERROR".to_string(),
+                        code: "23514".to_string(), // check_violation
+                        message: e.to_string(),
+                        detail: None,
+                        hint: None,
+                        position: None,
+                        internal_position: None,
+                        internal_query: None,
+                        where_: None,
+                        schema: None,
+                        table: None,
+                        column: None,
+                        datatype: None,
+                        constraint: None,
+                        file: None,
+                        line: None,
+                        routine: None,
+                    }
+                }
+            };
             framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
                 .map_err(PgSqliteError::Io)?;
             return Ok(());
@@ -820,7 +1269,8 @@ impl QueryExecutor {
         let response = if let Some(router) = query_router {
             router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
         } else {
-            db.execute(query).await?
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
         };
         
         // Optimized tag creation with static strings for common cases and buffer pooling for larger counts
@@ -839,7 +1289,7 @@ impl QueryExecutor {
     
     async fn execute_dml_with_returning<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         query: &str,
         query_router: Option<&Arc<QueryRouter>>,
@@ -847,195 +1297,151 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
-            .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
-        
         use crate::query::{QueryTypeDetector, QueryType};
         
-        if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Insert) {
-            // For INSERT, execute the insert and then query by last_insert_rowid
-            let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
+        // SQLite 3.35.0+ supports native RETURNING clause
+        // Execute the query with RETURNING clause directly
+        let returning_response = if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+        } else {
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
+        };
+        
+        // Extract table name from query for type lookup
+        let table_name = match QueryTypeDetector::detect_query_type(query) {
+            QueryType::Insert => extract_table_name_from_insert(query),
+            QueryType::Update => extract_table_name_from_update(query),
+            QueryType::Delete => extract_table_name_from_delete(query),
+            _ => None,
+        };
+        
+        // Build field descriptions with proper type information
+        let mut fields: Vec<FieldDescription> = Vec::new();
+        let mut column_types: Vec<Option<String>> = Vec::new();
+        
+        for (i, col_name) in returning_response.columns.iter().enumerate() {
+            let mut type_oid = PgType::Text.to_oid(); // Default to text
+            let mut pg_type = None;
             
-            // Execute the INSERT
-            let response = if let Some(router) = query_router {
-                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.execute(&base_query).await?
-            };
-            
-            // Get the last inserted rowid and query for RETURNING data
-            let returning_query = format!(
-                "SELECT {returning_clause} FROM {table_name} WHERE rowid = last_insert_rowid()"
-            );
-            
-            let returning_response = if let Some(router) = query_router {
-                router.execute_query(&returning_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.query(&returning_query).await?
-            };
-            
-            // Send row description
-            let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: PgType::Text.to_oid(), // Default to text
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
-                .collect();
-            
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
-            
-            // Send data rows
-            for row in returning_response.rows {
-                framed.send(BackendMessage::DataRow(row)).await
-                    .map_err(PgSqliteError::Io)?;
-            }
-            
-            // Send command complete
-            let tag = format!("INSERT 0 {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(PgSqliteError::Io)?;
-        } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Update) {
-            // For UPDATE, we need a different approach
-            // SQLite doesn't support RETURNING natively, so we'll use a workaround
-            let table_name = ReturningTranslator::extract_table_from_update(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
-            
-            // First, get the rowids of rows that will be updated
-            let where_clause = ReturningTranslator::extract_where_clause(&base_query);
-            let rowid_query = format!(
-                "SELECT rowid FROM {table_name} {where_clause}"
-            );
-            let rowid_response = if let Some(router) = query_router {
-                router.execute_query(&rowid_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.query(&rowid_query).await?
-            };
-            let rowids: Vec<String> = rowid_response.rows.iter()
-                .filter_map(|row| row[0].as_ref())
-                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                .collect();
-            
-            // Execute the UPDATE
-            let response = if let Some(router) = query_router {
-                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.execute(&base_query).await?
-            };
-            
-            // Now query the updated rows
-            if !rowids.is_empty() {
-                let rowid_list = rowids.join(",");
-                let returning_query = format!(
-                    "SELECT {returning_clause} FROM {table_name} WHERE rowid IN ({rowid_list})"
-                );
-                
-                let returning_response = if let Some(router) = query_router {
-                    router.execute_query(&returning_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-                } else {
-                    db.query(&returning_query).await?
-                };
-                
-                // Send row description
-                let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                    .enumerate()
-                    .map(|(i, name)| FieldDescription {
-                        name: name.clone(),
-                        table_oid: 0,
-                        column_id: (i + 1) as i16,
-                        type_oid: PgType::Text.to_oid(),
-                        type_size: -1,
-                        type_modifier: -1,
-                        format: 0,
-                    })
-                    .collect();
-                
-                framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(PgSqliteError::Io)?;
-                
-                // Send data rows
-                for row in returning_response.rows {
-                    framed.send(BackendMessage::DataRow(row)).await
-                        .map_err(PgSqliteError::Io)?;
+            // Try to get type information from schema
+            if let Some(ref table) = table_name {
+                if let Ok(Some(schema_type)) = db.get_schema_type(table, col_name).await {
+                    pg_type = Some(schema_type.clone());
+                    type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&schema_type);
                 }
             }
             
-            // Send command complete
-            let tag = format!("UPDATE {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(PgSqliteError::Io)?;
-        } else if matches!(QueryTypeDetector::detect_query_type(&base_query), QueryType::Delete) {
-            // For DELETE, capture rows before deletion
-            let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
+            fields.push(FieldDescription {
+                name: col_name.clone(),
+                table_oid: 0,
+                column_id: (i + 1) as i16,
+                type_oid,
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            });
             
-            let capture_query = ReturningTranslator::generate_capture_query(
-                &base_query,
-                &table_name,
-                &returning_clause
-            )?;
+            column_types.push(pg_type);
+        }
+        
+        framed.send(BackendMessage::RowDescription(fields)).await
+            .map_err(|e| PgSqliteError::Io(e))?;
+        
+        // Send data rows with proper type conversion
+        let mut row_count = 0;
+        for row in returning_response.rows {
+            // Convert row values based on column types
+            let mut converted_row = Vec::new();
             
-            // Capture the rows that will be affected
-            let captured_rows = if let Some(router) = query_router {
-                router.execute_query(&capture_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.query(&capture_query).await?
-            };
-            
-            // Execute the actual DELETE
-            let response = if let Some(router) = query_router {
-                router.execute_query(&base_query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
-            } else {
-                db.execute(&base_query).await?
-            };
-            
-            // Send row description
-            let fields: Vec<FieldDescription> = captured_rows.columns.iter()
-                .skip(1) // Skip rowid column
-                .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: PgType::Text.to_oid(),
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
-                .collect();
-            
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
-            
-            // Send captured rows (skip rowid column)
-            for row in captured_rows.rows {
-                let data_row: Vec<Option<Vec<u8>>> = row.into_iter()
-                    .skip(1) // Skip rowid
-                    .collect();
-                framed.send(BackendMessage::DataRow(data_row)).await
-                    .map_err(PgSqliteError::Io)?;
+            for (col_idx, value_opt) in row.iter().enumerate() {
+                if let Some(value_bytes) = value_opt {
+                    if let Some(Some(pg_type)) = column_types.get(col_idx) {
+                        // Apply type-specific formatting for datetime types
+                        let formatted = match pg_type.to_uppercase().as_str() {
+                            "DATE" => {
+                                // Convert INTEGER days to YYYY-MM-DD format
+                                if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                    if let Ok(days) = value_str.parse::<i32>() {
+                                        use crate::types::datetime_utils::format_days_to_date_buf;
+                                        let mut buf = vec![0u8; 32];
+                                        let len = format_days_to_date_buf(days, &mut buf);
+                                        buf.truncate(len);
+                                        Some(buf)
+                                    } else {
+                                        Some(value_bytes.clone())
+                                    }
+                                } else {
+                                    Some(value_bytes.clone())
+                                }
+                            }
+                            "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
+                                // Convert INTEGER microseconds to HH:MM:SS.ffffff format
+                                if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                    if let Ok(micros) = value_str.parse::<i64>() {
+                                        use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                                        let mut buf = vec![0u8; 32];
+                                        let len = format_microseconds_to_time_buf(micros, &mut buf);
+                                        buf.truncate(len);
+                                        Some(buf)
+                                    } else {
+                                        Some(value_bytes.clone())
+                                    }
+                                } else {
+                                    Some(value_bytes.clone())
+                                }
+                            }
+                            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff format
+                                if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                    if let Ok(micros) = value_str.parse::<i64>() {
+                                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                        let mut buf = vec![0u8; 32];
+                                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                                        buf.truncate(len);
+                                        Some(buf)
+                                    } else {
+                                        Some(value_bytes.clone())
+                                    }
+                                } else {
+                                    Some(value_bytes.clone())
+                                }
+                            }
+                            _ => Some(value_bytes.clone()),
+                        };
+                        converted_row.push(formatted);
+                    } else {
+                        converted_row.push(Some(value_bytes.clone()));
+                    }
+                } else {
+                    converted_row.push(None);
+                }
             }
             
-            // Send command complete
-            let tag = format!("DELETE {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(PgSqliteError::Io)?;
+            framed.send(BackendMessage::DataRow(converted_row)).await
+                .map_err(|e| PgSqliteError::Io(e))?;
+            row_count += 1;
         }
+        
+        // Determine the command tag based on query type
+        let query_type = QueryTypeDetector::detect_query_type(query);
+        let tag = match query_type {
+            QueryType::Insert => format!("INSERT 0 {row_count}"),
+            QueryType::Update => format!("UPDATE {row_count}"),
+            QueryType::Delete => format!("DELETE {row_count}"),
+            _ => format!("OK {row_count}"),
+        };
+        
+        framed.send(BackendMessage::CommandComplete { tag }).await
+            .map_err(|e| PgSqliteError::Io(e))?;
         
         Ok(())
     }
     
     async fn execute_ddl<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
-        _session: &Arc<SessionState>,
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
         query: &str,
         _query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
@@ -1048,25 +1454,24 @@ impl QueryExecutor {
         
         // Check if this is an ENUM DDL statement
         if EnumDdlHandler::is_enum_ddl(query) {
-            // Handle the ENUM DDL in a scope to ensure the mutex guard is dropped
-            let command_tag = {
-                let mut conn = db.get_mut_connection()
-                    .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-                
-                // Handle the ENUM DDL
-                EnumDdlHandler::handle_enum_ddl(&mut conn, query)?;
-                
-                // Determine command tag
-                if query.trim().to_uppercase().starts_with("CREATE TYPE") {
-                    "CREATE TYPE"
-                } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {
-                    "ALTER TYPE"
-                } else if query.trim().to_uppercase().starts_with("DROP TYPE") {
-                    "DROP TYPE"
-                } else {
-                    "OK"
-                }
-            }; // Mutex guard is dropped here
+            // Handle ENUM DDL with session connections
+            db.with_session_connection_mut(&session.id, |conn| {
+                EnumDdlHandler::handle_enum_ddl(conn, query)
+                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("ENUM DDL failed: {e}"))
+                    ))
+            }).await?;
+            
+            let command_tag = if query.trim().to_uppercase().starts_with("CREATE TYPE") {
+                "CREATE TYPE"
+            } else if query.trim().to_uppercase().starts_with("ALTER TYPE") {
+                "ALTER TYPE"
+            } else if query.trim().to_uppercase().starts_with("DROP TYPE") {
+                "DROP TYPE"  
+            } else {
+                "OK"
+            };
             
             // Send command complete
             framed.send(BackendMessage::CommandComplete { 
@@ -1079,14 +1484,15 @@ impl QueryExecutor {
         
         let (translated_query, type_mappings, enum_columns, array_columns) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
             // Use CREATE TABLE translator with connection for ENUM support
-            let conn = db.get_mut_connection()
-                .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection: {e}")))?;
-            
-            let result = CreateTableTranslator::translate_with_connection_full(query, Some(&conn))
-                .map_err(|e| PgSqliteError::Protocol(format!("CREATE TABLE translation failed: {e}")))?;
-            
-            // Connection guard is dropped here
-            (result.sql, result.type_mappings, result.enum_columns, result.array_columns)
+            db.with_session_connection(&session.id, |conn| {
+                let result = CreateTableTranslator::translate_with_connection_full(query, Some(conn))
+                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("CREATE TABLE translation failed: {e}"))
+                    ))?;
+                
+                Ok((result.sql, result.type_mappings, result.enum_columns, result.array_columns))
+            }).await?
         } else {
             // For other DDL, check for JSON/JSONB types
             let translated = if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {
@@ -1097,11 +1503,39 @@ impl QueryExecutor {
             (translated, std::collections::HashMap::new(), Vec::new(), Vec::new())
         };
         
+        // Check if this is a DROP TABLE command and extract table name
+        let is_drop_table = matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) 
+            && query.trim_start()[4..].trim_start().to_uppercase().starts_with("TABLE");
+        
+        let table_name_to_clean = if is_drop_table {
+            // Extract table name from DROP TABLE statement
+            let drop_table_pattern = regex::Regex::new(r"(?i)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+            drop_table_pattern.captures(query)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+        } else {
+            None
+        };
+        
         // Execute the translated query
-        db.execute(&translated_query).await?;
+        let cached_conn = Self::get_or_cache_connection(session, db).await;
+        db.execute_with_session_cached(&translated_query, &session.id, cached_conn.as_ref()).await?;
+        
+        // If this was a DROP TABLE, clean up enum usage records
+        if let Some(table_name) = table_name_to_clean {
+            db.with_session_connection_mut(&session.id, |conn| {
+                use crate::metadata::EnumTriggers;
+                EnumTriggers::clean_enum_usage_for_table(conn, &table_name)
+                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Failed to clean enum usage for table {}: {}", table_name, e))
+                    ))
+            }).await?;
+            debug!("Cleaned up enum usage records for dropped table: {}", table_name);
+        }
         
         // If we have type mappings, store them in the metadata table
-        info!("Type mappings count: {}", type_mappings.len());
+        debug!("Type mappings count: {}", type_mappings.len());
         if !type_mappings.is_empty() {
             // Extract table name from the original query
             if let Some(table_name) = extract_table_name_from_create(query) {
@@ -1114,8 +1548,9 @@ impl QueryExecutor {
                     PRIMARY KEY (table_name, column_name)
                 )";
                 
-                match db.execute(init_query).await {
-                    Ok(_) => info!("Successfully created/verified __pgsqlite_schema table"),
+                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                match db.execute_with_session_cached(init_query, &session.id, cached_conn.as_ref()).await {
+                    Ok(_) => debug!("Successfully created/verified __pgsqlite_schema table"),
                     Err(e) => debug!("Failed to create __pgsqlite_schema table: {}", e),
                 }
                 
@@ -1129,8 +1564,9 @@ impl QueryExecutor {
                             table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
                         );
                         
-                        match db.execute(&insert_query).await {
-                            Ok(_) => info!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
+                        let cached_conn = Self::get_or_cache_connection(session, db).await;
+                        match db.execute_with_session_cached(&insert_query, &session.id, cached_conn.as_ref()).await {
+                            Ok(_) => debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type),
                             Err(e) => debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e),
                         }
                         
@@ -1154,8 +1590,9 @@ impl QueryExecutor {
                                     table_name, parts[1], modifier, if is_char { 1 } else { 0 }
                                 );
                                 
-                                match db.execute(&constraint_query).await {
-                                    Ok(_) => info!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
+                                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                                match db.execute_with_session_cached(&constraint_query, &session.id, cached_conn.as_ref()).await {
+                                    Ok(_) => debug!("Stored string constraint: {}.{} max_length={}", table_name, parts[1], modifier),
                                     Err(e) => debug!("Failed to store string constraint for {}.{}: {}", table_name, parts[1], e),
                                 }
                             } else if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
@@ -1171,9 +1608,10 @@ impl QueryExecutor {
                                     table_name, parts[1], precision, scale
                                 );
                                 
-                                match db.execute(&constraint_query).await {
+                                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                                match db.execute_with_session_cached(&constraint_query, &session.id, cached_conn.as_ref()).await {
                                     Ok(_) => {
-                                        info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                        debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                     }
                                     Err(e) => {
                                         debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
@@ -1184,54 +1622,66 @@ impl QueryExecutor {
                     }
                 }
                 
-                info!("Stored type mappings for table {} (simple query protocol)", table_name);
+                debug!("Stored type mappings for table {} (simple query protocol)", table_name);
                 
                 // Create triggers for ENUM columns
                 if !enum_columns.is_empty() {
-                    let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for triggers: {e}")))?;
-                    
-                    for (column_name, enum_type) in &enum_columns {
-                        // Record enum usage
-                        EnumTriggers::record_enum_usage(&conn, &table_name, column_name, enum_type)
-                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to record enum usage: {e}")))?;
-                        
-                        // Create validation triggers
-                        EnumTriggers::create_enum_validation_triggers(&conn, &table_name, column_name, enum_type)
-                            .map_err(|e| PgSqliteError::Protocol(format!("Failed to create enum triggers: {e}")))?;
-                        
-                        info!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
-                    }
+                    db.with_session_connection(&session.id, |conn| {
+                        for (column_name, enum_type) in &enum_columns {
+                            // Record enum usage
+                            EnumTriggers::record_enum_usage(conn, &table_name, column_name, enum_type)
+                                .map_err(|e| rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some(format!("Failed to record enum usage: {e}"))
+                                ))?;
+                            
+                            // Create validation triggers
+                            EnumTriggers::create_enum_validation_triggers(conn, &table_name, column_name, enum_type)
+                                .map_err(|e| rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some(format!("Failed to create enum triggers: {e}"))
+                                ))?;
+                            
+                            debug!("Created ENUM validation triggers for {}.{} (type: {})", table_name, column_name, enum_type);
+                        }
+                        Ok(())
+                    }).await?;
                 }
                 
                 // Store array column metadata
                 if !array_columns.is_empty() {
-                    let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for array metadata: {e}")))?;
-                    
-                    // Create array metadata table if it doesn't exist (should exist from migration v8)
-                    conn.execute(
-                        "CREATE TABLE IF NOT EXISTS __pgsqlite_array_types (
-                            table_name TEXT NOT NULL,
-                            column_name TEXT NOT NULL,
-                            element_type TEXT NOT NULL,
-                            dimensions INTEGER DEFAULT 1,
-                            PRIMARY KEY (table_name, column_name)
-                        )", 
-                        []
-                    ).map_err(|e| PgSqliteError::Protocol(format!("Failed to create array metadata table: {e}")))?;
-                    
-                    // Insert array column metadata
-                    for (column_name, element_type, dimensions) in &array_columns {
+                    db.with_session_connection(&session.id, |conn| {
+                        // Create array metadata table if it doesn't exist (should exist from migration v8)
                         conn.execute(
-                            "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
-                             VALUES (?1, ?2, ?3, ?4)",
-                            params![table_name, column_name, element_type, dimensions]
-                        ).map_err(|e| PgSqliteError::Protocol(format!("Failed to store array metadata: {e}")))?;
+                            "CREATE TABLE IF NOT EXISTS __pgsqlite_array_types (
+                                table_name TEXT NOT NULL,
+                                column_name TEXT NOT NULL,
+                                element_type TEXT NOT NULL,
+                                dimensions INTEGER DEFAULT 1,
+                                PRIMARY KEY (table_name, column_name)
+                            )", 
+                            []
+                        ).map_err(|e| rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Failed to create array metadata table: {e}"))
+                        ))?;
                         
-                        info!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
-                              table_name, column_name, element_type, dimensions);
-                    }
+                        // Insert array column metadata
+                        for (column_name, element_type, dimensions) in &array_columns {
+                            conn.execute(
+                                "INSERT OR REPLACE INTO __pgsqlite_array_types (table_name, column_name, element_type, dimensions) 
+                                 VALUES (?1, ?2, ?3, ?4)",
+                                params![table_name, column_name, element_type, dimensions]
+                            ).map_err(|e| rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Failed to store array metadata: {e}"))
+                        ))?;
+                            
+                            debug!("Stored array column metadata for {}.{} (element_type: {}, dimensions: {})", 
+                                  table_name, column_name, element_type, dimensions);
+                        }
+                        Ok(())
+                    }).await?;
                 }
                 
                 // Numeric validation is now handled at the application layer in execute_dml
@@ -1242,16 +1692,16 @@ impl QueryExecutor {
                 
                 // Populate PostgreSQL catalog tables with constraint information
                 if let Some(table_name) = extract_table_name_from_create(query) {
-                    let conn = db.get_mut_connection()
-                        .map_err(|e| PgSqliteError::Protocol(format!("Failed to get connection for constraint population: {e}")))?;
-                    
-                    // Populate pg_constraint, pg_attrdef, and pg_index tables
-                    if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
-                        // Log the error but don't fail the CREATE TABLE operation
-                        debug!("Failed to populate constraints for table {}: {}", table_name, e);
-                    } else {
-                        info!("Successfully populated constraint catalog tables for table: {}", table_name);
-                    }
+                    db.with_session_connection(&session.id, |conn| {
+                        // Populate pg_constraint, pg_attrdef, and pg_index tables
+                        if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                            // Log the error but don't fail the CREATE TABLE operation
+                            debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                        } else {
+                            debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                        }
+                        Ok(())
+                    }).await?;
                 }
             }
         }
@@ -1286,8 +1736,8 @@ impl QueryExecutor {
     
     async fn execute_transaction<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
-        _session: &Arc<SessionState>,
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
         query: &str,
         _query_router: Option<&Arc<QueryRouter>>,
     ) -> Result<(), PgSqliteError>
@@ -1295,19 +1745,73 @@ impl QueryExecutor {
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
         use crate::query::{QueryTypeDetector, QueryType};
+        use crate::protocol::TransactionStatus;
+        
+        // Check if we're in a failed transaction
+        let current_status = session.get_transaction_status().await;
+        if current_status == TransactionStatus::InFailedTransaction {
+            // Only ROLLBACK is allowed in a failed transaction
+            if !matches!(QueryTypeDetector::detect_query_type(query), QueryType::Rollback) {
+                return Err(PgSqliteError::Protocol(
+                    "current transaction is aborted, commands ignored until end of transaction block".to_string()
+                ));
+            }
+        }
+        
         match QueryTypeDetector::detect_query_type(query) {
             QueryType::Begin => {
-                db.execute("BEGIN").await?;
-                framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
-                    .map_err(PgSqliteError::Io)?;
+                // Check if we're already in a transaction
+                if current_status == TransactionStatus::InTransaction {
+                    // PostgreSQL behavior: warn but don't fail
+                    tracing::warn!("BEGIN command received while already in transaction");
+                    // Send a warning notice
+                    use crate::protocol::messages::NoticeResponse;
+                    framed.send(BackendMessage::NoticeResponse(NoticeResponse {
+                        severity: "WARNING".to_string(),
+                        code: "25001".to_string(), // active_sql_transaction
+                        message: "there is already a transaction in progress".to_string(),
+                        detail: None,
+                        hint: None,
+                        position: None,
+                        where_: None,
+                    })).await.map_err(PgSqliteError::Io)?;
+                    // Still send CommandComplete, but don't actually execute BEGIN
+                    framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
+                        .map_err(PgSqliteError::Io)?;
+                } else {
+                    tracing::debug!("Executing BEGIN command");
+                    db.begin_with_session(&session.id).await?;
+                    tracing::debug!("BEGIN executed successfully");
+                    // Update transaction status to InTransaction
+                    *session.transaction_status.write().await = TransactionStatus::InTransaction;
+                    tracing::debug!("Transaction status updated to InTransaction");
+                    framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
+                        .map_err(PgSqliteError::Io)?;
+                }
             }
             QueryType::Commit => {
-                db.execute("COMMIT").await?;
+                // Can't commit a failed transaction
+                if current_status == TransactionStatus::InFailedTransaction {
+                    return Err(PgSqliteError::Protocol(
+                        "current transaction is aborted, commands ignored until end of transaction block".to_string()
+                    ));
+                }
+                tracing::debug!("Executing COMMIT command");
+                db.commit_with_session(&session.id).await?;
+                tracing::debug!("COMMIT executed successfully");
+                
+                // Update transaction status to Idle
+                *session.transaction_status.write().await = TransactionStatus::Idle;
+                tracing::debug!("Transaction status updated to Idle");
                 framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
                     .map_err(PgSqliteError::Io)?;
             }
             QueryType::Rollback => {
-                db.execute("ROLLBACK").await?;
+                // Use the rollback method which handles the "no transaction active" case gracefully
+                db.rollback_with_session(&session.id).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?;
+                
+                // Update transaction status to Idle (regardless of previous state)
+                *session.transaction_status.write().await = TransactionStatus::Idle;
                 framed.send(BackendMessage::CommandComplete { tag: "ROLLBACK".to_string() }).await
                     .map_err(PgSqliteError::Io)?;
             }
@@ -1319,7 +1823,7 @@ impl QueryExecutor {
     
     async fn execute_generic<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
-        db: &DbHandler,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         query: &str,
         query_router: Option<&Arc<QueryRouter>>,
@@ -1331,7 +1835,8 @@ impl QueryExecutor {
         if let Some(router) = query_router {
             router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?;
         } else {
-            db.execute(query).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
         }
         
         framed.send(BackendMessage::CommandComplete { tag: "OK".to_string() }).await
@@ -1416,8 +1921,30 @@ impl QueryExecutor {
     ) -> Result<Vec<Vec<Option<Vec<u8>>>>, PgSqliteError> {
         // Extract type OIDs from field descriptions
         let type_oids: Vec<i32> = fields.iter().map(|f| f.type_oid).collect();
-        info!("Type OIDs for conversion: {:?}", type_oids);
-        info!("Boolean type OID: {}", PgType::Bool.to_oid());
+        debug!("Type OIDs for conversion: {:?}", type_oids);
+        debug!("Boolean type OID: {}", PgType::Bool.to_oid());
+        
+        // Quick check: if no array, boolean, or datetime types, return rows as-is
+        let bool_oid = PgType::Bool.to_oid();
+        let date_oid = PgType::Date.to_oid();
+        let time_oid = PgType::Time.to_oid();
+        let timetz_oid = PgType::Timetz.to_oid();
+        let timestamp_oid = PgType::Timestamp.to_oid();
+        let timestamptz_oid = PgType::Timestamptz.to_oid();
+        
+        let needs_conversion = type_oids.iter().any(|&oid| {
+            oid == bool_oid || 
+            oid == date_oid ||
+            oid == time_oid ||
+            oid == timetz_oid ||
+            oid == timestamp_oid ||
+            oid == timestamptz_oid ||
+            PgType::from_oid(oid).is_some_and(|t| t.is_array())
+        });
+        
+        if !needs_conversion {
+            return Ok(rows);
+        }
         
         // Convert each row
         let mut converted_rows = Vec::with_capacity(rows.len());
@@ -1438,20 +1965,58 @@ impl QueryExecutor {
                         }
                     } else if type_oid == PgType::Bool.to_oid() {
                         // Convert boolean values from integer 0/1 to PostgreSQL f/t format
-                        info!("Converting boolean data for column {}: {:?}", col_idx, std::str::from_utf8(&data));
-                        match std::str::from_utf8(&data) {
-                            Ok(s) => match s.trim() {
-                                "0" => {
-                                    info!("Converted '0' to 'f'");
-                                    Some(b"f".to_vec())
-                                },
-                                "1" => {
-                                    info!("Converted '1' to 't'");
-                                    Some(b"t".to_vec())
-                                },
-                                _ => Some(data), // Keep original data if not 0/1
-                            },
-                            Err(_) => Some(data), // Keep original data if not valid UTF-8
+                        // Optimized: work directly with bytes to avoid string conversion overhead
+                        if data.len() == 1 && data[0] == b'0' {
+                            Some(b"f".to_vec())
+                        } else if data.len() == 1 && data[0] == b'1' {
+                            Some(b"t".to_vec())
+                        } else {
+                            Some(data) // Keep original data if not 0/1
+                        }
+                    } else if type_oid == date_oid {
+                        // Convert INTEGER days to YYYY-MM-DD format
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            if let Ok(days) = s.parse::<i32>() {
+                                use crate::types::datetime_utils::format_days_to_date_buf;
+                                let mut buf = vec![0u8; 32];
+                                let len = format_days_to_date_buf(days, &mut buf);
+                                buf.truncate(len);
+                                Some(buf)
+                            } else {
+                                Some(data) // Keep original if not an integer
+                            }
+                        } else {
+                            Some(data) // Keep original if not valid UTF-8
+                        }
+                    } else if type_oid == time_oid || type_oid == timetz_oid {
+                        // Convert INTEGER microseconds to HH:MM:SS.ffffff format
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            if let Ok(micros) = s.parse::<i64>() {
+                                use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                                let mut buf = vec![0u8; 32];
+                                let len = format_microseconds_to_time_buf(micros, &mut buf);
+                                buf.truncate(len);
+                                Some(buf)
+                            } else {
+                                Some(data) // Keep original if not an integer
+                            }
+                        } else {
+                            Some(data) // Keep original if not valid UTF-8
+                        }
+                    } else if type_oid == timestamp_oid || type_oid == timestamptz_oid {
+                        // Convert INTEGER microseconds to YYYY-MM-DD HH:MM:SS.ffffff format
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            if let Ok(micros) = s.parse::<i64>() {
+                                use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                let mut buf = vec![0u8; 32];
+                                let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                                buf.truncate(len);
+                                Some(buf)
+                            } else {
+                                Some(data) // Keep original if not an integer
+                            }
+                        } else {
+                            Some(data) // Keep original if not valid UTF-8
                         }
                     } else {
                         Some(data)
@@ -1522,27 +2087,59 @@ impl QueryExecutor {
 }
 
 fn extract_table_name_from_select(query: &str) -> Option<String> {
-    // Look for FROM clause with case-insensitive search
-    let from_pos = query.as_bytes().windows(6)
-        .position(|window| window.eq_ignore_ascii_case(b" from "))?;
+    // Look for FROM keyword using regex to handle various whitespace patterns
+    use once_cell::sync::Lazy;
+    use regex::Regex;
     
-    let after_from = &query[from_pos + 6..].trim();
+    static FROM_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"(?i)\bFROM\s+([^\s,;()]+)").unwrap()
+    });
     
-    // Find the end of table name (space, where, order by, etc.)
-    let table_end = after_from.find(|c: char| {
-        c.is_whitespace() || c == ',' || c == ';' || c == '('
-    }).unwrap_or(after_from.len());
-    
-    let table_name = after_from[..table_end].trim();
-    
-    // Remove quotes if present
-    let table_name = table_name.trim_matches('"').trim_matches('\'');
-    
-    if !table_name.is_empty() {
-        Some(table_name.to_string())
-    } else {
-        None
+    if let Some(captures) = FROM_TABLE_REGEX.captures(query) {
+        if let Some(table_match) = captures.get(1) {
+            let table_name = table_match.as_str().trim();
+            
+            // Remove quotes if present
+            let table_name = table_name.trim_matches('"').trim_matches('\'');
+            
+            if !table_name.is_empty() {
+                debug!("extract_table_name_from_select: query='{}' -> table='{}'", query, table_name);
+                return Some(table_name.to_string());
+            }
+        }
     }
+    
+    debug!("extract_table_name_from_select: query='{}' -> None", query);
+    None
+}
+
+/// Extract column mappings from SELECT query with AS aliases
+fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collections::HashMap<String, String> {
+    use regex::Regex;
+    use std::collections::HashMap;
+    
+    let mut mappings = HashMap::new();
+    
+    // Match patterns like "table.column_name AS alias"
+    let re = Regex::new(&format!(
+        r"(?i)\b{}\.(\w+)\s+AS\s+(\w+)",
+        regex::escape(table)
+    )).unwrap_or_else(|_| {
+        // Fallback pattern - just match any alias pattern
+        Regex::new(r"(?i)\b(\w+)\s+AS\s+(\w+)").unwrap()
+    });
+    
+    for captures in re.captures_iter(query) {
+        if let (Some(source_col), Some(alias)) = (captures.get(1), captures.get(2)) {
+            let source_column = source_col.as_str().to_string();
+            let alias_name = alias.as_str().to_string();
+            
+            debug!("Column mapping: {} -> {}", alias_name, source_column);
+            mappings.insert(alias_name, source_column);
+        }
+    }
+    
+    mappings
 }
 
 /// Extract table name from CREATE TABLE statement
@@ -1616,6 +2213,38 @@ fn extract_table_name_from_update(query: &str) -> Option<String> {
     }).unwrap_or(after_update.len());
     
     let table_name = after_update[..table_end].trim();
+    
+    // Remove quotes if present
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract table name from DELETE statement
+fn extract_table_name_from_delete(query: &str) -> Option<String> {
+    // Look for DELETE FROM pattern with case-insensitive search
+    let delete_pos = query.as_bytes().windows(6)
+        .position(|window| window.eq_ignore_ascii_case(b"DELETE"))?;
+    
+    let after_delete = &query[delete_pos + 6..].trim();
+    
+    // Skip optional FROM keyword
+    let after_from = if after_delete.to_uppercase().starts_with("FROM") {
+        &after_delete[4..].trim()
+    } else {
+        after_delete
+    };
+    
+    // Find the end of table name (WHERE or end of query)
+    let table_end = after_from.find(|c: char| {
+        c.is_whitespace() || c == ';'
+    }).unwrap_or(after_from.len());
+    
+    let table_name = after_from[..table_end].trim();
     
     // Remove quotes if present
     let table_name = table_name.trim_matches('"').trim_matches('\'');

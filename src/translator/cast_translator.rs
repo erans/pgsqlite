@@ -20,6 +20,23 @@ impl CastTranslator {
     
     /// Translate a query containing PostgreSQL cast syntax
     pub fn translate_query(query: &str, conn: Option<&Connection>) -> String {
+        let result = Self::translate_query_with_depth(query, conn, 0);
+        if query.contains("::mood::text") || query.contains("::text") {
+            eprintln!("CastTranslator: Translating double cast query");
+            eprintln!("  Original: {query}");
+            eprintln!("  Result: {result}");
+        }
+        result
+    }
+    
+    /// Internal translation method with recursion depth tracking
+    fn translate_query_with_depth(query: &str, conn: Option<&Connection>, depth: usize) -> String {
+        // Prevent infinite recursion
+        const MAX_RECURSION_DEPTH: usize = 10;
+        if depth >= MAX_RECURSION_DEPTH {
+            return query.to_string();
+        }
+        
         // Check translation cache first
         if let Some(cached) = crate::cache::global_translation_cache().get(query) {
             return cached;
@@ -87,24 +104,59 @@ impl CastTranslator {
                     
                     // Always preserve cast for aggregate functions or complex expressions
                     if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
-                        format!("CAST({clean_expr} AS TEXT)")
+                        // Check if this is a subquery that needs extra parentheses
+                        if clean_expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({clean_expr}) AS TEXT)")
+                        } else {
+                            format!("CAST({clean_expr} AS TEXT)")
+                        }
                     } else {
                         clean_expr.to_string()
                     }
                 } else {
                     // For other types, check if SQLite supports them
                     let sqlite_type = Self::postgres_to_sqlite_type(type_name);
-                    // If postgres_to_sqlite_type returns TEXT and the original type is not a text type,
-                    // it means SQLite doesn't know this type
-                    if sqlite_type == "TEXT" && !matches!(type_name.to_uppercase().as_str(), "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING") {
-                        // Unknown type, just return the expression
-                        expr.to_string()
-                    } else if sqlite_type == type_name.to_uppercase().as_str() {
-                        // Same type name, use CAST
-                        format!("CAST({expr} AS {type_name})")
-                    } else {
-                        // Use SQLite type
-                        format!("CAST({expr} AS {sqlite_type})")
+                    
+                    // Special handling for timestamp/date/time types
+                    let upper_type = type_name.to_uppercase();
+                    match upper_type.as_str() {
+                        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                            // Use pgsqlite's timestamp conversion function
+                            format!("pg_timestamp_from_text({expr})")
+                        }
+                        "DATE" => {
+                            // Use pgsqlite's date conversion function
+                            format!("pg_date_from_text({expr})")
+                        }
+                        "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
+                            // Use pgsqlite's time conversion function
+                            format!("pg_time_from_text({expr})")
+                        }
+                        _ => {
+                            // For non-datetime types, use regular cast logic
+                            // If postgres_to_sqlite_type returns TEXT and the original type is not a text type,
+                            // it means SQLite doesn't know this type
+                            if sqlite_type == "TEXT" && !matches!(upper_type.as_str(), "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING") {
+                                // Unknown type, just return the expression
+                                expr.to_string()
+                            } else if sqlite_type == upper_type.as_str() {
+                                // Same type name, use CAST
+                                // Check if expression is a subquery
+                                if expr.trim_start().starts_with("SELECT") {
+                                    format!("CAST(({expr}) AS {type_name})")
+                                } else {
+                                    format!("CAST({expr} AS {type_name})")
+                                }
+                            } else {
+                                // Use SQLite type
+                                // Check if expression is a subquery
+                                if expr.trim_start().starts_with("SELECT") {
+                                    format!("CAST(({expr}) AS {sqlite_type})")
+                                } else {
+                                    format!("CAST({expr} AS {sqlite_type})")
+                                }
+                            }
+                        }
                     }
                 }
             } else {
@@ -118,12 +170,32 @@ impl CastTranslator {
                     };
                     // Keep CAST for expressions with function calls
                     if clean_expr.contains('(') && clean_expr.contains(')') {
-                        format!("CAST({clean_expr} AS TEXT)")
+                        // Check if this is a subquery that needs extra parentheses
+                        if clean_expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({clean_expr}) AS TEXT)")
+                        } else {
+                            format!("CAST({clean_expr} AS TEXT)")
+                        }
                     } else {
                         clean_expr.to_string()
                     }
                 } else {
-                    format!("CAST({expr} AS {type_name})")
+                    // Special handling for timestamp/date/time types even without connection
+                    let upper_type = type_name.to_uppercase();
+                    match upper_type.as_str() {
+                        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                            format!("pg_timestamp_from_text({expr})")
+                        }
+                        "DATE" => {
+                            format!("pg_date_from_text({expr})")
+                        }
+                        "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
+                            format!("pg_time_from_text({expr})")
+                        }
+                        _ => {
+                            format!("CAST({expr} AS {type_name})")
+                        }
+                    }
                 }
             };
             
@@ -134,8 +206,37 @@ impl CastTranslator {
                 translated_cast
             };
             
-            // Replace the PostgreSQL cast with the translated version
-            result.replace_range(expr_start..cast_pos + 2 + type_end, &final_replacement);
+            // Build the original cast expression to replace
+            let original_cast = format!("{expr}::{type_name}");
+            
+            // Debug log for RETURNING issue
+            if query.contains("RETURNING") {
+                eprintln!("DEBUG CastTranslator: Processing query with RETURNING");
+                eprintln!("  Original: {query}");
+                eprintln!("  Current result: {result}");
+                eprintln!("  Looking to replace '{original_cast}' with '{final_replacement}'");
+            }
+            
+            // Find and replace the exact cast expression
+            if let Some(pos) = result.find(&original_cast) {
+                if query.contains("RETURNING") {
+                    eprintln!("DEBUG: Found exact match at position {pos}");
+                    eprintln!("  Replacing '{original_cast}' with '{final_replacement}'");
+                }
+                result.replace_range(pos..pos + original_cast.len(), &final_replacement);
+                if query.contains("RETURNING") {
+                    eprintln!("  Result after replacement: {result}");
+                }
+            } else {
+                // Fallback to the old method if exact match fails
+                if query.contains("RETURNING") {
+                    eprintln!("DEBUG: Fallback replacement");
+                    eprintln!("  expr_start: {expr_start}, cast_pos: {cast_pos}, type_end: {type_end}");
+                    eprintln!("  Replacing range {}..{}", expr_start, cast_pos + 2 + type_end);
+                    eprintln!("  Substring being replaced: '{}'", &result[expr_start..cast_pos + 2 + type_end]);
+                }
+                result.replace_range(expr_start..cast_pos + 2 + type_end, &final_replacement);
+            }
             
             // Since we modified the string, we need to recalculate positions for the next iteration
             // Break and re-find positions (this is safe because we limit iterations)
@@ -143,9 +244,9 @@ impl CastTranslator {
         }
         
         // If we made changes, we might need to process more casts
-        if iterations > 0 && iterations < MAX_ITERATIONS {
-            // Recursively process any remaining casts
-            return Self::translate_query(&result, conn);
+        if iterations > 0 && iterations < MAX_ITERATIONS && result != query {
+            // Recursively process any remaining casts with incremented depth
+            return Self::translate_query_with_depth(&result, conn, depth + 1);
         }
         
         // Cache the translation if it changed
@@ -233,6 +334,71 @@ impl CastTranslator {
         let bytes = after.as_bytes();
         let mut paren_depth = 0;
         
+        // Debug for RETURNING issue
+        if after.contains("RETURNING") {
+            eprintln!("DEBUG find_type_end: after = '{after}'");
+        }
+        
+        // Check if this starts with a multi-word type pattern
+        let upper_after = after.to_uppercase();
+        let multiword_types = [
+            ("TIMESTAMP WITHOUT TIME ZONE", 27),
+            ("TIMESTAMP WITH TIME ZONE", 24),
+            ("TIME WITHOUT TIME ZONE", 22), 
+            ("TIME WITH TIME ZONE", 19),
+            ("DOUBLE PRECISION", 16),
+            ("CHARACTER VARYING", 17),
+            ("BIT VARYING", 11),
+        ];
+        
+        for (pattern, len) in multiword_types {
+            if upper_after.starts_with(pattern) {
+                // Make sure this is followed by a word boundary or end of string
+                if after.len() == len {
+                    // Exact match - this is the end of the string
+                    return len;
+                } else if let Some(next_char) = after.as_bytes().get(len) {
+                    // There's a character after the pattern - make sure it's a word boundary
+                    if !next_char.is_ascii_alphanumeric() && *next_char != b'_' {
+                        return len;
+                    }
+                }
+            }
+        }
+        
+        // Check for single-word types that might be followed by ) or other delimiters
+        let single_word_types = [
+            "TIMESTAMP", "DATE", "TIME", "TIMETZ", "TIMESTAMPTZ",
+            "INTEGER", "INT", "INT4", "INT8", "INT2", 
+            "BIGINT", "SMALLINT", "SERIAL", "BIGSERIAL",
+            "TEXT", "VARCHAR", "CHAR", "BOOLEAN", "BOOL",
+            "REAL", "FLOAT", "FLOAT4", "FLOAT8", "DOUBLE",
+            "NUMERIC", "DECIMAL", "MONEY", "UUID", "JSON", "JSONB",
+            "BYTEA", "BIT", "VARBIT", "INTERVAL"
+        ];
+        
+        for type_name in single_word_types {
+            if upper_after.starts_with(type_name) {
+                let len = type_name.len();
+                // Make sure this is followed by a word boundary
+                if after.len() == len {
+                    if after.contains("RETURNING") {
+                        eprintln!("DEBUG: Exact match for type '{type_name}', returning {len}");
+                    }
+                    return len;
+                } else if let Some(next_char) = after.as_bytes().get(len) {
+                    // Check if next character is not alphanumeric (word boundary)
+                    if !next_char.is_ascii_alphanumeric() && *next_char != b'_' {
+                        if after.contains("RETURNING") {
+                            eprintln!("DEBUG: Type '{}' followed by non-alphanumeric '{}', returning {}", type_name, *next_char as char, len);
+                        }
+                        return len;
+                    }
+                }
+            }
+        }
+        
+        // Fall back to original logic for single-word types
         for i in 0..bytes.len() {
             let ch = bytes[i];
             
@@ -276,11 +442,39 @@ impl CastTranslator {
     }
     
     /// Translate an ENUM cast
-    fn translate_enum_cast(expr: &str, _type_name: &str, _conn: &Connection) -> String {
-        // For ENUM casts, we just return the expression as-is
-        // The CHECK constraint on the column will validate the value at runtime
-        // This is consistent with how PostgreSQL handles ENUM casts
-        expr.to_string()
+    fn translate_enum_cast(expr: &str, type_name: &str, conn: &Connection) -> String {
+        // For ENUM casts, we validate the value exists and return it if valid
+        // For invalid values, we rely on the database triggers to catch them
+        // This approach allows parameterized queries and CTEs to work while
+        // still providing validation through triggers during INSERT/UPDATE
+        
+        // If the expression is a literal string, we can validate it immediately 
+        // If it's a parameter or variable, we let it through for runtime validation
+        if expr.starts_with('\'') && expr.ends_with('\'') {
+            // It's a string literal, validate it exists
+            let literal_value = &expr[1..expr.len()-1]; // Remove quotes
+            
+            // Check if the enum value exists
+            let exists = conn.query_row(
+                "SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = ?1 AND ev.label = ?2",
+                rusqlite::params![type_name, literal_value],
+                |_| Ok(true)
+            ).unwrap_or(false);
+            
+            if exists {
+                expr.to_string()
+            } else {
+                // Create an expression that will fail when evaluated
+                format!(
+                    "(SELECT CASE WHEN 1=1 THEN CAST(NULL AS INTEGER) NOT NULL ELSE {} END)",
+                    expr
+                )
+            }
+        } else {
+            // Not a literal (could be parameter, variable, etc.), let it through
+            // Runtime validation will be handled by triggers
+            expr.to_string()
+        }
     }
     
     /// Check if an expression might need explicit TEXT casting
@@ -337,6 +531,11 @@ impl CastTranslator {
             "BOOLEAN" | "BOOL" => "INTEGER", // SQLite uses 0/1 for boolean
             "NUMERIC" | "DECIMAL" => "TEXT", // Store as text for precision
             "BIT" | "VARBIT" | "BIT VARYING" => "TEXT", // BIT types stored as text strings
+            // DateTime types - pgsqlite stores them as INTEGER (microseconds/days)
+            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => "INTEGER",
+            "DATE" => "INTEGER",
+            "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => "INTEGER",
+            "INTERVAL" => "INTEGER",
             _ => "TEXT", // Default to TEXT for unknown types
         }
     }
@@ -393,7 +592,7 @@ impl CastTranslator {
             // Check if this is an ENUM type cast
             let translated = if let Some(conn) = conn {
                 if Self::is_enum_type(conn, type_name) {
-                    // For ENUM types, just return the expression
+                    // For ENUM types, use the enum cast translator
                     Self::translate_enum_cast(expr, type_name, conn)
                 } else if type_name.eq_ignore_ascii_case("text") {
                     // For text cast, we need to handle parenthesized expressions carefully
@@ -406,19 +605,49 @@ impl CastTranslator {
                     
                     // Always preserve cast for aggregate functions or complex expressions
                     if clean_expr.contains('(') || Self::is_aggregate_function(clean_expr) || Self::might_need_text_cast(clean_expr) {
-                        format!("CAST({clean_expr} AS TEXT)")
+                        // Check if this is a subquery that needs extra parentheses
+                        if clean_expr.trim_start().starts_with("SELECT") {
+                            format!("CAST(({clean_expr}) AS TEXT)")
+                        } else {
+                            format!("CAST({clean_expr} AS TEXT)")
+                        }
                     } else {
                         clean_expr.to_string()
                     }
                 } else {
                     // Check if SQLite supports this type
                     let sqlite_type = Self::postgres_to_sqlite_type(type_name);
-                    if sqlite_type == "TEXT" && !matches!(type_name.to_uppercase().as_str(), "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING") {
-                        // Unknown type, just return the expression
-                        expr.to_string()
-                    } else {
-                        // Keep the CAST with SQLite type
-                        format!("CAST({expr} AS {sqlite_type})")
+                    
+                    // Special handling for timestamp/date/time types
+                    let upper_type = type_name.to_uppercase();
+                    match upper_type.as_str() {
+                        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                            // Use pgsqlite's timestamp conversion function
+                            format!("pg_timestamp_from_text({expr})")
+                        }
+                        "DATE" => {
+                            // Use pgsqlite's date conversion function
+                            format!("pg_date_from_text({expr})")
+                        }
+                        "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
+                            // Use pgsqlite's time conversion function
+                            format!("pg_time_from_text({expr})")
+                        }
+                        _ => {
+                            // For non-datetime types, use regular cast logic
+                            if sqlite_type == "TEXT" && !matches!(upper_type.as_str(), "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING") {
+                                // Unknown type, just return the expression
+                                expr.to_string()
+                            } else {
+                                // Keep the CAST with SQLite type
+                                // Check if expression is a subquery
+                                if expr.trim_start().starts_with("SELECT") {
+                                    format!("CAST(({expr}) AS {sqlite_type})")
+                                } else {
+                                    format!("CAST({expr} AS {sqlite_type})")
+                                }
+                            }
+                        }
                     }
                 }
             } else {

@@ -3,6 +3,21 @@ use crate::metadata::EnumMetadata;
 use crate::cache::global_enum_cache;
 use crate::PgSqliteError;
 use tracing::info;
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+// Pre-compiled regex patterns
+static CREATE_TYPE_ENUM_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)CREATE\s+TYPE\s+(\w+)\s+AS\s+ENUM\s*\((.*)\)").unwrap()
+});
+
+static ALTER_TYPE_ADD_VALUE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)ALTER\s+TYPE\s+(\w+)\s+ADD\s+VALUE\s+(?:IF\s+NOT\s+EXISTS\s+)?'([^']+)'(?:\s+(BEFORE|AFTER)\s+'([^']+)')?").unwrap()
+});
+
+static DROP_TYPE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)DROP\s+TYPE\s+(?:IF\s+EXISTS\s+)?(\w+)(?:\s+CASCADE)?").unwrap()
+});
 
 pub struct EnumDdlHandler;
 
@@ -77,10 +92,7 @@ impl EnumDdlHandler {
         // Simple regex-based parsing for CREATE TYPE
         // Format: CREATE TYPE name AS ENUM ('value1', 'value2', ...)
         
-        let re = regex::Regex::new(r"(?i)CREATE\s+TYPE\s+(\w+)\s+AS\s+ENUM\s*\((.*)\)")
-            .map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
-        
-        let captures = re.captures(query)
+        let captures = CREATE_TYPE_ENUM_REGEX.captures(query)
             .ok_or_else(|| PgSqliteError::Protocol("Invalid CREATE TYPE AS ENUM syntax".to_string()))?;
         
         let type_name = captures.get(1)
@@ -158,11 +170,7 @@ impl EnumDdlHandler {
         query: &str,
     ) -> Result<(), PgSqliteError> {
         // Parse ALTER TYPE for ADD VALUE
-        let re_add = regex::Regex::new(
-            r"(?i)ALTER\s+TYPE\s+(\w+)\s+ADD\s+VALUE\s+'([^']+)'(?:\s+(BEFORE|AFTER)\s+'([^']+)')?"
-        ).map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
-        
-        if let Some(captures) = re_add.captures(query) {
+        if let Some(captures) = ALTER_TYPE_ADD_VALUE_REGEX.captures(query) {
             let type_name = captures.get(1).unwrap().as_str();
             let new_value = captures.get(2).unwrap().as_str();
             let position = captures.get(3).map(|m| m.as_str());
@@ -206,10 +214,7 @@ impl EnumDdlHandler {
         query: &str,
     ) -> Result<(), PgSqliteError> {
         // Parse DROP TYPE
-        let re = regex::Regex::new(r"(?i)DROP\s+TYPE\s+(?:IF\s+EXISTS\s+)?(\w+)(?:\s+CASCADE)?")
-            .map_err(|e| PgSqliteError::Protocol(format!("Regex error: {e}")))?;
-        
-        let captures = re.captures(query)
+        let captures = DROP_TYPE_REGEX.captures(query)
             .ok_or_else(|| PgSqliteError::Protocol("Invalid DROP TYPE syntax".to_string()))?;
         
         let type_name = captures.get(1).unwrap().as_str();

@@ -1,0 +1,568 @@
+[2m2025-07-27T03:53:11.280385Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.11
+[2m2025-07-27T03:53:11.284156Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, running initial migrations...
+[2m2025-07-27T03:53:11.286610Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-07-27T03:53:11.286855Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-07-27T03:53:11.286887Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-07-27T03:53:11.287234Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-07-27T03:53:11.287255Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-07-27T03:53:11.287648Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-07-27T03:53:11.287672Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-07-27T03:53:11.287759Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-07-27T03:53:11.287779Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-07-27T03:53:11.298989Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 11ms
+[2m2025-07-27T03:53:11.299019Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-07-27T03:53:11.299470Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-07-27T03:53:11.299493Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-07-27T03:53:11.299700Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-07-27T03:53:11.299724Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-07-27T03:53:11.300148Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-07-27T03:53:11.300169Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-07-27T03:53:11.301277Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 0ms
+[2m2025-07-27T03:53:11.301305Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Applied 9 migrations to new database
+[2m2025-07-27T03:53:11.301399Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with mutex-based implementation
+[2m2025-07-27T03:53:11.301536Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.5435
+[2m2025-07-27T03:53:11.301564Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 5435
+[2m2025-07-27T03:53:11.301568Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: test_transaction_clean.db
+[2m2025-07-27T03:53:11.301571Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-07-27T03:53:11.302867Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-07-27T03:53:29.896821Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:42348
+[2m2025-07-27T03:53:29.897073Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:42348
+[2m2025-07-27T03:53:29.897131Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:42348 (SSL disabled)
+[2m2025-07-27T03:53:29.897161Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:42348: StartupMessage { protocol_version: 196608, parameters: {"user": "test", "database": "test"} }
+[2m2025-07-27T03:53:29.897272Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:42348
+[2m2025-07-27T03:53:29.909683Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 2
+[2m2025-07-27T03:53:29.909731Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T03:53:29.909832Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_table.id -> INTEGER (INTEGER)
+[2m2025-07-27T03:53:29.909893Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_table.name -> TEXT (TEXT)
+[2m2025-07-27T03:53:29.909899Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table test_table (simple query protocol)
+[2m2025-07-27T03:53:29.909904Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: test_table
+[2m2025-07-27T03:53:29.913802Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: test_table
+[2m2025-07-27T03:53:29.913814Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: test_table
+[2m2025-07-27T03:53:29.913899Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.913912Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.913916Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.914072Z[0m [32m INFO[0m [2mpgsqlite::cache::enhanced_statement_pool[0m[2m:[0m Cached new statement for pattern SimpleInsert in 0ms
+[2m2025-07-27T03:53:29.914258Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T03:53:29.914291Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T03:53:29.914295Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T03:53:29.914346Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.914355Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.914359Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.914743Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:42348 requested termination
+[2m2025-07-27T03:53:29.914755Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rolling back active transaction before client disconnect
+[2m2025-07-27T03:53:29.914770Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:42348 closed
+[2m2025-07-27T03:53:29.914911Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:42364
+[2m2025-07-27T03:53:29.914935Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:42364
+[2m2025-07-27T03:53:29.915008Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:42364 (SSL disabled)
+[2m2025-07-27T03:53:29.915021Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:42364: StartupMessage { protocol_version: 196608, parameters: {"database": "test", "user": "test"} }
+[2m2025-07-27T03:53:29.915095Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:42364
+[2m2025-07-27T03:53:29.915142Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.915167Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.915171Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.915552Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:42364 requested termination
+[2m2025-07-27T03:53:29.915560Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rolling back active transaction before client disconnect
+[2m2025-07-27T03:53:29.915570Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:42364 closed
+[2m2025-07-27T03:53:29.934189Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:42378
+[2m2025-07-27T03:53:29.934215Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:42378
+[2m2025-07-27T03:53:29.934252Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:42378 (SSL disabled)
+[2m2025-07-27T03:53:29.934264Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:42378: StartupMessage { protocol_version: 196608, parameters: {"database": "main", "user": "postgres"} }
+[2m2025-07-27T03:53:29.934337Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:42378
+[2m2025-07-27T03:53:29.934408Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.934419Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.934422Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.934483Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT t.oid, typarray
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore';
+[2m2025-07-27T03:53:29.936046Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 3 mappings from query
+[2m2025-07-27T03:53:29.936094Z[0m [32m INFO[0m [2mpgsqlite::cache::row_description[0m[2m:[0m Initializing RowDescription cache with capacity 1000 and TTL 10 minutes
+[2m2025-07-27T03:53:29.938884Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.938902Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.938908Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.938978Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: select pg_catalog.version()
+[2m2025-07-27T03:53:29.939998Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: TRANSACTION ISOLATION LEVEL
+[2m2025-07-27T03:53:29.940009Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter TRANSACTION ISOLATION LEVEL = read committed
+[2m2025-07-27T03:53:29.940087Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: STANDARD_CONFORMING_STRINGS
+[2m2025-07-27T03:53:29.940094Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter STANDARD_CONFORMING_STRINGS = on
+[2m2025-07-27T03:53:29.942721Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.942733Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.942736Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.965370Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'test_users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T03:53:29.968931Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T03:53:29.971821Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 2
+[2m2025-07-27T03:53:29.971837Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T03:53:29.971863Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_users.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T03:53:29.971884Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_users.name -> VARCHAR(50) (TEXT)
+[2m2025-07-27T03:53:29.971901Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: test_users.name max_length=50
+[2m2025-07-27T03:53:29.971904Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table test_users (simple query protocol)
+[2m2025-07-27T03:53:29.971907Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: test_users
+[2m2025-07-27T03:53:29.972105Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: test_users
+[2m2025-07-27T03:53:29.972111Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: test_users
+[2m2025-07-27T03:53:29.972216Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T03:53:29.972362Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T03:53:29.972367Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T03:53:29.973694Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.973708Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.973712Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.973844Z[0m [32m INFO[0m [2mpgsqlite::cache::enhanced_statement_pool[0m[2m:[0m Cached new statement for pattern SimpleInsert in 0ms
+[2m2025-07-27T03:53:29.974053Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T03:53:29.974112Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T03:53:29.974116Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T03:53:29.975146Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.975157Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.975160Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.977242Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T03:53:29.977289Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T03:53:29.977294Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T03:53:29.977769Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.977784Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.977797Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.978480Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T03:53:29.978493Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T03:53:29.978498Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T03:53:29.992389Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:42378 requested termination
+[2m2025-07-27T03:53:29.992408Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:42378 closed
+[2m2025-07-27T03:58:11.302040Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-07-27T04:02:34.391845Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:48374
+[2m2025-07-27T04:02:34.391904Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:48374
+[2m2025-07-27T04:02:34.391987Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:48374 (SSL disabled)
+[2m2025-07-27T04:02:34.392008Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:48374: StartupMessage { protocol_version: 196608, parameters: {"database": "main", "user": "postgres"} }
+[2m2025-07-27T04:02:34.392108Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:48374
+[2m2025-07-27T04:02:34.392199Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.392225Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.392230Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.392788Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.392802Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.392807Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.393899Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: TRANSACTION ISOLATION LEVEL
+[2m2025-07-27T04:02:34.393912Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter TRANSACTION ISOLATION LEVEL = read committed
+[2m2025-07-27T04:02:34.394053Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: STANDARD_CONFORMING_STRINGS
+[2m2025-07-27T04:02:34.394061Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter STANDARD_CONFORMING_STRINGS = on
+[2m2025-07-27T04:02:34.394551Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.394563Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.394567Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.397978Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.397999Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.398005Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.401686Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:02:34.403887Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:02:34.406488Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:02:34.407597Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:02:34.410343Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:02:34.411591Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:02:34.414066Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:02:34.415151Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:02:34.417594Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:02:34.418728Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:02:34.422072Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:02:34.423902Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:02:34.430414Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 7
+[2m2025-07-27T04:02:34.430440Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:02:34.430511Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.full_name -> VARCHAR(100) (TEXT)
+[2m2025-07-27T04:02:34.430542Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: users.full_name max_length=100
+[2m2025-07-27T04:02:34.430565Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.username -> VARCHAR(50) (TEXT)
+[2m2025-07-27T04:02:34.430586Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: users.username max_length=50
+[2m2025-07-27T04:02:34.430605Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.email -> VARCHAR(100) (TEXT)
+[2m2025-07-27T04:02:34.430637Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: users.email max_length=100
+[2m2025-07-27T04:02:34.430662Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:02:34.430682Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-27T04:02:34.430700Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.is_active -> BOOLEAN (INTEGER)
+[2m2025-07-27T04:02:34.430718Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: users.birth_date -> DATE (INTEGER)
+[2m2025-07-27T04:02:34.430724Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table users (simple query protocol)
+[2m2025-07-27T04:02:34.430729Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: users
+[2m2025-07-27T04:02:34.431735Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: users
+[2m2025-07-27T04:02:34.431748Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: users
+[2m2025-07-27T04:02:34.433611Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 4
+[2m2025-07-27T04:02:34.433636Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:02:34.433660Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.description -> TEXT (TEXT)
+[2m2025-07-27T04:02:34.433678Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:02:34.433692Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-27T04:02:34.433706Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: categories.name -> VARCHAR(50) (TEXT)
+[2m2025-07-27T04:02:34.433723Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: categories.name max_length=50
+[2m2025-07-27T04:02:34.433726Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table categories (simple query protocol)
+[2m2025-07-27T04:02:34.433730Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: categories
+[2m2025-07-27T04:02:34.433836Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: categories
+[2m2025-07-27T04:02:34.433845Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: categories
+[2m2025-07-27T04:02:34.435299Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 7
+[2m2025-07-27T04:02:34.435317Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:02:34.435348Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.stock_quantity -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.435365Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-27T04:02:34.435379Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.is_available -> BOOLEAN (INTEGER)
+[2m2025-07-27T04:02:34.435391Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.price -> NUMERIC(10,2) (DECIMAL)
+[2m2025-07-27T04:02:34.435409Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored numeric constraint: products.price precision=10 scale=2
+[2m2025-07-27T04:02:34.435426Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:02:34.435441Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.name -> VARCHAR(100) (TEXT)
+[2m2025-07-27T04:02:34.435456Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: products.name max_length=100
+[2m2025-07-27T04:02:34.435472Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: products.description -> TEXT (TEXT)
+[2m2025-07-27T04:02:34.435475Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table products (simple query protocol)
+[2m2025-07-27T04:02:34.435478Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: products
+[2m2025-07-27T04:02:34.435569Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: products
+[2m2025-07-27T04:02:34.435576Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: products
+[2m2025-07-27T04:02:34.437096Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 9
+[2m2025-07-27T04:02:34.437115Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:02:34.437137Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.is_published -> BOOLEAN (INTEGER)
+[2m2025-07-27T04:02:34.437153Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.title -> VARCHAR(200) (TEXT)
+[2m2025-07-27T04:02:34.437171Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: posts.title max_length=200
+[2m2025-07-27T04:02:34.437187Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.category_id -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.437202Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:02:34.437217Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.updated_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-27T04:02:34.437230Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.created_at -> TIMESTAMP WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-27T04:02:34.437244Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.content -> TEXT (TEXT)
+[2m2025-07-27T04:02:34.437258Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.view_count -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.437272Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: posts.author_id -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.437275Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table posts (simple query protocol)
+[2m2025-07-27T04:02:34.437279Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: posts
+[2m2025-07-27T04:02:34.437389Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: posts
+[2m2025-07-27T04:02:34.437395Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: posts
+[2m2025-07-27T04:02:34.438082Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 7
+[2m2025-07-27T04:02:34.438099Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:02:34.438120Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.notes -> TEXT (TEXT)
+[2m2025-07-27T04:02:34.438135Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.total_amount -> NUMERIC(12,2) (DECIMAL)
+[2m2025-07-27T04:02:34.438151Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored numeric constraint: orders.total_amount precision=12 scale=2
+[2m2025-07-27T04:02:34.438168Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.customer_id -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.438183Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:02:34.438197Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.order_date -> DATE (INTEGER)
+[2m2025-07-27T04:02:34.438212Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.order_time -> TIME WITHOUT TIME ZONE (INTEGER)
+[2m2025-07-27T04:02:34.438226Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: orders.status -> VARCHAR(20) (TEXT)
+[2m2025-07-27T04:02:34.438241Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: orders.status max_length=20
+[2m2025-07-27T04:02:34.438245Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table orders (simple query protocol)
+[2m2025-07-27T04:02:34.438248Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: orders
+[2m2025-07-27T04:02:34.438329Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: orders
+[2m2025-07-27T04:02:34.438335Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: orders
+[2m2025-07-27T04:02:34.438857Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 5
+[2m2025-07-27T04:02:34.438873Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:02:34.438894Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.quantity -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.438911Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:02:34.438923Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.unit_price -> NUMERIC(10,2) (DECIMAL)
+[2m2025-07-27T04:02:34.438939Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored numeric constraint: order_items.unit_price precision=10 scale=2
+[2m2025-07-27T04:02:34.438955Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.product_id -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.438968Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: order_items.order_id -> INTEGER (INTEGER)
+[2m2025-07-27T04:02:34.438972Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table order_items (simple query protocol)
+[2m2025-07-27T04:02:34.438982Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: order_items
+[2m2025-07-27T04:02:34.439098Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: order_items
+[2m2025-07-27T04:02:34.439104Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: order_items
+[2m2025-07-27T04:02:34.439225Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:02:34.439467Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:02:34.439473Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:02:34.439723Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.439735Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.439738Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.439797Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT table_name 
+                    FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+[2m2025-07-27T04:02:34.449765Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.449785Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.449789Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: categories
+   Columns: ["name", "description", "created_at"]
+   Select clause: CAST(p0 AS TEXT), CAST(p1 AS TEXT), p2 FROM (VALUES ('Technology', 'Posts about technology and programming', '2025-07-27T04:02:34.449585', 0), ('Lifestyle', 'Posts about lifestyle and personal development', '2025-07-27T04:02:34.449588', 1)) AS imp_sen(p0, p1, p2, sen_counter) ORDER BY sen_counter RETURNING categories.id, categories.id AS id__1
+   🔍 Type casts: [Some("TEXT"), Some("TEXT"), None]
+   📦 Parsed 2 rows from VALUES clause
+   Final SELECT: CAST('Technology' AS TEXT), CAST('Posts about technology and programming' AS TEXT), '2025-07-27T04:02:34.449585' UNION ALL SELECT CAST('Lifestyle' AS TEXT), CAST('Posts about lifestyle and personal development' AS TEXT), '2025-07-27T04:02:34.449588' RETURNING categories.id, categories.id AS id__1
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: users
+   Columns: ["username", "email", "full_name", "is_active", "created_at", "birth_date"]
+   Select clause: CAST(p0 AS TEXT), CAST(p1 AS TEXT), CAST(p2 AS TEXT), CAST(p3 AS INTEGER), p4, p5 FROM (VALUES ('alice_dev', 'alice@example.com', 'Alice Johnson', true, '2025-07-27T04:02:34.453233', '1990-05-15', 0), ('bob_writer', 'bob@example.com', 'Bob Smith', true, '2025-07-27T04:02:34.453235', '1985-10-22', 1), ('charlie_inactive', 'charlie@example.com', 'Charlie Brown', false, '2025-07-27T04:02:34.453236'::timestamp, '1995-03-08'::date, 2)) AS imp_sen(p0, p1, p2, p3, p4, p5, sen_counter) ORDER BY sen_counter RETURNING users.id, users.id AS id__1
+   🔍 Type casts: [Some("TEXT"), Some("TEXT"), Some("TEXT"), Some("INTEGER"), None, None]
+   📦 Parsed 3 rows from VALUES clause
+   Final SELECT: CAST('alice_dev' AS TEXT), CAST('alice@example.com' AS TEXT), CAST('Alice Johnson' AS TEXT), CAST(true AS INTEGER), '2025-07-27T04:02:34.453233', '1990-05-15' UNION ALL SELECT CAST('bob_writer' AS TEXT), CAST('bob@example.com' AS TEXT), CAST('Bob Smith' AS TEXT), CAST(true AS INTEGER), '2025-07-27T04:02:34.453235', '1985-10-22' UNION ALL SELECT CAST('charlie_inactive' AS TEXT), CAST('charlie@example.com' AS TEXT), CAST('Charlie Brown' AS TEXT), CAST(false AS INTEGER), '2025-07-27T04:02:34.453236'::timestamp, '1995-03-08'::date RETURNING users.id, users.id AS id__1
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: posts
+   Columns: ["title", "content", "author_id", "category_id", "created_at", "updated_at", "view_count", "is_published"]
+   Select clause: CAST(p0 AS TEXT), CAST(p1 AS TEXT), CAST(p2 AS INTEGER), CAST(p3 AS INTEGER), p4, p5, CAST(p6 AS INTEGER), CAST(p7 AS INTEGER) FROM (VALUES ('Getting Started with SQLAlchemy', 'SQLAlchemy is a powerful Python ORM...', '1', '1', '2025-07-27T04:02:34.457187', '2025-07-27T04:02:34.457189', 150, true, 0), ('PostgreSQL vs SQLite', 'Comparing two popular database systems...', '1', '1', '2025-07-27T04:02:34.457190'::timestamp, '2025-07-27T04:02:34.457190'::timestamp, 89, true, 1), ('Work-Life Balance Tips', 'How to maintain a healthy work-life balance...', '2', '2', '2025-07-27T04:02:34.457191'::timestamp, '2025-07-27T04:02:34.457192'::timestamp, 245, true, 2), ('Draft: Future of AI', 'This is a draft post about AI...', '2', '1', '2025-07-27T04:02:34.457192'::timestamp, '2025-07-27T04:02:34.457193'::timestamp, 5, false, 3)) AS imp_sen(p0, p1, p2, p3, p4, p5, p6, p7, sen_counter) ORDER BY sen_counter RETURNING posts.id, posts.id AS id__1
+   🔍 Type casts: [Some("TEXT"), Some("TEXT"), Some("INTEGER"), Some("INTEGER"), None, None, Some("INTEGER"), Some("INTEGER")]
+   📦 Parsed 4 rows from VALUES clause
+   Final SELECT: CAST('Getting Started with SQLAlchemy' AS TEXT), CAST('SQLAlchemy is a powerful Python ORM...' AS TEXT), CAST('1' AS INTEGER), CAST('1' AS INTEGER), '2025-07-27T04:02:34.457187', '2025-07-27T04:02:34.457189', CAST(150 AS INTEGER), CAST(true AS INTEGER) UNION ALL SELECT CAST('PostgreSQL vs SQLite' AS TEXT), CAST('Comparing two popular database systems...' AS TEXT), CAST('1' AS INTEGER), CAST('1' AS INTEGER), '2025-07-27T04:02:34.457190'::timestamp, '2025-07-27T04:02:34.457190'::timestamp, CAST(89 AS INTEGER), CAST(true AS INTEGER) UNION ALL SELECT CAST('Work-Life Balance Tips' AS TEXT), CAST('How to maintain a healthy work-life balance...' AS TEXT), CAST('2' AS INTEGER), CAST('2' AS INTEGER), '2025-07-27T04:02:34.457191'::timestamp, '2025-07-27T04:02:34.457192'::timestamp, CAST(245 AS INTEGER), CAST(true AS INTEGER) UNION ALL SELECT CAST('Draft: Future of AI' AS TEXT), CAST('This is a draft post about AI...' AS TEXT), CAST('2' AS INTEGER), CAST('1' AS INTEGER), '2025-07-27T04:02:34.457192'::timestamp, '2025-07-27T04:02:34.457193'::timestamp, CAST(5 AS INTEGER), CAST(false AS INTEGER) RETURNING posts.id, posts.id AS id__1
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: products
+   Columns: ["name", "description", "price", "stock_quantity", "is_available", "created_at"]
+   Select clause: CAST(p0 AS TEXT), CAST(p1 AS TEXT), p2, CAST(p3 AS INTEGER), CAST(p4 AS INTEGER), p5 FROM (VALUES ('Laptop Pro', 'High-performance laptop for developers', 1299.99, 25, true, '2025-07-27T04:02:34.461080', 0), ('Wireless Mouse', 'Ergonomic wireless mouse', 49.99, 100, true, '2025-07-27T04:02:34.461082', 1), ('Mechanical Keyboard', 'RGB mechanical keyboard', 129.50, 0, false, '2025-07-27T04:02:34.461083', 2)) AS imp_sen(p0, p1, p2, p3, p4, p5, sen_counter) ORDER BY sen_counter RETURNING products.id, products.id AS id__1
+   🔍 Type casts: [Some("TEXT"), Some("TEXT"), None, Some("INTEGER"), Some("INTEGER"), None]
+   📦 Parsed 3 rows from VALUES clause
+   Final SELECT: CAST('Laptop Pro' AS TEXT), CAST('High-performance laptop for developers' AS TEXT), 1299.99, CAST(25 AS INTEGER), CAST(true AS INTEGER), '2025-07-27T04:02:34.461080' UNION ALL SELECT CAST('Wireless Mouse' AS TEXT), CAST('Ergonomic wireless mouse' AS TEXT), 49.99, CAST(100 AS INTEGER), CAST(true AS INTEGER), '2025-07-27T04:02:34.461082' UNION ALL SELECT CAST('Mechanical Keyboard' AS TEXT), CAST('RGB mechanical keyboard' AS TEXT), 129.50, CAST(0 AS INTEGER), CAST(false AS INTEGER), '2025-07-27T04:02:34.461083' RETURNING products.id, products.id AS id__1
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: orders
+   Columns: ["customer_id", "order_date", "order_time", "total_amount", "status", "notes"]
+   Select clause: CAST(p0 AS INTEGER), p1, p2, p3, CAST(p4 AS TEXT), CAST(p5 AS TEXT) FROM (VALUES ('1', '2024-01-15', '14:30:00', 0.00, 'completed', 'Express delivery requested', 0), ('2', '2024-01-20', '10:15:00', 0.00, 'pending', 'Standard delivery', 1)) AS imp_sen(p0, p1, p2, p3, p4, p5, sen_counter) ORDER BY sen_counter RETURNING orders.id, orders.id AS id__1
+   🔍 Type casts: [Some("INTEGER"), None, None, None, Some("TEXT"), Some("TEXT")]
+   📦 Parsed 2 rows from VALUES clause
+   Final SELECT: CAST('1' AS INTEGER), '2024-01-15', '14:30:00', 0.00, CAST('completed' AS TEXT), CAST('Express delivery requested' AS TEXT) UNION ALL SELECT CAST('2' AS INTEGER), '2024-01-20', '10:15:00', 0.00, CAST('pending' AS TEXT), CAST('Standard delivery' AS TEXT) RETURNING orders.id, orders.id AS id__1
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: order_items
+   Columns: ["order_id", "product_id", "quantity", "unit_price"]
+   Select clause: CAST(p0 AS INTEGER), CAST(p1 AS INTEGER), CAST(p2 AS INTEGER), p3 FROM (VALUES ('1', '1', 1, 1299.99, 0), ('1', '2', 1, 49.99, 1), ('2', '2', 2, 49.99, 2)) AS imp_sen(p0, p1, p2, p3, sen_counter) ORDER BY sen_counter RETURNING order_items.id, order_items.id AS id__1
+   🔍 Type casts: [Some("INTEGER"), Some("INTEGER"), Some("INTEGER"), None]
+   📦 Parsed 3 rows from VALUES clause
+   Final SELECT: CAST('1' AS INTEGER), CAST('1' AS INTEGER), CAST(1 AS INTEGER), 1299.99 UNION ALL SELECT CAST('1' AS INTEGER), CAST('2' AS INTEGER), CAST(1 AS INTEGER), 49.99 UNION ALL SELECT CAST('2' AS INTEGER), CAST('2' AS INTEGER), CAST(2 AS INTEGER), 49.99 RETURNING order_items.id, order_items.id AS id__1
+[2m2025-07-27T04:02:34.469391Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:02:34.469505Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:02:34.469511Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:02:34.471791Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.471803Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.471807Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.474099Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:02:34.478455Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:02:34.481096Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:02:34.488081Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:02:34.488110Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:02:34.488113Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:02:34.489058Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.489073Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.489078Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.489967Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_id' -> table 'posts'
+[2m2025-07-27T04:02:34.489984Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_id' for posts.id
+[2m2025-07-27T04:02:34.489990Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_title' -> table 'posts'
+[2m2025-07-27T04:02:34.489993Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_title' for posts.title
+[2m2025-07-27T04:02:34.489997Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_content' -> table 'posts'
+[2m2025-07-27T04:02:34.489999Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_content' for posts.content
+[2m2025-07-27T04:02:34.490003Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_author_id' -> table 'posts'
+[2m2025-07-27T04:02:34.490006Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_author_id' for posts.author_id
+[2m2025-07-27T04:02:34.490010Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_category_id' -> table 'posts'
+[2m2025-07-27T04:02:34.490013Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_category_id' for posts.category_id
+[2m2025-07-27T04:02:34.490017Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_created_at' -> table 'posts'
+[2m2025-07-27T04:02:34.490019Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_created_at' for posts.created_at
+[2m2025-07-27T04:02:34.490022Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_updated_at' -> table 'posts'
+[2m2025-07-27T04:02:34.490025Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_updated_at' for posts.updated_at
+[2m2025-07-27T04:02:34.490028Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_view_count' -> table 'posts'
+[2m2025-07-27T04:02:34.490030Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_view_count' for posts.view_count
+[2m2025-07-27T04:02:34.490034Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_is_published' -> table 'posts'
+[2m2025-07-27T04:02:34.490037Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_is_published' for posts.is_published
+[2m2025-07-27T04:02:34.490044Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 30 mappings from query
+[2m2025-07-27T04:02:34.494429Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.494441Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.494445Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.513174Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_id' -> table 'posts'
+[2m2025-07-27T04:02:34.513200Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_id' for posts.id
+[2m2025-07-27T04:02:34.513206Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_title' -> table 'posts'
+[2m2025-07-27T04:02:34.513209Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_title' for posts.title
+[2m2025-07-27T04:02:34.513224Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_content' -> table 'posts'
+[2m2025-07-27T04:02:34.513226Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_content' for posts.content
+[2m2025-07-27T04:02:34.513230Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_author_id' -> table 'posts'
+[2m2025-07-27T04:02:34.513233Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_author_id' for posts.author_id
+[2m2025-07-27T04:02:34.513236Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_category_id' -> table 'posts'
+[2m2025-07-27T04:02:34.513239Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_category_id' for posts.category_id
+[2m2025-07-27T04:02:34.513243Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_created_at' -> table 'posts'
+[2m2025-07-27T04:02:34.513245Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_created_at' for posts.created_at
+[2m2025-07-27T04:02:34.513249Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_updated_at' -> table 'posts'
+[2m2025-07-27T04:02:34.513251Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_updated_at' for posts.updated_at
+[2m2025-07-27T04:02:34.513255Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_view_count' -> table 'posts'
+[2m2025-07-27T04:02:34.513257Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_view_count' for posts.view_count
+[2m2025-07-27T04:02:34.513261Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'posts_is_published' -> table 'posts'
+[2m2025-07-27T04:02:34.513263Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'posts_is_published' for posts.is_published
+[2m2025-07-27T04:02:34.513266Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_id' -> table 'users'
+[2m2025-07-27T04:02:34.513270Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_id' for users.id
+[2m2025-07-27T04:02:34.513273Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_username' -> table 'users'
+[2m2025-07-27T04:02:34.513276Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_username' for users.username
+[2m2025-07-27T04:02:34.513279Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_email' -> table 'users'
+[2m2025-07-27T04:02:34.513281Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_email' for users.email
+[2m2025-07-27T04:02:34.513284Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_full_name' -> table 'users'
+[2m2025-07-27T04:02:34.513287Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_full_name' for users.full_name
+[2m2025-07-27T04:02:34.513290Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_is_active' -> table 'users'
+[2m2025-07-27T04:02:34.513293Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_is_active' for users.is_active
+[2m2025-07-27T04:02:34.513300Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_created_at' -> table 'users'
+[2m2025-07-27T04:02:34.513303Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_created_at' for users.created_at
+[2m2025-07-27T04:02:34.513306Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_birth_date' -> table 'users'
+[2m2025-07-27T04:02:34.513309Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_birth_date' for users.birth_date
+[2m2025-07-27T04:02:34.513312Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'categories_id' -> table 'categories'
+[2m2025-07-27T04:02:34.513315Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'categories_id' for categories.id
+[2m2025-07-27T04:02:34.513318Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'categories_name' -> table 'categories'
+[2m2025-07-27T04:02:34.513321Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'categories_name' for categories.name
+[2m2025-07-27T04:02:34.513325Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'categories_description' -> table 'categories'
+[2m2025-07-27T04:02:34.513327Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'categories_description' for categories.description
+[2m2025-07-27T04:02:34.513331Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'categories_created_at' -> table 'categories'
+[2m2025-07-27T04:02:34.513334Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'categories_created_at' for categories.created_at
+[2m2025-07-27T04:02:34.513340Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 56 mappings from query
+[2m2025-07-27T04:02:34.516877Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_username' -> table 'users'
+[2m2025-07-27T04:02:34.516892Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_username' for users.username
+[2m2025-07-27T04:02:34.516904Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 10 mappings from query
+[2m2025-07-27T04:02:34.520884Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["order_items.quantity", "order_items.unit_price"] aliased as 'item_total', using 'order_items.quantity' as source
+[2m2025-07-27T04:02:34.522093Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'orders_id' -> table 'orders'
+[2m2025-07-27T04:02:34.522109Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'orders_id' for orders.id
+[2m2025-07-27T04:02:34.522119Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'users_username' -> table 'users'
+[2m2025-07-27T04:02:34.522124Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'users_username' for users.username
+[2m2025-07-27T04:02:34.522131Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'products_name' -> table 'products'
+[2m2025-07-27T04:02:34.522136Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'products_name' for products.name
+[2m2025-07-27T04:02:34.522165Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'order_items_quantity' -> table 'order_items'
+[2m2025-07-27T04:02:34.522171Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'order_items_quantity' for order_items.quantity
+[2m2025-07-27T04:02:34.522177Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'order_items_unit_price' -> table 'order_items'
+[2m2025-07-27T04:02:34.522182Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'order_items_unit_price' for order_items.unit_price
+[2m2025-07-27T04:02:34.522190Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'item_total' -> table 'order_items'
+[2m2025-07-27T04:02:34.522202Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 24 mappings from query
+[2m2025-07-27T04:02:34.525821Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.525835Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.525840Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.535150Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:02:34.539213Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: alias 'categories_name' -> table 'categories'
+[2m2025-07-27T04:02:34.539225Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: SQLAlchemy pattern detected 'categories_name' for categories.name
+[2m2025-07-27T04:02:34.539236Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 8 mappings from query
+[2m2025-07-27T04:02:34.541760Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.541773Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.541777Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.549832Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:02:34.549853Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:02:34.549858Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:02:34.550040Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["sum", "order_items.quantity", "order_items.unit_price"] aliased as 'sum_1', using 'sum' as source
+[2m2025-07-27T04:02:34.554405Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["products.price"] aliased as 'discounted_price', using 'products.price' as source
+[2m2025-07-27T04:02:34.556965Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:48374 requested termination
+[2m2025-07-27T04:02:34.556981Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:48374 closed
+[2m2025-07-27T04:03:11.302176Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-07-27T04:04:31.636689Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:53104
+[2m2025-07-27T04:04:31.636766Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:53104
+[2m2025-07-27T04:04:31.636823Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:53104 (SSL disabled)
+[2m2025-07-27T04:04:31.636869Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:53104: StartupMessage { protocol_version: 196608, parameters: {"user": "postgres", "database": "main"} }
+[2m2025-07-27T04:04:31.636950Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:53104
+[2m2025-07-27T04:04:31.637019Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:31.637044Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:31.637050Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:31.637603Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:31.637626Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:31.637634Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:31.638204Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: TRANSACTION ISOLATION LEVEL
+[2m2025-07-27T04:04:31.638212Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter TRANSACTION ISOLATION LEVEL = read committed
+[2m2025-07-27T04:04:31.638353Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: STANDARD_CONFORMING_STRINGS
+[2m2025-07-27T04:04:31.638360Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter STANDARD_CONFORMING_STRINGS = on
+[2m2025-07-27T04:04:31.640647Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:31.640660Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:31.640663Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:31.642174Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'test_returning_users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:31.644027Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:31.646887Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Type mappings count: 2
+[2m2025-07-27T04:04:31.646911Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully created/verified __pgsqlite_schema table
+[2m2025-07-27T04:04:31.646951Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_returning_users.name -> VARCHAR(50) (TEXT)
+[2m2025-07-27T04:04:31.646980Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored string constraint: test_returning_users.name max_length=50
+[2m2025-07-27T04:04:31.647004Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored metadata: test_returning_users.id -> SERIAL (INTEGER PRIMARY KEY AUTOINCREMENT)
+[2m2025-07-27T04:04:31.647009Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Stored type mappings for table test_returning_users (simple query protocol)
+[2m2025-07-27T04:04:31.647014Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: test_returning_users
+[2m2025-07-27T04:04:31.647114Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: test_returning_users
+[2m2025-07-27T04:04:31.647129Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Successfully populated constraint catalog tables for table: test_returning_users
+[2m2025-07-27T04:04:31.647247Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:04:31.647376Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:04:31.647381Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:04:31.648672Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:31.648687Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:31.648691Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:31.648935Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:04:31.648979Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:04:31.648983Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:04:31.650816Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:31.650828Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:31.650832Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:31.651185Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:04:31.651222Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:04:31.651226Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:04:31.652412Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:31.652424Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:31.652427Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:31.661764Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:53104 requested termination
+[2m2025-07-27T04:04:31.661781Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:53104 closed
+[2m2025-07-27T04:04:51.897779Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:33992
+[2m2025-07-27T04:04:51.897839Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:33992
+[2m2025-07-27T04:04:51.897940Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:33992 (SSL disabled)
+[2m2025-07-27T04:04:51.897987Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:33992: StartupMessage { protocol_version: 196608, parameters: {"user": "postgres", "database": "main"} }
+[2m2025-07-27T04:04:51.898069Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:33992
+[2m2025-07-27T04:04:51.898169Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.898195Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.898202Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.898794Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.898806Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.898811Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.899416Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: TRANSACTION ISOLATION LEVEL
+[2m2025-07-27T04:04:51.899423Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter TRANSACTION ISOLATION LEVEL = read committed
+[2m2025-07-27T04:04:51.899555Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m SHOW parameter: STANDARD_CONFORMING_STRINGS
+[2m2025-07-27T04:04:51.899560Z[0m [32m INFO[0m [2mpgsqlite::query::set_handler[0m[2m:[0m Parameter STANDARD_CONFORMING_STRINGS = on
+[2m2025-07-27T04:04:51.900048Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.900060Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.900063Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.903096Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.903115Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.903120Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.904923Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'users' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:51.906622Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:51.908237Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'categories' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:51.909622Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:51.911229Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'posts' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:51.913171Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:51.914720Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'products' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:51.916113Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:51.917691Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'orders' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:51.919035Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:51.920575Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT pg_catalog.pg_class.relname 
+FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
+WHERE pg_catalog.pg_class.relname = 'order_items' AND EXISTS (SELECT 1 FROM json_each('["r","p","f","v","m"]') WHERE value = pg_catalog.pg_class.relkind) AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
+[2m2025-07-27T04:04:51.921932Z[0m [32m INFO[0m [2mpgsqlite::query::join_type_inference[0m[2m:[0m JOIN mapping: Built 6 mappings from query
+[2m2025-07-27T04:04:51.922199Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:04:51.922216Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:04:51.922220Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:04:51.922514Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.922523Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.922527Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.931027Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.931043Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.931047Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL
+   Table: categories
+   Columns: ["name", "description", "created_at"]
+   Select clause: CAST(p0 AS TEXT), CAST(p1 AS TEXT), p2 FROM (VALUES ('Technology', 'Posts about technology and programming', '2025-07-27T04:04:51.930856', 0), ('Lifestyle', 'Posts about lifestyle and personal development', '2025-07-27T04:04:51.930858', 1)) AS imp_sen(p0, p1, p2, sen_counter) ORDER BY sen_counter RETURNING categories.id, categories.id AS id__1
+   🔍 Type casts: [Some("TEXT"), Some("TEXT"), None]
+   📦 Parsed 2 rows from VALUES clause
+   Final SELECT: CAST('Technology' AS TEXT), CAST('Posts about technology and programming' AS TEXT), '2025-07-27T04:04:51.930856' UNION ALL SELECT CAST('Lifestyle' AS TEXT), CAST('Posts about lifestyle and personal development' AS TEXT), '2025-07-27T04:04:51.930858' RETURNING categories.id, categories.id AS id__1
+[2m2025-07-27T04:04:51.931797Z[0m [31mERROR[0m [2mpgsqlite[0m[2m:[0m Query execution error: SQLite error: UNIQUE constraint failed: categories.name
+[2m2025-07-27T04:04:51.937200Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.937219Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.937223Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.937301Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:04:51.939117Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:04:51.940497Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:04:51.943274Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing COMMIT command
+[2m2025-07-27T04:04:51.943292Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m COMMIT executed successfully
+[2m2025-07-27T04:04:51.943296Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to Idle
+[2m2025-07-27T04:04:51.944104Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.944115Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.944119Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.945243Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.945253Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.945255Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.961363Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["order_items.quantity", "order_items.unit_price"] aliased as 'item_total', using 'order_items.quantity' as source
+[2m2025-07-27T04:04:51.962762Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.962776Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.962780Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.966665Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["count"] aliased as 'count_1', using 'count' as source
+[2m2025-07-27T04:04:51.967978Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.967992Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.967996Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.971182Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Executing BEGIN command
+[2m2025-07-27T04:04:51.971196Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m BEGIN executed successfully
+[2m2025-07-27T04:04:51.971200Z[0m [32m INFO[0m [2mpgsqlite::query::executor[0m[2m:[0m Transaction status updated to InTransaction
+[2m2025-07-27T04:04:51.971261Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["sum", "order_items.quantity", "order_items.unit_price"] aliased as 'sum_1', using 'sum' as source
+[2m2025-07-27T04:04:51.972631Z[0m [32m INFO[0m [2mpgsqlite::translator::arithmetic_analyzer[0m[2m:[0m Detected arithmetic on columns ["products.price"] aliased as 'discounted_price', using 'products.price' as source
+[2m2025-07-27T04:04:51.973053Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:33992 requested termination
+[2m2025-07-27T04:04:51.973061Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:33992 closed

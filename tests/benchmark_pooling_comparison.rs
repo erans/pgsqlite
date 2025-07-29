@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use pgsqlite::session::DbHandler;
 use tokio::task::JoinSet;
 
@@ -14,7 +14,9 @@ async fn benchmark_pooling_comparison() {
     let query = "SELECT id, name FROM users WHERE id = 1";
     
     // Create and initialize database
-    let db_handler = Arc::new(DbHandler::new(":memory:").unwrap());
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+    let db_path = format!("/tmp/benchmark_pooling_{timestamp}.db");
+    let db_handler = Arc::new(DbHandler::new(&db_path).unwrap());
     
     // Initialize test data
     db_handler.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
@@ -63,6 +65,11 @@ async fn benchmark_pooling_comparison() {
     println!("\nNote: Connection pooling infrastructure is complete but not yet integrated");
     println!("      into the main query execution pipeline. Once integrated, we expect");
     println!("      to see improved performance for concurrent read operations.");
+    
+    // Cleanup
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }
 
 /// Test that pooling can be enabled via environment variable

@@ -1,5 +1,6 @@
 use tokio::net::TcpListener;
 use tokio_postgres::NoTls;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_simple_select() {
@@ -8,13 +9,18 @@ async fn test_simple_select() {
         .with_env_filter("pgsqlite::query::extended=debug")
         .try_init();
     
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path_clone = db_path.clone();
+    
     // Start test server
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path_clone).unwrap()
         );
         
         // Create a simple table
@@ -66,4 +72,10 @@ async fn test_simple_select() {
     
     println!("\nTest passed!");
     server_handle.abort();
+
+    // Clean up
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
 }

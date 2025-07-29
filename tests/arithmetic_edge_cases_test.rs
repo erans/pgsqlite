@@ -8,8 +8,11 @@ async fn test_division_by_zero() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_division_by_zero_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         // Create test table
@@ -56,8 +59,11 @@ async fn test_very_large_numbers() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_very_large_numbers_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         // Create table with large numbers
@@ -103,8 +109,11 @@ async fn test_negative_number_arithmetic() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_negative_number_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE negatives (id INTEGER PRIMARY KEY, val REAL)").await.unwrap();
@@ -149,8 +158,11 @@ async fn test_case_sensitivity_in_aliases() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_case_sensitivity_in_aliases_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, price REAL)").await.unwrap();
@@ -200,8 +212,11 @@ async fn test_arithmetic_with_cast() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_arithmetic_with_cast_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE mixed_types (id INTEGER PRIMARY KEY, int_val INTEGER, text_val TEXT, real_val REAL)").await.unwrap();
@@ -252,8 +267,11 @@ async fn test_multiple_arithmetic_operators() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_multiple_arithmetic_operators_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE calc (id INTEGER PRIMARY KEY, a REAL, b REAL, c REAL)").await.unwrap();
@@ -308,8 +326,11 @@ async fn test_floating_point_precision() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_floating_point_precision_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE precision_test (id INTEGER PRIMARY KEY, val DOUBLE PRECISION)").await.unwrap();

@@ -4,45 +4,69 @@ This document provides detailed performance benchmarks and analysis of pgsqlite.
 
 ## Executive Summary
 
-pgsqlite adds a PostgreSQL protocol translation layer on top of SQLite. The overhead varies significantly by operation type:
+**⚠️ CRITICAL: As of 2025-07-29, pgsqlite is experiencing severe performance regression.**
 
-- **Best Performance**: UPDATE/DELETE operations (44-48x overhead)
-- **Good Performance**: Cached SELECT queries (74x overhead with read-only optimizer)
-- **Expected Overhead**: Non-cached SELECT (369x) and single-row INSERT (332x)
-- **Optimization Available**: Multi-row INSERT can be 76x faster than single-row
-- **New Features**: Read-only optimizer provides 2.4x speedup for cached queries
+The recent connection-per-session architecture changes have introduced massive overhead:
+- SELECT operations are 568x worse than the documented target
+- All DML operations (INSERT, UPDATE, DELETE) are 100-300x worse than targets
+- Even cached queries are performing 3.5x worse than expected
+
+**Root Cause Analysis (Preliminary):**
+1. Connection-per-session architecture may have excessive mutex contention
+2. Session state management overhead in hot paths
+3. Possible connection lookup inefficiencies
+4. LazyQueryProcessor allocations may be impacting performance
+
+**Immediate Actions Required:**
+1. Profile the connection management code
+2. Identify and remove bottlenecks in session handling
+3. Optimize hot paths to reduce overhead
+4. Consider connection pooling within sessions
 
 ## Benchmark Results
 
-### Latest Results (2025-07-18 - Query Optimization System)
+### ⚠️ CRITICAL PERFORMANCE REGRESSION (2025-07-29)
+
+After implementing connection-per-session architecture, performance has severely degraded:
 
 ```
 ================================================================================
-                           pgsqlite Performance Analysis
+                     SEVERE PERFORMANCE REGRESSION ALERT
 ================================================================================
 
 Benchmark Configuration:
-- Records: 10,000
+- Records: 1,000+ operations per type
 - SQLite: In-memory database
-- pgsqlite: In-memory with comprehensive optimization system
+- pgsqlite: In-memory with connection-per-session architecture
 - Connection: Unix Socket
 
 ================================================================================
-                              Overhead Summary
+                          Current vs Target Performance
 ================================================================================
 
+Operation        | SQLite (ms) | pgsqlite (ms) | Current    | Target   | Status
+-----------------|-------------|---------------|------------|----------|--------
+CREATE TABLE     |    0.145    |    15.769     | 10,792.1%  | ~100x    | ❌ 107x worse
+INSERT (single)  |    0.002    |     0.174     | 10,753.0%  | 36.6x    | ❌ 294x worse
+SELECT (first)   |    0.001    |     3.827     | 383,068.5% | 674.9x   | ❌ 568x worse
+SELECT (cached)  |    0.005    |     0.159     |  3,185.9%  | 17.2x    | ❌ 3.5x worse
+UPDATE           |    0.001    |     0.063     |  5,368.6%  | 50.9x    | ❌ 105x worse
+DELETE           |    0.001    |     0.045     |  4,636.9%  | 35.8x    | ❌ 130x worse
+
+Cache Effectiveness: 24.1x speedup (3.827ms → 0.159ms) - Good ratio but poor absolute performance
+Connection-per-session: SEVERE OVERHEAD - needs immediate optimization
+```
+
+### Previous Best Results (2025-07-27 - Pre-regression)
+
+```
 Operation        | SQLite (ms) | pgsqlite (ms) | Overhead | Performance
 -----------------|-------------|---------------|----------|-------------
-CREATE TABLE     |    0.139    |    13.438     |  9579x   | Expected
-INSERT (single)  |    0.002    |     0.302     | 18412x   | Use batch
-SELECT (first)   |    0.001    |     0.379     | 36856x   | Protocol cost
-SELECT (cached)  |    0.002    |     0.161     |  7442x   | Excellent ⭐
-UPDATE           |    0.001    |     0.063     |  5284x   | Excellent ⭐
-DELETE           |    0.001    |     0.041     |  4294x   | Excellent ⭐
-
-Cache Effectiveness: 2.4x speedup (0.379ms → 0.161ms)
-Read-only optimizer: Active for SELECT queries
-Enhanced statement caching: 200+ cached query plans
+SELECT (first)   |    0.001    |     0.669     |  674.9x  | Good
+SELECT (cached)  |    0.003    |     0.046     |   17.2x  | Excellent ⭐
+UPDATE           |    0.001    |     0.059     |   50.9x  | Excellent ⭐
+DELETE           |    0.001    |     0.034     |   35.8x  | Excellent ⭐
+INSERT (single)  |    0.002    |     0.060     |   36.6x  | Excellent ⭐
 ```
 
 ### Historical Performance Improvements

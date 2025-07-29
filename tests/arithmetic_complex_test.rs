@@ -8,8 +8,11 @@ async fn test_nested_parentheses() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_nested_parentheses_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         // Create test table
@@ -61,8 +64,11 @@ async fn test_multiple_columns_arithmetic() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_multiple_columns_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE sales (id INTEGER PRIMARY KEY, quantity INTEGER, price REAL, tax_rate REAL, discount REAL)").await.unwrap();
@@ -118,8 +124,11 @@ async fn test_arithmetic_with_functions() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_arithmetic_with_functions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE measurements (id INTEGER PRIMARY KEY, value REAL)").await.unwrap();
@@ -171,8 +180,11 @@ async fn test_mixed_type_arithmetic() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_mixed_type_arithmetic_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE mixed (id INTEGER PRIMARY KEY, int_col INTEGER, real_col REAL, decimal_col DECIMAL(10,2))").await.unwrap();
@@ -222,8 +234,11 @@ async fn test_very_long_expressions() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_very_long_expressions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE nums (id INTEGER PRIMARY KEY, v1 REAL, v2 REAL, v3 REAL, v4 REAL, v5 REAL)").await.unwrap();
@@ -276,8 +291,11 @@ async fn test_arithmetic_with_case_expressions() {
     let port = listener.local_addr().unwrap().port();
     
     let server_handle = tokio::spawn(async move {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        let db_path = format!("/tmp/test_arithmetic_with_case_expressions_{timestamp}.db");
         let db_handler = std::sync::Arc::new(
-            pgsqlite::session::DbHandler::new(":memory:").unwrap()
+            pgsqlite::session::DbHandler::new(&db_path).unwrap()
         );
         
         db_handler.execute("CREATE TABLE conditions (id INTEGER PRIMARY KEY, status TEXT, amount REAL)").await.unwrap();

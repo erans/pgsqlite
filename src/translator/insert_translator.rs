@@ -3,30 +3,60 @@ use once_cell::sync::Lazy;
 use crate::session::DbHandler;
 use crate::types::ValueConverter;
 use serde_json;
+use tracing::debug;
 
 /// Translates INSERT statements to convert datetime literals to INTEGER values
 pub struct InsertTranslator;
 
 // Pattern to match INSERT INTO table (...) VALUES (...)
 static INSERT_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:;?\s*$)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s*VALUES\s*(.+?)(?:\s+RETURNING\s+|;\s*$|$)").unwrap()
 });
 
 // Pattern to match INSERT INTO table VALUES (...) without column list
 static INSERT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:;?\s*$)").unwrap()
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+VALUES\s*(.+?)(?:\s+RETURNING\s+|;\s*$|$)").unwrap()
+});
+
+// Pattern to match INSERT INTO table (...) SELECT ...
+static INSERT_SELECT_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s*\(([^)]+)\)\s+SELECT\s+(.+)").unwrap()
+});
+
+// Pattern to match INSERT INTO table SELECT ... (without column list)
+static INSERT_SELECT_NO_COLUMNS_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?si)INSERT\s+INTO\s+(\w+)\s+SELECT\s+(.+)").unwrap()
 });
 
 impl InsertTranslator {
-    /// Check if the query is an INSERT that might need datetime or array translation
+    /// Check if the query is an INSERT that might need datetime, array, or VALUES translation
     pub fn needs_translation(query: &str) -> bool {
+        // Skip if already processed by CastTranslator
+        if query.contains("pg_timestamp_from_text") || 
+           query.contains("pg_date_from_text") || 
+           query.contains("pg_time_from_text") {
+            return false;
+        }
         
-        (INSERT_PATTERN.is_match(query) || INSERT_NO_COLUMNS_PATTERN.is_match(query)) && (
-            query.contains('-') ||  // Date patterns like '2024-01-01'
-            query.contains(':') ||  // Time patterns like '14:30:00'
-            query.contains('{') ||  // Array patterns like '{1,2,3}'
-            query.contains("ARRAY[") // Array constructor like ARRAY[1,2,3]
-        )
+        let is_insert = INSERT_PATTERN.is_match(query) || 
+                       INSERT_NO_COLUMNS_PATTERN.is_match(query) ||
+                       INSERT_SELECT_PATTERN.is_match(query) ||
+                       INSERT_SELECT_NO_COLUMNS_PATTERN.is_match(query);
+        
+        let has_datetime_or_array = query.contains('-') ||  // Date patterns like '2024-01-01'
+                                   query.contains(':') ||  // Time patterns like '14:30:00'
+                                   query.contains('{') ||  // Array patterns like '{1,2,3}'
+                                   query.contains("ARRAY[") || // Array constructor like ARRAY[1,2,3]
+                                   query.contains("NOW()") ||  // PostgreSQL datetime functions
+                                   query.contains("CURRENT_DATE") ||
+                                   query.contains("CURRENT_TIME") ||
+                                   query.contains("CURRENT_TIMESTAMP");
+        
+        // Also check for SQLAlchemy VALUES pattern
+        let has_sqlalchemy_values = query.contains("FROM (VALUES") && query.contains(") AS ") && 
+                                   (query.contains("imp_sen") || query.contains("(p0, p1"));
+        
+        is_insert && (has_datetime_or_array || has_sqlalchemy_values)
     }
     
     /// Translate INSERT statement to convert datetime values to INTEGER format
@@ -73,9 +103,16 @@ impl InsertTranslator {
                 &column_types
             )?;
             
+            // Check if there's a RETURNING clause
+            let returning_clause = if let Some(idx) = query.to_uppercase().find(" RETURNING ") {
+                &query[idx..]
+            } else {
+                ""
+            };
+            
             // Reconstruct the INSERT query
             let result = format!(
-                "INSERT INTO {table_name} ({columns_str}) VALUES {converted_values}"
+                "INSERT INTO {table_name} ({columns_str}) VALUES {converted_values}{returning_clause}"
             );
             Ok(result)
         } else if let Some(caps) = INSERT_NO_COLUMNS_PATTERN.captures(query) {
@@ -111,12 +148,81 @@ impl InsertTranslator {
                 &column_types
             )?;
             
+            // Check if there's a RETURNING clause
+            let returning_clause = if let Some(idx) = query.to_uppercase().find(" RETURNING ") {
+                &query[idx..]
+            } else {
+                ""
+            };
+            
             // Reconstruct the INSERT query  
             Ok(format!(
-                "INSERT INTO {table_name} VALUES {converted_values}"
+                "INSERT INTO {table_name} VALUES {converted_values}{returning_clause}"
+            ))
+        } else if let Some(caps) = INSERT_SELECT_PATTERN.captures(query) {
+            // Handle INSERT INTO table (...) SELECT ...
+            let table_name = &caps[1];
+            let columns_str = &caps[2];
+            let select_clause = &caps[3];
+            
+            debug!("INSERT SELECT translation called for table: {}", table_name);
+            debug!("SELECT clause: {}", select_clause);
+            
+            // Parse column names
+            let columns: Vec<&str> = columns_str.split(',')
+                .map(|c| c.trim())
+                .collect();
+            
+            // Get column types from __pgsqlite_schema
+            let column_types = Self::get_column_types(db, table_name).await?;
+            
+            // Check if this is the SQLAlchemy VALUES pattern FIRST
+            let final_select = if Self::is_sqlalchemy_values_pattern(select_clause) {
+                eprintln!("🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL");
+                eprintln!("   Table: {table_name}");
+                eprintln!("   Columns: {columns:?}");
+                eprintln!("   Select clause: {select_clause}");
+                // Convert VALUES pattern to UNION ALL
+                Self::convert_sqlalchemy_values_to_union(select_clause, &columns, &column_types)?
+            } else {
+                // Translate the SELECT clause normally
+                let converted_select = Self::translate_select_clause(
+                    select_clause,
+                    &columns,
+                    &column_types
+                )?;
+                eprintln!("   Converted SELECT: {converted_select}");
+                converted_select
+            };
+            
+            eprintln!("   Final SELECT: {final_select}");
+            
+            // Reconstruct the INSERT query
+            Ok(format!(
+                "INSERT INTO {table_name} ({columns_str}) SELECT {final_select}"
+            ))
+        } else if let Some(caps) = INSERT_SELECT_NO_COLUMNS_PATTERN.captures(query) {
+            // Handle INSERT INTO table SELECT ... (without column list)
+            let table_name = &caps[1];
+            let select_clause = &caps[2];
+            
+            // Get all columns and types from __pgsqlite_schema, ordered by column position
+            let (columns, column_types) = Self::get_all_columns_and_types(db, table_name).await?;
+            
+            // Translate the SELECT clause
+            let columns_refs: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
+            let converted_select = Self::translate_select_clause(
+                select_clause,
+                &columns_refs,
+                &column_types
+            )?;
+            
+            // Reconstruct the INSERT query  
+            Ok(format!(
+                "INSERT INTO {table_name} SELECT {converted_select}"
             ))
         } else {
-            // Not a simple INSERT statement, return as-is
+            // Not a recognized INSERT pattern, return as-is
             Ok(query.to_string())
         }
     }
@@ -357,6 +463,11 @@ impl InsertTranslator {
                value_upper.starts_with("CURRENT_") {
                 return Ok(value.to_string());
             }
+            // Check if this is a function call (contains parentheses)
+            if value.contains('(') && value.contains(')') {
+                // This is a function call, don't try to convert it
+                return Ok(value.to_string());
+            }
         }
         
         // Remove quotes if present
@@ -566,6 +677,385 @@ impl InsertTranslator {
         // Default to string
         Ok(serde_json::Value::String(elem.to_string()))
     }
+    
+    /// Translate SELECT clause expressions to convert datetime literals and functions
+    fn translate_select_clause(
+        select_clause: &str,
+        columns: &[&str],
+        column_types: &std::collections::HashMap<String, String>
+    ) -> Result<String, String> {
+        // SQLAlchemy VALUES pattern is now handled in the main translate_query method
+        
+        // Parse the SELECT clause to extract individual expressions
+        let expressions = Self::parse_select_expressions(select_clause)?;
+        
+        if expressions.len() != columns.len() {
+            return Err(format!(
+                "Column count mismatch in SELECT: {} columns but {} expressions", 
+                columns.len(), 
+                expressions.len()
+            ));
+        }
+        
+        // Convert each expression based on the target column type
+        let mut converted_expressions = Vec::new();
+        for (i, expr) in expressions.iter().enumerate() {
+            let column_name = columns[i];
+            let converted_expr = if let Some(pg_type) = column_types.get(&column_name.to_lowercase()) {
+                Self::convert_select_expression(expr, pg_type)?
+            } else {
+                expr.to_string()
+            };
+            converted_expressions.push(converted_expr);
+        }
+        
+        Ok(converted_expressions.join(", "))
+    }
+    
+    /// Check if this is the SQLAlchemy VALUES pattern with column aliases
+    fn is_sqlalchemy_values_pattern(select_clause: &str) -> bool {
+        // Look for pattern: p0::TYPE or CAST(p0 AS TYPE), ... FROM (VALUES ...) AS alias(p0, p1, p2, ...)
+        // This works for both original queries and after CastTranslator has run
+        select_clause.contains("FROM (VALUES") && 
+        select_clause.contains(") AS ") && 
+        (select_clause.contains("(p0, p1, p2") || 
+         (select_clause.contains("CAST(p0") && select_clause.contains("imp_sen")))
+    }
+    
+    /// Convert SQLAlchemy VALUES pattern to UNION ALL syntax
+    fn convert_sqlalchemy_values_to_union(
+        select_clause: &str,
+        columns: &[&str],
+        _column_types: &std::collections::HashMap<String, String>
+    ) -> Result<String, String> {
+        // Extract the VALUES rows from the pattern:
+        // SELECT p0::TYPE, p1::TYPE FROM (VALUES (val1, val2, val3, idx), ...) AS alias(p0, p1, p2, sen_counter)
+        
+        // First, extract the SELECT expressions to understand what type casts are applied
+        let select_start = 0;
+        let from_pos = select_clause.find(" FROM ").ok_or("FROM not found")?;
+        let select_expressions = &select_clause[select_start..from_pos];
+        
+        // Parse the SELECT expressions to get the type casts
+        let type_casts = Self::parse_sqlalchemy_type_casts(select_expressions)?;
+        eprintln!("   🔍 Type casts: {type_casts:?}");
+        
+        // Find the VALUES clause
+        let values_start = select_clause.find("VALUES").ok_or("VALUES not found")?;
+        let values_end_search = &select_clause[values_start..];
+        
+        // Find the end of VALUES - look for ) AS
+        let as_pos = values_end_search.find(") AS").ok_or("End of VALUES not found")?;
+        let values_content = &values_end_search[6..as_pos + 1]; // Skip "VALUES" and include the last )
+        
+        // Parse the VALUES rows
+        let rows = Self::parse_values_rows(values_content)?;
+        eprintln!("   📦 Parsed {} rows from VALUES clause", rows.len());
+        
+        // Extract ORDER BY and RETURNING clauses if present
+        let mut order_by = "";
+        let mut returning = "";
+        
+        if let Some(order_pos) = select_clause.find(" ORDER BY ") {
+            let order_end = select_clause[order_pos..].find(" RETURNING ")
+                .map(|p| order_pos + p)
+                .unwrap_or(select_clause.len());
+            order_by = &select_clause[order_pos..order_end];
+        }
+        
+        if let Some(ret_pos) = select_clause.find(" RETURNING ") {
+            returning = &select_clause[ret_pos..];
+        }
+        
+        // Build UNION ALL query
+        let mut union_parts = Vec::new();
+        
+        for (row_idx, row_values) in rows.iter().enumerate() {
+            let mut select_parts = Vec::new();
+            
+            for (col_idx, value) in row_values.iter().enumerate() {
+                if col_idx >= columns.len() {
+                    // This is probably the sen_counter column, skip it
+                    continue;
+                }
+                
+                let _column_name = columns[col_idx];
+                
+                // Apply type cast if specified in the original query
+                let converted_value = if col_idx < type_casts.len() {
+                    if let Some(ref cast_type) = type_casts[col_idx] {
+                        // Apply the CAST
+                        format!("CAST({value} AS {cast_type})")
+                    } else {
+                        // No cast found in query, just use the value
+                        // For NUMERIC columns, we don't need special handling since SQLite stores them as-is
+                        value.to_string()
+                    }
+                } else {
+                    // Beyond the type_casts array, just use value as-is
+                    value.to_string()
+                };
+                
+                select_parts.push(converted_value);
+            }
+            
+            // For the first row, don't include SELECT (it will be added by the caller)
+            // For subsequent rows, we need SELECT for UNION ALL
+            if row_idx == 0 {
+                union_parts.push(select_parts.join(", "));
+            } else {
+                let select_stmt = format!("SELECT {}", select_parts.join(", "));
+                union_parts.push(select_stmt);
+            }
+        }
+        
+        // Join with UNION ALL
+        let union_query = union_parts.join(" UNION ALL ");
+        
+        // Add ORDER BY if we need to preserve row order (but skip sen_counter)
+        let final_query = if !order_by.is_empty() && order_by.contains("sen_counter") {
+            // Skip ORDER BY sen_counter as it doesn't exist in UNION ALL
+            format!("{union_query}{returning}")
+        } else {
+            format!("{union_query}{order_by}{returning}")
+        };
+        
+        Ok(final_query)
+    }
+    
+    /// Parse VALUES rows from a VALUES clause like ((val1, val2), (val3, val4))
+    /// Parse type casts from SQLAlchemy SELECT expressions like "CAST(p0 AS INTEGER), p1::NUMERIC(10, 2)"
+    fn parse_sqlalchemy_type_casts(select_expressions: &str) -> Result<Vec<Option<String>>, String> {
+        let mut type_casts = Vec::new();
+        
+        // Split by comma but handle nested parentheses
+        let expressions = Self::parse_select_expressions(select_expressions)?;
+        
+        for expr in expressions {
+            let expr_trimmed = expr.trim();
+            
+            // Check for CAST(p{n} AS TYPE) pattern
+            if expr_trimmed.starts_with("CAST(") {
+                if let Some(as_pos) = expr_trimmed.find(" AS ") {
+                    let after_as = &expr_trimmed[as_pos + 4..];
+                    if let Some(close_pos) = after_as.rfind(')') {
+                        let cast_type = after_as[..close_pos].trim();
+                        type_casts.push(Some(cast_type.to_string()));
+                        continue;
+                    }
+                }
+            }
+            
+            // Check for p{n}::TYPE pattern
+            if expr_trimmed.contains("::") {
+                if let Some(cast_pos) = expr_trimmed.find("::") {
+                    let cast_type = expr_trimmed[cast_pos + 2..].trim();
+                    type_casts.push(Some(cast_type.to_string()));
+                    continue;
+                }
+            }
+            
+            // No cast found
+            type_casts.push(None);
+        }
+        
+        Ok(type_casts)
+    }
+    
+    fn parse_values_rows(values_content: &str) -> Result<Vec<Vec<String>>, String> {
+        let mut rows = Vec::new();
+        let mut current_row = Vec::new();
+        let mut current_value = String::new();
+        let mut in_quotes = false;
+        let mut paren_depth = 0;
+        let mut in_row = false;
+        
+        let chars: Vec<char> = values_content.chars().collect();
+        let mut i = 0;
+        
+        while i < chars.len() {
+            let ch = chars[i];
+            
+            match ch {
+                '\'' => {
+                    current_value.push(ch);
+                    if in_quotes && i + 1 < chars.len() && chars[i + 1] == '\'' {
+                        // Escaped quote
+                        current_value.push('\'');
+                        i += 1;
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                }
+                '(' if !in_quotes => {
+                    if paren_depth == 0 {
+                        in_row = true;
+                    } else {
+                        current_value.push(ch);
+                    }
+                    paren_depth += 1;
+                }
+                ')' if !in_quotes => {
+                    paren_depth -= 1;
+                    if paren_depth == 0 && in_row {
+                        // End of row
+                        if !current_value.trim().is_empty() {
+                            current_row.push(current_value.trim().to_string());
+                            current_value.clear();
+                        }
+                        rows.push(current_row.clone());
+                        current_row.clear();
+                        in_row = false;
+                    } else {
+                        current_value.push(ch);
+                    }
+                }
+                ',' if !in_quotes && in_row => {
+                    // End of value within row
+                    current_row.push(current_value.trim().to_string());
+                    current_value.clear();
+                }
+                _ => {
+                    if in_row {
+                        current_value.push(ch);
+                    }
+                }
+            }
+            i += 1;
+        }
+        
+        Ok(rows)
+    }
+    
+    /// Parse SELECT clause into individual expressions, handling commas within function calls
+    fn parse_select_expressions(select_clause: &str) -> Result<Vec<String>, String> {
+        // First, extract only the expressions part before FROM
+        let expressions_part = if let Some(from_pos) = select_clause.find(" FROM ") {
+            &select_clause[..from_pos]
+        } else {
+            select_clause
+        }.trim();
+        
+        let mut expressions = Vec::new();
+        let mut current = String::new();
+        let mut paren_depth = 0;
+        let mut in_quotes = false;
+        let mut chars = expressions_part.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\'' => {
+                    current.push(ch);
+                    // Handle escaped quotes
+                    if in_quotes && chars.peek() == Some(&'\'') {
+                        current.push('\'');
+                        chars.next();
+                    } else {
+                        in_quotes = !in_quotes;
+                    }
+                }
+                '(' if !in_quotes => {
+                    paren_depth += 1;
+                    current.push(ch);
+                }
+                ')' if !in_quotes => {
+                    paren_depth -= 1;
+                    current.push(ch);
+                }
+                ',' if !in_quotes && paren_depth == 0 => {
+                    // End of expression
+                    expressions.push(current.trim().to_string());
+                    current.clear();
+                }
+                _ => {
+                    current.push(ch);
+                }
+            }
+        }
+        
+        // Don't forget the last expression
+        if !current.trim().is_empty() {
+            expressions.push(current.trim().to_string());
+        }
+        
+        Ok(expressions)
+    }
+    
+    /// Convert a single SELECT expression to handle datetime literals and functions
+    fn convert_select_expression(expr: &str, pg_type: &str) -> Result<String, String> {
+        let expr_trimmed = expr.trim();
+        
+        // Check if this is a datetime/array type that needs conversion
+        let needs_datetime_conversion = matches!(pg_type.to_lowercase().as_str(),
+            "date" | "time" | "timestamp" | "timestamptz" | "timetz" | "interval"
+        );
+        
+        let needs_array_conversion = pg_type.ends_with("[]") || pg_type.starts_with("_");
+        
+        // Handle PostgreSQL type cast expressions like "p0::VARCHAR" or "p1::TIMESTAMP"
+        if expr_trimmed.contains("::") {
+            // For cast expressions, we don't convert them - they're column references with type hints
+            // SQLAlchemy uses these for parameter binding, not literal values
+            return Ok(expr_trimmed.to_string());
+        }
+        
+        if needs_datetime_conversion {
+            // Handle PostgreSQL datetime functions
+            let expr_upper = expr_trimmed.to_uppercase();
+            if expr_upper == "NOW()" {
+                return Ok("CURRENT_TIMESTAMP".to_string());
+            }
+            if expr_upper == "CURRENT_DATE" || 
+               expr_upper == "CURRENT_TIME" || 
+               expr_upper == "CURRENT_TIMESTAMP" {
+                return Ok(expr_trimmed.to_string());
+            }
+            
+            // Handle literal datetime values (quoted strings)
+            if expr_trimmed.starts_with('\'') && expr_trimmed.ends_with('\'') && expr_trimmed.len() > 1 {
+                let literal_value = &expr_trimmed[1..expr_trimmed.len()-1];
+                return Self::convert_datetime_literal(literal_value, pg_type);
+            }
+        }
+        
+        if needs_array_conversion {
+            // Handle array literals and constructors
+            if expr_trimmed.starts_with("ARRAY[") || expr_trimmed.starts_with("'{") {
+                return Self::convert_array_value(expr_trimmed);
+            }
+        }
+        
+        // No conversion needed, return as-is
+        Ok(expr_trimmed.to_string())
+    }
+    
+    /// Convert datetime literal to INTEGER format
+    fn convert_datetime_literal(literal: &str, pg_type: &str) -> Result<String, String> {
+        match pg_type.to_lowercase().as_str() {
+            "date" => {
+                match ValueConverter::convert_date_to_unix(literal) {
+                    Ok(days) => Ok(days),
+                    Err(e) => Err(format!("Invalid date value '{literal}': {e}"))
+                }
+            }
+            "time" => {
+                match ValueConverter::convert_time_to_seconds(literal) {
+                    Ok(micros) => Ok(micros),
+                    Err(e) => Err(format!("Invalid time value '{literal}': {e}"))
+                }
+            }
+            "timestamp" => {
+                match ValueConverter::convert_timestamp_to_unix(literal) {
+                    Ok(micros) => Ok(micros),
+                    Err(e) => Err(format!("Invalid timestamp value '{literal}': {e}"))
+                }
+            }
+            _ => {
+                // For other types (timestamptz, timetz, interval), keep as quoted string for now
+                Ok(format!("'{literal}'"))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -589,8 +1079,32 @@ mod tests {
         assert!(InsertTranslator::needs_translation("INSERT INTO test (date_col) VALUES ('2024-01-15')"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (time_col) VALUES ('14:30:00')"));
         assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES ('{1,2,3}')"));
+    }
+    
+    #[test]
+    fn test_regex_matches_multiline_insert() {
+        let query = r#"INSERT INTO test_arrays (int_array, text_array, bool_array) VALUES
+    ('{1,2,3,4,5}', '{"apple","banana","cherry"}', '{true,false,true}'),
+    ('{}', '{}', '{}'),
+    (NULL, NULL, NULL);"#;
+        
+        assert!(INSERT_PATTERN.is_match(query), "Regex should match multi-line INSERT");
+        
+        if let Some(caps) = INSERT_PATTERN.captures(query) {
+            assert_eq!(&caps[1], "test_arrays");
+            assert_eq!(&caps[2], "int_array, text_array, bool_array");
+            assert!(caps[3].contains("('{1,2,3,4,5}'"));
+        }
+    }
+    
+    #[test]
+    fn test_needs_translation_array_types() {
         assert!(InsertTranslator::needs_translation("INSERT INTO test (arr_col) VALUES (ARRAY[1,2,3])"));
         assert!(!InsertTranslator::needs_translation("INSERT INTO test (id) VALUES (1)"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test (date_col) SELECT '2024-01-15' FROM source"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test SELECT '2024-01-15', NOW() FROM source"));
+        assert!(InsertTranslator::needs_translation("INSERT INTO test (time_col) SELECT CURRENT_TIME FROM source"));
+        assert!(!InsertTranslator::needs_translation("INSERT INTO test SELECT id, name FROM source"));
     }
     
     #[test]
@@ -622,5 +1136,50 @@ mod tests {
         
         let elements = InsertTranslator::parse_array_elements("1,NULL,3").unwrap();
         assert_eq!(elements, vec![serde_json::json!(1), serde_json::Value::Null, serde_json::json!(3)]);
+    }
+    
+    #[test]
+    fn test_parse_select_expressions() {
+        // Test simple expressions
+        let expressions = InsertTranslator::parse_select_expressions("id, name, '2024-01-15'").unwrap();
+        assert_eq!(expressions, vec!["id", "name", "'2024-01-15'"]);
+        
+        // Test expressions with function calls
+        let expressions = InsertTranslator::parse_select_expressions("id, UPPER(name), NOW()").unwrap();
+        assert_eq!(expressions, vec!["id", "UPPER(name)", "NOW()"]);
+        
+        // Test complex expressions with nested commas
+        let expressions = InsertTranslator::parse_select_expressions("id, COALESCE(date_col, '2024-01-01'), name").unwrap();
+        assert_eq!(expressions, vec!["id", "COALESCE(date_col, '2024-01-01')", "name"]);
+        
+        // Test SQLAlchemy pattern with FROM clause
+        let expressions = InsertTranslator::parse_select_expressions("p0::VARCHAR, p1::TEXT, p2::TIMESTAMP WITHOUT TIME ZONE FROM (VALUES (...)) AS imp_sen ORDER BY sen_counter").unwrap();
+        assert_eq!(expressions, vec!["p0::VARCHAR", "p1::TEXT", "p2::TIMESTAMP WITHOUT TIME ZONE"]);
+    }
+    
+    #[test]
+    fn test_convert_select_expression() {
+        // Test datetime literal conversion
+        let result = InsertTranslator::convert_select_expression("'2024-01-15'", "date").unwrap();
+        assert_eq!(result, "19737"); // Days since epoch
+        
+        // Test function conversion
+        let result = InsertTranslator::convert_select_expression("NOW()", "timestamp").unwrap();
+        assert_eq!(result, "CURRENT_TIMESTAMP");
+        
+        // Test non-datetime expression (should pass through)
+        let result = InsertTranslator::convert_select_expression("id + 1", "integer").unwrap();
+        assert_eq!(result, "id + 1");
+        
+        // Test CURRENT_DATE (should pass through)
+        let result = InsertTranslator::convert_select_expression("CURRENT_DATE", "date").unwrap();
+        assert_eq!(result, "CURRENT_DATE");
+        
+        // Test PostgreSQL cast expressions (should pass through unchanged)
+        let result = InsertTranslator::convert_select_expression("p0::VARCHAR", "varchar").unwrap();
+        assert_eq!(result, "p0::VARCHAR");
+        
+        let result = InsertTranslator::convert_select_expression("p2::TIMESTAMP WITHOUT TIME ZONE", "timestamp").unwrap();
+        assert_eq!(result, "p2::TIMESTAMP WITHOUT TIME ZONE");
     }
 }

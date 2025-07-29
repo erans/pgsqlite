@@ -1,4 +1,5 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
+use crate::session::SessionState;
 use crate::PgSqliteError;
 use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
@@ -16,7 +17,7 @@ pub struct CatalogInterceptor;
 
 impl CatalogInterceptor {
     /// Check if a query is targeting pg_catalog and handle it
-    pub async fn intercept_query(query: &str, db: Arc<DbHandler>) -> Option<Result<DbResponse, PgSqliteError>> {
+    pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<Result<DbResponse, PgSqliteError>> {
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
         
@@ -34,7 +35,7 @@ impl CatalogInterceptor {
         if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && 
            !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") &&
            !lower_query.contains("pg_class") && !lower_query.contains("pg_attribute") &&
-           !lower_query.contains("pg_enum") {
+           !lower_query.contains("pg_enum") && !lower_query.contains("information_schema") {
             return None;
         }
         
@@ -103,7 +104,7 @@ impl CatalogInterceptor {
                         }
                         
                         // Normal catalog table handling
-                        if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone()).await {
+                        if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone(), session.clone()).await {
                             return Some(Ok(response));
                         }
                     }
@@ -124,7 +125,7 @@ impl CatalogInterceptor {
         None
     }
 
-    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>) -> Option<DbResponse> {
+    async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
             // Check if this is a JOIN query involving catalog tables
@@ -150,13 +151,13 @@ impl CatalogInterceptor {
             // For simple queries, check each table
             for table_ref in &select.from {
                 // Check main table
-                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db.clone()).await {
+                if let Some(response) = Self::check_table_factor(&table_ref.relation, select, db.clone(), session.clone()).await {
                     return Some(response);
                 }
                 
                 // Check joined tables
                 for join in &table_ref.joins {
-                    if let Some(response) = Self::check_table_factor(&join.relation, select, db.clone()).await {
+                    if let Some(response) = Self::check_table_factor(&join.relation, select, db.clone(), session.clone()).await {
                         return Some(response);
                     }
                 }
@@ -166,13 +167,13 @@ impl CatalogInterceptor {
         None
     }
     
-    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: Arc<DbHandler>) -> Option<DbResponse> {
+    async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         if let TableFactor::Table { name, .. } = table_factor {
             let table_name = name.to_string().to_lowercase();
             
             // Handle pg_type queries
             if table_name.contains("pg_type") || table_name.contains("pg_catalog.pg_type") {
-                return Some(Self::handle_pg_type_query(select, db.clone()));
+                return Some(Self::handle_pg_type_query(select, db.clone(), session.clone()).await);
             }
             
             // Handle pg_namespace queries
@@ -209,11 +210,16 @@ impl CatalogInterceptor {
             if table_name.contains("pg_enum") || table_name.contains("pg_catalog.pg_enum") {
                 return (PgEnumHandler::handle_query(select, &db).await).ok();
             }
+            
+            // Handle information_schema.tables queries
+            if table_name.contains("information_schema.tables") {
+                return Some(Self::handle_information_schema_tables_query(select, &db).await);
+            }
         }
         None
     }
 
-    fn handle_pg_type_query(select: &Select, db: Arc<DbHandler>) -> DbResponse {
+    async fn handle_pg_type_query(select: &Select, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> DbResponse {
         // Extract which columns are being selected
         let mut columns = Vec::new();
         let mut column_indices = Vec::new();
@@ -379,10 +385,24 @@ impl CatalogInterceptor {
         
         // Add ENUM types from metadata only if typtype filter allows it
         if filter_typtype.is_none() || filter_typtype.as_ref() == Some(&"e".to_string()) {
-            if let Ok(conn) = db.get_mut_connection() {
-                if let Ok(enum_types) = crate::metadata::EnumMetadata::get_all_enum_types(&conn) {
-                    debug!("Found {} enum types in metadata", enum_types.len());
-                    for enum_type in enum_types {
+            // Use session connection if available, otherwise fall back to get_mut_connection
+            let enum_types_result = if let Some(ref session) = session {
+                db.with_session_connection(&session.id, |conn| {
+                    crate::metadata::EnumMetadata::get_all_enum_types(conn)
+                        .map_err(|e| rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Failed to get enum types: {e}"))
+                        ))
+                }).await
+            } else {
+                db.get_mut_connection()
+                    .and_then(|conn| crate::metadata::EnumMetadata::get_all_enum_types(&conn))
+                    .map_err(|e| PgSqliteError::Sqlite(e))
+            };
+            
+            if let Ok(enum_types) = enum_types_result {
+                debug!("Found {} enum types in metadata", enum_types.len());
+                for enum_type in enum_types {
                         debug!("Processing enum type: {} (OID: {})", enum_type.type_name, enum_type.type_oid);
                         // Apply OID filter if specified
                         if let Some(filter) = filter_oid {
@@ -412,7 +432,6 @@ impl CatalogInterceptor {
                             rows.push(row);
                         }
                     }
-                }
             }
         }
 
@@ -821,5 +840,103 @@ impl CatalogInterceptor {
         }
         Ok(())
         })
+    }
+
+    async fn handle_information_schema_tables_query(select: &Select, db: &DbHandler) -> DbResponse {
+        debug!("Handling information_schema.tables query");
+        
+        // Get list of tables from SQLite
+        let tables_response = match db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
+            Ok(response) => response,
+            Err(_) => return DbResponse {
+                columns: vec!["table_name".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            },
+        };
+        
+        // Define information_schema.tables columns
+        let all_columns = vec![
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "table_type".to_string(),
+            "self_referencing_column_name".to_string(),
+            "reference_generation".to_string(),
+            "user_defined_type_catalog".to_string(),
+            "user_defined_type_schema".to_string(),
+            "user_defined_type_name".to_string(),
+        ];
+        
+        // Determine which columns to return based on SELECT clause
+        let (selected_columns, column_indices) = if select.projection.len() == 1 {
+            if let SelectItem::Wildcard(_) = &select.projection[0] {
+                // SELECT * - return all columns
+                (all_columns.clone(), (0..all_columns.len()).collect::<Vec<_>>())
+            } else {
+                // Extract specific columns
+                let mut cols = Vec::new();
+                let mut indices = Vec::new();
+                for item in &select.projection {
+                    if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
+                        let col_name = ident.value.to_string();
+                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                            cols.push(col_name);
+                            indices.push(idx);
+                        }
+                    }
+                }
+                (cols, indices)
+            }
+        } else {
+            // Multiple specific columns
+            let mut cols = Vec::new();
+            let mut indices = Vec::new();
+            for item in &select.projection {
+                if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
+                    let col_name = ident.value.to_string();
+                    if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                        cols.push(col_name);
+                        indices.push(idx);
+                    }
+                }
+            }
+            (cols, indices)
+        };
+        
+        // Build rows
+        let mut rows = Vec::new();
+        for table_row in &tables_response.rows {
+            if let Some(Some(table_name_bytes)) = table_row.get(0) {
+                let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
+                
+                // Create full row with all columns
+                let full_row: Vec<Option<Vec<u8>>> = vec![
+                    Some("main".to_string().into_bytes()),        // table_catalog
+                    Some("public".to_string().into_bytes()),      // table_schema  
+                    Some(table_name.into_bytes()),                // table_name
+                    Some("BASE TABLE".to_string().into_bytes()),  // table_type
+                    None,                                         // self_referencing_column_name
+                    None,                                         // reference_generation
+                    None,                                         // user_defined_type_catalog
+                    None,                                         // user_defined_type_schema
+                    None,                                         // user_defined_type_name
+                ];
+                
+                // Project only the requested columns
+                let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                    .map(|&idx| full_row[idx].clone())
+                    .collect();
+                
+                rows.push(projected_row);
+            }
+        }
+        
+        let rows_count = rows.len();
+        DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        }
     }
 }

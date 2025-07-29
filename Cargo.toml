@@ -48,6 +48,8 @@ byteorder = "1.5"
 parking_lot = "0.12"
 memchr = "2.7"
 itoa = "1.0"
+bitflags = "2.6"
+lru = "0.12"
 
 # Memory mapping for zero-copy operations
 memmap2 = "0.9"

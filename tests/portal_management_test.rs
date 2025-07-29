@@ -1,9 +1,14 @@
 use pgsqlite::session::{DbHandler, SessionState};
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_portal_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     let session = Arc::new(SessionState::new("test".to_string(), "test".to_string()));
     
     // Create test table with data
@@ -56,6 +61,14 @@ async fn test_portal_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
     assert!(session.portal_manager.get_portal("test_portal").is_none());
     
     println!("✅ Portal lifecycle test passed");
+    
+    // Clean up
+    drop(db_handler);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    
     Ok(())
 }
 

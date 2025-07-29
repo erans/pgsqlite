@@ -1,10 +1,15 @@
 use pgsqlite::session::DbHandler;
 use std::sync::Arc;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_fast_path_with_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    
     // Create database handler
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create a table with DECIMAL column
     db_handler.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price DECIMAL(10,2))").await?;
@@ -37,12 +42,24 @@ async fn test_fast_path_with_metadata() -> Result<(), Box<dyn std::error::Error>
     assert_eq!(products_result.rows.len(), 1);
     
     println!("Fast path metadata test completed successfully");
+    
+    // Clean up
+    drop(db_handler);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    
     Ok(())
 }
 
 #[tokio::test] 
 async fn test_fast_path_decimal_handling() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = Arc::new(DbHandler::new(":memory:")?);
+    // Use a temporary file instead of in-memory database
+    let test_id = Uuid::new_v4().to_string().replace("-", "");
+    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    
+    let db_handler = Arc::new(DbHandler::new(&db_path)?);
     
     // Create table with various numeric types
     db_handler.execute("CREATE TABLE numbers (
@@ -65,6 +82,13 @@ async fn test_fast_path_decimal_handling() -> Result<(), Box<dyn std::error::Err
     // Test arithmetic
     let calc_result = db_handler.query("SELECT price * quantity FROM numbers").await?;
     println!("price * quantity result: {:?}", calc_result.rows);
+    
+    // Clean up
+    drop(db_handler);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(format!("{}-journal", db_path));
+    let _ = std::fs::remove_file(format!("{}-wal", db_path));
+    let _ = std::fs::remove_file(format!("{}-shm", db_path));
     
     Ok(())
 }

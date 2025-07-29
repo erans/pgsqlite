@@ -212,6 +212,11 @@ impl ResultSetCache {
             return false;
         }
         
+        // Don't cache queries with non-deterministic functions
+        if crate::query::simple_query_detector::contains_non_deterministic_functions(query) {
+            return false;
+        }
+        
         // Cache if query takes more than 1ms or returns many rows
         execution_time_us > 1000 || row_count > 10
     }
@@ -228,10 +233,8 @@ fn estimate_result_size(result: &CachedResultSet) -> u64 {
     
     // Row data
     for row in &result.rows {
-        for cell in row {
-            if let Some(data) = cell {
-                size += data.len() as u64;
-            }
+        for data in row.iter().flatten() {
+            size += data.len() as u64;
         }
     }
     
@@ -308,5 +311,13 @@ mod tests {
         
         // Should not cache fast queries with few results
         assert!(!ResultSetCache::should_cache("SELECT 1", 100, 1));
+        
+        // Should not cache non-deterministic functions
+        assert!(!ResultSetCache::should_cache("SELECT gen_random_uuid()", 1000, 1));
+        assert!(!ResultSetCache::should_cache("SELECT uuid_generate_v4()", 1000, 1));
+        assert!(!ResultSetCache::should_cache("SELECT random()", 1000, 1));
+        assert!(!ResultSetCache::should_cache("SELECT NOW()", 1000, 1));
+        assert!(!ResultSetCache::should_cache("SELECT CURRENT_TIMESTAMP", 1000, 1));
+        assert!(!ResultSetCache::should_cache("SELECT current_date", 1000, 1));
     }
 }

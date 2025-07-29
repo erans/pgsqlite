@@ -59,9 +59,25 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
     conn.create_scalar_function(
         "extract",
         2,
-        FunctionFlags::SQLITE_UTF8,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let field: String = ctx.get(0)?;
+            use rusqlite::types::ValueRef;
+            
+            // Get field name - handle both text and blob
+            let field = match ctx.get_raw(0) {
+                ValueRef::Text(s) => {
+                    std::str::from_utf8(s)
+                        .map_err(|e| Error::UserFunctionError(e.to_string().into()))?
+                        .to_string()
+                }
+                ValueRef::Blob(b) => {
+                    std::str::from_utf8(b)
+                        .map_err(|e| Error::UserFunctionError(e.to_string().into()))?
+                        .to_string()
+                }
+                _ => return Err(Error::UserFunctionError("Expected text field name".into())),
+            };
+            
             let timestamp: i64 = ctx.get(1)?;
             extract_date_part(&field, timestamp)
         },
@@ -71,9 +87,25 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
     conn.create_scalar_function(
         "date_trunc",
         2,
-        FunctionFlags::SQLITE_UTF8,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let field: String = ctx.get(0)?;
+            use rusqlite::types::ValueRef;
+            
+            // Get field name - handle both text and blob
+            let field = match ctx.get_raw(0) {
+                ValueRef::Text(s) => {
+                    std::str::from_utf8(s)
+                        .map_err(|e| Error::UserFunctionError(e.to_string().into()))?
+                        .to_string()
+                }
+                ValueRef::Blob(b) => {
+                    std::str::from_utf8(b)
+                        .map_err(|e| Error::UserFunctionError(e.to_string().into()))?
+                        .to_string()
+                }
+                _ => return Err(Error::UserFunctionError("Expected text field name".into())),
+            };
+            
             let timestamp: i64 = ctx.get(1)?;
             truncate_date(&field, timestamp)
         },
@@ -109,7 +141,42 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8,
         |ctx| {
-            let ts: f64 = ctx.get(0)?;
+            use rusqlite::types::ValueRef;
+            
+            // Handle both numeric and blob (decimal) types
+            let ts = match ctx.get_raw(0) {
+                ValueRef::Real(f) => f,
+                ValueRef::Integer(i) => i as f64,
+                ValueRef::Text(s) => {
+                    std::str::from_utf8(s)
+                        .ok()
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .unwrap_or(0.0)
+                }
+                ValueRef::Blob(b) => {
+                    // Handle both decimal binary format (16 bytes) and raw f64 (8 bytes)
+                    if b.len() == 16 {
+                        use rust_decimal::Decimal;
+                        let mut array = [0u8; 16];
+                        array.copy_from_slice(b);
+                        let decimal = Decimal::deserialize(array);
+                        // Convert decimal to f64 - use a more reliable method
+                        use std::convert::TryInto;
+                        decimal.try_into().unwrap_or(0.0)
+                    } else if b.len() == 8 {
+                        // Raw f64 bytes (big-endian from PostgreSQL protocol)
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(b);
+                        f64::from_be_bytes(bytes)
+                    } else {
+                        // Try little-endian if size is 8
+                        eprintln!("ERROR: Unexpected blob size {} bytes", b.len());
+                        0.0
+                    }
+                }
+                _ => 0.0,
+            };
+            
             Ok((ts * 1_000_000.0) as i64) // Convert seconds to microseconds
         },
     )?;
@@ -169,6 +236,136 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
                     format!("Invalid time: {hour}:{min}:{sec}").into()
                 ))
             }
+        },
+    )?;
+    
+    // pg_timestamp_from_text - Convert text to timestamp (microseconds since epoch)
+    conn.create_scalar_function(
+        "pg_timestamp_from_text",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            
+            // Try parsing with multiple formats
+            // First try ISO 8601 format with fractional seconds
+            if let Ok(dt) = DateTime::parse_from_rfc3339(&text) {
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            // Handle PostgreSQL-style timezone offsets (+00, -05, etc.)
+            // Convert +00 to +00:00 format that chrono can parse
+            let normalized_text = if text.len() >= 3 {
+                let suffix = &text[text.len()-3..];
+                if (suffix.starts_with('+') || suffix.starts_with('-')) && suffix[1..].chars().all(|c| c.is_numeric()) {
+                    format!("{}:00", text)
+                } else {
+                    text.clone()
+                }
+            } else {
+                text.clone()
+            };
+            
+            // Try parsing the normalized text as RFC3339
+            if normalized_text != text {
+                if let Ok(dt) = DateTime::parse_from_rfc3339(&normalized_text) {
+                    let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                    return Ok(micros);
+                }
+            }
+            
+            // Try custom format for PostgreSQL timestamps with timezone
+            let formats_with_tz = [
+                "%Y-%m-%d %H:%M:%S%.f%:z",
+                "%Y-%m-%d %H:%M:%S%:z",
+            ];
+            
+            for format in &formats_with_tz {
+                if let Ok(dt) = DateTime::parse_from_str(&text, format) {
+                    let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                    return Ok(micros);
+                }
+            }
+            
+            // Try without timezone
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S%.f") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            // Try without fractional seconds
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%dT%H:%M:%S") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            // Try space separator
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S%.f") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&text, "%Y-%m-%d %H:%M:%S") {
+                let dt = DateTime::<Utc>::from_naive_utc_and_offset(naive_dt, Utc);
+                let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
+                return Ok(micros);
+            }
+            
+            Err(Error::UserFunctionError(
+                format!("Invalid timestamp format: {text}").into()
+            ))
+        },
+    )?;
+    
+    // pg_date_from_text - Convert text to date (days since epoch)
+    conn.create_scalar_function(
+        "pg_date_from_text",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            
+            if let Ok(date) = NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
+                let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                let days = (date - epoch).num_days();
+                return Ok(days);
+            }
+            
+            Err(Error::UserFunctionError(
+                format!("Invalid date format: {text}").into()
+            ))
+        },
+    )?;
+    
+    // pg_time_from_text - Convert text to time (microseconds since midnight)
+    conn.create_scalar_function(
+        "pg_time_from_text",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            
+            // Try with fractional seconds
+            if let Ok(time) = NaiveTime::parse_from_str(&text, "%H:%M:%S%.f") {
+                let micros = time.num_seconds_from_midnight() as i64 * 1_000_000 
+                    + (time.nanosecond() / 1000) as i64;
+                return Ok(micros);
+            }
+            
+            // Try without fractional seconds
+            if let Ok(time) = NaiveTime::parse_from_str(&text, "%H:%M:%S") {
+                let micros = time.num_seconds_from_midnight() as i64 * 1_000_000 
+                    + (time.nanosecond() / 1000) as i64;
+                return Ok(micros);
+            }
+            
+            Err(Error::UserFunctionError(
+                format!("Invalid time format: {text}").into()
+            ))
         },
     )?;
     
@@ -302,8 +499,56 @@ fn truncate_date(field: &str, timestamp: i64) -> Result<i64> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    
     #[test]
     fn test_date_functions() {
-        // Test will be implemented when integrated
+        let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+        let days = 19700; // Some arbitrary number of days
+        let expected_date = epoch + chrono::Duration::days(days);
+        
+        // Test formatting
+        let expected_text = expected_date.format("%Y-%m-%d").to_string();
+        assert_eq!(expected_text.len(), 10); // YYYY-MM-DD
+        
+        // Test parsing
+        let parsed = NaiveDate::parse_from_str(&expected_text, "%Y-%m-%d").unwrap();
+        assert_eq!(parsed, expected_date);
+    }
+    
+    #[test]
+    fn test_pg_timestamp_from_text() {
+        use rusqlite::Connection;
+        
+        let conn = Connection::open_in_memory().unwrap();
+        register_datetime_functions(&conn).unwrap();
+        
+        // Test various timestamp formats
+        let test_cases = vec![
+            // Standard ISO format
+            ("2025-01-15T12:00:00", 1736942400000000i64),
+            // With fractional seconds
+            ("2025-01-15T12:00:00.123", 1736942400123000i64),
+            // Space separator
+            ("2025-01-15 12:00:00", 1736942400000000i64),
+            // PostgreSQL-style timezone offset
+            ("2025-01-15 12:00:00+00", 1736942400000000i64),
+            ("2025-01-15 12:00:00-05", 1736960400000000i64), // EST offset
+            // RFC3339 format
+            ("2025-01-15T12:00:00+00:00", 1736942400000000i64),
+        ];
+        
+        for (input, expected) in test_cases {
+            let result: i64 = conn
+                .query_row(
+                    "SELECT pg_timestamp_from_text(?)",
+                    [input],
+                    |row| row.get(0),
+                )
+                .unwrap_or_else(|e| panic!("Failed to parse '{}': {}", input, e));
+            
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
     }
 }

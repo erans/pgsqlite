@@ -173,22 +173,22 @@ cleanup
 # Configure based on connection mode
 case "$CONNECTION_MODE" in
     "tcp-ssl")
-        log_info "Mode: TCP with SSL (in-memory database)"
-        DB_NAME=":memory:"
-        SERVER_ARGS="--port $PORT --database $DB_NAME --ssl --ssl-ephemeral"
+        log_info "Mode: TCP with SSL (shared memory database)"
+        DB_NAME="file::memory:?cache=shared&uri=true"
+        SERVER_ARGS="--port $PORT --database \"$DB_NAME\" --ssl --ssl-ephemeral"
         EPHEMERAL_SSL=1
         CONNECTION_STRING="host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=require"
         ;;
     "tcp-no-ssl")
-        log_info "Mode: TCP without SSL (in-memory database)"
-        DB_NAME=":memory:"
-        SERVER_ARGS="--port $PORT --database $DB_NAME"
+        log_info "Mode: TCP without SSL (shared memory database)"
+        DB_NAME="file::memory:?cache=shared&uri=true"
+        SERVER_ARGS="--port $PORT --database \"$DB_NAME\""
         CONNECTION_STRING="host=127.0.0.1 port=$PORT dbname=$DB_NAME sslmode=disable"
         ;;
     "unix-socket")
-        log_info "Mode: Unix socket (in-memory database)"
-        DB_NAME=":memory:"
-        SERVER_ARGS="--socket-dir $SOCKET_DIR --port $PORT --database $DB_NAME"
+        log_info "Mode: Unix socket (shared memory database)"
+        DB_NAME="file::memory:?cache=shared&uri=true"
+        SERVER_ARGS="--socket-dir $SOCKET_DIR --port $PORT --database \"$DB_NAME\""
         CONNECTION_STRING="host=$SOCKET_DIR port=$PORT dbname=$DB_NAME"
         ;;
     "file-ssl")

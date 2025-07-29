@@ -1,5 +1,31 @@
 use crate::PgSqliteError;
 use regex::Regex;
+use once_cell::sync::Lazy;
+
+// Pre-compiled regex patterns
+static RETURNING_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)(.+?)\s+RETURNING\s+(.+)$").unwrap()
+});
+
+static INSERT_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)INSERT\s+INTO\s+([^\s(]+)").unwrap()
+});
+
+static UPDATE_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)UPDATE\s+([^\s]+)").unwrap()
+});
+
+static DELETE_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)DELETE\s+FROM\s+([^\s]+)").unwrap()
+});
+
+static WHERE_CLAUSE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\sWHERE\s+(.+?)(?:\s+RETURNING|$)").unwrap()
+});
+
+static UPDATE_WHERE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)WHERE\s+(.+?)(?:\s+RETURNING|$)").unwrap()
+});
 
 /// Translates PostgreSQL RETURNING clause to SQLite-compatible operations
 pub struct ReturningTranslator;
@@ -13,9 +39,7 @@ impl ReturningTranslator {
     
     /// Extract RETURNING clause from a query
     pub fn extract_returning_clause(sql: &str) -> Option<(String, String)> {
-        let re = Regex::new(r"(?i)(.+?)\s+RETURNING\s+(.+)$").unwrap();
-        
-        if let Some(captures) = re.captures(sql) {
+        if let Some(captures) = RETURNING_REGEX.captures(sql) {
             let base_query = captures.get(1)?.as_str().trim().to_string();
             let returning_clause = captures.get(2)?.as_str().trim().to_string();
             Some((base_query, returning_clause))
@@ -35,9 +59,7 @@ impl ReturningTranslator {
     
     /// Extract table name from INSERT statement
     pub fn extract_table_from_insert(sql: &str) -> Option<String> {
-        let re = Regex::new(r"(?i)INSERT\s+INTO\s+([^\s(]+)").unwrap();
-        
-        if let Some(captures) = re.captures(sql) {
+        if let Some(captures) = INSERT_TABLE_REGEX.captures(sql) {
             Some(captures.get(1)?.as_str().to_string())
         } else {
             None
@@ -46,9 +68,7 @@ impl ReturningTranslator {
     
     /// Extract table name from UPDATE statement
     pub fn extract_table_from_update(sql: &str) -> Option<String> {
-        let re = Regex::new(r"(?i)UPDATE\s+([^\s]+)").unwrap();
-        
-        if let Some(captures) = re.captures(sql) {
+        if let Some(captures) = UPDATE_TABLE_REGEX.captures(sql) {
             Some(captures.get(1)?.as_str().to_string())
         } else {
             None
@@ -57,9 +77,7 @@ impl ReturningTranslator {
     
     /// Extract table name from DELETE statement
     pub fn extract_table_from_delete(sql: &str) -> Option<String> {
-        let re = Regex::new(r"(?i)DELETE\s+FROM\s+([^\s]+)").unwrap();
-        
-        if let Some(captures) = re.captures(sql) {
+        if let Some(captures) = DELETE_TABLE_REGEX.captures(sql) {
             Some(captures.get(1)?.as_str().to_string())
         } else {
             None
@@ -68,9 +86,7 @@ impl ReturningTranslator {
     
     /// Extract WHERE clause from a query
     pub fn extract_where_clause(sql: &str) -> String {
-        let where_re = Regex::new(r"(?i)\sWHERE\s+(.+?)(?:\s+RETURNING|$)").unwrap();
-        
-        if let Some(captures) = where_re.captures(sql) {
+        if let Some(captures) = WHERE_CLAUSE_REGEX.captures(sql) {
             format!("WHERE {}", captures.get(1).map(|m| m.as_str()).unwrap_or("1=1"))
         } else {
             String::new()
@@ -87,8 +103,7 @@ impl ReturningTranslator {
         
         if upper_sql.starts_with("UPDATE") {
             // Extract WHERE clause from UPDATE
-            let where_re = Regex::new(r"(?i)WHERE\s+(.+?)(?:\s+RETURNING|$)").unwrap();
-            let where_clause = where_re.captures(sql)
+            let where_clause = UPDATE_WHERE_REGEX.captures(sql)
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
                 .unwrap_or("1=1");
@@ -96,8 +111,7 @@ impl ReturningTranslator {
             Ok(format!("SELECT rowid, {returning_columns} FROM {table_name} WHERE {where_clause}"))
         } else if upper_sql.starts_with("DELETE") {
             // Extract WHERE clause from DELETE
-            let where_re = Regex::new(r"(?i)WHERE\s+(.+?)(?:\s+RETURNING|$)").unwrap();
-            let where_clause = where_re.captures(sql)
+            let where_clause = UPDATE_WHERE_REGEX.captures(sql)
                 .and_then(|c| c.get(1))
                 .map(|m| m.as_str())
                 .unwrap_or("1=1");

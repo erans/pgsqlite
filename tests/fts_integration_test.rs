@@ -1,5 +1,6 @@
 use pgsqlite::session::DbHandler;
 use tempfile::NamedTempFile;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_fts_create_table_integration() {
@@ -21,16 +22,9 @@ async fn test_fts_create_table_integration() {
     assert!(result.is_ok(), "CREATE TABLE with tsvector should succeed");
     
     // Verify the main table was created
-    {
-        let conn = db.get_mut_connection().unwrap();
-        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='articles'").unwrap();
-        let tables: Vec<String> = stmt.query_map([], |row| {
-            row.get(0)
-        }).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
-        
-        assert_eq!(tables.len(), 1);
-        assert_eq!(tables[0], "articles");
-    }
+    let check_result = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='articles'").await.unwrap();
+    assert_eq!(check_result.rows.len(), 1);
+    assert_eq!(String::from_utf8_lossy(&check_result.rows[0][0].as_ref().unwrap()), "articles");
     
     // Note: Full FTS integration would require the executor integration 
     // which is currently commented out due to async issues
@@ -44,57 +38,61 @@ async fn test_fts_functions_registration() {
     let db = DbHandler::new(db_path).unwrap();
     
     // Test that FTS functions are registered and work
-    {
-        let conn = db.get_mut_connection().unwrap();
-        
-        // Test to_tsvector function
-        let result: String = conn.query_row(
-            "SELECT to_tsvector('english', 'hello world')", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
-        
-        // Should return JSON metadata
-        assert!(result.contains("fts_ref"));
-        assert!(result.contains("english"));
-        
-        // Test to_tsquery function  
-        let result: String = conn.query_row(
-            "SELECT to_tsquery('english', 'hello & world')", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
-        
-        // Should convert to FTS5 syntax
-        assert_eq!(result, "hello AND world");
-        
-        // Test plainto_tsquery function
-        let result: String = conn.query_row(
-            "SELECT plainto_tsquery('english', 'hello world')", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
-        
-        assert_eq!(result, "hello AND world");
-        
-        // Test phraseto_tsquery function
-        let result: String = conn.query_row(
-            "SELECT phraseto_tsquery('english', 'hello world')", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
-        
-        assert_eq!(result, "\"hello world\"");
-        
-        // Test ts_rank function
-        let result: f64 = conn.query_row(
-            "SELECT ts_rank('dummy', 'dummy')", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
-        
-        assert_eq!(result, 0.1);
-    }
+    // Create a session for testing
+    let session_id = Uuid::new_v4();
+    db.create_session_connection(session_id).await.unwrap();
+    
+    // Test to_tsvector function
+    let result = db.query_with_session(
+        "SELECT to_tsvector('english', 'hello world')",
+        &session_id
+    ).await.unwrap();
+    
+    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    // Should return JSON metadata
+    assert!(text.contains("fts_ref"));
+    assert!(text.contains("english"));
+    
+    // Test to_tsquery function  
+    let result = db.query_with_session(
+        "SELECT to_tsquery('english', 'hello & world')",
+        &session_id
+    ).await.unwrap();
+    
+    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    // Should convert to FTS5 syntax
+    assert_eq!(text, "hello AND world");
+    
+    // Test plainto_tsquery function
+    let result = db.query_with_session(
+        "SELECT plainto_tsquery('english', 'hello world')",
+        &session_id
+    ).await.unwrap();
+    
+    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    assert_eq!(text, "hello AND world");
+    
+    // Test phraseto_tsquery function
+    let result = db.query_with_session(
+        "SELECT phraseto_tsquery('english', 'hello world')",
+        &session_id
+    ).await.unwrap();
+    
+    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    assert_eq!(text, "\"hello world\"");
+    
+    // Test ts_rank function
+    let result = db.query_with_session(
+        "SELECT ts_rank('dummy', 'dummy')",
+        &session_id
+    ).await.unwrap();
+    
+    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    // ts_rank returns a float, but we get it as text
+    assert_eq!(text, "0.1");
+    
+    // Clean up session
+    db.remove_session_connection(&session_id);
 }
 
 #[test]
