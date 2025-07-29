@@ -31,14 +31,17 @@ impl QueryAnalyzer {
         let mut flags = TranslationFlags::NONE;
         let query_lower = query.to_lowercase();
         
-        // Check for cast operations (::)
-        if query.contains("::") {
+        // Check for cast operations (:: and CAST(...AS...))
+        if query.contains("::") || query_lower.contains("cast(") {
             flags |= TranslationFlags::CAST;
             
             // Check for numeric format casts
             if query_lower.contains("::numeric") || query_lower.contains("::decimal") ||
                query_lower.contains("::double precision") || query_lower.contains("::real") ||
-               query_lower.contains("::float") {
+               query_lower.contains("::float") ||
+               query_lower.contains(" as numeric") || query_lower.contains(" as decimal") ||
+               query_lower.contains(" as double precision") || query_lower.contains(" as real") ||
+               query_lower.contains(" as float") {
                 flags |= TranslationFlags::NUMERIC_FORMAT;
             }
         }
@@ -166,6 +169,21 @@ mod tests {
         let flags = QueryAnalyzer::analyze("SELECT id::int FROM users");
         assert!(flags.contains(TranslationFlags::CAST));
         assert!(!flags.contains(TranslationFlags::NUMERIC_FORMAT));
+    }
+    
+    #[test]
+    fn test_cast_syntax_detection() {
+        // Test :: syntax
+        let flags = QueryAnalyzer::analyze("SELECT id::int FROM users");
+        assert!(flags.contains(TranslationFlags::CAST));
+        
+        // Test CAST(...AS...) syntax
+        let flags = QueryAnalyzer::analyze("SELECT CAST(id AS int) FROM users");
+        assert!(flags.contains(TranslationFlags::CAST));
+        
+        // Test CAST with enum
+        let flags = QueryAnalyzer::analyze("SELECT CAST('inactive' AS status) as casted_status");
+        assert!(flags.contains(TranslationFlags::CAST));
     }
     
     #[test]
