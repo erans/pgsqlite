@@ -1503,9 +1503,36 @@ impl QueryExecutor {
             (translated, std::collections::HashMap::new(), Vec::new(), Vec::new())
         };
         
+        // Check if this is a DROP TABLE command and extract table name
+        let is_drop_table = matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) 
+            && query.trim_start()[4..].trim_start().to_uppercase().starts_with("TABLE");
+        
+        let table_name_to_clean = if is_drop_table {
+            // Extract table name from DROP TABLE statement
+            let drop_table_pattern = regex::Regex::new(r"(?i)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
+            drop_table_pattern.captures(query)
+                .and_then(|caps| caps.get(1))
+                .map(|m| m.as_str().to_string())
+        } else {
+            None
+        };
+        
         // Execute the translated query
         let cached_conn = Self::get_or_cache_connection(session, db).await;
         db.execute_with_session_cached(&translated_query, &session.id, cached_conn.as_ref()).await?;
+        
+        // If this was a DROP TABLE, clean up enum usage records
+        if let Some(table_name) = table_name_to_clean {
+            db.with_session_connection_mut(&session.id, |conn| {
+                use crate::metadata::EnumTriggers;
+                EnumTriggers::clean_enum_usage_for_table(conn, &table_name)
+                    .map_err(|e| rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Failed to clean enum usage for table {}: {}", table_name, e))
+                    ))
+            }).await?;
+            debug!("Cleaned up enum usage records for dropped table: {}", table_name);
+        }
         
         // If we have type mappings, store them in the metadata table
         debug!("Type mappings count: {}", type_mappings.len());
