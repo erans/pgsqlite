@@ -21,11 +21,6 @@ impl CastTranslator {
     /// Translate a query containing PostgreSQL cast syntax
     pub fn translate_query(query: &str, conn: Option<&Connection>) -> String {
         let result = Self::translate_query_with_depth(query, conn, 0);
-        if query.contains("inactive") && query.contains("status") {
-            eprintln!("CastTranslator: Translating enum cast query");
-            eprintln!("  Original: {query}");
-            eprintln!("  Result: {result}");
-        }
         if query.contains("::mood::text") || query.contains("::text") {
             eprintln!("CastTranslator: Translating double cast query");
             eprintln!("  Original: {query}");
@@ -452,11 +447,12 @@ impl CastTranslator {
         // Use a CASE expression that will cause a constraint error for invalid values
         // We use CAST(NULL AS INTEGER) NOT NULL which will fail with "NOT NULL constraint failed"
         
+        // Force an error by querying a non-existent table
         format!(
             r#"(CASE 
                 WHEN EXISTS(SELECT 1 FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{type_name}' AND ev.label = {expr}) 
-                THEN (SELECT label FROM __pgsqlite_enum_values ev JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid WHERE et.type_name = '{type_name}' AND ev.label = {expr})
-                ELSE (SELECT CASE WHEN 1=0 THEN 'dummy' ELSE CAST('invalid input value for enum {type_name}: ' || {expr} AS INTEGER) END)
+                THEN {expr}
+                ELSE (SELECT invalid_enum_cast_error_table.invalid_column FROM invalid_enum_cast_error_table WHERE error_message = 'invalid input value for enum {type_name}: ' || {expr})
             END)"#
         )
     }

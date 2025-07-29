@@ -74,7 +74,7 @@ async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id
                        pg_type_lower == "timestamp" || pg_type_lower == "timestamptz" ||
                        pg_type_lower == "time without time zone" || pg_type_lower == "time with time zone" ||
                        pg_type_lower == "timestamp without time zone" || pg_type_lower == "timestamp with time zone" {
-                        schema_info.datetime_columns.insert(col_name.clone(), pg_type_lower);
+                        schema_info.datetime_columns.insert(col_name.clone(), pg_type_lower.clone());
                     }
                     
                     // Check if enum - enum types are stored with their actual type name (e.g., "status", "priority")
@@ -301,6 +301,42 @@ impl QueryExecutor {
                     framed.send(BackendMessage::RowDescription(fields)).await
                         .map_err(PgSqliteError::Io)?;
                     
+                    // Pre-fetch enum mappings if needed
+                    let enum_mappings: std::collections::HashMap<String, std::collections::HashMap<i32, String>> = 
+                        if !enum_columns.is_empty() {
+                            let mut mappings = std::collections::HashMap::new();
+                            
+                            // Use session connection to fetch enum values
+                            let _ = db.with_session_connection(&session.id, |conn| {
+                                for enum_type in enum_columns.values() {
+                                    if !mappings.contains_key(enum_type) {
+                                        if let Ok(mut stmt) = conn.prepare(
+                                            "SELECT sort_order, label FROM __pgsqlite_enum_values ev 
+                                             JOIN __pgsqlite_enum_types et ON ev.type_oid = et.type_oid 
+                                             WHERE et.type_name = ?1 
+                                             ORDER BY ev.sort_order"
+                                        ) {
+                                            if let Ok(values) = stmt.query_map([enum_type], |row| {
+                                                // sort_order is a REAL, but we need to map it to integers 0, 1, 2...
+                                                let sort_order: f64 = row.get(0)?;
+                                                let ordinal = (sort_order as i32) - 1; // Convert 1-based to 0-based
+                                                let label: String = row.get(1)?;
+                                                Ok((ordinal, label))
+                                            }) {
+                                                let enum_values: std::collections::HashMap<i32, String> = 
+                                                    values.flatten().collect();
+                                                mappings.insert(enum_type.clone(), enum_values);
+                                            }
+                                        }
+                                    }
+                                }
+                                Ok::<(), rusqlite::Error>(())
+                            }).await;
+                            mappings
+                        } else {
+                            std::collections::HashMap::new()
+                        };
+                    
                     // Send data rows with boolean, datetime, and enum conversion
                     for row in response.rows {
                         // Fast path - if no special columns, send row as-is
@@ -310,11 +346,6 @@ impl QueryExecutor {
                             continue;
                         }
                         
-                        // Debug enum cast issue
-                        if query.contains("casted_status") {
-                            eprintln!("DEBUG QueryExecutor: Processing row for enum cast query");
-                            eprintln!("  Row data: {row:?}");
-                        }
                         let converted_row: Vec<Option<Vec<u8>>> = row.into_iter()
                             .enumerate()
                             .map(|(col_idx, cell)| {
@@ -405,18 +436,15 @@ impl QueryExecutor {
                                                 Ok(s) => {
                                                     // Try to parse as integer (ordinal value)
                                                     if let Ok(ordinal) = s.parse::<i32>() {
-                                                        // Look up enum value from __pgsqlite_enums table
-                                                        let cached_conn = Self::get_or_cache_connection(session, db).await;
-                                                        if let Ok(label) = db.with_cached_connection(cached_conn.as_ref(), |conn| {
-                                                            conn.query_row(
-                                                                "SELECT enum_label FROM __pgsqlite_enums WHERE enum_type = ?1 AND enum_value = ?2",
-                                                                rusqlite::params![enum_type, ordinal],
-                                                                |row| row.get::<_, String>(0)
-                                                            )
-                                                        }) {
-                                                            Some(label.into_bytes())
+                                                        // Look up enum value from pre-fetched mappings
+                                                        if let Some(type_mappings) = enum_mappings.get(enum_type) {
+                                                            if let Some(label) = type_mappings.get(&ordinal) {
+                                                                Some(label.as_bytes().to_vec())
+                                                            } else {
+                                                                Some(data) // Keep original if ordinal not found
+                                                            }
                                                         } else {
-                                                            Some(data) // Keep original if lookup fails
+                                                            Some(data) // Keep original if type not found
                                                         }
                                                     } else {
                                                         Some(data) // Keep original if not an integer
