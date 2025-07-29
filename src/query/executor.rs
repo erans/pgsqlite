@@ -225,9 +225,8 @@ impl QueryExecutor {
                         db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
                     };
                     
-                    // Fast path for queries without special types - skip schema lookup
-                    let needs_type_conversion = query.contains("::") || query.contains("CAST") || 
-                                               query.contains("cast") || query.contains("AT TIME ZONE");
+                    // Always check for type conversion to handle datetime columns
+                    let needs_type_conversion = true;
                     
                     // Extract table name once and get all schema information in one query
                     let table_name = if needs_type_conversion {
