@@ -3,7 +3,6 @@ use bytes::{BytesMut, BufMut, Buf};
 use std::io;
 use std::collections::HashMap;
 use super::messages::*;
-use tracing::debug;
 
 #[derive(Clone)]
 pub struct PostgresCodec {
@@ -53,14 +52,13 @@ impl Encoder<BackendMessage> for PostgresCodec {
     type Error = io::Error;
     
     fn encode(&mut self, msg: BackendMessage, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        debug!("Encoding message: {:?}", msg);
         match msg {
             BackendMessage::Authentication(auth) => encode_authentication(auth, dst),
             BackendMessage::ParameterStatus { name, value } => encode_parameter_status(&name, &value, dst),
             BackendMessage::BackendKeyData { process_id, secret_key } => encode_backend_key_data(process_id, secret_key, dst),
             BackendMessage::ReadyForQuery { status } => encode_ready_for_query(status, dst),
             BackendMessage::RowDescription(fields) => encode_row_description(fields, dst),
-            BackendMessage::DataRow(values) => encode_data_row(values, dst),
+            BackendMessage::DataRow(values) => encode_data_row(&values, dst),
             BackendMessage::CommandComplete { tag } => encode_command_complete(&tag, dst),
             BackendMessage::EmptyQueryResponse => encode_empty_query_response(dst),
             BackendMessage::ErrorResponse(err) => encode_error_response(*err, dst),
@@ -265,7 +263,7 @@ fn encode_row_description(fields: Vec<FieldDescription>, dst: &mut BytesMut) {
     update_message_length(dst, len_pos);
 }
 
-fn encode_data_row(values: Vec<Option<Vec<u8>>>, dst: &mut BytesMut) {
+fn encode_data_row(values: &[Option<Vec<u8>>], dst: &mut BytesMut) {
     dst.put_u8(b'D');
     let len_pos = dst.len();
     dst.put_i32(0); // Placeholder
@@ -277,7 +275,7 @@ fn encode_data_row(values: Vec<Option<Vec<u8>>>, dst: &mut BytesMut) {
             None => dst.put_i32(-1),
             Some(data) => {
                 dst.put_i32(data.len() as i32);
-                dst.put_slice(&data);
+                dst.put_slice(data);
             }
         }
     }

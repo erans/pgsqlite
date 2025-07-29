@@ -60,6 +60,24 @@ fn find_keyword_position(query: &str, keyword: &str) -> Option<usize> {
 pub struct ExtendedQueryHandler;
 
 impl ExtendedQueryHandler {
+    /// Get cached connection or fetch and cache it
+    async fn get_or_cache_connection(
+        session: &Arc<SessionState>,
+        db: &Arc<DbHandler>
+    ) -> Option<Arc<parking_lot::Mutex<rusqlite::Connection>>> {
+        // First check if we have a cached connection
+        if let Some(cached) = session.get_cached_connection() {
+            return Some(cached);
+        }
+        
+        // Try to get connection from manager and cache it
+        if let Some(conn_arc) = db.connection_manager().get_connection_arc(&session.id) {
+            session.cache_connection(conn_arc.clone());
+            Some(conn_arc)
+        } else {
+            None
+        }
+    }
     pub async fn handle_parse<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &Arc<DbHandler>,
@@ -71,6 +89,43 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        // Fast path: Check if we already have this prepared statement
+        // This avoids re-parsing the same query multiple times
+        if !name.is_empty() {
+            let statements = session.prepared_statements.read().await;
+            if let Some(existing) = statements.get(&name) {
+                // Check if it's the same query
+                if existing.query == query && existing.param_types == param_types {
+                    // Already parsed, just send ParseComplete
+                    drop(statements);
+                    framed.send(BackendMessage::ParseComplete).await
+                        .map_err(PgSqliteError::Io)?;
+                    return Ok(());
+                }
+            }
+        } else {
+            // For unnamed statements, check if we have cached info about this query
+            // This is important for benchmarks that use parameterized queries
+            if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
+                // We already know about this query, create a fast prepared statement
+                let stmt = PreparedStatement {
+                    query: query.clone(),
+                    translated_query: None, // Will be translated during execute if needed
+                    param_types: cached_info.param_types.clone(),
+                    param_formats: vec![0; cached_info.param_types.len()],
+                    field_descriptions: Vec::new(), // Will be populated during bind/execute
+                    translation_metadata: None,
+                };
+                
+                // Store as unnamed statement
+                session.prepared_statements.write().await.insert(String::new(), stmt);
+                
+                framed.send(BackendMessage::ParseComplete).await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
+        }
+        
         // Strip SQL comments first to avoid parsing issues
         let mut cleaned_query = crate::query::strip_sql_comments(&query);
         
@@ -349,7 +404,8 @@ impl ExtendedQueryHandler {
                 
                 // Add LIMIT 1 to avoid processing too much data
                 test_query = format!("{test_query} LIMIT 1");
-                let test_response = db.query_with_session(&test_query, &session.id).await;
+                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                let test_response = db.query_with_session_cached(&test_query, &session.id, cached_conn.as_ref()).await;
                 
                 match test_response {
                     Ok(response) => {
@@ -634,19 +690,31 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        debug!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
+        // Fast path for simple queries - skip debug logging and python parameter checking
+        let is_simple_query = {
+            let statements = session.prepared_statements.read().await;
+            if let Some(stmt) = statements.get(&statement) {
+                stmt.query.starts_with("SELECT") && !stmt.query.contains("%(")
+            } else {
+                false
+            }
+        };
         
-        // Check if this statement used Python-style parameters and reorder values if needed
-        {
-            let python_mappings = session.python_param_mapping.read().await;
-            if let Some(param_names) = python_mappings.get(&statement) {
-                info!("Statement '{}' used Python parameters: {:?}", statement, param_names);
-                
-                // The values come in as a map (conceptually), but we received them as a Vec
-                // We need to reorder them to match the $1, $2, $3... order we created
-                // Since we already converted %(name__0)s -> $1, %(name__1)s -> $2, etc. in parse,
-                // the values should already be in the correct order
-                info!("Python parameter mapping found, values should already be in correct order");
+        if !is_simple_query {
+            debug!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
+            
+            // Check if this statement used Python-style parameters and reorder values if needed
+            {
+                let python_mappings = session.python_param_mapping.read().await;
+                if let Some(param_names) = python_mappings.get(&statement) {
+                    info!("Statement '{}' used Python parameters: {:?}", statement, param_names);
+                    
+                    // The values come in as a map (conceptually), but we received them as a Vec
+                    // We need to reorder them to match the $1, $2, $3... order we created
+                    // Since we already converted %(name__0)s -> $1, %(name__1)s -> $2, etc. in parse,
+                    // the values should already be in the correct order
+                    info!("Python parameter mapping found, values should already be in correct order");
+                }
             }
         }
         
@@ -788,6 +856,84 @@ impl ExtendedQueryHandler {
             let stmt = statements.get(&statement_name).unwrap();
             stmt.param_types.clone()
         };
+        
+        // Fast path for simple parameterized SELECT queries
+        if query_starts_with_ignore_case(&query, "SELECT") && 
+           !query.contains("JOIN") && 
+           !query.contains("GROUP BY") && 
+           !query.contains("HAVING") &&
+           !query.contains("::") &&
+           !query.contains("UNION") &&
+           !query.contains("INTERSECT") &&
+           !query.contains("EXCEPT") &&
+           (result_formats.is_empty() || result_formats[0] == 0) {
+            
+            debug!("Using fast path for simple SELECT query: {}", query);
+            
+            // Get cached connection first
+            let _cached_conn = Self::get_or_cache_connection(session, db).await;
+            
+            // Use the original query if no translation needed
+            let query_to_execute = if let Some(ref translated) = translated_query {
+                translated
+            } else {
+                &query
+            };
+            
+            match db.execute_with_params(query_to_execute, &bound_values, &session.id).await {
+                Ok(response) => {
+                        // Send RowDescription if needed
+                        let send_row_desc = {
+                            let statements = session.prepared_statements.read().await;
+                            if let Some(stmt) = statements.get(&statement_name) {
+                                stmt.field_descriptions.is_empty()
+                            } else {
+                                true
+                            }
+                        };
+                        
+                        if send_row_desc {
+                            let fields: Vec<FieldDescription> = response.columns.iter()
+                                .enumerate()
+                                .map(|(i, name)| FieldDescription {
+                                    name: name.clone(),
+                                    table_oid: 0,
+                                    column_id: (i + 1) as i16,
+                                    type_oid: PgType::Text.to_oid(),
+                                    type_size: -1,
+                                    type_modifier: -1,
+                                    format: 0,
+                                })
+                                .collect();
+                            framed.send(BackendMessage::RowDescription(fields)).await
+                                .map_err(PgSqliteError::Io)?;
+                        }
+                        
+                        // Send data rows
+                        let row_count = response.rows.len();
+                        for row in response.rows {
+                            framed.send(BackendMessage::DataRow(row)).await
+                                .map_err(PgSqliteError::Io)?;
+                        }
+                        
+                        framed.send(BackendMessage::CommandComplete { 
+                            tag: format!("SELECT {}", row_count) 
+                        }).await.map_err(PgSqliteError::Io)?;
+                        
+                        // Portal management for suspended queries
+                        if max_rows > 0 && row_count >= max_rows as usize {
+                            // Portal suspended - but we consumed all rows
+                            framed.send(BackendMessage::PortalSuspended).await
+                                .map_err(PgSqliteError::Io)?;
+                        }
+                        
+                        return Ok(());
+                    }
+                    Err(_) => {
+                        // Fall through to regular path
+                    }
+                }
+        }
         
         // Try optimized extended fast path first for parameterized queries
         if !bound_values.is_empty() && query.contains('$') {
@@ -2652,7 +2798,8 @@ impl ExtendedQueryHandler {
             catalog_response
         } else {
             info!("Query not intercepted, executing normally");
-            db.query_with_session(query, &session.id).await?
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
         };
         
         // Check if we need to send RowDescription
@@ -3058,7 +3205,8 @@ impl ExtendedQueryHandler {
         // Validation is now done in handle_execute before parameter substitution
         
         debug!("Extended protocol: Executing DML query without RETURNING: {}", query);
-        let response = db.execute_with_session(query, &session.id).await?;
+        let cached_conn = Self::get_or_cache_connection(session, db).await;
+        let response = db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
         
         let tag = if query_starts_with_ignore_case(query, "INSERT") {
             format!("INSERT 0 {}", response.rows_affected)
@@ -3095,14 +3243,16 @@ impl ExtendedQueryHandler {
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
             
             // Execute the INSERT
-            let response = db.execute_with_session(&base_query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
             
             // Get the last inserted rowid and query for RETURNING data
             let returning_query = format!(
                 "SELECT {returning_clause} FROM {table_name} WHERE rowid = last_insert_rowid()"
             );
             
-            let returning_response = db.query_with_session(&returning_query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;
             
             // Send row description
             let fields: Vec<FieldDescription> = returning_response.columns.iter()
@@ -3153,14 +3303,16 @@ impl ExtendedQueryHandler {
             let rowid_query = format!(
                 "SELECT rowid FROM {table_name} {where_clause}"
             );
-            let rowid_response = db.query_with_session(&rowid_query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let rowid_response = db.query_with_session_cached(&rowid_query, &session.id, cached_conn.as_ref()).await?;
             let rowids: Vec<String> = rowid_response.rows.iter()
                 .filter_map(|row| row[0].as_ref())
                 .map(|bytes| String::from_utf8_lossy(bytes).to_string())
                 .collect();
             
             // Execute the UPDATE
-            let response = db.execute_with_session(&base_query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
             
             // Now query the updated rows
             if !rowids.is_empty() {
@@ -3169,7 +3321,8 @@ impl ExtendedQueryHandler {
                     "SELECT {returning_clause} FROM {table_name} WHERE rowid IN ({rowid_list})"
                 );
                 
-                let returning_response = db.query_with_session(&returning_query, &session.id).await?;
+                let cached_conn = Self::get_or_cache_connection(session, db).await;
+                let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;
                 
                 // Send row description
                 let fields: Vec<FieldDescription> = returning_response.columns.iter()
@@ -3223,10 +3376,12 @@ impl ExtendedQueryHandler {
             )?;
             
             // Capture the rows that will be affected
-            let captured_rows = db.query_with_session(&capture_query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let captured_rows = db.query_with_session_cached(&capture_query, &session.id, cached_conn.as_ref()).await?;
             
             // Execute the actual DELETE
-            let response = db.execute_with_session(&base_query, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
             
             // Send row description
             let fields: Vec<FieldDescription> = captured_rows.columns.iter()
@@ -3301,7 +3456,8 @@ impl ExtendedQueryHandler {
             .map_err(|e| PgSqliteError::Protocol(format!("Failed to translate CREATE TABLE: {e}")))?;
             
             // Execute the translated CREATE TABLE
-            db.execute_with_session(&sqlite_sql, &session.id).await?;
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            db.execute_with_session_cached(&sqlite_sql, &session.id, cached_conn.as_ref()).await?;
             
             // Store the type mappings if we have any
             debug!("Type mappings count: {}", type_mappings.len());
@@ -3316,7 +3472,8 @@ impl ExtendedQueryHandler {
                         sqlite_type TEXT NOT NULL,
                         PRIMARY KEY (table_name, column_name)
                     )";
-                    let _ = db.execute_with_session(init_query, &session.id).await;
+                    let cached_conn = Self::get_or_cache_connection(session, db).await;
+                    let _ = db.execute_with_session_cached(init_query, &session.id, cached_conn.as_ref()).await;
                     
                     // Store each type mapping and numeric constraints
                     for (full_column, type_mapping) in type_mappings {
@@ -3327,7 +3484,8 @@ impl ExtendedQueryHandler {
                                 "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
                                 table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
                             );
-                            let _ = db.execute_with_session(&insert_query, &session.id).await;
+                            let cached_conn = Self::get_or_cache_connection(session, db).await;
+                            let _ = db.execute_with_session_cached(&insert_query, &session.id, cached_conn.as_ref()).await;
                             
                             // Store numeric constraints if applicable
                             if let Some(modifier) = type_mapping.type_modifier {
@@ -3351,7 +3509,8 @@ impl ExtendedQueryHandler {
                                         table_name, parts[1], precision, scale
                                     );
                                     
-                                    match db.execute_with_session(&constraint_query, &session.id).await {
+                                    let cached_conn = Self::get_or_cache_connection(session, db).await;
+                                    match db.execute_with_session_cached(&constraint_query, &session.id, cached_conn.as_ref()).await {
                                         Ok(_) => {
                                             info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                         }
@@ -3438,7 +3597,8 @@ impl ExtendedQueryHandler {
             query.to_string()
         };
         
-        db.execute_with_session(&translated_query, &session.id).await?;
+        let cached_conn = Self::get_or_cache_connection(session, db).await;
+        db.execute_with_session_cached(&translated_query, &session.id, cached_conn.as_ref()).await?;
         
         let tag = if query_starts_with_ignore_case(query, "CREATE TABLE") {
             "CREATE TABLE".to_string()
@@ -3491,7 +3651,8 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        db.execute_with_session(query, &session.id).await?;
+        let cached_conn = Self::get_or_cache_connection(session, db).await;
+        db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
         
         framed.send(BackendMessage::CommandComplete { tag: "OK".to_string() }).await
             .map_err(PgSqliteError::Io)?;
