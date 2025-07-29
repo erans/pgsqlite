@@ -24,6 +24,7 @@ struct TableSchemaInfo {
     boolean_columns: std::collections::HashSet<String>,
     datetime_columns: std::collections::HashMap<String, String>,
     column_types: std::collections::HashMap<String, String>,
+    enum_columns: std::collections::HashMap<String, String>, // column_name -> enum_type
 }
 
 /// Cache for table schema information to avoid repeated database queries
@@ -45,6 +46,7 @@ async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id
         boolean_columns: std::collections::HashSet::new(),
         datetime_columns: std::collections::HashMap::new(),
         column_types: std::collections::HashMap::new(),
+        enum_columns: std::collections::HashMap::new(),
     };
     
     // Use session connection to query schema information
@@ -72,7 +74,22 @@ async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id
                        pg_type_lower == "timestamp" || pg_type_lower == "timestamptz" ||
                        pg_type_lower == "time without time zone" || pg_type_lower == "time with time zone" ||
                        pg_type_lower == "timestamp without time zone" || pg_type_lower == "timestamp with time zone" {
-                        schema_info.datetime_columns.insert(col_name, pg_type_lower);
+                        schema_info.datetime_columns.insert(col_name.clone(), pg_type_lower);
+                    }
+                    
+                    // Check if enum - enum types are stored with their actual type name (e.g., "status", "priority")
+                    // not as standard PostgreSQL types
+                    if !matches!(pg_type_lower.as_str(), 
+                        "integer" | "int" | "int4" | "int8" | "bigint" | "smallint" | "int2" |
+                        "real" | "float4" | "double precision" | "float8" | 
+                        "text" | "varchar" | "char" | "character varying" | "character" |
+                        "boolean" | "bool" |
+                        "date" | "time" | "timetz" | "timestamp" | "timestamptz" |
+                        "time without time zone" | "time with time zone" |
+                        "timestamp without time zone" | "timestamp with time zone" |
+                        "numeric" | "decimal" | "uuid" | "json" | "jsonb" | "bytea" | "blob") {
+                        // This is likely an enum type
+                        schema_info.enum_columns.insert(col_name, pg_type);
                     }
                 }
             }
@@ -235,7 +252,7 @@ impl QueryExecutor {
                         None
                     };
                     
-                    let (boolean_columns, datetime_columns, column_types, column_mappings) = if needs_type_conversion && table_name.is_some() {
+                    let (boolean_columns, datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
                         let table = table_name.as_ref().unwrap();
                         let schema_info = get_table_schema_info(table, db, &session.id).await;
                         let mappings = extract_column_mappings_from_query(query, table);
@@ -245,11 +262,13 @@ impl QueryExecutor {
                             schema_info.boolean_columns,
                             schema_info.datetime_columns,
                             schema_info.column_types,
-                            mappings
+                            mappings,
+                            schema_info.enum_columns
                         )
                     } else {
                         (
                             std::collections::HashSet::new(),
+                            std::collections::HashMap::new(),
                             std::collections::HashMap::new(),
                             std::collections::HashMap::new(),
                             std::collections::HashMap::new()
@@ -282,10 +301,10 @@ impl QueryExecutor {
                     framed.send(BackendMessage::RowDescription(fields)).await
                         .map_err(PgSqliteError::Io)?;
                     
-                    // Send data rows with boolean and datetime conversion
+                    // Send data rows with boolean, datetime, and enum conversion
                     for row in response.rows {
                         // Fast path - if no special columns, send row as-is
-                        if boolean_columns.is_empty() && datetime_columns.is_empty() {
+                        if boolean_columns.is_empty() && datetime_columns.is_empty() && enum_columns.is_empty() {
                             framed.send(BackendMessage::DataRow(row)).await
                                 .map_err(PgSqliteError::Io)?;
                             continue;
@@ -371,8 +390,42 @@ impl QueryExecutor {
                                                 }
                                                 Err(_) => Some(data), // Keep original data if not valid UTF-8
                                             }
+                                        }
+                                        // Check for enum columns
+                                        else if let Some(enum_type) = enum_columns.get(col_name)
+                                            .or_else(|| {
+                                                // Check if this is an alias mapped to a real column
+                                                if let Some(real_column) = column_mappings.get(col_name) {
+                                                    enum_columns.get(real_column)
+                                                } else {
+                                                    None
+                                                }
+                                            }) {
+                                            match std::str::from_utf8(&data) {
+                                                Ok(s) => {
+                                                    // Try to parse as integer (ordinal value)
+                                                    if let Ok(ordinal) = s.parse::<i32>() {
+                                                        // Look up enum value from __pgsqlite_enums table
+                                                        let cached_conn = Self::get_or_cache_connection(session, db).await;
+                                                        if let Ok(label) = db.with_cached_connection(cached_conn.as_ref(), |conn| {
+                                                            conn.query_row(
+                                                                "SELECT enum_label FROM __pgsqlite_enums WHERE enum_type = ?1 AND enum_value = ?2",
+                                                                rusqlite::params![enum_type, ordinal],
+                                                                |row| row.get::<_, String>(0)
+                                                            )
+                                                        }) {
+                                                            Some(label.into_bytes())
+                                                        } else {
+                                                            Some(data) // Keep original if lookup fails
+                                                        }
+                                                    } else {
+                                                        Some(data) // Keep original if not an integer
+                                                    }
+                                                }
+                                                Err(_) => Some(data), // Keep original data if not valid UTF-8
+                                            }
                                         } else {
-                                            Some(data) // Keep original data for non-boolean/datetime columns
+                                            Some(data) // Keep original data for non-boolean/datetime/enum columns
                                         }
                                     } else {
                                         Some(data) // Keep original data if column index is out of bounds
