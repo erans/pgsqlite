@@ -11,7 +11,7 @@ use tokio::net::TcpListener;
 #[cfg(unix)]
 use tokio::net::UnixListener;
 use tokio_util::codec::Framed;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use tokio_rustls::TlsAcceptor;
 
 use pgsqlite::config::Config;
@@ -392,7 +392,7 @@ where
     while let Some(msg) = framed.next().await {
         match msg? {
             FrontendMessage::Query(sql) => {
-                info!("Received query from {}: {}", connection_info, sql);
+                debug!("Received query from {}: {}", connection_info, sql);
 
                 // Execute the query
                 match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, None).await {
