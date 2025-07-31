@@ -2,7 +2,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 use crate::cache::SchemaCache;
 use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
-use crate::query::{QueryTypeDetector, QueryType, LazyQueryProcessor};
+use crate::query::{QueryTypeDetector, QueryType, process_query};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
@@ -234,12 +234,10 @@ impl DbHandler {
         session_id: &Uuid
     ) -> Result<DbResponse, PgSqliteError> {
         self.connection_manager.execute_with_session(session_id, |conn| {
-            // Apply query translations using LazyQueryProcessor
-            let mut processor = LazyQueryProcessor::new(query);
-            let processed_query = processor.process(conn, &self.schema_cache)?;
-            // debug!("Execute with params translation: {} -> {}", query, processed_query);
+            // Process query with fast path optimization
+            let processed_query = process_query(query, conn, &self.schema_cache)?;
             
-            let mut stmt = conn.prepare(processed_query)?;
+            let mut stmt = conn.prepare(&processed_query)?;
             
             // Convert params to rusqlite values
             let values: Vec<rusqlite::types::Value> = params.iter()
@@ -325,12 +323,10 @@ impl DbHandler {
             // For file databases, create a temporary connection
             let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
             
-            // Apply query translations using LazyQueryProcessor
-            let mut processor = LazyQueryProcessor::new(query);
-            let processed_query = processor.process(&conn, &self.schema_cache)?;
-            // debug!("Execute translation (file db): {} -> {}", query, processed_query);
+            // Process query with fast path optimization
+            let processed_query = process_query(query, &conn, &self.schema_cache)?;
             
-            let mut stmt = conn.prepare(processed_query)?;
+            let mut stmt = conn.prepare(&processed_query)?;
             let column_count = stmt.column_count();
             let mut columns = Vec::with_capacity(column_count);
             for i in 0..column_count {
@@ -407,12 +403,10 @@ impl DbHandler {
         match cached_conn {
             Some(conn) => {
                 self.connection_manager.execute_with_cached_connection(conn, |conn| {
-                    // Apply query translations using LazyQueryProcessor
-                    let mut processor = LazyQueryProcessor::new(query);
-                    let processed_query = processor.process(conn, &self.schema_cache)?;
-                    // debug!("Query translation (cached): {} -> {}", query, processed_query);
+                    // Process query with fast path optimization
+                    let processed_query = process_query(query, conn, &self.schema_cache)?;
                     
-                    let mut stmt = conn.prepare(processed_query)?;
+                    let mut stmt = conn.prepare(&processed_query)?;
                     let column_count = stmt.column_count();
                     let mut columns = Vec::with_capacity(column_count);
                     for i in 0..column_count {
@@ -487,12 +481,10 @@ impl DbHandler {
         }
         
         self.connection_manager.execute_with_session(session_id, |conn| {
-            // Apply query translations using LazyQueryProcessor
-            let mut processor = LazyQueryProcessor::new(query);
-            let processed_query = processor.process(conn, &self.schema_cache)?;
-            // debug!("Query translation: {} -> {}", query, processed_query);
+            // Process query with fast path optimization
+            let processed_query = process_query(query, conn, &self.schema_cache)?;
             
-            let mut stmt = conn.prepare(processed_query)?;
+            let mut stmt = conn.prepare(&processed_query)?;
             let column_count = stmt.column_count();
             let mut columns = Vec::with_capacity(column_count);
             for i in 0..column_count {
@@ -552,12 +544,10 @@ impl DbHandler {
         } else {
             let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
             
-            // Apply query translations using LazyQueryProcessor
-            let mut processor = LazyQueryProcessor::new(query);
-            let processed_query = processor.process(&conn, &self.schema_cache)?;
-            // debug!("Execute translation (file db DML): {} -> {}", query, processed_query);
+            // Process query with fast path optimization
+            let processed_query = process_query(query, &conn, &self.schema_cache)?;
             
-            let rows_affected = conn.execute(processed_query, [])?;
+            let rows_affected = conn.execute(&processed_query, [])?;
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],
@@ -576,12 +566,10 @@ impl DbHandler {
         match cached_conn {
             Some(conn) => {
                 self.connection_manager.execute_with_cached_connection(conn, |conn| {
-                    // Apply query translations using LazyQueryProcessor
-                    let mut processor = LazyQueryProcessor::new(query);
-                    let processed_query = processor.process(conn, &self.schema_cache)?;
-                    // debug!("Execute translation (cached): {} -> {}", query, processed_query);
+                    // Process query with fast path optimization
+                    let processed_query = process_query(query, conn, &self.schema_cache)?;
                     
-                    let rows_affected = conn.execute(processed_query, [])?;
+                    let rows_affected = conn.execute(&processed_query, [])?;
                     Ok(DbResponse {
                         columns: vec![],
                         rows: vec![],
@@ -599,12 +587,10 @@ impl DbHandler {
     /// Execute with session-specific connection
     pub async fn execute_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
         self.connection_manager.execute_with_session(session_id, |conn| {
-            // Apply query translations using LazyQueryProcessor
-            let mut processor = LazyQueryProcessor::new(query);
-            let processed_query = processor.process(conn, &self.schema_cache)?;
-            // debug!("Execute translation: {} -> {}", query, processed_query);
+            // Process query with fast path optimization
+            let processed_query = process_query(query, conn, &self.schema_cache)?;
             
-            let rows_affected = conn.execute(processed_query, [])?;
+            let rows_affected = conn.execute(&processed_query, [])?;
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],

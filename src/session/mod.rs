@@ -6,6 +6,7 @@ pub mod read_only_handler;
 pub mod query_router;
 pub mod portal_manager;
 pub mod connection_manager;
+pub mod thread_local_cache;
 
 pub use state::{SessionState, PreparedStatement, Portal, GLOBAL_QUERY_CACHE};
 pub use pool::{SqlitePool, PooledConnection};
@@ -15,3 +16,4 @@ pub use pool::PoolStats;
 pub use query_router::{QueryRouter, QueryRoute, QueryType, RouterError, RouterStats};
 pub use portal_manager::{PortalManager, PortalExecutor, ManagedPortal, PortalExecutionState, CachedQueryResult};
 pub use connection_manager::ConnectionManager;
+pub use thread_local_cache::ThreadLocalConnectionCache;

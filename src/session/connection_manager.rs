@@ -5,6 +5,7 @@ use rusqlite::{Connection, OpenFlags};
 use uuid::Uuid;
 use crate::config::Config;
 use crate::PgSqliteError;
+use crate::session::ThreadLocalConnectionCache;
 use tracing::{warn, debug, info};
 
 /// Manages per-session SQLite connections for true isolation
@@ -80,7 +81,12 @@ impl ConnectionManager {
         crate::metadata::TypeMetadata::init(&conn)
             .map_err(PgSqliteError::Sqlite)?;
         
-        connections.insert(session_id, Arc::new(Mutex::new(conn)));
+        let conn_arc = Arc::new(Mutex::new(conn));
+        connections.insert(session_id, conn_arc.clone());
+        
+        // Cache in thread-local storage for fast access
+        ThreadLocalConnectionCache::insert(session_id, conn_arc);
+        
         info!("Created new connection for session {} (total connections: {})", session_id, connections.len());
         
         Ok(())
@@ -95,7 +101,13 @@ impl ConnectionManager {
     where
         F: FnOnce(&Connection) -> Result<R, rusqlite::Error>
     {
-        // First, get a read lock on the connections map
+        // First try thread-local cache (fast path)
+        if let Some(conn_arc) = ThreadLocalConnectionCache::get(session_id) {
+            let conn = conn_arc.lock();
+            return f(&*conn).map_err(|e| PgSqliteError::Sqlite(e));
+        }
+        
+        // Fall back to global map (slow path)
         let connections = self.connections.read();
         
         // Get the connection Arc
@@ -109,6 +121,9 @@ impl ConnectionManager {
         
         // Drop the read lock early
         drop(connections);
+        
+        // Cache in thread-local storage for next time
+        ThreadLocalConnectionCache::insert(*session_id, conn_arc.clone());
         
         // Now lock the individual connection
         let conn = conn_arc.lock();
@@ -130,6 +145,9 @@ impl ConnectionManager {
     
     /// Remove a connection when session ends
     pub fn remove_connection(&self, session_id: &Uuid) {
+        // Remove from thread-local cache first
+        ThreadLocalConnectionCache::remove(session_id);
+        
         let mut connections = self.connections.write();
         if connections.remove(session_id).is_some() {
             info!("Removed connection for session {} (remaining connections: {})", session_id, connections.len());
@@ -195,7 +213,13 @@ impl ConnectionManager {
     where
         F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error>
     {
-        // Get a read lock on the connections map
+        // First try thread-local cache (fast path)
+        if let Some(conn_arc) = ThreadLocalConnectionCache::get(session_id) {
+            let mut conn = conn_arc.lock();
+            return f(&mut *conn).map_err(|e| PgSqliteError::Sqlite(e));
+        }
+        
+        // Fall back to global map (slow path)
         let connections = self.connections.read();
         
         // Get the connection Arc
@@ -208,6 +232,9 @@ impl ConnectionManager {
         // Drop the read lock early
         drop(connections);
         
+        // Cache in thread-local storage for next time
+        ThreadLocalConnectionCache::insert(*session_id, conn_arc.clone());
+        
         // Now lock the individual connection for mutable access
         let mut conn = conn_arc.lock();
         f(&mut *conn).map_err(PgSqliteError::Sqlite)
@@ -215,7 +242,20 @@ impl ConnectionManager {
     
     /// Get the connection Arc for a session (for caching)
     pub fn get_connection_arc(&self, session_id: &Uuid) -> Option<Arc<Mutex<Connection>>> {
-        self.connections.read().get(session_id).cloned()
+        // First try thread-local cache
+        if let Some(conn_arc) = ThreadLocalConnectionCache::get(session_id) {
+            return Some(conn_arc);
+        }
+        
+        // Fall back to global map
+        let conn_arc = self.connections.read().get(session_id).cloned();
+        
+        // Cache it if found
+        if let Some(ref arc) = conn_arc {
+            ThreadLocalConnectionCache::insert(*session_id, arc.clone());
+        }
+        
+        conn_arc
     }
     
     /// Execute a function with a mutable cached connection
