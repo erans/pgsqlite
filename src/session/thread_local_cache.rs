@@ -67,7 +67,7 @@ mod tests {
         
         // Create mock connections (we can't create real SQLite connections in tests easily)
         let session1 = Uuid::new_v4();
-        let session2 = Uuid::new_v4();
+        let _session2 = Uuid::new_v4();
         
         // Test empty cache
         assert!(ThreadLocalConnectionCache::get(&session1).is_none());

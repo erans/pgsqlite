@@ -90,6 +90,71 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
     SIMPLE_DELETE_REGEX.is_match(query)
 }
 
+/// Check if a RETURNING clause is simple (only column names, no expressions)
+#[inline(always)]
+fn is_simple_returning_clause(query_bytes: &[u8]) -> bool {
+    // Find RETURNING keyword (case-insensitive)
+    let returning_pos = memchr::memmem::find(query_bytes, b"RETURNING").or_else(|| {
+        memchr::memmem::find(query_bytes, b"returning")
+    });
+    
+    if let Some(pos) = returning_pos {
+        // Get the part after RETURNING
+        let after_returning = &query_bytes[pos + 9..]; // "RETURNING".len() == 9
+        
+        // Skip whitespace
+        let content_start = after_returning.iter()
+            .position(|&b| !b.is_ascii_whitespace())
+            .unwrap_or(after_returning.len());
+        
+        if content_start >= after_returning.len() {
+            return false; // Empty RETURNING clause
+        }
+        
+        let content = &after_returning[content_start..];
+        
+        // Check for complex patterns that indicate expressions
+        // These would require LazyQueryProcessor
+        let complex_patterns: &[&[u8]] = &[
+            b"::",     // Type casts
+            b"(",      // Function calls or expressions
+            b")",      
+            b"+",      // Operators
+            b"-",
+            b"*",      // Could be multiply OR "SELECT *", need to check context
+            b"/",
+            b"||",     // String concatenation
+            b"CASE",   // CASE expressions
+            b"case",
+            b"SELECT", // Subqueries
+            b"select",
+        ];
+        
+        // Special handling for * which is allowed in RETURNING *
+        if content.starts_with(b"*") {
+            // Check if it's just "RETURNING *" (with optional trailing semicolon/whitespace)
+            let after_star = &content[1..];
+            return after_star.iter().all(|&b| b.is_ascii_whitespace() || b == b';');
+        }
+        
+        // Check for any complex patterns
+        for pattern in complex_patterns {
+            if memchr::memmem::find(content, pattern).is_some() {
+                return false;
+            }
+        }
+        
+        // Only allow alphanumeric, underscore, comma, and whitespace
+        // This permits: RETURNING id  or  RETURNING id, name, email
+        content.iter().all(|&b| {
+            b.is_ascii_alphanumeric() || b == b'_' || b == b',' || b.is_ascii_whitespace() || b == b';'
+        })
+    } else {
+        // No RETURNING clause at all
+        true
+    }
+}
+
 /// Fast byte-level check for simple queries that don't need LazyQueryProcessor
 /// This is much faster than regex matching and should be called first
 #[inline(always)]
@@ -147,7 +212,6 @@ pub fn is_fast_path_simple_query(query: &str) -> bool {
     
     // Check for special SQL features
     if memchr::memmem::find(query_bytes, b"USING").is_some() ||
-       memchr::memmem::find(query_bytes, b"RETURNING").is_some() ||
        memchr::memmem::find(query_bytes, b"AT TIME ZONE").is_some() ||
        memchr::memmem::find(query_bytes, b"NOW()").is_some() ||
        memchr::memmem::find(query_bytes, b"CURRENT_").is_some() ||
@@ -156,6 +220,14 @@ pub fn is_fast_path_simple_query(query: &str) -> bool {
        memchr::memmem::find(query_bytes, b"CAST").is_some() ||
        memchr::memmem::find(query_bytes, b"cast").is_some() {
         return false;
+    }
+    
+    // Check RETURNING clause separately - allow simple RETURNING
+    if memchr::memmem::find(query_bytes, b"RETURNING").is_some() ||
+       memchr::memmem::find(query_bytes, b"returning").is_some() {
+        if !is_simple_returning_clause(query_bytes) {
+            return false;
+        }
     }
     
     // Check for UPDATE ... FROM pattern
@@ -337,6 +409,12 @@ mod tests {
         assert!(is_fast_path_simple_query("DELETE FROM benchmark_table_pg WHERE id = %s"));
         assert!(is_fast_path_simple_query("SELECT * FROM benchmark_table_pg WHERE int_col > %s"));
         
+        // Simple RETURNING clauses should NOW use fast path!
+        assert!(is_fast_path_simple_query("INSERT INTO users (name) VALUES ('test') RETURNING id"));
+        assert!(is_fast_path_simple_query("INSERT INTO benchmark_table_pg (text_col, int_col, real_col, bool_col) VALUES (%s, %s, %s, %s) RETURNING id"));
+        assert!(is_fast_path_simple_query("UPDATE users SET name = 'test' WHERE id = 1 RETURNING *"));
+        assert!(is_fast_path_simple_query("DELETE FROM users WHERE id = 1 RETURNING id, name"));
+        
         // Complex queries that should NOT use fast path
         assert!(!is_fast_path_simple_query("SELECT * FROM users WHERE created_at::date = $1"));
         assert!(!is_fast_path_simple_query("SELECT * FROM pg_catalog.pg_tables"));
@@ -345,19 +423,48 @@ mod tests {
         assert!(!is_fast_path_simple_query("DELETE FROM users USING orders WHERE users.id = orders.user_id"));
         assert!(!is_fast_path_simple_query("UPDATE users SET updated_at = NOW()"));
         assert!(!is_fast_path_simple_query("SELECT * FROM users WHERE tags @> ARRAY['admin']"));
-        assert!(!is_fast_path_simple_query("INSERT INTO users (name) VALUES ('test') RETURNING id"));
         assert!(!is_fast_path_simple_query("SELECT CAST('active' AS status)"));
         assert!(!is_fast_path_simple_query("SELECT * FROM users JOIN orders ON users.id = orders.user_id"));
         assert!(!is_fast_path_simple_query("INSERT INTO logs (created) VALUES ('2024-01-01')"));
         assert!(!is_fast_path_simple_query("INSERT INTO logs (time) VALUES ('14:30:00')"));
         assert!(!is_fast_path_simple_query("SELECT * FROM unnest(ARRAY[1,2,3])"));
         
-        // RETURNING clause should NOT use fast path
-        assert!(!is_fast_path_simple_query("INSERT INTO benchmark_table_pg (text_col, int_col, real_col, bool_col) VALUES (%s, %s, %s, %s) RETURNING id"));
+        // Complex RETURNING clauses should NOT use fast path
+        assert!(!is_fast_path_simple_query("INSERT INTO users (name) VALUES ('test') RETURNING id::text"));
+        assert!(!is_fast_path_simple_query("INSERT INTO users (name) VALUES ('test') RETURNING upper(name)"));
+        assert!(!is_fast_path_simple_query("UPDATE users SET price = 10 WHERE id = 1 RETURNING price * 2"));
+        assert!(!is_fast_path_simple_query("DELETE FROM users WHERE id = 1 RETURNING now()"));
         
         // Edge cases
         assert!(!is_fast_path_simple_query("SELECT")); // Too short
         assert!(!is_fast_path_simple_query("BEGIN")); // Not DML
         assert!(!is_fast_path_simple_query("COMMIT")); // Not DML
+    }
+    
+    #[test]
+    fn test_simple_returning_clause() {
+        // Simple RETURNING clauses
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING id"));
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING *"));
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING id, name"));
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING id, name, email"));
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING user_id"));
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1) returning id")); // lowercase
+        
+        // No RETURNING clause (should be true - no complex RETURNING)
+        assert!(is_simple_returning_clause(b"INSERT INTO users VALUES (1)"));
+        
+        // Complex RETURNING clauses
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING id::text"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING upper(name)"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING id + 1"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING now()"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING (SELECT max(id) FROM users)"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING CASE WHEN id > 0 THEN id END"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING price * quantity"));
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING name || ' suffix'"));
+        
+        // Edge cases
+        assert!(!is_simple_returning_clause(b"INSERT INTO users VALUES (1) RETURNING")); // Empty RETURNING
     }
 }
