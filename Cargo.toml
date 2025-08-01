@@ -6,6 +6,7 @@ edition = "2024"
 [features]
 default = []
 use_db_executor = []
+unified_processor = []
 
 [dependencies]
 # Async runtime
@@ -75,3 +76,7 @@ rcgen = "0.13"
 [dev-dependencies]
 criterion = "0.6"
 pretty_assertions = "1.4"
+
+[[bench]]
+name = "simple_query_bench"
+harness = false

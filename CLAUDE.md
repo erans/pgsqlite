@@ -70,15 +70,20 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 - DELETE: ~35.8x overhead (0.034ms) ✓
 - INSERT: ~36.6x overhead (0.060ms) ✓
 
-### Current (2025-07-29) - SEVERE REGRESSION
-- SELECT: ~383,068.5% overhead (3.827ms) - **568x worse than target**
-- SELECT (cached): ~3,185.9% overhead (0.159ms) - **3.5x worse than target**
-- UPDATE: ~5,368.6% overhead (0.063ms) - **105x worse than target**
-- DELETE: ~4,636.9% overhead (0.045ms) - **130x worse than target**  
-- INSERT: ~10,753.0% overhead (0.174ms) - **294x worse than target**
+### Current (2025-08-01) - SEVERE REGRESSION
+- SELECT: ~389,541.9% overhead (4.016ms) - **599x worse than target**
+- SELECT (cached): ~2,892.9% overhead (0.079ms) - **1.7x worse than target**
+- UPDATE: ~4,591.1% overhead (0.053ms) - **90x worse than target**
+- DELETE: ~3,560.5% overhead (0.033ms) - **100x worse than target**  
+- INSERT: ~9,847.9% overhead (0.163ms) - **269x worse than target**
 
-**Note**: Performance regression likely due to connection-per-session architecture changes.
-Immediate optimization required.
+**Critical Issue**: Massive performance regression detected. Investigation and immediate optimization required.
+
+### Performance Characteristics
+- **Connection-per-session architecture** may be causing overhead
+- **Debug logging in hot paths** needs to be reduced
+- **Type detection improvements** may have introduced latency
+- **Batch operations still provide best performance** (10x-50x speedup)
 
 ### Batch INSERT Best Practices
 ```sql
@@ -131,7 +136,18 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-07-29)
+### Recently Fixed (2025-08-01)
+- **SQLAlchemy MAX/MIN Aggregate Types**: Fixed "Unknown PG numeric type: 25" error
+  - Added aggregate_type_fixer.rs to detect aliased aggregate columns
+  - SQLite returns TEXT for MAX/MIN on TEXT columns storing decimals
+  - Now properly returns NUMERIC (1700) for MAX/MIN on DECIMAL columns
+  - Handles SQLAlchemy's alias patterns like "max_1"
+- **Build Warnings**: Fixed all compilation warnings
+  - Fixed unused variables/functions in simple_query_detector.rs
+  - Fixed unused variant/fields in unified_processor.rs
+  - All 372 unit tests now pass without warnings
+
+### Previously Fixed (2025-07-29)
 - **Connection-per-Session Architecture**: Implemented true connection isolation matching PostgreSQL behavior
   - Each client session gets its own SQLite connection
   - Fixes SQLAlchemy transaction persistence issues with WAL mode
@@ -148,7 +164,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - Fixed common test module compatibility with connection-per-session architecture
 - **Logging Optimization**: Converted info to debug logging in hot paths
   - Changed query logging from info!() to debug!() level
-  - Should help reduce performance overhead (pending benchmark validation)
+  - Performance regression still present despite optimization
 
 ### Previously Fixed (2025-07-27)
 - **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries

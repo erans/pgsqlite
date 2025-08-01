@@ -1,0 +1,51 @@
+Running SQLite benchmarks...
+Running SQLite cached query benchmarks...
+SQLite benchmarks completed.
+Running pgsqlite benchmarks...
+Connecting to pgsqlite via TCP on port 5434
+Running pgsqlite cached query benchmarks...
+pgsqlite benchmarks completed.
+
+================================================================================
+BENCHMARK RESULTS
+Mode: Full Comparison
+Connection: TCP
+Database: File-Based
+================================================================================
+
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+| Operation       |   Count |   SQLite Avg (ms) |   pgsqlite Avg (ms) |   Diff (ms) | Overhead   |   SQLite Total (s) |   pgsqlite Total (s) |
++=================+=========+===================+=====================+=============+============+====================+======================+
+| CREATE          |       1 |             7.38  |              10.463 |       3.083 | +41.8%     |              0.007 |                0.01  |
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+| INSERT          |    2532 |             0.003 |               0.593 |       0.589 | +18111.1%  |              0.008 |                1.48  |
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+| UPDATE          |    2516 |             0.002 |               0.094 |       0.092 | +4236.8%   |              0.005 |                0.234 |
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+| DELETE          |    2482 |             0.002 |               0.058 |       0.056 | +2973.4%   |              0.005 |                0.144 |
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+| SELECT          |    2470 |             0.001 |               2.724 |       2.722 | +192983.7% |              0.003 |                6.918 |
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+| SELECT (cached) |     500 |             0.009 |               0.168 |       0.159 | +1798.5%   |              0.004 |                0.084 |
++-----------------+---------+-------------------+---------------------+-------------+------------+--------------------+----------------------+
+
+Per-Operation Time Differences:
+CREATE: +3.083ms (+3.083ms avg difference per call)
+INSERT: +0.589ms (+0.589ms avg difference per call)
+UPDATE: +0.092ms (+0.092ms avg difference per call)
+DELETE: +0.056ms (+0.056ms avg difference per call)
+SELECT: +2.722ms (+2.722ms avg difference per call)
+SELECT (cached): +0.159ms (+0.159ms avg difference per call)
+
+Overall Statistics:
+Total operations: 10501
+Total SQLite time: 0.034s
+Total pgsqlite time: 8.870s
+Overall overhead: +26243.1%
+
+Cache Effectiveness Analysis:
+SQLite - Uncached SELECT: 0.001ms, Cached: 0.009ms (Speedup: 0.2x)
+pgsqlite - Uncached SELECT: 2.724ms, Cached: 0.168ms (Speedup: 16.2x)
+
+Cached query overhead: +1798.5% (pgsqlite vs SQLite)
+Cache improvement: 16.2x speedup for pgsqlite cached queries

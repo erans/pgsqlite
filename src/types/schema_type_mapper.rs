@@ -423,6 +423,18 @@ impl SchemaTypeMapper {
                     }
                 }
             }
+            
+            // If we couldn't look up the type from schema (conn or table is None),
+            // try to infer it from the query context for MAX/MIN on likely DECIMAL columns
+            if let Some(fixed_type) = crate::types::aggregate_type_fixer::fix_aggregate_type_for_decimal(function_name, query) {
+                return Some(fixed_type);
+            }
+        }
+        
+        // Last resort: Check if the query context suggests this is an aggregate on a decimal column
+        // This handles cases where the column has an alias (e.g., "max_1") 
+        if let Some(fixed_type) = crate::types::aggregate_type_fixer::fix_aggregate_type_for_decimal(function_name, query) {
+            return Some(fixed_type);
         }
         
         // Array functions

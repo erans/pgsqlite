@@ -4,6 +4,7 @@ pub mod uuid;
 pub mod sqlite_type_info;
 pub mod schema_type_mapper;
 pub mod query_context_analyzer;
+pub mod aggregate_type_fixer;
 pub mod value_converter;
 pub mod decimal_handler;
 pub mod datetime_utils;

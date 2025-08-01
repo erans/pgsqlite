@@ -4,26 +4,51 @@ This document provides detailed performance benchmarks and analysis of pgsqlite.
 
 ## Executive Summary
 
-**⚠️ CRITICAL: As of 2025-07-29, pgsqlite is experiencing severe performance regression.**
+**⚠️ CRITICAL: As of 2025-08-01, pgsqlite continues to experience severe performance regression.**
 
-The recent connection-per-session architecture changes have introduced massive overhead:
-- SELECT operations are 568x worse than the documented target
-- All DML operations (INSERT, UPDATE, DELETE) are 100-300x worse than targets
-- Even cached queries are performing 3.5x worse than expected
+The connection-per-session architecture and recent changes have introduced massive overhead:
+- SELECT operations are 599x worse than the documented target (4.016ms vs 0.669ms)
+- INSERT operations are 269x worse (0.163ms vs 0.060ms target)
+- UPDATE operations are 90x worse (0.053ms vs 0.059ms target)
+- DELETE operations are 100x worse (0.033ms vs 0.034ms target)
+- Even cached SELECTs are 1.7x worse (0.079ms vs 0.046ms target)
 
-**Root Cause Analysis (Preliminary):**
-1. Connection-per-session architecture may have excessive mutex contention
-2. Session state management overhead in hot paths
-3. Possible connection lookup inefficiencies
-4. LazyQueryProcessor allocations may be impacting performance
+**Root Cause Analysis (Updated 2025-08-01):**
+1. Connection-per-session architecture overhead persists
+2. Type detection improvements (aggregate_type_fixer) may add latency
+3. Debug logging converted to debug!() but overhead remains
+4. Session state management still impacting hot paths
 
 **Immediate Actions Required:**
-1. Profile the connection management code
-2. Identify and remove bottlenecks in session handling
-3. Optimize hot paths to reduce overhead
-4. Consider connection pooling within sessions
+1. Profile the type detection and schema resolution code
+2. Investigate aggregate_type_fixer performance impact
+3. Consider caching type information more aggressively
+4. Review all hot path allocations and mutex usage
 
 ## Benchmark Results
+
+### ⚠️ LATEST BENCHMARK RESULTS (2025-08-01)
+
+After fixing SQLAlchemy edge cases and build warnings:
+
+```
+================================================================================
+                           BENCHMARK RESULTS
+Mode: Full Comparison | Connection: Unix Socket | Database: In-Memory
+================================================================================
+
+Operation        | SQLite (ms) | pgsqlite (ms) | Overhead    | vs Target | Status
+-----------------|-------------|---------------|-------------|-----------|--------
+CREATE           |    0.148    |    10.061     | +6,711.4%   | N/A       | -
+INSERT           |    0.002    |     0.163     | +9,847.9%   | 269x      | ❌ CRITICAL
+UPDATE           |    0.001    |     0.053     | +4,591.1%   | 90x       | ❌ CRITICAL
+DELETE           |    0.001    |     0.033     | +3,560.5%   | 100x      | ❌ CRITICAL
+SELECT           |    0.001    |     4.016     | +389,541.9% | 599x      | ❌ CRITICAL
+SELECT (cached)  |    0.003    |     0.079     | +2,892.9%   | 1.7x      | ❌ Poor
+
+Cache Effectiveness: 50.8x speedup for pgsqlite cached queries (4.016ms → 0.079ms)
+Total operations: 1,101 | Overall overhead: +64,441.9%
+```
 
 ### ⚠️ CRITICAL PERFORMANCE REGRESSION (2025-07-29)
 
