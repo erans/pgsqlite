@@ -12,7 +12,7 @@ use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tracing::{info, warn, debug};
 use std::sync::Arc;
-use byteorder::{BigEndian, ByteOrder};
+use crate::protocol::binary::BinaryEncoder;
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
 
 /// Efficient case-insensitive query type detection
@@ -2211,8 +2211,7 @@ impl ExtendedQueryHandler {
         }
         
         // Prepend length
-        let mut result = vec![0u8; 4];
-        BigEndian::write_i32(&mut result, bit_count);
+        let mut result = (bit_count as i32).to_be_bytes().to_vec();
         result.extend_from_slice(&bytes);
         
         Some(result)
@@ -2283,9 +2282,7 @@ impl ExtendedQueryHandler {
                 t if t == PgType::Int4.to_oid() => {
                     // int4
                     if let Ok(val) = lower_str.parse::<i32>() {
-                        let mut buf = vec![0u8; 4];
-                        BigEndian::write_i32(&mut buf, val);
-                        buf
+                        val.to_be_bytes().to_vec()
                     } else {
                         return None;
                     }
@@ -2293,9 +2290,7 @@ impl ExtendedQueryHandler {
                 t if t == PgType::Int8.to_oid() => {
                     // int8
                     if let Ok(val) = lower_str.parse::<i64>() {
-                        let mut buf = vec![0u8; 8];
-                        BigEndian::write_i64(&mut buf, val);
-                        buf
+                        val.to_be_bytes().to_vec()
                     } else {
                         return None;
                     }
@@ -2321,9 +2316,7 @@ impl ExtendedQueryHandler {
                 t if t == PgType::Int4.to_oid() => {
                     // int4
                     if let Ok(val) = upper_str.parse::<i32>() {
-                        let mut buf = vec![0u8; 4];
-                        BigEndian::write_i32(&mut buf, val);
-                        buf
+                        val.to_be_bytes().to_vec()
                     } else {
                         return None;
                     }
@@ -2331,9 +2324,7 @@ impl ExtendedQueryHandler {
                 t if t == PgType::Int8.to_oid() => {
                     // int8
                     if let Ok(val) = upper_str.parse::<i64>() {
-                        let mut buf = vec![0u8; 8];
-                        BigEndian::write_i64(&mut buf, val);
-                        buf
+                        val.to_be_bytes().to_vec()
                     } else {
                         return None;
                     }
@@ -2398,15 +2389,15 @@ impl ExtendedQueryHandler {
                                 // bool - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     let val = match s.trim() {
-                                        "1" | "t" | "true" | "TRUE" | "T" => 1u8,
-                                        "0" | "f" | "false" | "FALSE" | "F" => 0u8,
+                                        "1" | "t" | "true" | "TRUE" | "T" => true,
+                                        "0" | "f" | "false" | "FALSE" | "F" => false,
                                         _ => {
                                             // Invalid boolean, keep as text
                                             encoded_row.push(Some(bytes.clone()));
                                             continue;
                                         }
                                     };
-                                    Some(vec![val])
+                                    Some(BinaryEncoder::encode_bool(val))
                                 } else {
                                     Some(bytes.clone())
                                 }
@@ -2415,9 +2406,7 @@ impl ExtendedQueryHandler {
                                 // int2 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i16>() {
-                                        let mut buf = vec![0u8; 2];
-                                        BigEndian::write_i16(&mut buf, val);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_int2(val))
                                     } else {
                                         Some(bytes.clone())
                                     }
@@ -2429,9 +2418,7 @@ impl ExtendedQueryHandler {
                                 // int4 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i32>() {
-                                        let mut buf = vec![0u8; 4];
-                                        BigEndian::write_i32(&mut buf, val);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_int4(val))
                                     } else {
                                         Some(bytes.clone())
                                     }
@@ -2443,9 +2430,7 @@ impl ExtendedQueryHandler {
                                 // int8 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i64>() {
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_i64(&mut buf, val);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_int8(val))
                                     } else {
                                         Some(bytes.clone())
                                     }
@@ -2457,9 +2442,7 @@ impl ExtendedQueryHandler {
                                 // float4 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<f32>() {
-                                        let mut buf = vec![0u8; 4];
-                                        BigEndian::write_f32(&mut buf, val);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_float4(val))
                                     } else {
                                         Some(bytes.clone())
                                     }
@@ -2471,9 +2454,7 @@ impl ExtendedQueryHandler {
                                 // float8 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<f64>() {
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_f64(&mut buf, val);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_float8(val))
                                     } else {
                                         Some(bytes.clone())
                                     }
@@ -2503,16 +2484,11 @@ impl ExtendedQueryHandler {
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     // Check if this is already an integer (days since 1970)
                                     if let Ok(days_since_1970) = s.parse::<i32>() {
-                                        // Convert from days since 1970 to days since 2000
-                                        let days_since_2000 = days_since_1970 - 10957;
-                                        let mut buf = vec![0u8; 4];
-                                        BigEndian::write_i32(&mut buf, days_since_2000);
-                                        Some(buf)
+                                        // Use BinaryEncoder which handles the conversion
+                                        Some(BinaryEncoder::encode_date(days_since_1970 as f64))
                                     } else if let Some(days) = Self::date_to_pg_days(&s) {
                                         // Handle date strings like "2025-01-01" 
-                                        let mut buf = vec![0u8; 4];
-                                        BigEndian::write_i32(&mut buf, days);
-                                        Some(buf)
+                                        Some(days.to_be_bytes().to_vec())
                                     } else {
                                         // If parsing fails, keep as text
                                         Some(bytes.clone())
@@ -2527,13 +2503,9 @@ impl ExtendedQueryHandler {
                                     // First check if this is already an integer (microseconds since midnight)
                                     if let Ok(micros) = s.parse::<i64>() {
                                         // Already in microseconds format
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_i64(&mut buf, micros);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_time(micros as f64))
                                     } else if let Some(micros) = Self::time_to_microseconds(&s) {
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_i64(&mut buf, micros);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_time(micros as f64))
                                     } else {
                                         // If parsing fails, keep as text
                                         Some(bytes.clone())
@@ -2549,14 +2521,9 @@ impl ExtendedQueryHandler {
                                     if let Ok(unix_micros) = s.parse::<i64>() {
                                         // Convert from Unix epoch (1970-01-01) to PostgreSQL epoch (2000-01-01)
                                         // 946684800 seconds = 30 years between epochs
-                                        let pg_micros = unix_micros - (946684800 * 1_000_000);
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_i64(&mut buf, pg_micros);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_timestamp(unix_micros as f64))
                                     } else if let Some(micros) = Self::timestamp_to_pg_microseconds(&s) {
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_i64(&mut buf, micros);
-                                        Some(buf)
+                                        Some(micros.to_be_bytes().to_vec())
                                     } else {
                                         // If parsing fails, keep as text
                                         Some(bytes.clone())
@@ -2580,9 +2547,7 @@ impl ExtendedQueryHandler {
                                     let cleaned = s.trim_start_matches('$').replace(',', "");
                                     if let Ok(val) = cleaned.parse::<f64>() {
                                         let cents = (val * 100.0).round() as i64;
-                                        let mut buf = vec![0u8; 8];
-                                        BigEndian::write_i64(&mut buf, cents);
-                                        Some(buf)
+                                        Some(cents.to_be_bytes().to_vec())
                                     } else {
                                         Some(bytes.clone())
                                     }
@@ -2710,9 +2675,7 @@ impl ExtendedQueryHandler {
                                 // int2 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
                                     if let Ok(val) = s.parse::<i16>() {
-                                        let mut buf = vec![0u8; 2];
-                                        BigEndian::write_i16(&mut buf, val);
-                                        Some(buf)
+                                        Some(BinaryEncoder::encode_int2(val))
                                     } else {
                                         Some(bytes.clone())
                                     }
