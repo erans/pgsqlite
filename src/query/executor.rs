@@ -206,7 +206,7 @@ impl QueryExecutor {
             
             if statements.len() > 1 {
                 // debug!("Query contains {} statements", statements.len());
-                for (i, stmt) in statements.iter().enumerate() {
+                for (_i, stmt) in statements.iter().enumerate() {
                     // debug!("Executing statement {}: {}", i + 1, stmt);
                     Self::execute_single_statement(framed, db, session, stmt, query_router).await?;
                 }
@@ -565,7 +565,7 @@ impl QueryExecutor {
                         // debug!("FTS translation produced {} queries", fts_queries.len());
                         
                         // Execute all but the last query first
-                        for (i, fts_query) in fts_queries.iter().take(fts_queries.len() - 1).enumerate() {
+                        for (_i, fts_query) in fts_queries.iter().take(fts_queries.len() - 1).enumerate() {
                             // debug!("Executing FTS query {}: {}", i + 1, fts_query);
                             let cached_conn = Self::get_or_cache_connection(session, db).await;
                             db.execute_with_session_cached(fts_query, &session.id, cached_conn.as_ref()).await?;
@@ -640,7 +640,7 @@ impl QueryExecutor {
                     // debug!("Query after JSON operator translation: {}", translated);
                     translated_query = translated;
                 }
-                Err(e) => {
+                Err(_e) => {
                     // debug!("JSON operator translation failed: {}", e);
                     // Continue with original query - some operators might not be supported yet
                 }
@@ -660,12 +660,12 @@ impl QueryExecutor {
                     translated_query = translated;
                 }
                 // debug!("Array translation metadata: {} hints", metadata.column_mappings.len());
-                for (col, hint) in &metadata.column_mappings {
+                for (_col, _hint) in &metadata.column_mappings {
                     // debug!("  Column '{}': type={:?}", col, hint.suggested_type);
                 }
                 translation_metadata.merge(metadata);
             }
-            Err(e) => {
+            Err(_e) => {
                 // debug!("Array operator translation failed: {}", e);
                 // Continue with original query
             }
@@ -684,7 +684,7 @@ impl QueryExecutor {
                 // debug!("Array_agg translation metadata: {} hints", metadata.column_mappings.len());
                 translation_metadata.merge(metadata);
             }
-            Err(e) => {
+            Err(_e) => {
                 // debug!("Array_agg translation failed: {}", e);
                 // Continue with original query
             }

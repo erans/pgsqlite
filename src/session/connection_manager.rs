@@ -185,7 +185,7 @@ impl ConnectionManager {
     
     /// Intelligently manage WAL checkpoints based on commit count and time
     /// This ensures all connections see committed data while minimizing overhead
-    pub fn refresh_all_other_connections(&self, excluding_session: &Uuid) -> Result<(), PgSqliteError> {
+    pub fn refresh_all_other_connections(&self, _excluding_session: &Uuid) -> Result<(), PgSqliteError> {
         // Only do this in WAL mode
         if self.config.pragma_journal_mode != "WAL" {
             return Ok(());

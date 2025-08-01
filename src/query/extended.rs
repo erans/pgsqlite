@@ -10,7 +10,7 @@ use crate::query::ParameterParser;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
-use tracing::{info, warn, debug};
+use tracing::{info, warn};
 use std::sync::Arc;
 use crate::protocol::binary::BinaryEncoder;
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
@@ -379,7 +379,7 @@ impl ExtendedQueryHandler {
         // debug!("JSON each metadata hints: {:?}", metadata);
                 translation_metadata.merge(metadata);
             }
-            Err(e) => {
+            Err(_e) => {
         // debug!("JSON each translation failed: {:?}", e);
                 // Continue with original query
             }
@@ -1173,7 +1173,7 @@ impl ExtendedQueryHandler {
         // debug!("Query after JSON operator translation: {}", translated);
                     final_query = translated;
                 }
-                Err(e) => {
+                Err(_e) => {
         // debug!("JSON operator translation failed: {}", e);
                     // Continue with original query - some operators might not be supported yet
                 }
@@ -2355,9 +2355,9 @@ impl ExtendedQueryHandler {
         // debug!("encode_row called with {} fields, result_formats: {:?}, field_types: {:?}", row.len(), result_formats, field_types);
         
         // Log the first few values for debugging
-        for (i, value) in row.iter().take(3).enumerate() {
+        for (_i, value) in row.iter().take(3).enumerate() {
             if let Some(bytes) = value {
-                if let Ok(s) = std::str::from_utf8(bytes) {
+                if let Ok(_s) = std::str::from_utf8(bytes) {
         // debug!("  Field {}: '{}' (type OID {})", i, s, field_types.get(i).unwrap_or(&0));
                 } else {
         // debug!("  Field {}: <binary data> (type OID {})", i, field_types.get(i).unwrap_or(&0));
@@ -3520,7 +3520,7 @@ impl ExtendedQueryHandler {
                                         Ok(_) => {
                                             info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                         }
-                                        Err(e) => {
+                                        Err(_e) => {
         // debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
                                         }
                                     }

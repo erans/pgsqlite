@@ -1,6 +1,7 @@
 use bytes::{BufMut, BytesMut};
 use rust_decimal::Decimal;
 use std::convert::TryInto;
+use std::str::FromStr;
 use crate::types::PgType;
 
 /// Binary format encoders for PostgreSQL types
@@ -57,13 +58,102 @@ impl BinaryEncoder {
         value.to_vec()
     }
 
+    /// Encode a JSON value (OID 114)
+    /// Binary format is the same as text format for JSON
+    #[inline]
+    pub fn encode_json(value: &str) -> Vec<u8> {
+        value.as_bytes().to_vec()
+    }
+
+    /// Encode a JSONB value (OID 3802)
+    /// Binary format includes version byte (0x01) + JSON text
+    #[inline]
+    pub fn encode_jsonb(value: &str) -> Vec<u8> {
+        let mut result = vec![1u8]; // Version 1
+        result.extend_from_slice(value.as_bytes());
+        result
+    }
+
     /// Encode a numeric/decimal value (OID 1700)
-    /// This is complex - PostgreSQL uses a custom format
+    /// PostgreSQL uses a custom binary format with 4-digit groups
     pub fn encode_numeric(value: &Decimal) -> Vec<u8> {
-        // For now, fall back to text representation
-        // Full binary numeric encoding is complex and requires
-        // converting to PostgreSQL's internal numeric format
-        value.to_string().into_bytes()
+        // Handle special cases
+        if value.is_zero() {
+            // Zero value: ndigits=0, weight=0, sign=0, dscale=0
+            return vec![0, 0, 0, 0, 0, 0, 0, 0];
+        }
+
+        let is_negative = value.is_sign_negative();
+        let abs_value = value.abs();
+        
+        // Convert to string to parse digits
+        let value_str = abs_value.to_string();
+        let (integer_part, fractional_part) = if let Some(dot_pos) = value_str.find('.') {
+            (&value_str[..dot_pos], &value_str[dot_pos + 1..])
+        } else {
+            (value_str.as_str(), "")
+        };
+        
+        // Calculate display scale (decimal places)
+        let dscale = fractional_part.len() as i16;
+        
+        // Combine all digits
+        let all_digits = format!("{}{}", integer_part, fractional_part);
+        
+        // Group digits into 4-digit chunks (from right to left for proper weight calculation)
+        let mut digit_groups = Vec::new();
+        let mut remaining = all_digits.as_str();
+        
+        // Calculate weight (position of leftmost group relative to decimal point)
+        // Weight = (number_of_integer_digits - 1) / 4
+        let weight = if integer_part == "0" {
+            // For fractional values like 0.0001, weight is negative
+            -((fractional_part.len() as i16 + 3) / 4)
+        } else {
+            (integer_part.len() as i16 - 1) / 4
+        };
+        
+        // Process digits from left to right, grouping into 4-digit chunks
+        while !remaining.is_empty() {
+            let chunk_size = if remaining.len() >= 4 { 4 } else { remaining.len() };
+            let chunk = &remaining[..chunk_size];
+            remaining = &remaining[chunk_size..];
+            
+            // Parse the chunk and pad with zeros if needed
+            let mut digit_value = chunk.parse::<u16>().unwrap_or(0);
+            if chunk.len() < 4 {
+                // Right-pad with zeros for the last chunk
+                for _ in chunk.len()..4 {
+                    digit_value *= 10;
+                }
+            }
+            
+            digit_groups.push(digit_value);
+        }
+        
+        // Remove trailing zeros
+        while let Some(&0) = digit_groups.last() {
+            digit_groups.pop();
+        }
+        
+        let ndigits = digit_groups.len() as i16;
+        let sign = if is_negative { 0x4000u16 } else { 0x0000u16 };
+        
+        // Build the binary format
+        let mut result = Vec::with_capacity(8 + digit_groups.len() * 2);
+        
+        // Header (8 bytes)
+        result.extend_from_slice(&ndigits.to_be_bytes());
+        result.extend_from_slice(&weight.to_be_bytes());
+        result.extend_from_slice(&(sign as i16).to_be_bytes());
+        result.extend_from_slice(&dscale.to_be_bytes());
+        
+        // Digit groups (2 bytes each)
+        for digit in digit_groups {
+            result.extend_from_slice(&digit.to_be_bytes());
+        }
+        
+        result
     }
     
     /// Encode DATE (days since 2000-01-01)
@@ -192,6 +282,47 @@ impl BinaryEncoder {
                 // TEXT, VARCHAR - binary format is the same as text
                 match value {
                     rusqlite::types::Value::Text(s) => Some(Self::encode_text(s)),
+                    _ => None,
+                }
+            }
+            t if t == PgType::Json.to_oid() => {
+                // JSON - binary format is the same as text
+                match value {
+                    rusqlite::types::Value::Text(s) => Some(Self::encode_json(s)),
+                    _ => None,
+                }
+            }
+            t if t == PgType::Jsonb.to_oid() => {
+                // JSONB - binary format includes version byte
+                match value {
+                    rusqlite::types::Value::Text(s) => Some(Self::encode_jsonb(s)),
+                    _ => None,
+                }
+            }
+            t if t == PgType::Numeric.to_oid() => {
+                // NUMERIC - custom PostgreSQL binary format
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        // Parse the text as decimal
+                        if let Ok(decimal) = Decimal::from_str(s) {
+                            Some(Self::encode_numeric(&decimal))
+                        } else {
+                            None
+                        }
+                    }
+                    rusqlite::types::Value::Real(f) => {
+                        // Convert float to decimal
+                        if let Some(decimal) = Decimal::from_f64_retain(*f) {
+                            Some(Self::encode_numeric(&decimal))
+                        } else {
+                            None
+                        }
+                    }
+                    rusqlite::types::Value::Integer(i) => {
+                        // Convert integer to decimal
+                        let decimal = Decimal::from(*i);
+                        Some(Self::encode_numeric(&decimal))
+                    }
                     _ => None,
                 }
             }
@@ -404,5 +535,76 @@ mod tests {
         let months = i32::from_be_bytes(encoded[12..16].try_into().unwrap());
         assert_eq!(days, 0);
         assert_eq!(months, 0);
+    }
+    
+    #[test]
+    fn test_numeric_encoding() {
+        // Test zero
+        let zero = Decimal::from(0);
+        let encoded = BinaryEncoder::encode_numeric(&zero);
+        assert_eq!(encoded, vec![0, 0, 0, 0, 0, 0, 0, 0]);
+        
+        // Test 123.45
+        let num = Decimal::from_str("123.45").unwrap();
+        let encoded = BinaryEncoder::encode_numeric(&num);
+        
+        // Parse header
+        let ndigits = i16::from_be_bytes([encoded[0], encoded[1]]);
+        let weight = i16::from_be_bytes([encoded[2], encoded[3]]);
+        let sign = i16::from_be_bytes([encoded[4], encoded[5]]);
+        let dscale = i16::from_be_bytes([encoded[6], encoded[7]]);
+        
+        assert_eq!(ndigits, 2); // Two digit groups
+        assert_eq!(weight, 0);   // First group at 10^0
+        assert_eq!(sign, 0);     // Positive
+        assert_eq!(dscale, 2);   // Two decimal places
+        
+        // Parse digit groups
+        let digit1 = u16::from_be_bytes([encoded[8], encoded[9]]);
+        let digit2 = u16::from_be_bytes([encoded[10], encoded[11]]);
+        
+        assert_eq!(digit1, 123);   // First group: 123
+        assert_eq!(digit2, 4500);  // Second group: 45 -> 4500
+        
+        // Test negative number -999.123
+        let neg_num = Decimal::from_str("-999.123").unwrap();
+        let encoded = BinaryEncoder::encode_numeric(&neg_num);
+        
+        let sign = i16::from_be_bytes([encoded[4], encoded[5]]);
+        assert_eq!(sign, 0x4000); // Negative flag
+        
+        // Test small fractional number 0.0001
+        let small = Decimal::from_str("0.0001").unwrap();
+        let encoded = BinaryEncoder::encode_numeric(&small);
+        
+        let ndigits = i16::from_be_bytes([encoded[0], encoded[1]]);
+        let weight = i16::from_be_bytes([encoded[2], encoded[3]]);
+        let dscale = i16::from_be_bytes([encoded[6], encoded[7]]);
+        
+        assert_eq!(ndigits, 1);  // One digit group
+        assert_eq!(weight, -1);  // Weight for 10^-4
+        assert_eq!(dscale, 4);   // Four decimal places
+    }
+    
+    #[test]
+    fn test_json_encoding() {
+        let json_str = r#"{"key": "value", "number": 42}"#;
+        let encoded = BinaryEncoder::encode_json(json_str);
+        assert_eq!(encoded, json_str.as_bytes().to_vec());
+    }
+    
+    #[test]
+    fn test_jsonb_encoding() {
+        let json_str = r#"{"key": "value", "number": 42}"#;
+        let encoded = BinaryEncoder::encode_jsonb(json_str);
+        
+        // Should start with version byte 0x01
+        assert_eq!(encoded[0], 1);
+        
+        // Rest should be the JSON text
+        assert_eq!(&encoded[1..], json_str.as_bytes());
+        
+        // Total length should be JSON length + 1 for version byte
+        assert_eq!(encoded.len(), json_str.len() + 1);
     }
 }
