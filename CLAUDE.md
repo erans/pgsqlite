@@ -63,20 +63,27 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 
 ## Performance Targets
 
-### Current Performance (2025-08-01) with Unified Processor
-- SELECT 1 (minimal): ~85x overhead (0.060ms) - **Protocol minimum**
-- SELECT (cached): ~186x overhead (0.67ms) ✅
-- UPDATE: ~150x overhead (0.15ms) ✅
-- DELETE: ~120x overhead (0.12ms) ✅
-- INSERT: ~180x overhead (0.18ms) ✅
+### Target (2025-07-27)
+- SELECT: ~674.9x overhead (0.669ms)
+- SELECT (cached): ~17.2x overhead (0.046ms) ✓
+- UPDATE: ~50.9x overhead (0.059ms) ✓
+- DELETE: ~35.8x overhead (0.034ms) ✓
+- INSERT: ~36.6x overhead (0.060ms) ✓
 
-**Note**: The 85x overhead for "SELECT 1" represents the absolute minimum due to PostgreSQL wire protocol over TCP/IP. This is not reducible without changing the fundamental architecture.
+### Current (2025-08-01) - SEVERE REGRESSION
+- SELECT: ~389,541.9% overhead (4.016ms) - **599x worse than target**
+- SELECT (cached): ~2,892.9% overhead (0.079ms) - **1.7x worse than target**
+- UPDATE: ~4,591.1% overhead (0.053ms) - **90x worse than target**
+- DELETE: ~3,560.5% overhead (0.033ms) - **100x worse than target**  
+- INSERT: ~9,847.9% overhead (0.163ms) - **269x worse than target**
+
+**Critical Issue**: Massive performance regression detected. Investigation and immediate optimization required.
 
 ### Performance Characteristics
-- **Protocol overhead dominates** simple queries (85x minimum)
-- **Unified processor is 10-20% faster** than previous implementation
-- **Complex queries benefit most** from optimizations
-- **Batch operations provide best performance** (10x-50x speedup)
+- **Connection-per-session architecture** may be causing overhead
+- **Debug logging in hot paths** needs to be reduced
+- **Type detection improvements** may have introduced latency
+- **Batch operations still provide best performance** (10x-50x speedup)
 
 ### Batch INSERT Best Practices
 ```sql
@@ -129,7 +136,18 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-07-29)
+### Recently Fixed (2025-08-01)
+- **SQLAlchemy MAX/MIN Aggregate Types**: Fixed "Unknown PG numeric type: 25" error
+  - Added aggregate_type_fixer.rs to detect aliased aggregate columns
+  - SQLite returns TEXT for MAX/MIN on TEXT columns storing decimals
+  - Now properly returns NUMERIC (1700) for MAX/MIN on DECIMAL columns
+  - Handles SQLAlchemy's alias patterns like "max_1"
+- **Build Warnings**: Fixed all compilation warnings
+  - Fixed unused variables/functions in simple_query_detector.rs
+  - Fixed unused variant/fields in unified_processor.rs
+  - All 372 unit tests now pass without warnings
+
+### Previously Fixed (2025-07-29)
 - **Connection-per-Session Architecture**: Implemented true connection isolation matching PostgreSQL behavior
   - Each client session gets its own SQLite connection
   - Fixes SQLAlchemy transaction persistence issues with WAL mode
@@ -146,7 +164,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - Fixed common test module compatibility with connection-per-session architecture
 - **Logging Optimization**: Converted info to debug logging in hot paths
   - Changed query logging from info!() to debug!() level
-  - Should help reduce performance overhead (pending benchmark validation)
+  - Performance regression still present despite optimization
 
 ### Previously Fixed (2025-07-27)
 - **UUID/NOW() Functions**: Fixed duplicate UUIDs and epoch timestamps in cached queries

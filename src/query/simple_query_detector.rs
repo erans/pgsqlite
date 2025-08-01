@@ -93,6 +93,7 @@ pub fn is_ultra_simple_query(query: &str) -> bool {
 /// Optimized check for simple RETURNING clause - inline and minimal overhead
 /// Returns true if RETURNING clause is simple or not present
 #[inline(always)]
+#[allow(dead_code)]
 fn has_complex_returning(query_bytes: &[u8], returning_pos: usize) -> bool {
     // Get the part after RETURNING (9 chars)
     let after_returning = &query_bytes[returning_pos + 9..];
@@ -148,7 +149,7 @@ pub fn is_fast_path_simple_query(query: &str) -> bool {
     // This avoids expensive string operations for most queries
     let first_char = query_bytes[0].to_ascii_uppercase();
     
-    let (is_dml, can_have_returning) = match first_char {
+    let (is_dml, _can_have_returning) = match first_char {
         b'S' => {
             // Check if it's SELECT (no RETURNING possible)
             if query_bytes.len() >= 7 {
@@ -239,20 +240,20 @@ pub fn is_fast_path_simple_query(query: &str) -> bool {
         return false;
     }
     
-    // RETURNING check - DISABLED FOR TESTING
-    // // This is the key optimization - we skip this expensive check for SELECT queries
-    // if can_have_returning {
-    //     // Use SIMD-optimized memchr - check both cases but it's still fast
-    //     if let Some(pos) = memchr::memmem::find(query_bytes, b"RETURNING") {
-    //         if has_complex_returning(query_bytes, pos) {
-    //             return false;
-    //         }
-    //     } else if let Some(pos) = memchr::memmem::find(query_bytes, b"returning") {
-    //         if has_complex_returning(query_bytes, pos) {
-    //             return false;
-    //         }
-    //     }
-    // }
+    // RETURNING check
+    // This is the key optimization - we skip this expensive check for SELECT queries
+    if _can_have_returning {
+        // Use SIMD-optimized memchr - check both cases but it's still fast
+        if let Some(pos) = memchr::memmem::find(query_bytes, b"RETURNING") {
+            if has_complex_returning(query_bytes, pos) {
+                return false;
+            }
+        } else if let Some(pos) = memchr::memmem::find(query_bytes, b"returning") {
+            if has_complex_returning(query_bytes, pos) {
+                return false;
+            }
+        }
+    }
     
     // Check for UPDATE ... FROM pattern (only if UPDATE)
     if first_char == b'U' {

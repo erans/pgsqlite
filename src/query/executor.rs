@@ -987,6 +987,9 @@ impl QueryExecutor {
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, Some(query)) {
                         // Second priority: Check for aggregate functions
                         aggregate_oid
+                    } else if crate::types::aggregate_type_fixer::fix_aggregate_type_for_decimal(name, Some(query)).is_some() {
+                        // Third priority: Check if this is an aliased aggregate on a decimal column
+                        crate::types::PgType::Numeric.to_oid()
                     } else if let Some(hint) = translation_metadata.get_hint(name) {
                         // Third priority: Check translation metadata (datetime or arithmetic)
                         debug!("Found translation hint for column '{}': {:?}", name, hint);

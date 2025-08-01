@@ -23,6 +23,7 @@ bitflags! {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 enum ComplexityLevel {
     Simple,      // No translation needed at all
     SimpleDML,   // Simple DML, possibly with RETURNING (just pass through)
@@ -37,9 +38,9 @@ thread_local! {
 
 /// Ultra-fast unified query processor
 pub struct UnifiedProcessor<'a> {
-    query: &'a str,
-    query_bytes: &'a [u8],
-    complexity: ComplexityLevel,
+    _query: &'a str,
+    _query_bytes: &'a [u8],
+    _complexity: ComplexityLevel,
     translations_needed: TranslationFlags,
 }
 
@@ -54,9 +55,9 @@ impl<'a> UnifiedProcessor<'a> {
         // Quick length check
         if query.len() < 10 || query.len() > 10000 {
             return Self {
-                query,
-                query_bytes,
-                complexity: ComplexityLevel::Complex,
+                _query: query,
+                _query_bytes: query_bytes,
+                _complexity: ComplexityLevel::Complex,
                 translations_needed: TranslationFlags::all(),
             };
         }
@@ -108,6 +109,18 @@ impl<'a> UnifiedProcessor<'a> {
             complexity = ComplexityLevel::Complex;
         }
         
+        // Check for datetime patterns in INSERT/UPDATE statements
+        if query_bytes.starts_with(b"INSERT") || query_bytes.starts_with(b"UPDATE") {
+            if memchr::memchr(b'\'', query_bytes).is_some() {
+                // Check for date pattern YYYY-MM-DD or time pattern HH:MM:SS
+                if memchr::memchr(b'-', query_bytes).is_some() ||
+                   memchr::memchr(b':', query_bytes).is_some() {
+                    translations.insert(TranslationFlags::DATETIME);
+                    complexity = ComplexityLevel::Moderate;
+                }
+            }
+        }
+        
         // Check for batch operations
         if let Some(delete_pos) = memchr::memmem::find(query_bytes, b"DELETE") {
             if memchr::memmem::find(&query_bytes[delete_pos..], b"USING").is_some() {
@@ -131,9 +144,9 @@ impl<'a> UnifiedProcessor<'a> {
         }
         
         Self {
-            query,
-            query_bytes,
-            complexity,
+            _query: query,
+            _query_bytes: query_bytes,
+            _complexity: complexity,
             translations_needed: translations,
         }
     }
@@ -508,7 +521,7 @@ mod tests {
         ];
         
         for query in &queries {
-            let result = process_query(query, &Connection::open_in_memory().unwrap(), &SchemaCache::new());
+            let result = process_query(query, &Connection::open_in_memory().unwrap(), &SchemaCache::new(300));
             assert!(matches!(result, Ok(Cow::Borrowed(_))));
         }
     }
@@ -523,7 +536,7 @@ mod tests {
         ];
         
         for query in &queries {
-            let result = process_query(query, &Connection::open_in_memory().unwrap(), &SchemaCache::new());
+            let result = process_query(query, &Connection::open_in_memory().unwrap(), &SchemaCache::new(300));
             assert!(matches!(result, Ok(Cow::Borrowed(_))));
         }
     }
@@ -542,7 +555,7 @@ mod tests {
             // Would need actual translation logic to test properly
             // For now just ensure they're detected as complex
             let processor = UnifiedProcessor::analyze(query);
-            assert_ne!(processor.complexity, ComplexityLevel::Simple);
+            assert_ne!(processor._complexity, ComplexityLevel::Simple);
         }
     }
 }

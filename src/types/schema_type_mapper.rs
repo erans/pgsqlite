@@ -431,6 +431,12 @@ impl SchemaTypeMapper {
             }
         }
         
+        // Last resort: Check if the query context suggests this is an aggregate on a decimal column
+        // This handles cases where the column has an alias (e.g., "max_1") 
+        if let Some(fixed_type) = crate::types::aggregate_type_fixer::fix_aggregate_type_for_decimal(function_name, query) {
+            return Some(fixed_type);
+        }
+        
         // Array functions
         // NOTE: Return TEXT instead of array types because data is stored as JSON strings
         if upper.starts_with("ARRAY_AGG(") {

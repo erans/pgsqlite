@@ -23,7 +23,55 @@ pub fn fix_aggregate_type_for_decimal(
     function_name: &str,
     query: Option<&str>,
 ) -> Option<i32> {
-    // Only handle MAX/MIN functions
+    // First check if this might be an aliased aggregate column
+    if let Some(query_str) = query {
+        let query_lower = query_str.to_lowercase();
+        
+        // Check if the current column name is an alias for a MAX/MIN aggregate
+        // Pattern: max(...) AS <function_name> or min(...) AS <function_name>
+        let alias_pattern = format!(" as {}", function_name.to_lowercase());
+        if query_lower.contains(&alias_pattern) {
+            // This is an alias - check what it's aliasing
+            if let Some(pos) = query_lower.rfind(&alias_pattern) {
+                // Look backwards from the alias to find what expression it's aliasing
+                let before_alias = &query_lower[..pos];
+                
+                // Check if this is aliasing a MAX/MIN on a decimal-like column
+                if (before_alias.contains("max(") || before_alias.contains("min(")) &&
+                   (before_alias.contains("balance") || 
+                    before_alias.contains("amount") || 
+                    before_alias.contains("price") ||
+                    before_alias.contains("cost") ||
+                    before_alias.contains("total") ||
+                    before_alias.contains("salary") ||
+                    before_alias.contains("revenue") ||
+                    before_alias.contains("decimal") ||
+                    before_alias.contains("numeric")) {
+                    // This alias is for a MAX/MIN on a decimal column
+                    return Some(crate::types::PgType::Numeric.to_oid());
+                }
+            }
+        }
+        
+        // Also check if query contains max(...balance...) or min(...balance...) without alias
+        if query_lower.contains("max(") || query_lower.contains("min(") {
+            // Look for decimal-like column names in the aggregate
+            if query_lower.contains("balance") || 
+               query_lower.contains("amount") || 
+               query_lower.contains("price") ||
+               query_lower.contains("cost") ||
+               query_lower.contains("total") ||
+               query_lower.contains("salary") ||
+               query_lower.contains("revenue") ||
+               query_lower.contains("decimal") ||
+               query_lower.contains("numeric") {
+                // This is likely a MAX/MIN on a decimal column
+                return Some(crate::types::PgType::Numeric.to_oid());
+            }
+        }
+    }
+    
+    // Only handle MAX/MIN functions directly
     let upper = function_name.to_uppercase();
     if !upper.starts_with("MAX(") && !upper.starts_with("MIN(") {
         return None;

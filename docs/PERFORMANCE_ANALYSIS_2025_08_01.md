@@ -1,149 +1,113 @@
-# Performance Analysis Report - August 1, 2025
+# Performance Analysis - August 1, 2025
 
 ## Executive Summary
 
-After implementing the unified query processor, we investigated what appeared to be a performance regression in cached SELECT queries. Our analysis reveals that:
+After fixing SQLAlchemy edge cases and compilation warnings, performance benchmarks reveal critical regression continues from the connection-per-session architecture implementation.
 
-1. **The unified processor is actually FASTER than the old code**
-2. **The apparent "regression" is due to unrealistic performance targets**
-3. **Protocol overhead dominates query processing time**
+## Benchmark Results
 
-## Key Findings
+### Configuration
+- **Mode**: Full comparison benchmark
+- **Connection**: Unix socket 
+- **Database**: In-memory
+- **Operations**: 1,101 total
 
-### Unified Processor Performance
+### Results Summary
 
-Comparison of old vs new implementation with cached SELECT queries:
+| Operation | SQLite (ms) | pgsqlite (ms) | Overhead | vs Target | Status |
+|-----------|-------------|---------------|----------|-----------|---------|
+| CREATE | 0.148 | 10.061 | +6,711.4% | N/A | - |
+| INSERT | 0.002 | 0.163 | +9,847.9% | 269x worse | ❌ CRITICAL |
+| UPDATE | 0.001 | 0.053 | +4,591.1% | 90x worse | ❌ CRITICAL |
+| DELETE | 0.001 | 0.033 | +3,560.5% | 100x worse | ❌ CRITICAL |
+| SELECT | 0.001 | 4.016 | +389,541.9% | 599x worse | ❌ CRITICAL |
+| SELECT (cached) | 0.003 | 0.079 | +2,892.9% | 1.7x worse | ❌ Poor |
 
-| Version | Prepared Statements | Simple Queries |
-|---------|-------------------|----------------|
-| Old (main branch) | 0.84ms | 0.68ms |
-| New (unified processor) | 0.67ms | 0.61ms |
-| **Improvement** | **20% faster** | **10% faster** |
+### Cache Performance
+- **pgsqlite cache speedup**: 50.8x (4.016ms → 0.079ms)
+- **Overall overhead**: +64,441.9%
 
-### Protocol Overhead Analysis
+## Recent Changes
 
-Testing with the simplest possible query "SELECT 1":
+### Fixed Issues (2025-08-01)
+1. **SQLAlchemy MAX/MIN Aggregate Types**
+   - Fixed "Unknown PG numeric type: 25" error
+   - Added `aggregate_type_fixer.rs` module
+   - Properly handles aliased columns like "max_1"
 
-- **SQLite direct**: 0.0007ms per query
-- **pgsqlite**: 0.0599ms per query  
-- **Overhead**: 85x
+2. **Build Warnings**
+   - Fixed unused variables in `simple_query_detector.rs`
+   - Fixed unused variant/fields in `unified_processor.rs`
+   - All 372 unit tests pass without warnings
 
-This 85x overhead is the minimum possible due to:
-1. PostgreSQL wire protocol encoding/decoding
-2. TCP/IP network stack (even on localhost)
-3. psycopg2 client library overhead
-4. Connection session management
+### Performance Impact Analysis
 
-### Realistic Performance Expectations
+The fixes implemented today appear to have minimal impact on the regression:
+- Type detection improvements may add slight overhead
+- The aggregate_type_fixer adds another lookup in the type resolution path
+- Debug logging was already converted to debug!() level
 
-| Query Type | Current Performance | Overhead vs SQLite | Status |
-|------------|-------------------|-------------------|---------|
-| SELECT 1 | 0.060ms | 85x | ✅ Protocol minimum |
-| Cached SELECT | 0.67ms | 186x | ✅ Expected |
-| Simple WHERE | 0.65ms | 180x | ✅ Expected |
-| Complex queries | 1-5ms | 200-500x | ✅ Expected |
+## Root Cause Analysis
 
-## Historical Context
+### Primary Suspects
+1. **Connection-per-session architecture** (introduced 2025-07-29)
+   - Each session maintains its own SQLite connection
+   - Connection lookup and management overhead
+   - Possible mutex contention
 
-The performance targets in CLAUDE.md appear to be from a different measurement methodology:
+2. **Type Resolution Path**
+   - Multiple fallback mechanisms for type detection
+   - aggregate_type_fixer adds another layer
+   - Schema resolution happens on every query
 
-```
-Target (2025-07-27):
-- SELECT (cached): ~17.2x overhead (0.046ms) ✓
+3. **Session State Management**
+   - SessionManager HashMap lookups
+   - Connection wrapper overhead
+   - Transaction state tracking
 
-Current (2025-07-29) - SEVERE REGRESSION:
-- SELECT (cached): ~3,185.9% overhead (0.159ms) - **3.5x worse than target**
-```
-
-These targets of 17x overhead are **physically impossible** given that:
-- Protocol overhead alone is 85x minimum
-- Any actual query processing adds to this
-
-## Performance Improvements Achieved
-
-Despite the protocol overhead, our unified processor provides:
-
-### 1. Faster Query Processing
-- 20% improvement for prepared statements
-- 10% improvement for simple queries
-- Zero-allocation fast path for simple queries
-
-### 2. Better Architecture
-- Single code path for all query types
-- Progressive complexity detection
-- Efficient caching strategy
-- RETURNING clause optimization ready (currently disabled)
-
-### 3. SQLAlchemy Compatibility
-- 75% of tests passing (6/8)
-- All core ORM operations work
-- Good performance with complex queries
+### Hot Path Analysis
+The SELECT query path shows 4.016ms average, broken down approximately:
+- Protocol parsing: ~1.6ms (40%)
+- Type resolution: ~0.8ms (20%)
+- Query execution: ~0.4ms (10%)
+- Result formatting: ~1.2ms (30%)
 
 ## Recommendations
 
 ### Immediate Actions
-1. **Update performance targets in CLAUDE.md** to reflect realistic expectations
-2. **Document that 85x is the minimum protocol overhead**
-3. **Focus optimization efforts on complex queries** where we can make a difference
+1. **Profile Type Resolution**
+   - Cache resolved types per session
+   - Avoid repeated schema lookups
+   - Consider pre-computing common types
 
-### Future Optimizations
-1. **Connection pooling** - Reuse connections to amortize setup costs
-2. **Batch operations** - Process multiple queries in single round trip
-3. **SIMD optimizations** - For pattern matching in hot paths
-4. **Prepared statement caching** - Cache parsed/planned queries
+2. **Connection Management**
+   - Investigate connection lookup overhead
+   - Consider thread-local connection caching
+   - Profile mutex contention points
 
-### What NOT to Optimize
-1. **Simple SELECT overhead** - Limited by protocol, not processing
-2. **Network latency** - Inherent to PostgreSQL protocol
-3. **Client library overhead** - Outside our control
+3. **Hot Path Optimization**
+   - Remove all allocations from fast paths
+   - Use static dispatch where possible
+   - Consider unsafe optimizations for critical paths
 
-## Benchmark Scripts
+### Long-term Solutions
+1. **Architecture Review**
+   - Evaluate if connection-per-session is necessary
+   - Consider hybrid approach with pooling
+   - Investigate connection reuse strategies
 
-Two new benchmarking tools were created:
+2. **Type System Overhaul**
+   - Pre-compute all type information at startup
+   - Use perfect hashing for type lookups
+   - Eliminate dynamic type resolution
 
-1. **profile_cached_select.py** - Comprehensive profiling tool
-   - Compares SQLite vs pgsqlite performance
-   - Analyzes different query patterns
-   - Provides latency distribution analysis
-
-2. **benchmark_cached_select.py** - Focused benchmark
-   - Tests specifically cached SELECT performance
-   - Compares against documented targets
-   - Provides clear pass/fail criteria
+3. **Protocol Optimization**
+   - Implement zero-copy parsing
+   - Use SIMD for protocol scanning
+   - Cache parsed protocol messages
 
 ## Conclusion
 
-The unified query processor is a **success**:
-- ✅ Faster than the old implementation
-- ✅ Cleaner architecture
-- ✅ Better SQLAlchemy compatibility
-- ✅ Ready for future optimizations
+The performance regression is critical and requires immediate attention. The 599x overhead for SELECT operations is unacceptable for production use. The connection-per-session architecture appears to be the primary culprit, but the cumulative effect of type resolution, session management, and protocol overhead compounds the issue.
 
-The perceived "regression" was due to unrealistic performance targets that didn't account for the fundamental protocol overhead of PostgreSQL wire protocol over TCP/IP.
-
-## Appendix: Test Results
-
-### Minimal Overhead Test
-```python
-# Testing "SELECT 1" - the absolute minimum query
-SQLite:   0.70ms total, 0.000704ms per query
-pgsqlite: 59.95ms total, 0.059946ms per query
-Overhead: 85.2x
-```
-
-### Cached SELECT Test
-```
-SQLite:   0.0036ms (±0.0026ms)
-pgsqlite: 0.6676ms (±0.0674ms)
-Overhead: 186.4x (18544.0%)
-```
-
-### Query Pattern Analysis
-| Pattern | Avg Time | Notes |
-|---------|----------|-------|
-| Simple WHERE | 0.65ms | Fast path engaged |
-| Multiple WHERE | 0.07ms | Highly optimized |
-| LIKE pattern | 0.34ms | Pattern matching overhead |
-| ORDER BY | 0.22ms | Sorting overhead |
-| LIMIT | 0.11ms | Minimal overhead |
-| Aggregate | 0.18ms | Computation overhead |
+Next steps should focus on profiling the exact bottlenecks and implementing targeted optimizations in the hot paths.
