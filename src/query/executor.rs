@@ -31,6 +31,18 @@ struct TableSchemaInfo {
 static TABLE_SCHEMA_CACHE: Lazy<RwLock<HashMap<String, TableSchemaInfo>>> = 
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Invalidate schema cache for a specific table
+pub fn invalidate_table_schema_cache(table_name: &str) {
+    let mut cache = TABLE_SCHEMA_CACHE.write();
+    cache.remove(table_name);
+}
+
+/// Invalidate entire schema cache
+pub fn invalidate_all_schema_cache() {
+    let mut cache = TABLE_SCHEMA_CACHE.write();
+    cache.clear();
+}
+
 /// Get all schema information for a table in one query
 async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id: &Uuid) -> TableSchemaInfo {
     // Check cache first
@@ -856,27 +868,33 @@ impl QueryExecutor {
             if is_join_query && !column_to_table_map.is_empty() {
                 // debug!("Type inference: Using JOIN column mappings for {} columns", response.columns.len());
                 
+                // Group columns by table to batch schema lookups
+                let mut table_columns: std::collections::HashMap<String, Vec<(String, String)>> = std::collections::HashMap::new();
+                
                 for col_name in &response.columns {
-                    // First check if we have a direct mapping from the query
                     if let Some(table) = column_to_table_map.get(col_name) {
-                        // Try to find the actual column name (strip alias prefix if needed)
                         let actual_column = if col_name.starts_with(&format!("{table}_")) {
                             &col_name[table.len() + 1..]
                         } else {
                             col_name
                         };
-                        
-                        // debug!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
-                        //       col_name, table, actual_column);
-                        
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, actual_column).await {
+                        table_columns.entry(table.clone())
+                            .or_insert_with(Vec::new)
+                            .push((col_name.clone(), actual_column.to_string()));
+                    }
+                }
+                
+                // Batch fetch schema for each table
+                for (table, columns) in table_columns {
+                    let table_schema = get_table_schema_info(&table, db, &session.id).await;
+                    
+                    for (col_name, actual_column) in columns {
+                        if let Some(pg_type) = table_schema.column_types.get(&actual_column) {
                             // debug!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
-                            schema_types.insert(col_name.clone(), pg_type);
+                            schema_types.insert(col_name, pg_type.clone());
                         } else {
                             // debug!("Type inference: No schema type found for '{}.{}'", table, actual_column);
                         }
-                    } else {
-                        // debug!("Type inference: No table mapping found for column '{}'", col_name);
                     }
                 }
             }
@@ -884,20 +902,23 @@ impl QueryExecutor {
             if let Some(ref table) = table_name {
                 // debug!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
                 
+                // Get all schema info for the table in one query
+                let table_schema = get_table_schema_info(table, db, &session.id).await;
+                
                 // Extract column mappings from query if possible
                 let column_mappings = extract_column_mappings_from_query(query, table);
                 
                 // Fetch types for actual columns
                 for col_name in &response.columns {
-                    // Try direct lookup first
-                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                    // Try direct lookup first from batched schema
+                    if let Some(pg_type) = table_schema.column_types.get(col_name) {
                         // debug!("Type inference: Found schema type for '{}.{}' -> {}", table, col_name, pg_type);
-                        schema_types.insert(col_name.clone(), pg_type);
+                        schema_types.insert(col_name.clone(), pg_type.clone());
                     } else if let Some(source_column) = column_mappings.get(col_name) {
                         // Try using the column mapping from SELECT clause
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, source_column).await {
+                        if let Some(pg_type) = table_schema.column_types.get(source_column) {
                             // debug!("Type inference: Found schema type for '{}.{}' (via SELECT mapping {}) -> {}", table, source_column, col_name, pg_type);
-                            schema_types.insert(col_name.clone(), pg_type);
+                            schema_types.insert(col_name.clone(), pg_type.clone());
                             continue;
                         }
                     } else {
@@ -939,6 +960,8 @@ impl QueryExecutor {
                                     (potential_table_single, potential_col_double.as_str()),
                                 ] {
                                     // debug!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
+                                    // For now, still use individual lookups for cross-table searches
+                                    // TODO: Optimize this by batching multiple table schemas
                                     if let Ok(Some(pg_type)) = db.get_schema_type(try_table, try_col).await {
                                         // debug!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
                                         schema_types.insert(col_name.clone(), pg_type);
@@ -949,9 +972,9 @@ impl QueryExecutor {
                         }
                         
                         if potential_column != col_name {
-                            if let Ok(Some(pg_type)) = db.get_schema_type(table, potential_column).await {
+                            if let Some(pg_type) = table_schema.column_types.get(potential_column) {
                                 // debug!("Type inference: Found schema type for '{}.{}' (via alias {}) -> {}", table, potential_column, col_name, pg_type);
-                                schema_types.insert(col_name.clone(), pg_type);
+                                schema_types.insert(col_name.clone(), pg_type.clone());
                                 continue;
                             }
                         }
@@ -965,11 +988,19 @@ impl QueryExecutor {
                 
             // Fetch types for source columns referenced in translation hints
             if let Some(ref table) = table_name {
+                // Get table schema once if we haven't already
+                let table_schema = if schema_types.is_empty() {
+                    get_table_schema_info(table, db, &session.id).await
+                } else {
+                    // We already have it from above
+                    get_table_schema_info(table, db, &session.id).await
+                };
+                
                 for col_name in &response.columns {
                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                         if let Some(ref source_col) = hint.source_column {
-                            if let Ok(Some(source_type)) = db.get_schema_type(table, source_col).await {
-                                hint_source_types.insert(col_name.clone(), source_type);
+                            if let Some(source_type) = table_schema.column_types.get(source_col) {
+                                hint_source_types.insert(col_name.clone(), source_type.clone());
                             }
                         }
                     }
@@ -1323,15 +1354,22 @@ impl QueryExecutor {
         let mut fields: Vec<FieldDescription> = Vec::new();
         let mut column_types: Vec<Option<String>> = Vec::new();
         
+        // Get table schema once for all columns
+        let table_schema = if let Some(ref table) = table_name {
+            Some(get_table_schema_info(table, db, &session.id).await)
+        } else {
+            None
+        };
+        
         for (i, col_name) in returning_response.columns.iter().enumerate() {
             let mut type_oid = PgType::Text.to_oid(); // Default to text
             let mut pg_type = None;
             
-            // Try to get type information from schema
-            if let Some(ref table) = table_name {
-                if let Ok(Some(schema_type)) = db.get_schema_type(table, col_name).await {
+            // Try to get type information from batched schema
+            if let Some(ref schema) = table_schema {
+                if let Some(schema_type) = schema.column_types.get(col_name) {
                     pg_type = Some(schema_type.clone());
-                    type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&schema_type);
+                    type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(schema_type);
                 }
             }
             
@@ -1713,6 +1751,10 @@ impl QueryExecutor {
             QueryType::Create => {
                 let after_create = query.trim_start()[6..].trim_start();
                 if after_create.to_uppercase().starts_with("TABLE") {
+                    // Invalidate schema cache for the new table
+                    if let Some(table_name) = extract_table_name_from_create(query) {
+                        invalidate_table_schema_cache(&table_name);
+                    }
                     "CREATE TABLE".to_string()
                 } else if after_create.to_uppercase().starts_with("INDEX") {
                     "CREATE INDEX".to_string()
@@ -1723,12 +1765,26 @@ impl QueryExecutor {
             QueryType::Drop => {
                 let after_drop = query.trim_start()[4..].trim_start();
                 if after_drop.to_uppercase().starts_with("TABLE") {
+                    // Invalidate schema cache for the dropped table
+                    if let Some(table_name) = extract_table_name_from_drop(query) {
+                        invalidate_table_schema_cache(&table_name);
+                    }
                     "DROP TABLE".to_string()
                 } else {
                     "DROP".to_string()
                 }
             }
-            _ => "OK".to_string(),
+            _ => {
+                // Check for ALTER TABLE
+                if query.trim_start().to_uppercase().starts_with("ALTER TABLE") {
+                    if let Some(table_name) = extract_table_name_from_alter(query) {
+                        invalidate_table_schema_cache(&table_name);
+                    }
+                    "ALTER TABLE".to_string()
+                } else {
+                    "OK".to_string()
+                }
+            }
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
@@ -2318,5 +2374,81 @@ mod tests {
         let result_data = &converted[0][0].as_ref().unwrap();
         let result_str = String::from_utf8_lossy(result_data);
         assert_eq!(result_str, r#"{"a","b","c"}"#);
+    }
+}
+
+/// Extract table name from DROP TABLE statement
+fn extract_table_name_from_drop(query: &str) -> Option<String> {
+    let drop_table_pos = query.as_bytes().windows(10)
+        .position(|window| window.eq_ignore_ascii_case(b"DROP TABLE"))?;
+    
+    let after_drop = &query[drop_table_pos + 10..].trim();
+    
+    // Skip IF EXISTS if present
+    let after_drop = if after_drop.len() >= 9 && after_drop[..9].eq_ignore_ascii_case("IF EXISTS") {
+        after_drop[9..].trim()
+    } else {
+        after_drop
+    };
+    
+    // Find the end of table name (whitespace or end of query)
+    let table_end = after_drop.find(|c: char| {
+        c.is_whitespace() || c == ';' || c == '('
+    }).unwrap_or(after_drop.len());
+    
+    let table_name = after_drop[..table_end].trim();
+    
+    // Remove quotes if present and handle schema.table format
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    // If it contains a dot, take the part after the last dot (table name without schema)
+    let table_name = if let Some(dot_pos) = table_name.rfind('.') {
+        &table_name[dot_pos + 1..]
+    } else {
+        table_name
+    };
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
+    } else {
+        None
+    }
+}
+
+/// Extract table name from ALTER TABLE statement
+fn extract_table_name_from_alter(query: &str) -> Option<String> {
+    let alter_table_pos = query.as_bytes().windows(11)
+        .position(|window| window.eq_ignore_ascii_case(b"ALTER TABLE"))?;
+    
+    let after_alter = &query[alter_table_pos + 11..].trim();
+    
+    // Skip IF EXISTS if present  
+    let after_alter = if after_alter.len() >= 9 && after_alter[..9].eq_ignore_ascii_case("IF EXISTS") {
+        after_alter[9..].trim()
+    } else {
+        after_alter
+    };
+    
+    // Find the end of table name (whitespace or end of query)
+    let table_end = after_alter.find(|c: char| {
+        c.is_whitespace() || c == ';' || c == '('
+    }).unwrap_or(after_alter.len());
+    
+    let table_name = after_alter[..table_end].trim();
+    
+    // Remove quotes if present and handle schema.table format
+    let table_name = table_name.trim_matches('"').trim_matches('\'');
+    
+    // If it contains a dot, take the part after the last dot (table name without schema)
+    let table_name = if let Some(dot_pos) = table_name.rfind('.') {
+        &table_name[dot_pos + 1..]
+    } else {
+        table_name
+    };
+    
+    if !table_name.is_empty() {
+        Some(table_name.to_string())
+    } else {
+        None
     }
 }
