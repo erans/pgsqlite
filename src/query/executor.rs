@@ -1754,6 +1754,8 @@ impl QueryExecutor {
                     // Invalidate schema cache for the new table
                     if let Some(table_name) = extract_table_name_from_create(query) {
                         invalidate_table_schema_cache(&table_name);
+                        // Also invalidate prepared statement cache
+                        super::extended::GLOBAL_PREPARED_STATEMENT_CACHE.invalidate_for_table(&table_name);
                     }
                     "CREATE TABLE".to_string()
                 } else if after_create.to_uppercase().starts_with("INDEX") {
@@ -1768,6 +1770,8 @@ impl QueryExecutor {
                     // Invalidate schema cache for the dropped table
                     if let Some(table_name) = extract_table_name_from_drop(query) {
                         invalidate_table_schema_cache(&table_name);
+                        // Also invalidate prepared statement cache
+                        super::extended::GLOBAL_PREPARED_STATEMENT_CACHE.invalidate_for_table(&table_name);
                     }
                     "DROP TABLE".to_string()
                 } else {
@@ -1779,6 +1783,8 @@ impl QueryExecutor {
                 if query.trim_start().to_uppercase().starts_with("ALTER TABLE") {
                     if let Some(table_name) = extract_table_name_from_alter(query) {
                         invalidate_table_schema_cache(&table_name);
+                        // Also invalidate prepared statement cache
+                        super::extended::GLOBAL_PREPARED_STATEMENT_CACHE.invalidate_for_table(&table_name);
                     }
                     "ALTER TABLE".to_string()
                 } else {

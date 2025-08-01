@@ -1,4 +1,5 @@
 use crate::session::GLOBAL_QUERY_CACHE;
+use crate::query::extended::GLOBAL_PREPARED_STATEMENT_CACHE;
 
 /// Cache status information
 #[derive(Debug, Clone)]
@@ -90,6 +91,17 @@ pub fn log_cache_status() {
         status.evictions,
         status.cache_size,
         status.cache_capacity
+    );
+    
+    // Also log prepared statement cache stats
+    let ps_stats = GLOBAL_PREPARED_STATEMENT_CACHE.stats();
+    tracing::info!(
+        "Prepared Statement Cache - Size: {}, Hits: {} ({:.1}%), Misses: {}, Evictions: {}",
+        ps_stats.size,
+        ps_stats.hits,
+        ps_stats.hit_rate,
+        ps_stats.misses,
+        ps_stats.evictions
     );
 }
 

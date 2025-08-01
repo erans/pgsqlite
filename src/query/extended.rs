@@ -3,7 +3,8 @@ use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
 use crate::types::{DecimalHandler, PgType};
-use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
+use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo, PreparedStatementCache};
+use once_cell::sync::Lazy;
 use crate::validator::NumericValidator;
 use crate::query::ParameterParser;
 use crate::PgSqliteError;
@@ -56,6 +57,11 @@ fn find_keyword_position(query: &str, keyword: &str) -> Option<usize> {
     
     None
 }
+
+// Global prepared statement cache to avoid re-parsing identical queries
+pub static GLOBAL_PREPARED_STATEMENT_CACHE: Lazy<Arc<PreparedStatementCache>> = Lazy::new(|| {
+    Arc::new(PreparedStatementCache::new(1000, 300)) // 1000 statements, 5 minute TTL
+});
 
 pub struct ExtendedQueryHandler;
 
@@ -159,6 +165,16 @@ impl ExtendedQueryHandler {
             python_param_mapping.insert(name.clone(), python_params);
         }
         
+        // Check global prepared statement cache before expensive parsing
+        if let Some(cached_stmt) = GLOBAL_PREPARED_STATEMENT_CACHE.get(&cleaned_query, &param_types) {
+            // Use the cached prepared statement
+            session.prepared_statements.write().await.insert(name.clone(), cached_stmt);
+            
+            framed.send(BackendMessage::ParseComplete).await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+        
         // Check if this is a SET command - handle it specially
         if crate::query::SetHandler::is_set_command(&cleaned_query) {
             // For SET commands, we need to create a special prepared statement
@@ -184,6 +200,9 @@ impl ExtendedQueryHandler {
                 },
                 translation_metadata: None, // SET commands don't need translation metadata
             };
+            
+            // Cache SET/SHOW commands as well
+            GLOBAL_PREPARED_STATEMENT_CACHE.insert(&cleaned_query, &vec![], stmt.clone());
             
             session.prepared_statements.write().await.insert(name.clone(), stmt);
             
@@ -661,6 +680,9 @@ impl ExtendedQueryHandler {
                 Some(translation_metadata)
             },
         };
+        
+        // Cache the prepared statement globally to avoid re-parsing
+        GLOBAL_PREPARED_STATEMENT_CACHE.insert(&cleaned_query, &actual_param_types, stmt.clone());
         
         session.prepared_statements.write().await.insert(name.clone(), stmt);
         
