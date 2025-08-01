@@ -292,6 +292,15 @@ impl ExtendedQueryHandler {
         }
         
         // Pre-translate the query first so we can analyze the translated version
+        #[cfg(feature = "unified_processor")]
+        let mut translated_for_analysis = {
+            // Use unified processor for translation - it handles ALL translations
+            db.with_session_connection(&session.id, |conn| {
+                crate::query::process_query(&cleaned_query, conn, db.get_schema_cache())
+            }).await?
+        };
+        
+        #[cfg(not(feature = "unified_processor"))]
         let mut translated_for_analysis = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
             db.with_session_connection(&session.id, |conn| {
                 Ok(crate::translator::CastTranslator::translate_query(&cleaned_query, Some(conn)))
@@ -301,6 +310,7 @@ impl ExtendedQueryHandler {
         };
         
         // Translate NUMERIC to TEXT casts with proper formatting
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::NumericFormatTranslator::needs_translation(&translated_for_analysis) {
             translated_for_analysis = db.with_session_connection(&session.id, |conn| {
                 Ok(crate::translator::NumericFormatTranslator::translate_query(&translated_for_analysis, conn))
@@ -309,6 +319,7 @@ impl ExtendedQueryHandler {
         
         // Translate datetime functions if needed and capture metadata
         let mut translation_metadata = crate::translator::TranslationMetadata::new();
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::DateTimeTranslator::needs_translation(&translated_for_analysis) {
             let (translated, metadata) = crate::translator::DateTimeTranslator::translate_with_metadata(&translated_for_analysis);
             translated_for_analysis = translated;
@@ -316,9 +327,11 @@ impl ExtendedQueryHandler {
         }
         
         // Translate array operators with metadata
-        use crate::translator::ArrayTranslator;
-        info!("Translating array operators for query: {}", translated_for_analysis);
-        match ArrayTranslator::translate_with_metadata(&translated_for_analysis) {
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
+        {
+            use crate::translator::ArrayTranslator;
+            info!("Translating array operators for query: {}", translated_for_analysis);
+            match ArrayTranslator::translate_with_metadata(&translated_for_analysis) {
             Ok((translated, metadata)) => {
                 if translated != translated_for_analysis {
                     info!("Array translation changed query to: {}", translated);
@@ -327,13 +340,16 @@ impl ExtendedQueryHandler {
                 info!("Array metadata has {} hints", metadata.column_mappings.len());
                 translation_metadata.merge(metadata);
             }
-            Err(_) => {
-                // Continue with original query
+                Err(_) => {
+                    // Continue with original query
+                }
             }
         }
         
         // Translate json_each()/jsonb_each() functions for PostgreSQL compatibility
-        use crate::translator::JsonEachTranslator;
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
+        {
+            use crate::translator::JsonEachTranslator;
         match JsonEachTranslator::translate_with_metadata(&translated_for_analysis) {
             Ok((translated, metadata)) => {
                 if translated != translated_for_analysis {
@@ -349,9 +365,12 @@ impl ExtendedQueryHandler {
                 // Continue with original query
             }
         }
+        }
         
         // Translate row_to_json() functions for PostgreSQL compatibility
-        use crate::translator::RowToJsonTranslator;
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
+        {
+            use crate::translator::RowToJsonTranslator;
         let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_for_analysis);
         if translated != translated_for_analysis {
             info!("row_to_json translation changed query from: {}", translated_for_analysis);
@@ -360,8 +379,10 @@ impl ExtendedQueryHandler {
         }
         debug!("row_to_json metadata hints: {:?}", metadata);
         translation_metadata.merge(metadata);
+        }
         
         // Analyze arithmetic expressions for type metadata
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);
             translation_metadata.merge(arithmetic_metadata);

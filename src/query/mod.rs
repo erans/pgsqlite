@@ -11,6 +11,7 @@ pub mod set_handler;
 pub mod simple_query_detector;
 pub mod parameter_parser;
 pub mod query_processor;
+pub mod unified_processor;
 pub mod pattern_optimizer;
 pub mod query_handler;
 pub mod join_type_inference;
