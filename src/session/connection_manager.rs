@@ -84,8 +84,8 @@ impl ConnectionManager {
         let conn_arc = Arc::new(Mutex::new(conn));
         connections.insert(session_id, conn_arc.clone());
         
-        // Cache in thread-local storage for fast access
-        ThreadLocalConnectionCache::insert(session_id, conn_arc);
+        // Pre-warm connection cache with thread affinity
+        ThreadLocalConnectionCache::pre_warm(session_id, conn_arc);
         
         info!("Created new connection for session {} (total connections: {})", session_id, connections.len());
         
@@ -101,8 +101,8 @@ impl ConnectionManager {
     where
         F: FnOnce(&Connection) -> Result<R, rusqlite::Error>
     {
-        // First try thread-local cache (fast path)
-        if let Some(conn_arc) = ThreadLocalConnectionCache::get(session_id) {
+        // Use thread affinity for fastest lookup
+        if let Some(conn_arc) = ThreadLocalConnectionCache::get_with_affinity(session_id) {
             let conn = conn_arc.lock();
             return f(&*conn).map_err(|e| PgSqliteError::Sqlite(e));
         }
@@ -122,8 +122,8 @@ impl ConnectionManager {
         // Drop the read lock early
         drop(connections);
         
-        // Cache in thread-local storage for next time
-        ThreadLocalConnectionCache::insert(*session_id, conn_arc.clone());
+        // Pre-warm the cache for next time
+        ThreadLocalConnectionCache::pre_warm(*session_id, conn_arc.clone());
         
         // Now lock the individual connection
         let conn = conn_arc.lock();
@@ -213,8 +213,8 @@ impl ConnectionManager {
     where
         F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error>
     {
-        // First try thread-local cache (fast path)
-        if let Some(conn_arc) = ThreadLocalConnectionCache::get(session_id) {
+        // Use thread affinity for fastest lookup
+        if let Some(conn_arc) = ThreadLocalConnectionCache::get_with_affinity(session_id) {
             let mut conn = conn_arc.lock();
             return f(&mut *conn).map_err(|e| PgSqliteError::Sqlite(e));
         }
@@ -232,8 +232,8 @@ impl ConnectionManager {
         // Drop the read lock early
         drop(connections);
         
-        // Cache in thread-local storage for next time
-        ThreadLocalConnectionCache::insert(*session_id, conn_arc.clone());
+        // Pre-warm the cache for next time
+        ThreadLocalConnectionCache::pre_warm(*session_id, conn_arc.clone());
         
         // Now lock the individual connection for mutable access
         let mut conn = conn_arc.lock();
@@ -242,17 +242,17 @@ impl ConnectionManager {
     
     /// Get the connection Arc for a session (for caching)
     pub fn get_connection_arc(&self, session_id: &Uuid) -> Option<Arc<Mutex<Connection>>> {
-        // First try thread-local cache
-        if let Some(conn_arc) = ThreadLocalConnectionCache::get(session_id) {
+        // Use thread affinity for fastest lookup
+        if let Some(conn_arc) = ThreadLocalConnectionCache::get_with_affinity(session_id) {
             return Some(conn_arc);
         }
         
         // Fall back to global map
         let conn_arc = self.connections.read().get(session_id).cloned();
         
-        // Cache it if found
+        // Pre-warm cache if found
         if let Some(ref arc) = conn_arc {
-            ThreadLocalConnectionCache::insert(*session_id, arc.clone());
+            ThreadLocalConnectionCache::pre_warm(*session_id, arc.clone());
         }
         
         conn_arc

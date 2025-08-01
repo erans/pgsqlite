@@ -196,23 +196,42 @@ For detailed compatibility information, see [Type Mapping Documentation](docs/ty
 
 ## Performance Considerations
 
-pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite, which does add overhead:
+pgsqlite acts as a translation layer between PostgreSQL protocol and SQLite. Our goal is to keep overhead within one order of magnitude (~10x) of pure SQLite for most operations.
 
-- **Best for**: Development, testing, prototyping, and single-user applications or low write throughput applications
-- **Typical overhead**: 40-350x vs raw SQLite depending on operation (SELECT ~337x, UPDATE ~67x, DELETE ~43x)
-- **Advanced Optimizations**: Comprehensive query optimization system with:
-  - **Read-Only Optimizer**: Direct execution path for SELECT queries with query plan caching
-  - **Enhanced Statement Caching**: Intelligent caching with priority-based eviction (200+ cached plans)
-  - **Context Merging**: Efficient handling of deeply nested subqueries
-  - **Lazy Schema Loading**: Deferred schema loading with thread-safe optimization
-  - **Pattern Recognition**: 14+ query patterns with pre-compiled regex optimization
-- **Built-in Features**: Query caching (2.4x speedup), optional connection pooling for concurrent reads, prepared statements, and ultra-fast path for simple queries
-- **Batch Operations**: Multi-row INSERT syntax provides dramatic performance improvements:
-  - 10-row batches: ~11x faster than single-row INSERTs
-  - 100-row batches: ~51x faster
-  - 1000-row batches: ~76x faster
+### Current Performance
 
-For production use cases with high performance requirements, consider using native PostgreSQL.
+**Best Configuration (Unix Socket + Connection Pooling):**
+- UPDATE: ~72x overhead (0.072ms)
+- DELETE: ~41x overhead (0.041ms)
+- INSERT: ~270x overhead (0.540ms)
+- SELECT: ~2,982x overhead (2.933ms) - needs optimization
+- SELECT (cached): ~25x overhead (0.074ms)
+
+**Note**: TCP connections add ~20-30% overhead compared to Unix sockets due to network stack traversal.
+
+### Optimization Tips
+
+1. **Use Unix Sockets** for best performance:
+   ```python
+   # psycopg2 example
+   conn = psycopg2.connect(host='/tmp', port=5432)
+   ```
+
+2. **Enable Connection Pooling** for concurrent workloads:
+   ```bash
+   PGSQLITE_USE_POOLING=true pgsqlite --database mydb.db
+   ```
+
+3. **Batch Operations** provide dramatic speedups:
+   - 10-row batches: ~11x faster than single-row INSERTs
+   - 100-row batches: ~51x faster
+   - 1000-row batches: ~76x faster
+
+4. **Cached Queries** show up to 40x improvement after first execution
+
+**Best for**: Development, testing, prototyping, feature branch deployments, and applications where SQLite's performance is already sufficient.
+
+For production use cases requiring microsecond-level latency, consider using native PostgreSQL.
 
 ### Connection Pooling
 

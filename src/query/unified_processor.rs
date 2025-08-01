@@ -188,18 +188,18 @@ pub fn process_query<'a>(
                 // Even with RETURNING, if it's simple, pass through
                 if let Some(ret_pos) = find_returning_fast(bytes) {
                     if is_simple_returning(&bytes[ret_pos..]) {
-                        tracing::debug!("UNIFIED: Simple INSERT with RETURNING using fast path: {}", query);
+                        // tracing::debug!("UNIFIED: Simple INSERT with RETURNING using fast path: {}", query);
                         return Ok(Cow::Borrowed(query));
                     }
-                    tracing::debug!("UNIFIED: Complex RETURNING, needs processing: {}", query);
+                    // tracing::debug!("UNIFIED: Complex RETURNING, needs processing: {}", query);
                     // Complex RETURNING, needs processing
                 } else {
                     // No RETURNING, simple INSERT
-                    tracing::debug!("UNIFIED: Simple INSERT without RETURNING using fast path: {}", query);
+                    // tracing::debug!("UNIFIED: Simple INSERT without RETURNING using fast path: {}", query);
                     return Ok(Cow::Borrowed(query));
                 }
             } else {
-                tracing::debug!("UNIFIED: INSERT has special patterns, needs processing: {}", query);
+                // tracing::debug!("UNIFIED: INSERT has special patterns, needs processing: {}", query);
             }
         }
         b'U' if len >= 7 && bytes[..7].eq_ignore_ascii_case(b"UPDATE ") => {

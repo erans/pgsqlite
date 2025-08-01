@@ -134,14 +134,14 @@ impl ExtendedQueryHandler {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
         
-        debug!("Parsing statement '{}': {}", name, cleaned_query);
-        debug!("Provided param_types: {:?}", param_types);
+        // debug!("Parsing statement '{}': {}", name, cleaned_query);
+        // debug!("Provided param_types: {:?}", param_types);
         
         // Check for Python-style parameters and convert to PostgreSQL-style
         use crate::query::parameter_parser::ParameterParser;
         let python_params = ParameterParser::find_python_parameters(&cleaned_query);
         if !python_params.is_empty() {
-            debug!("Found Python-style parameters: {:?}", python_params);
+        // debug!("Found Python-style parameters: {:?}", python_params);
             
             // Convert %(name)s parameters to $1, $2, $3, etc.
             let mut param_counter = 1;
@@ -152,7 +152,7 @@ impl ExtendedQueryHandler {
                 param_counter += 1;
             }
             
-            debug!("Converted query: {}", cleaned_query);
+        // debug!("Converted query: {}", cleaned_query);
             
             // Store the parameter mapping in session for later use in bind
             let mut python_param_mapping = session.python_param_mapping.write().await;
@@ -357,11 +357,11 @@ impl ExtendedQueryHandler {
                     info!("JSON each translation changed query to: {}", translated);
                     translated_for_analysis = translated;
                 }
-                debug!("JSON each metadata hints: {:?}", metadata);
+        // debug!("JSON each metadata hints: {:?}", metadata);
                 translation_metadata.merge(metadata);
             }
             Err(e) => {
-                debug!("JSON each translation failed: {:?}", e);
+        // debug!("JSON each translation failed: {:?}", e);
                 // Continue with original query
             }
         }
@@ -377,7 +377,7 @@ impl ExtendedQueryHandler {
             info!("row_to_json translation changed query to: {}", translated);
             translated_for_analysis = translated;
         }
-        debug!("row_to_json metadata hints: {:?}", metadata);
+        // debug!("row_to_json metadata hints: {:?}", metadata);
         translation_metadata.merge(metadata);
         }
         
@@ -722,7 +722,7 @@ impl ExtendedQueryHandler {
         };
         
         if !is_simple_query {
-            debug!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
+        // debug!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
             
             // Check if this statement used Python-style parameters and reorder values if needed
             {
@@ -744,8 +744,8 @@ impl ExtendedQueryHandler {
         let stmt = statements.get(&statement)
             .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {statement}")))?;
             
-        debug!("Statement has param_types: {:?}", stmt.param_types);
-        debug!("Received param formats: {:?}", formats);
+        // debug!("Statement has param_types: {:?}", stmt.param_types);
+        // debug!("Received param formats: {:?}", formats);
         
         // Check if we need to infer types (only when param types are empty or unknown)
         let needs_inference = stmt.param_types.is_empty() || 
@@ -754,8 +754,8 @@ impl ExtendedQueryHandler {
         let mut inferred_types = None;
         
         if needs_inference && !values.is_empty() {
-            debug!("Need to infer parameter types from values");
-            debug!("Statement param_types: {:?}", stmt.param_types);
+        // debug!("Need to infer parameter types from values");
+        // debug!("Statement param_types: {:?}", stmt.param_types);
             let mut types = Vec::new();
             
             for (i, val) in values.iter().enumerate() {
@@ -851,7 +851,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        debug!("Executing portal '{}' with max_rows: {}", portal, max_rows);
+        // debug!("Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
@@ -889,7 +889,7 @@ impl ExtendedQueryHandler {
            !query.contains("EXCEPT") &&
            (result_formats.is_empty() || result_formats[0] == 0) {
             
-            debug!("Using fast path for simple SELECT query: {}", query);
+        // debug!("Using fast path for simple SELECT query: {}", query);
             
             // Get cached connection first
             let _cached_conn = Self::get_or_cache_connection(session, db).await;
@@ -1145,23 +1145,23 @@ impl ExtendedQueryHandler {
         
         // Apply JSON operator translation if needed
         if JsonTranslator::contains_json_operations(&final_query) {
-            debug!("Query needs JSON operator translation: {}", final_query);
+        // debug!("Query needs JSON operator translation: {}", final_query);
             match JsonTranslator::translate_json_operators(&final_query) {
                 Ok(translated) => {
-                    debug!("Query after JSON operator translation: {}", translated);
+        // debug!("Query after JSON operator translation: {}", translated);
                     final_query = translated;
                 }
                 Err(e) => {
-                    debug!("JSON operator translation failed: {}", e);
+        // debug!("JSON operator translation failed: {}", e);
                     // Continue with original query - some operators might not be supported yet
                 }
             }
         }
         
-        debug!("Executing query: {}", final_query);
-        debug!("Original query: {}", query);
-        debug!("Final query after substitution: {}", final_query);
-        debug!("Original query had {} bound values", bound_values.len());
+        // debug!("Executing query: {}", final_query);
+        // debug!("Original query: {}", query);
+        // debug!("Final query after substitution: {}", final_query);
+        // debug!("Original query had {} bound values", bound_values.len());
         
         
         // Debug: Check if this is a catalog query
@@ -1700,7 +1700,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        debug!("send_select_response called with {} columns: {:?}", response.columns.len(), response.columns);
+        // debug!("send_select_response called with {} columns: {:?}", response.columns.len(), response.columns);
         // Send RowDescription
         let mut field_descriptions = Vec::new();
         for (i, column_name) in response.columns.iter().enumerate() {
@@ -1733,12 +1733,12 @@ impl ExtendedQueryHandler {
                 if let Some(bytes) = cell {
                     let column_name = response.columns.get(i).map(|s| s.as_str()).unwrap_or("unknown");
                     let column_lower = column_name.to_lowercase();
-                    debug!("Processing column '{}' (lowercase: '{}')", column_name, column_lower);
+        // debug!("Processing column '{}' (lowercase: '{}')", column_name, column_lower);
                     // Check if this is a datetime function result that needs formatting
                     if let Ok(s) = String::from_utf8(bytes.clone()) {
-                        debug!("Column '{}' value as string: '{}'", column_name, s);
+        // debug!("Column '{}' value as string: '{}'", column_name, s);
                         if let Ok(micros) = s.parse::<i64>() {
-                            debug!("Column '{}' parsed as i64: {}", column_name, micros);
+        // debug!("Column '{}' parsed as i64: {}", column_name, micros);
                             // Check if this looks like microseconds (large integer)
                             if micros > 1_000_000_000_000 && 
                                (column_lower.contains("now") || 
@@ -1748,20 +1748,20 @@ impl ExtendedQueryHandler {
                                 // This is likely a datetime function result, format it
                                 use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                 let formatted = format_microseconds_to_timestamp(micros);
-                                debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
+        // debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
                                 values.push(Some(formatted.into_bytes()));
                             } else {
-                                debug!("Column '{}' not converted: micros={}, contains_now={}, contains_current_timestamp={}, eq_now={}, eq_current_timestamp={}", 
-                                       column_name, micros, column_lower.contains("now"), column_lower.contains("current_timestamp"), 
-                                       column_lower == "now", column_lower == "current_timestamp");
+        // debug!("Column '{}' not converted: micros={}, contains_now={}, contains_current_timestamp={}, eq_now={}, eq_current_timestamp={}", 
+        //                                column_name, micros, column_lower.contains("now"), column_lower.contains("current_timestamp"), 
+        //                                column_lower == "now", column_lower == "current_timestamp");
                                 values.push(cell.clone());
                             }
                         } else {
-                            debug!("Column '{}' failed to parse as i64", column_name);
+        // debug!("Column '{}' failed to parse as i64", column_name);
                             values.push(cell.clone());
                         }
                     } else {
-                        debug!("Column '{}' failed to parse as UTF-8", column_name);
+        // debug!("Column '{}' failed to parse as UTF-8", column_name);
                         values.push(cell.clone());
                     }
                 } else {
@@ -1838,7 +1838,7 @@ impl ExtendedQueryHandler {
                                         format!("'{}'", s.replace('\'', "''"))
                                     }
                                     Err(e) => {
-                                        debug!("Failed to decode binary NUMERIC parameter: {}", e);
+        // debug!("Failed to decode binary NUMERIC parameter: {}", e);
                                         return Err(PgSqliteError::InvalidParameter(format!("Invalid binary NUMERIC: {e}")));
                                     }
                                 }
@@ -1889,7 +1889,7 @@ impl ExtendedQueryHandler {
                                                 format!("'{}'", s.replace('\'', "''"))
                                             }
                                             Err(e) => {
-                                                debug!("Invalid NUMERIC parameter: {}", e);
+        // debug!("Invalid NUMERIC parameter: {}", e);
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid NUMERIC value: {e}")));
                                             }
                                         }
@@ -1899,7 +1899,7 @@ impl ExtendedQueryHandler {
                                         match crate::types::ValueConverter::convert_timestamp_to_unix(&s) {
                                             Ok(unix_timestamp) => unix_timestamp,
                                             Err(e) => {
-                                                debug!("Invalid TIMESTAMP parameter: {}", e);
+        // debug!("Invalid TIMESTAMP parameter: {}", e);
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {e}")));
                                             }
                                         }
@@ -1909,7 +1909,7 @@ impl ExtendedQueryHandler {
                                         match crate::types::ValueConverter::convert_date_to_unix(&s) {
                                             Ok(unix_timestamp) => unix_timestamp,
                                             Err(e) => {
-                                                debug!("Invalid DATE parameter: {}", e);
+        // debug!("Invalid DATE parameter: {}", e);
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid DATE value: {e}")));
                                             }
                                         }
@@ -1919,7 +1919,7 @@ impl ExtendedQueryHandler {
                                         match crate::types::ValueConverter::convert_time_to_seconds(&s) {
                                             Ok(seconds) => seconds,
                                             Err(e) => {
-                                                debug!("Invalid TIME parameter: {}", e);
+        // debug!("Invalid TIME parameter: {}", e);
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid TIME value: {e}")));
                                             }
                                         }
@@ -2339,18 +2339,18 @@ impl ExtendedQueryHandler {
         result_formats: &[i16],
         field_types: &[i32],
     ) -> Result<Vec<Option<Vec<u8>>>, PgSqliteError> {
-        debug!("encode_row called with {} fields, result_formats: {:?}, field_types: {:?}", row.len(), result_formats, field_types);
+        // debug!("encode_row called with {} fields, result_formats: {:?}, field_types: {:?}", row.len(), result_formats, field_types);
         
         // Log the first few values for debugging
         for (i, value) in row.iter().take(3).enumerate() {
             if let Some(bytes) = value {
                 if let Ok(s) = std::str::from_utf8(bytes) {
-                    debug!("  Field {}: '{}' (type OID {})", i, s, field_types.get(i).unwrap_or(&0));
+        // debug!("  Field {}: '{}' (type OID {})", i, s, field_types.get(i).unwrap_or(&0));
                 } else {
-                    debug!("  Field {}: <binary data> (type OID {})", i, field_types.get(i).unwrap_or(&0));
+        // debug!("  Field {}: <binary data> (type OID {})", i, field_types.get(i).unwrap_or(&0));
                 }
             } else {
-                debug!("  Field {}: NULL (type OID {})", i, field_types.get(i).unwrap_or(&0));
+        // debug!("  Field {}: NULL (type OID {})", i, field_types.get(i).unwrap_or(&0));
             }
         }
         
@@ -2547,7 +2547,7 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Numeric.to_oid() => {
                                 // Force text format for NUMERIC to prevent Unicode decode errors
                                 // Binary NUMERIC encoding can cause issues with SQLAlchemy and other clients
-                                debug!("NUMERIC type detected - forcing text format to avoid binary encoding issues");
+        // debug!("NUMERIC type detected - forcing text format to avoid binary encoding issues");
                                 Some(bytes.clone())
                             }
                             // Money type
@@ -2749,7 +2749,7 @@ impl ExtendedQueryHandler {
                                             // This is likely a datetime function result, format it
                                             use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                             let formatted = format_microseconds_to_timestamp(micros);
-                                            debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
+        // debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
                                             Some(formatted.into_bytes())
                                         } else {
                                             Some(bytes.clone())
@@ -2949,8 +2949,8 @@ impl ExtendedQueryHandler {
                             
                             if !is_system_table {
                                 // For user tables, missing metadata is an error
-                                debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", col_name, table);
-                                debug!("Falling back to type inference, but this may cause type compatibility issues.");
+        // debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", col_name, table);
+        // debug!("Falling back to type inference, but this may cause type compatibility issues.");
                             }
                         }
                         
@@ -3213,7 +3213,7 @@ impl ExtendedQueryHandler {
     {
         // Check for RETURNING clause
         if ReturningTranslator::has_returning_clause(query) {
-            debug!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
+        // debug!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             // Get result formats from portal
             let result_formats = {
                 let portals = session.portals.read().await;
@@ -3225,7 +3225,7 @@ impl ExtendedQueryHandler {
         
         // Validation is now done in handle_execute before parameter substitution
         
-        debug!("Extended protocol: Executing DML query without RETURNING: {}", query);
+        // debug!("Extended protocol: Executing DML query without RETURNING: {}", query);
         let cached_conn = Self::get_or_cache_connection(session, db).await;
         let response = db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
         
@@ -3481,7 +3481,7 @@ impl ExtendedQueryHandler {
             db.execute_with_session_cached(&sqlite_sql, &session.id, cached_conn.as_ref()).await?;
             
             // Store the type mappings if we have any
-            debug!("Type mappings count: {}", type_mappings.len());
+        // debug!("Type mappings count: {}", type_mappings.len());
             if !type_mappings.is_empty() {
                 // Extract table name from query
                 if let Some(table_name) = extract_table_name_from_create(query) {
@@ -3536,7 +3536,7 @@ impl ExtendedQueryHandler {
                                             info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                         }
                                         Err(e) => {
-                                            debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+        // debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
                                         }
                                     }
                                 }
@@ -3544,7 +3544,7 @@ impl ExtendedQueryHandler {
                         }
                     }
                     
-                    debug!("Stored type mappings for table {} (extended query protocol)", table_name);
+        // debug!("Stored type mappings for table {} (extended query protocol)", table_name);
                     
                     // Create triggers for ENUM columns
                     if !enum_columns.is_empty() {

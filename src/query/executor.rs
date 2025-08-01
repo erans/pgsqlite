@@ -179,7 +179,7 @@ impl QueryExecutor {
                 "Python-style parameters detected: {python_params:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query."
             );
             info!("⚠️  {}", error_msg);
-            debug!("Query: {}", query_to_execute);
+            // debug!("Query: {}", query_to_execute);
             return Err(PgSqliteError::Protocol(error_msg));
         }
         
@@ -193,9 +193,9 @@ impl QueryExecutor {
                 .collect();
             
             if statements.len() > 1 {
-                debug!("Query contains {} statements", statements.len());
+                // debug!("Query contains {} statements", statements.len());
                 for (i, stmt) in statements.iter().enumerate() {
-                    debug!("Executing statement {}: {}", i + 1, stmt);
+                    // debug!("Executing statement {}: {}", i + 1, stmt);
                     Self::execute_single_statement(framed, db, session, stmt, query_router).await?;
                 }
                 return Ok(());
@@ -477,7 +477,7 @@ impl QueryExecutor {
                 }
                 QueryType::Insert | QueryType::Update | QueryType::Delete => {
                     // For ultra-simple queries, bypass all validation and translation
-                    debug!("Using ultra-fast path for DML query: {}", query);
+                    // debug!("Using ultra-fast path for DML query: {}", query);
                     return Self::execute_dml(framed, db, session, query, query_router).await;
                 }
                 _ => {} // Fall through to normal processing
@@ -486,7 +486,7 @@ impl QueryExecutor {
         
         // Analyze query once to determine which translators are needed
         let translation_flags = crate::translator::QueryAnalyzer::analyze(query);
-        debug!("Query analysis flags: {:?}", translation_flags);
+        // debug!("Query analysis flags: {:?}", translation_flags);
         
         // Translate PostgreSQL cast syntax if present
         let mut translated_query = if translation_flags.contains(crate::translator::TranslationFlags::CAST) {
@@ -522,7 +522,7 @@ impl QueryExecutor {
             let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
             let batch_translator = BatchUpdateTranslator::new(decimal_cache);
             translated_query = batch_translator.translate(&translated_query, &[]);
-            debug!("Query after batch UPDATE translation: {}", translated_query);
+            // debug!("Query after batch UPDATE translation: {}", translated_query);
         }
         
         // Translate batch DELETE operations if needed
@@ -532,12 +532,12 @@ impl QueryExecutor {
             let decimal_cache = Arc::new(Mutex::new(HashMap::new()));
             let batch_translator = BatchDeleteTranslator::new(decimal_cache);
             translated_query = batch_translator.translate(&translated_query, &[]);
-            debug!("Query after batch DELETE translation: {}", translated_query);
+            // debug!("Query after batch DELETE translation: {}", translated_query);
         }
         
         // Translate FTS operations if needed
         if translation_flags.contains(crate::translator::TranslationFlags::FTS) {
-            debug!("Query contains FTS operations: {}", translated_query);
+            // debug!("Query contains FTS operations: {}", translated_query);
             let fts_translator = FtsTranslator::new();
             
             // Get connection, do translation, and immediately drop it to avoid Send issues
@@ -550,11 +550,11 @@ impl QueryExecutor {
                 Ok(Ok(fts_queries)) => {
                     // For multiple queries (like CREATE TABLE with shadow tables), execute them all
                     if fts_queries.len() > 1 {
-                        debug!("FTS translation produced {} queries", fts_queries.len());
+                        // debug!("FTS translation produced {} queries", fts_queries.len());
                         
                         // Execute all but the last query first
                         for (i, fts_query) in fts_queries.iter().take(fts_queries.len() - 1).enumerate() {
-                            debug!("Executing FTS query {}: {}", i + 1, fts_query);
+                            // debug!("Executing FTS query {}: {}", i + 1, fts_query);
                             let cached_conn = Self::get_or_cache_connection(session, db).await;
                             db.execute_with_session_cached(fts_query, &session.id, cached_conn.as_ref()).await?;
                         }
@@ -562,19 +562,19 @@ impl QueryExecutor {
                         // Use the last query as the main query
                         if let Some(main_query) = fts_queries.last() {
                             translated_query = main_query.clone();
-                            debug!("Using final FTS query: {}", translated_query);
+                            // debug!("Using final FTS query: {}", translated_query);
                         }
                     } else if fts_queries.len() == 1 {
                         translated_query = fts_queries[0].clone();
-                        debug!("Query after FTS translation: {}", translated_query);
+                        // debug!("Query after FTS translation: {}", translated_query);
                     }
                 }
                 Ok(Err(e)) => {
-                    debug!("FTS translation failed: {}", e);
+                    // debug!("FTS translation failed: {}", e);
                     return Err(PgSqliteError::Protocol(format!("FTS translation error: {e}")));
                 }
                 Err(e) => {
-                    debug!("FTS connection failed: {}", e);
+                    // debug!("FTS connection failed: {}", e);
                     return Err(PgSqliteError::Protocol(format!("Failed to translate FTS: {e}")));
                 }
             }
@@ -583,14 +583,14 @@ impl QueryExecutor {
         // Translate INSERT statements with datetime values if needed
         if translation_flags.contains(crate::translator::TranslationFlags::INSERT_DATETIME) {
             use crate::translator::InsertTranslator;
-            debug!("Query needs INSERT datetime translation: {}", translated_query);
+            // debug!("Query needs INSERT datetime translation: {}", translated_query);
             match InsertTranslator::translate_query(&translated_query, db).await {
                 Ok(translated) => {
-                    debug!("Query after INSERT translation: {}", translated);
+                    // debug!("Query after INSERT translation: {}", translated);
                     translated_query = translated;
                 }
                 Err(e) => {
-                    debug!("INSERT translation failed: {}", e);
+                    // debug!("INSERT translation failed: {}", e);
                     // Return the error to the user
                     return Err(PgSqliteError::Protocol(e));
                 }
@@ -603,39 +603,39 @@ impl QueryExecutor {
             if crate::profiling::is_profiling_enabled() {
                 crate::time_datetime_translation!({
                     use crate::translator::DateTimeTranslator;
-                    debug!("Query needs datetime translation: {}", translated_query);
+                    // debug!("Query needs datetime translation: {}", translated_query);
                     let (translated, metadata) = DateTimeTranslator::translate_with_metadata(&translated_query);
                     translated_query = translated;
                     translation_metadata.merge(metadata);
-                    debug!("Query after datetime translation: {}", translated_query);
+                    // debug!("Query after datetime translation: {}", translated_query);
                 });
             } else {
                 use crate::translator::DateTimeTranslator;
-                debug!("Query needs datetime translation: {}", translated_query);
+                // debug!("Query needs datetime translation: {}", translated_query);
                 let (translated, metadata) = DateTimeTranslator::translate_with_metadata(&translated_query);
                 translated_query = translated;
                 translation_metadata.merge(metadata);
-                debug!("Query after datetime translation: {}", translated_query);
+                // debug!("Query after datetime translation: {}", translated_query);
             }
         }
         
         // Translate JSON operators if present
         if translation_flags.contains(crate::translator::TranslationFlags::JSON) {
             use crate::translator::JsonTranslator;
-            debug!("Query needs JSON operator translation: {}", translated_query);
+            // debug!("Query needs JSON operator translation: {}", translated_query);
             match JsonTranslator::translate_json_operators(&translated_query) {
                 Ok(translated) => {
-                    debug!("Query after JSON operator translation: {}", translated);
+                    // debug!("Query after JSON operator translation: {}", translated);
                     translated_query = translated;
                 }
                 Err(e) => {
-                    debug!("JSON operator translation failed: {}", e);
+                    // debug!("JSON operator translation failed: {}", e);
                     // Continue with original query - some operators might not be supported yet
                 }
             }
             
             // Note: JSON path $ restoration will happen right before SQLite execution
-            debug!("Query after JSON translation ($ placeholders preserved): {}", translated_query);
+            // debug!("Query after JSON translation ($ placeholders preserved): {}", translated_query);
         }
         
         // Translate array operators with metadata
@@ -644,17 +644,17 @@ impl QueryExecutor {
             match ArrayTranslator::translate_with_metadata(&translated_query) {
             Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    debug!("Query after array operator translation: {}", translated);
+                    // debug!("Query after array operator translation: {}", translated);
                     translated_query = translated;
                 }
-                debug!("Array translation metadata: {} hints", metadata.column_mappings.len());
+                // debug!("Array translation metadata: {} hints", metadata.column_mappings.len());
                 for (col, hint) in &metadata.column_mappings {
-                    debug!("  Column '{}': type={:?}", col, hint.suggested_type);
+                    // debug!("  Column '{}': type={:?}", col, hint.suggested_type);
                 }
                 translation_metadata.merge(metadata);
             }
             Err(e) => {
-                debug!("Array operator translation failed: {}", e);
+                // debug!("Array operator translation failed: {}", e);
                 // Continue with original query
             }
             }
@@ -666,14 +666,14 @@ impl QueryExecutor {
             match ArrayAggTranslator::translate_with_metadata(&translated_query) {
             Ok((translated, metadata)) => {
                 if translated != translated_query {
-                    debug!("Query after array_agg translation: {}", translated);
+                    // debug!("Query after array_agg translation: {}", translated);
                     translated_query = translated;
                 }
-                debug!("Array_agg translation metadata: {} hints", metadata.column_mappings.len());
+                // debug!("Array_agg translation metadata: {} hints", metadata.column_mappings.len());
                 translation_metadata.merge(metadata);
             }
             Err(e) => {
-                debug!("Array_agg translation failed: {}", e);
+                // debug!("Array_agg translation failed: {}", e);
                 // Continue with original query
             }
             }
@@ -688,7 +688,7 @@ impl QueryExecutor {
                     debug!("Query after unnest translation: {}", translated);
                     translated_query = translated;
                 }
-                debug!("Unnest translation metadata: {} hints", metadata.column_mappings.len());
+                // debug!("Unnest translation metadata: {} hints", metadata.column_mappings.len());
                 translation_metadata.merge(metadata);
             }
             Err(e) => {
@@ -707,7 +707,7 @@ impl QueryExecutor {
                     debug!("Query after json_each translation: {}", translated);
                     translated_query = translated;
                 }
-                debug!("JsonEach translation metadata: {} hints", metadata.column_mappings.len());
+                // debug!("JsonEach translation metadata: {} hints", metadata.column_mappings.len());
                 translation_metadata.merge(metadata);
             }
             Err(e) => {
@@ -725,7 +725,7 @@ impl QueryExecutor {
             debug!("Query after row_to_json translation: {}", translated);
             translated_query = translated;
             }
-            debug!("RowToJson translation metadata: {} hints", metadata.column_mappings.len());
+            // debug!("RowToJson translation metadata: {} hints", metadata.column_mappings.len());
             translation_metadata.merge(metadata);
         }
         
@@ -733,9 +733,9 @@ impl QueryExecutor {
         if translation_flags.contains(crate::translator::TranslationFlags::ARITHMETIC) {
             debug!("Analyzing arithmetic expressions in query");
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_query);
-            debug!("ArithmeticAnalyzer found {} hints", arithmetic_metadata.column_mappings.len());
+            // debug!("ArithmeticAnalyzer found {} hints", arithmetic_metadata.column_mappings.len());
             translation_metadata.merge(arithmetic_metadata);
-            debug!("Total translation metadata after merge: {} hints", translation_metadata.column_mappings.len());
+            // debug!("Total translation metadata after merge: {} hints", translation_metadata.column_mappings.len());
         }
         
         let query_to_execute = translated_query.as_str();
@@ -831,7 +831,7 @@ impl QueryExecutor {
         let is_join_query = query.contains(" JOIN ") || query.contains(" join ") || 
                            query.contains(" Join ") || query.contains(" JoIn ");
         let column_to_table_map = if is_join_query {
-            debug!("Type inference: Detected JOIN query, building column-to-table mappings");
+            // debug!("Type inference: Detected JOIN query, building column-to-table mappings");
             build_column_to_table_mapping(query)
         } else {
             std::collections::HashMap::new()
@@ -854,7 +854,7 @@ impl QueryExecutor {
             
             // For JOIN queries, use column-to-table mapping
             if is_join_query && !column_to_table_map.is_empty() {
-                debug!("Type inference: Using JOIN column mappings for {} columns", response.columns.len());
+                // debug!("Type inference: Using JOIN column mappings for {} columns", response.columns.len());
                 
                 for col_name in &response.columns {
                     // First check if we have a direct mapping from the query
@@ -866,23 +866,23 @@ impl QueryExecutor {
                             col_name
                         };
                         
-                        debug!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
-                              col_name, table, actual_column);
+                        // debug!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
+                        //       col_name, table, actual_column);
                         
                         if let Ok(Some(pg_type)) = db.get_schema_type(table, actual_column).await {
-                            debug!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
+                            // debug!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
                             schema_types.insert(col_name.clone(), pg_type);
                         } else {
-                            debug!("Type inference: No schema type found for '{}.{}'", table, actual_column);
+                            // debug!("Type inference: No schema type found for '{}.{}'", table, actual_column);
                         }
                     } else {
-                        debug!("Type inference: No table mapping found for column '{}'", col_name);
+                        // debug!("Type inference: No table mapping found for column '{}'", col_name);
                     }
                 }
             }
             
             if let Some(ref table) = table_name {
-                debug!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
+                // debug!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
                 
                 // Extract column mappings from query if possible
                 let column_mappings = extract_column_mappings_from_query(query, table);
@@ -891,12 +891,12 @@ impl QueryExecutor {
                 for col_name in &response.columns {
                     // Try direct lookup first
                     if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
-                        debug!("Type inference: Found schema type for '{}.{}' -> {}", table, col_name, pg_type);
+                        // debug!("Type inference: Found schema type for '{}.{}' -> {}", table, col_name, pg_type);
                         schema_types.insert(col_name.clone(), pg_type);
                     } else if let Some(source_column) = column_mappings.get(col_name) {
                         // Try using the column mapping from SELECT clause
                         if let Ok(Some(pg_type)) = db.get_schema_type(table, source_column).await {
-                            debug!("Type inference: Found schema type for '{}.{}' (via SELECT mapping {}) -> {}", table, source_column, col_name, pg_type);
+                            // debug!("Type inference: Found schema type for '{}.{}' (via SELECT mapping {}) -> {}", table, source_column, col_name, pg_type);
                             schema_types.insert(col_name.clone(), pg_type);
                             continue;
                         }
@@ -932,15 +932,15 @@ impl QueryExecutor {
                                 let potential_col_double = format!("{}_{}", parts[parts.len() - 2], parts[parts.len() - 1]);
                                 
                                 // Try different combinations
-                                debug!("Type inference: Trying pattern matching for '{}' with parts: {:?}", col_name, parts);
+                                // debug!("Type inference: Trying pattern matching for '{}' with parts: {:?}", col_name, parts);
                                 for (try_table, try_col) in [
                                     (potential_table_double.as_str(), potential_col_double.as_str()),
                                     (potential_table_double.as_str(), potential_col_single),
                                     (potential_table_single, potential_col_double.as_str()),
                                 ] {
-                                    debug!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
+                                    // debug!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
                                     if let Ok(Some(pg_type)) = db.get_schema_type(try_table, try_col).await {
-                                        debug!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
+                                        // debug!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
                                         schema_types.insert(col_name.clone(), pg_type);
                                         break;
                                     }
@@ -950,17 +950,17 @@ impl QueryExecutor {
                         
                         if potential_column != col_name {
                             if let Ok(Some(pg_type)) = db.get_schema_type(table, potential_column).await {
-                                debug!("Type inference: Found schema type for '{}.{}' (via alias {}) -> {}", table, potential_column, col_name, pg_type);
+                                // debug!("Type inference: Found schema type for '{}.{}' (via alias {}) -> {}", table, potential_column, col_name, pg_type);
                                 schema_types.insert(col_name.clone(), pg_type);
                                 continue;
                             }
                         }
                         
-                        debug!("Type inference: No schema type found for '{}.{}'", table, col_name);
+                        // debug!("Type inference: No schema type found for '{}.{}'", table, col_name);
                     }
                 }
             } else {
-                debug!("Type inference: No table name extracted from query, using fallback logic");
+                // debug!("Type inference: No table name extracted from query, using fallback logic");
             }
                 
             // Fetch types for source columns referenced in translation hints
@@ -992,13 +992,13 @@ impl QueryExecutor {
                         crate::types::PgType::Numeric.to_oid()
                     } else if let Some(hint) = translation_metadata.get_hint(name) {
                         // Third priority: Check translation metadata (datetime or arithmetic)
-                        debug!("Found translation hint for column '{}': {:?}", name, hint);
+                        // debug!("Found translation hint for column '{}': {:?}", name, hint);
                         debug!("  Expression type: {:?}", hint.expression_type);
                         debug!("  Source column: {:?}", hint.source_column);
                         
                         // Check if we pre-fetched the source type
                         if let Some(source_type) = hint_source_types.get(name) {
-                            debug!("Found source column type for '{}' -> '{}': {}", name, hint.source_column.as_ref().unwrap_or(&"<none>".to_string()), source_type);
+                            // debug!("Found source column type for '{}' -> '{}': {}", name, hint.source_column.as_ref().unwrap_or(&"<none>".to_string()), source_type);
                             // For arithmetic on numeric columns, preserve the type
                             if hint.expression_type == Some(crate::translator::ExpressionType::ArithmeticOnFloat) {
                                 if source_type.contains("NUMERIC") || source_type.contains("DECIMAL") {
@@ -1039,17 +1039,17 @@ impl QueryExecutor {
                             
                             if !is_system_table {
                                 // For user tables, missing metadata should be logged at debug level
-                                debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", name, table);
+                                // debug!("Column '{}' in table '{}' not found in __pgsqlite_schema. Using type inference.", name, table);
                             }
                         }
                         
                         // Default to text for simple queries without schema info
-                        debug!("Column '{}' using default text type", name);
+                        // debug!("Column '{}' using default text type", name);
                         PgType::Text.to_oid()
                     };
                     
-                    debug!("Column '{}' final type OID: {} ({})", name, type_oid, 
-                        crate::types::SchemaTypeMapper::pg_oid_to_type_name(type_oid));
+                    // debug!("Column '{}' final type OID: {} ({})", name, type_oid, 
+                    //     crate::types::SchemaTypeMapper::pg_oid_to_type_name(type_oid));
                     
                     FieldDescription {
                         name: name.clone(),
@@ -2137,7 +2137,7 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
             let source_column = source_col.as_str().to_string();
             let alias_name = alias.as_str().to_string();
             
-            debug!("Column mapping: {} -> {}", alias_name, source_column);
+            // debug!("Column mapping: {} -> {}", alias_name, source_column);
             mappings.insert(alias_name, source_column);
         }
     }
