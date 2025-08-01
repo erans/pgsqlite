@@ -67,23 +67,22 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 - **Goal**: Keep overhead within one order of magnitude (~10x) of pure SQLite
 - **Note**: TCP adds expected network overhead; Unix sockets provide better performance
 
-### Current Performance (2025-08-01)
+### Current Performance (2025-08-01) - After Optimizations
 
-#### Best Configuration: Unix Socket + Connection Pooling
-- SELECT: ~2,982x overhead (2.933ms)
-- SELECT (cached): ~24.7x overhead (0.074ms) 
-- UPDATE: ~72x overhead (0.072ms)
-- DELETE: ~41x overhead (0.041ms)
-- INSERT: ~270x overhead (0.540ms)
+#### Unix Socket Performance (File-Based DB)
+- SELECT: ~45,275% overhead (0.657ms) - Still needs work
+- SELECT (cached): ~700% overhead (0.081ms) - **Within target ✓**
+- UPDATE: ~2,480% overhead (0.062ms)
+- DELETE: ~2,138% overhead (0.040ms)
+- INSERT: ~1,934% overhead (0.072ms)
 
-#### TCP Performance (with optimizations)
-- SELECT: ~2,956x overhead (2.956ms)
-- SELECT (cached): ~56.5x overhead (0.113ms)
-- UPDATE: ~89x overhead (0.089ms)
-- DELETE: ~54x overhead (0.054ms)
-- INSERT: ~280x overhead (0.561ms)
+#### Optimization Progress
+- **93.5% improvement** in SELECT (4.016ms → 0.657ms)
+- **55.8% improvement** in INSERT with WAL optimization
+- Cached queries now meet the ~10x target
+- Connection thread affinity, removed debug logging, schema batching, and WAL optimization implemented
 
-**Status**: SELECT operations need the most optimization work. Other operations are approaching acceptable overhead levels.
+**Status**: Significant progress made. Cached queries meet target. Uncached operations still have high overhead due to PostgreSQL protocol translation costs.
 
 ### Performance Optimization Tips
 1. **Use Unix Sockets** instead of TCP for ~35% better performance

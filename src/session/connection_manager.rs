@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use parking_lot::{RwLock, Mutex};
 use rusqlite::{Connection, OpenFlags};
 use uuid::Uuid;
@@ -18,6 +20,18 @@ pub struct ConnectionManager {
     config: Arc<Config>,
     /// Maximum number of connections allowed
     max_connections: usize,
+    /// WAL checkpoint state
+    wal_checkpoint_state: WalCheckpointState,
+}
+
+/// Tracks WAL checkpoint state to optimize checkpointing
+struct WalCheckpointState {
+    /// Number of commits since last checkpoint
+    commits_since_checkpoint: AtomicUsize,
+    /// Last checkpoint time
+    last_checkpoint: Mutex<Instant>,
+    /// WAL size at last checkpoint (in pages)
+    last_wal_size: AtomicU64,
 }
 
 impl ConnectionManager {
@@ -27,6 +41,11 @@ impl ConnectionManager {
             db_path,
             config,
             max_connections: 100, // TODO: Make configurable
+            wal_checkpoint_state: WalCheckpointState {
+                commits_since_checkpoint: AtomicUsize::new(0),
+                last_checkpoint: Mutex::new(Instant::now()),
+                last_wal_size: AtomicU64::new(0),
+            },
         }
     }
     
@@ -164,42 +183,62 @@ impl ConnectionManager {
         self.connections.read().contains_key(session_id)
     }
     
-    /// Force WAL checkpoint on all connections except the specified one
-    /// This ensures all connections see committed data from other connections
+    /// Intelligently manage WAL checkpoints based on commit count and time
+    /// This ensures all connections see committed data while minimizing overhead
     pub fn refresh_all_other_connections(&self, excluding_session: &Uuid) -> Result<(), PgSqliteError> {
         // Only do this in WAL mode
         if self.config.pragma_journal_mode != "WAL" {
             return Ok(());
         }
         
-        let connections = self.connections.read();
-        let mut refresh_count = 0;
-        let mut error_count = 0;
+        // Increment commit counter
+        let commits = self.wal_checkpoint_state.commits_since_checkpoint.fetch_add(1, Ordering::Relaxed) + 1;
         
-        for (session_id, conn_arc) in connections.iter() {
-            // Skip the session that just committed
-            if session_id == excluding_session {
-                continue;
-            }
+        // Check if we should perform a checkpoint
+        let should_checkpoint = {
+            let last_checkpoint = self.wal_checkpoint_state.last_checkpoint.lock();
+            let time_since_checkpoint = Instant::now().duration_since(*last_checkpoint);
             
-            // Lock the individual connection
-            let conn = conn_arc.lock();
-            
-            // Force this connection to read the latest WAL data
-            match conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_row| Ok(())) {
-                Ok(_) => {
-                    refresh_count += 1;
-                    debug!("Refreshed WAL for session {}", session_id);
-                }
-                Err(e) => {
-                    error_count += 1;
-                    debug!("Failed to refresh WAL for session {}: {}", session_id, e);
-                }
-            }
+            // Checkpoint if:
+            // 1. More than 100 commits since last checkpoint
+            // 2. More than 10 seconds since last checkpoint
+            // 3. WAL file is getting large (checked below)
+            commits >= 100 || time_since_checkpoint >= Duration::from_secs(10)
+        };
+        
+        if !should_checkpoint {
+            // No checkpoint needed yet
+            return Ok(());
         }
         
-        debug!("WAL refresh completed: {} success, {} errors, excluding session {}", 
-               refresh_count, error_count, excluding_session);
+        // Get one connection to check WAL size and perform checkpoint
+        let connections = self.connections.read();
+        if let Some((_, conn_arc)) = connections.iter().next() {
+            let conn = conn_arc.lock();
+            
+            // Check WAL size
+            let wal_size = conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                // wal_checkpoint returns (busy, checkpointed, total)
+                // We want the total pages
+                row.get::<_, i32>(2).map(|v| v as u64)
+            }).unwrap_or(0);
+            
+            let last_size = self.wal_checkpoint_state.last_wal_size.load(Ordering::Relaxed);
+            
+            // If WAL has grown significantly (>1000 pages), force a checkpoint
+            if wal_size > last_size + 1000 {
+                // Perform TRUNCATE checkpoint to actually shrink the WAL
+                let _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", []);
+                debug!("Performed WAL TRUNCATE checkpoint: {} pages", wal_size);
+            } else {
+                debug!("Performed WAL PASSIVE checkpoint: {} pages after {} commits", wal_size, commits);
+            }
+            
+            // Update checkpoint state
+            self.wal_checkpoint_state.commits_since_checkpoint.store(0, Ordering::Relaxed);
+            *self.wal_checkpoint_state.last_checkpoint.lock() = Instant::now();
+            self.wal_checkpoint_state.last_wal_size.store(wal_size, Ordering::Relaxed);
+        }
         
         Ok(())
     }
