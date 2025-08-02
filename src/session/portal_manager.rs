@@ -267,6 +267,7 @@ mod tests {
             param_formats: vec![],
             result_formats: vec![],
             inferred_param_types: None,
+            client_param_types: vec![],
         };
         
         // Create portal
@@ -296,6 +297,7 @@ mod tests {
                 param_formats: vec![],
                 result_formats: vec![],
                 inferred_param_types: None,
+                client_param_types: vec![],
             };
             
             manager.create_portal(format!("portal_{i}"), portal).unwrap();
@@ -324,6 +326,7 @@ mod tests {
                 param_formats: vec![],
                 result_formats: vec![],
                 inferred_param_types: None,
+                client_param_types: vec![],
             };
             
             manager.create_portal(format!("portal_{i}"), portal).unwrap();

@@ -1,4 +1,4 @@
-use crate::protocol::{BackendMessage, FieldDescription};
+use crate::protocol::{BackendMessage, FieldDescription, BinaryResultEncoder, BinaryEncoder};
 use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_QUERY_CACHE};
 use crate::catalog::CatalogInterceptor;
 use crate::translator::{JsonTranslator, ReturningTranslator};
@@ -13,7 +13,6 @@ use futures::SinkExt;
 use tracing::{debug, info, warn};
 use std::sync::Arc;
 use std::str::FromStr;
-use crate::protocol::binary::BinaryEncoder;
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
 
 /// Efficient case-insensitive query type detection
@@ -1039,16 +1038,58 @@ impl ExtendedQueryHandler {
                         if send_row_desc {
                             info!("Fast path: Sending RowDescription for binary format");
                             let format = if result_formats.is_empty() { 0 } else { result_formats[0] };
+                            
+                            // Infer field types from data
                             let fields: Vec<FieldDescription> = response.columns.iter()
                                 .enumerate()
-                                .map(|(i, name)| FieldDescription {
-                                    name: name.clone(),
-                                    table_oid: 0,
-                                    column_id: (i + 1) as i16,
-                                    type_oid: PgType::Text.to_oid(),
-                                    type_size: -1,
-                                    type_modifier: -1,
-                                    format,
+                                .map(|(i, name)| {
+                                    // Try to infer type from data
+                                    let type_oid = if !response.rows.is_empty() {
+                                        if let Some(value) = response.rows[0].get(i) {
+                                            if let Some(bytes) = value {
+                                                if let Ok(s) = std::str::from_utf8(bytes) {
+                                                    // Check aggregate functions
+                                                    let col_lower = name.to_lowercase();
+                                                    if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                                                        oid
+                                                    } else if s == "t" || s == "f" || s == "true" || s == "false" {
+                                                        PgType::Bool.to_oid()
+                                                    } else if let Ok(_) = s.parse::<i64>() {
+                                                        // Integer without decimal point
+                                                        if !s.contains('.') {
+                                                            PgType::Int8.to_oid()
+                                                        } else {
+                                                            // Should not happen - i64 parse would fail
+                                                            PgType::Float8.to_oid()
+                                                        }
+                                                    } else if let Ok(_) = s.parse::<f64>() {
+                                                        // It's a float - use FLOAT8 for compatibility
+                                                        PgType::Float8.to_oid()
+                                                    } else {
+                                                        PgType::Text.to_oid()
+                                                    }
+                                                } else {
+                                                    PgType::Bytea.to_oid()
+                                                }
+                                            } else {
+                                                PgType::Text.to_oid()
+                                            }
+                                        } else {
+                                            PgType::Text.to_oid()
+                                        }
+                                    } else {
+                                        PgType::Text.to_oid()
+                                    };
+                                    
+                                    FieldDescription {
+                                        name: name.clone(),
+                                        table_oid: 0,
+                                        column_id: (i + 1) as i16,
+                                        type_oid,
+                                        type_size: -1,
+                                        type_modifier: -1,
+                                        format,
+                                    }
                                 })
                                 .collect();
                             framed.send(BackendMessage::RowDescription(fields.clone())).await
@@ -1064,25 +1105,57 @@ impl ExtendedQueryHandler {
                         
                         // If binary format is requested, we need to encode the rows
                         if result_formats.iter().any(|&f| f == 1) {
-                            info!("Fast path: Binary format requested, encoding rows");
-                            // Get field types from the statement's field descriptions
-                            let field_types: Vec<i32> = {
-                                let statements = session.prepared_statements.read().await;
-                                if let Some(stmt) = statements.get(&statement_name) {
-                                    stmt.field_descriptions.iter()
-                                        .map(|f| f.type_oid)
-                                        .collect()
-                                } else {
-                                    // Fallback to TEXT if no field descriptions
-                                    response.columns.iter()
-                                        .map(|_| PgType::Text.to_oid())
-                                        .collect()
-                                }
-                            };
+                            info!("Fast path: Binary format requested, using optimized encoding");
+                            // Get field types from the response data
+                            let field_types: Vec<i32> = response.columns.iter()
+                                .enumerate()
+                                .map(|(i, name)| {
+                                    // Try to infer type from data (same logic as RowDescription)
+                                    if !response.rows.is_empty() {
+                                        if let Some(value) = response.rows[0].get(i) {
+                                            if let Some(bytes) = value {
+                                                if let Ok(s) = std::str::from_utf8(bytes) {
+                                                    // Check aggregate functions
+                                                    let col_lower = name.to_lowercase();
+                                                    if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                                                        oid
+                                                    } else if s == "t" || s == "f" || s == "true" || s == "false" {
+                                                        PgType::Bool.to_oid()
+                                                    } else if let Ok(_) = s.parse::<i64>() {
+                                                        // Integer without decimal point
+                                                        if !s.contains('.') {
+                                                            PgType::Int8.to_oid()
+                                                        } else {
+                                                            // Should not happen - i64 parse would fail
+                                                            PgType::Float8.to_oid()
+                                                        }
+                                                    } else if let Ok(_) = s.parse::<f64>() {
+                                                        // It's a float - use FLOAT8 for compatibility
+                                                        PgType::Float8.to_oid()
+                                                    } else {
+                                                        PgType::Text.to_oid()
+                                                    }
+                                                } else {
+                                                    PgType::Bytea.to_oid()
+                                                }
+                                            } else {
+                                                PgType::Text.to_oid()
+                                            }
+                                        } else {
+                                            PgType::Text.to_oid()
+                                        }
+                                    } else {
+                                        PgType::Text.to_oid()
+                                    }
+                                })
+                                .collect();
                             info!("Fast path: Field types: {:?}", field_types);
                             
-                            for row in response.rows {
-                                let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
+                            // Use optimized batch encoder
+                            let (encoded_rows, _encoder) = Self::encode_rows_optimized(&response.rows, &result_formats, &field_types)?;
+                            
+                            // Send all encoded rows
+                            for encoded_row in encoded_rows {
                                 framed.send(BackendMessage::DataRow(encoded_row)).await
                                     .map_err(PgSqliteError::Io)?;
                             }
@@ -2095,14 +2168,17 @@ impl ExtendedQueryHandler {
         let needs_encoding = result_formats.iter().any(|&f| f == 1);
         
         if needs_encoding {
-            // Binary format requested - need to encode rows
+            // Binary format requested - use optimized batch encoding
             // Get field types from field descriptions we just sent
             let field_types: Vec<i32> = field_descriptions.iter()
                 .map(|f| f.type_oid)
                 .collect();
             
-            for row in response.rows {
-                let encoded_row = Self::encode_row(&row, result_formats, &field_types)?;
+            // Use optimized batch encoder
+            let (encoded_rows, _encoder) = Self::encode_rows_optimized(&response.rows, result_formats, &field_types)?;
+            
+            // Send all encoded rows
+            for encoded_row in encoded_rows {
                 framed.send(BackendMessage::DataRow(encoded_row)).await?;
             }
         } else {
@@ -3162,6 +3238,32 @@ impl ExtendedQueryHandler {
         Ok(encoded_row)
     }
     
+    /// Optimized batch encoding for multiple rows using zero-copy encoder
+    fn encode_rows_optimized(
+        rows: &[Vec<Option<Vec<u8>>>],
+        result_formats: &[i16],
+        field_types: &[i32],
+    ) -> Result<(Vec<Vec<Option<Vec<u8>>>>, BinaryResultEncoder), PgSqliteError> {
+        let num_rows = rows.len();
+        let num_cols = if rows.is_empty() { 0 } else { rows[0].len() };
+        
+        // Create encoder with pre-allocated buffer
+        let mut encoder = BinaryResultEncoder::new(num_rows, num_cols);
+        let mut encoded_rows = Vec::with_capacity(num_rows);
+        
+        // Encode all rows
+        for row in rows {
+            let encoded_row = encoder.encode_row(row, result_formats, field_types)?;
+            encoded_rows.push(encoded_row);
+        }
+        
+        // Log statistics
+        let (size, capacity, row_count) = encoder.stats();
+        debug!("Binary encoding stats: {} bytes used, {} capacity, {} rows", size, capacity, row_count);
+        
+        Ok((encoded_rows, encoder))
+    }
+    
     async fn execute_select<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &Arc<DbHandler>,
@@ -3558,11 +3660,23 @@ impl ExtendedQueryHandler {
             }
         }
         
-        for row in rows_to_send {
-            // Convert row data based on result formats
-            let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
-            framed.send(BackendMessage::DataRow(encoded_row)).await
-                .map_err(PgSqliteError::Io)?;
+        // Check if we need binary encoding
+        let needs_binary = result_formats.iter().any(|&f| f == 1);
+        
+        if needs_binary && !rows_to_send.is_empty() {
+            // Use optimized batch encoding for binary format
+            let (encoded_rows, _encoder) = Self::encode_rows_optimized(&rows_to_send, &result_formats, &field_types)?;
+            for encoded_row in encoded_rows {
+                framed.send(BackendMessage::DataRow(encoded_row)).await
+                    .map_err(PgSqliteError::Io)?;
+            }
+        } else {
+            // Text format or empty result - encode row by row
+            for row in rows_to_send {
+                let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
+                framed.send(BackendMessage::DataRow(encoded_row)).await
+                    .map_err(PgSqliteError::Io)?;
+            }
         }
         
         // Update portal execution state

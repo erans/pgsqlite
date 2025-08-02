@@ -100,7 +100,28 @@ impl ConnectionManager {
         crate::metadata::TypeMetadata::init(&conn)
             .map_err(PgSqliteError::Sqlite)?;
         
-        let conn_arc = Arc::new(Mutex::new(conn));
+        // For :memory: databases, run migrations on each connection since they're isolated
+        let final_conn = if self.db_path.contains(":memory:") {
+            info!("Running migrations for in-memory database on session connection {}", session_id);
+            let mut runner = crate::migration::runner::MigrationRunner::new(conn);
+            match runner.run_pending_migrations() {
+                Ok(applied) => {
+                    if !applied.is_empty() {
+                        info!("Applied {} migrations to session connection {}", applied.len(), session_id);
+                    }
+                }
+                Err(e) => {
+                    return Err(PgSqliteError::Protocol(format!("Migration failed for session {}: {}", session_id, e)));
+                }
+            }
+            // Get the connection back from the runner
+            runner.into_connection()
+        } else {
+            // For file databases, no migration needed as they share the same file
+            conn
+        };
+        
+        let conn_arc = Arc::new(Mutex::new(final_conn));
         connections.insert(session_id, conn_arc.clone());
         
         // Pre-warm connection cache with thread affinity

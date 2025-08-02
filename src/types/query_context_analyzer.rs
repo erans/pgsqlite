@@ -17,6 +17,13 @@ impl QueryContextAnalyzer {
                 .unwrap_or(after_into.len());
             let table_name = after_into[..table_end].trim().to_string();
             
+            // Check if we have VALUES immediately after table name (no column list)
+            let after_table = after_into[table_end..].trim();
+            if after_table.to_lowercase().starts_with("values") {
+                // No explicit column list
+                return Some((table_name, vec![]));
+            }
+            
             // Find column list if present
             if let Some(paren_start) = after_into.find('(') {
                 let rest = &after_into[paren_start + 1..];

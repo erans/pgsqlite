@@ -36,6 +36,7 @@ pub struct PreparedStatement {
     pub query: String,
     pub translated_query: Option<String>, // Cached translation of the query
     pub param_types: Vec<i32>,
+    pub client_param_types: Vec<i32>, // Original types sent by client in Parse message
     pub param_formats: Vec<i16>,
     pub field_descriptions: Vec<crate::protocol::FieldDescription>,
     pub translation_metadata: Option<crate::translator::TranslationMetadata>, // Type hints from query translation
@@ -50,6 +51,7 @@ pub struct Portal {
     pub param_formats: Vec<i16>,
     pub result_formats: Vec<i16>,
     pub inferred_param_types: Option<Vec<i32>>, // Types inferred from actual values
+    pub client_param_types: Vec<i32>, // Original types sent by client (for binary decoding)
 }
 
 impl SessionState {

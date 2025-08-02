@@ -26,6 +26,7 @@ async fn test_portal_lifecycle() -> Result<(), Box<dyn std::error::Error>> {
         param_formats: vec![],
         result_formats: vec![],
         inferred_param_types: None,
+        client_param_types: vec![],
     };
     
     // Test portal creation
@@ -86,6 +87,7 @@ async fn test_multiple_concurrent_portals() -> Result<(), Box<dyn std::error::Er
             param_formats: vec![],
             result_formats: vec![],
             inferred_param_types: None,
+            client_param_types: vec![],
         };
         
         session.portal_manager.create_portal(format!("portal{i}"), portal)?;
@@ -143,6 +145,7 @@ async fn test_portal_cleanup() -> Result<(), Box<dyn std::error::Error>> {
         param_formats: vec![],
         result_formats: vec![],
         inferred_param_types: None,
+        client_param_types: vec![],
     };
     
     session.portal_manager.create_portal("test_portal".to_string(), portal)?;
@@ -189,6 +192,7 @@ async fn test_portal_limit_enforcement() -> Result<(), Box<dyn std::error::Error
             param_formats: vec![],
             result_formats: vec![],
             inferred_param_types: None,
+            client_param_types: vec![],
         };
         
         session.portal_manager.create_portal(format!("portal{i}"), portal)?;
@@ -227,6 +231,7 @@ async fn test_stale_portal_cleanup() -> Result<(), Box<dyn std::error::Error>> {
             param_formats: vec![],
             result_formats: vec![],
             inferred_param_types: None,
+            client_param_types: vec![],
         };
         
         session.portal_manager.create_portal(format!("portal{i}"), portal)?;
@@ -270,6 +275,7 @@ async fn test_portal_with_values() -> Result<(), Box<dyn std::error::Error>> {
         param_formats: vec![0], // Text format
         result_formats: vec![0], // Text result
         inferred_param_types: Some(vec![23]), // Int4
+        client_param_types: vec![23], // Int4
     };
     
     session.portal_manager.create_portal("param_portal".to_string(), portal)?;

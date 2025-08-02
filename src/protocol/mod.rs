@@ -2,6 +2,7 @@
 pub mod messages;
 pub mod codec;
 pub mod binary;
+pub mod binary_encoding;
 pub mod memory_mapped;
 pub mod value_handler;
 pub mod buffer_pool;
@@ -12,6 +13,7 @@ pub mod small_value;
 pub use messages::*;
 pub use codec::PostgresCodec;
 pub use binary::{BinaryEncoder, ZeroCopyBinaryEncoder};
+pub use binary_encoding::{BinaryResultEncoder, BinaryResultCache};
 pub use memory_mapped::{MappedValue, MappedValueReader, MappedValueFactory, MemoryMappedConfig};
 pub use value_handler::{ValueHandler, ValueHandlerConfig, ValueHandlerStats};
 pub use buffer_pool::{BufferPool, BufferPoolConfig, BufferPoolStats, PooledBytesMut, global_buffer_pool, get_pooled_buffer};

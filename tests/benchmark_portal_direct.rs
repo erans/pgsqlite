@@ -119,6 +119,7 @@ async fn test_portal_chunked_fetch(db_handler: &DbHandler, session: &Arc<Session
         param_formats: vec![],
         result_formats: vec![],
         inferred_param_types: None,
+        client_param_types: vec![],
     };
     
     let portal_name = "bench_portal".to_string();
@@ -231,6 +232,7 @@ async fn test_portal_resource_management(session: &Arc<SessionState>) {
             param_formats: vec![],
             result_formats: vec![],
             inferred_param_types: None,
+            client_param_types: vec![],
         };
         
         session.portal_manager.create_portal(format!("portal_{i}"), portal)
@@ -298,6 +300,7 @@ async fn test_concurrent_portals(session: &Arc<SessionState>) {
                 param_formats: vec![],
                 result_formats: vec![],
                 inferred_param_types: None,
+                client_param_types: vec![],
             };
             
             let portal_name = format!("concurrent_portal_{portal_id}");

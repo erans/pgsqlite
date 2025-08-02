@@ -89,6 +89,10 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 2. **Enable Connection Pooling** with `PGSQLITE_USE_POOLING=true`
 3. **Batch operations** provide 10x-50x speedup for bulk operations
 4. **Cached queries** show dramatic improvement (up to 40x faster)
+5. **Use Binary Format** for 10-18% performance improvement (psycopg3 only)
+   - SELECT: 10.5% faster with binary format
+   - INSERT/UPDATE/DELETE: 11-18% faster with binary format
+   - Requires psycopg3 with `cursor(binary=True)`
 
 ### Optimized Configuration
 ```bash

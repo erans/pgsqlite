@@ -295,6 +295,61 @@ impl DbHandler {
         })
     }
     
+    /// Execute with rusqlite values (for proper binary parameter support)
+    pub async fn execute_with_rusqlite_params(
+        &self,
+        query: &str,
+        params: &[rusqlite::types::Value],
+        session_id: &Uuid
+    ) -> Result<DbResponse, PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            // For parameterized queries, don't process_query as it removes parameter placeholders
+            // We need the placeholders for proper parameterized execution
+            let mut stmt = conn.prepare(query)?;
+            
+            let query_type = QueryTypeDetector::detect_query_type(query);
+            
+            match query_type {
+                QueryType::Select => {
+                    let column_count = stmt.column_count();
+                    let mut columns = Vec::with_capacity(column_count);
+                    for i in 0..column_count {
+                        columns.push(stmt.column_name(i)?.to_string());
+                    }
+                    
+                    let rows: Result<Vec<_>, _> = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                        let mut row_data = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            let value: Option<rusqlite::types::Value> = row.get(i)?;
+                            row_data.push(match value {
+                                Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                Some(rusqlite::types::Value::Null) | None => None,
+                            });
+                        }
+                        Ok(row_data)
+                    })?.collect();
+                    
+                    Ok(DbResponse {
+                        columns,
+                        rows: rows?,
+                        rows_affected: 0,
+                    })
+                }
+                _ => {
+                    let rows_affected = stmt.execute(rusqlite::params_from_iter(params.iter()))?;
+                    Ok(DbResponse {
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected,
+                    })
+                }
+            }
+        })
+    }
+    
     /// Query without session (uses temporary connection)
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
         // Check if it's any form of memory database (including named shared memory)
@@ -665,18 +720,42 @@ impl DbHandler {
     
     /// Get schema type for a column
     pub async fn get_schema_type(&self, table_name: &str, column_name: &str) -> Result<Option<String>, rusqlite::Error> {
-        let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+        // For file databases, create a new connection (old behavior)
+        // For memory databases, this won't work as each connection is isolated
+        if !self.db_path.contains(":memory:") {
+            let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+            
+            let mut stmt = conn.prepare(
+                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+            )?;
+            
+            use rusqlite::OptionalExtension;
+            let result = stmt.query_row([table_name, column_name], |row| {
+                row.get::<_, String>(0)
+            }).optional()?;
+            
+            return Ok(result);
+        }
         
-        let mut stmt = conn.prepare(
-            "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
-        )?;
-        
-        use rusqlite::OptionalExtension;
-        let result = stmt.query_row([table_name, column_name], |row| {
-            row.get::<_, String>(0)
-        }).optional()?;
-        
-        Ok(result)
+        // For memory databases, we need to use the session connection
+        // This method doesn't have access to session_id, so return None
+        // The caller should use get_schema_type_with_session instead
+        Ok(None)
+    }
+    
+    pub async fn get_schema_type_with_session(&self, session_id: &uuid::Uuid, table_name: &str, column_name: &str) -> Result<Option<String>, PgSqliteError> {
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+            )?;
+            
+            use rusqlite::OptionalExtension;
+            let result = stmt.query_row([table_name, column_name], |row| {
+                row.get::<_, String>(0)
+            }).optional()?;
+            
+            Ok(result)
+        })
     }
     
     /// Try fast path execution with parameters

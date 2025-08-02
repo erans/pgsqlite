@@ -10,6 +10,7 @@ python = "^3.12"
 psycopg2-binary = "^2.9"
 tabulate = "^0.9"
 colorama = "^0.4"
+psycopg = {extras = ["binary"], version = "^3.2.9"}
 
 [tool.poetry.dev-dependencies]
 
