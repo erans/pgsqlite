@@ -156,6 +156,14 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
+### Recently Fixed (2025-08-02)
+- **PostgreSQL Binary Wire Protocol**: Full implementation with psycopg3 compatibility
+  - Fixed duplicate RowDescription issue causing protocol errors
+  - Preserved client parameter types (INT2, FLOAT8) for proper binary decoding
+  - Fixed double execution bug with INSERT...RETURNING statements
+  - Added binary encoding in fast path for DataRow messages
+  - Performance: 11-18% faster for DML operations, 7-45% slower for SELECT
+
 ### Recently Fixed (2025-08-01)
 - **SQLAlchemy MAX/MIN Aggregate Types**: Fixed "Unknown PG numeric type: 25" error
   - Added aggregate_type_fixer.rs to detect aliased aggregate columns
@@ -192,6 +200,10 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
 
 ### Major Features
+- **Binary Wire Protocol**: Full support for PostgreSQL binary format (psycopg3 compatible)
+  - 11-18% faster write operations (INSERT/UPDATE/DELETE)
+  - Use with psycopg3's `cursor(binary=True)` for write-heavy workloads
+  - Benchmark with `./benchmarks/run_benchmark.sh --binary-format`
 - **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
 - **40+ PostgreSQL Types**: Including arrays, JSON/JSONB, ENUMs

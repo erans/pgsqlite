@@ -10,6 +10,18 @@ NC='\033[0m' # No Color
 echo -e "${YELLOW}pgsqlite Benchmark Runner${NC}"
 echo "=========================="
 
+# Check if help was requested
+if [[ "$@" == *"--help"* ]] || [[ "$@" == *"-h"* ]]; then
+    echo "Usage: $0 [options]"
+    echo "Options:"
+    echo "  --tcp              Use TCP connection instead of Unix socket"
+    echo "  --file-based       Use file-based database instead of in-memory"
+    echo "  --binary-format    Use PostgreSQL binary wire format"
+    echo "  --help, -h         Show this help message"
+    echo "  All other options are passed to benchmark.py"
+    exit 0
+fi
+
 # Change to project root
 cd "$(dirname "$0")/.."
 
@@ -68,6 +80,13 @@ if [[ "$@" == *"--tcp"* ]]; then
     echo -e "${YELLOW}Using TCP mode${NC}"
 else
     echo -e "${YELLOW}Using Unix socket mode (default)${NC}"
+fi
+
+# Check if binary format is requested
+if [[ "$@" == *"--binary-format"* ]]; then
+    echo -e "${YELLOW}Using PostgreSQL binary wire format${NC}"
+else
+    echo -e "${YELLOW}Using PostgreSQL text wire format (default)${NC}"
 fi
 
 # Check if --file-based flag was passed to use file-based mode

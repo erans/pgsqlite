@@ -72,6 +72,33 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Added datetime translation support to LazyQueryProcessor
   - [x] AT TIME ZONE operator now properly handles float return values
 
+### PostgreSQL Binary Wire Protocol Format - COMPLETED (2025-08-02)
+- [x] **Implement Full Binary Format Support** - Mixed performance results
+  - [x] Binary encoding/decoding for all major PostgreSQL types
+  - [x] Support for binary parameters (input) and binary results (output)
+  - [x] Fixed field description format codes to respect portal result formats
+  - [x] Binary format for INT2, INT4, INT8, FLOAT4, FLOAT8, NUMERIC, BOOL
+  - [x] Binary format for DATE, TIME, TIMESTAMP (as integers)
+  - [x] Binary format for TEXT, VARCHAR, BYTEA, JSON, JSONB
+  - [x] psycopg3 compatibility with binary=True cursor option
+- [x] **Fix Binary Parameter Decoding** - Resolved psycopg3 compatibility issues
+  - [x] Fixed duplicate RowDescription issue causing psycopg3 protocol errors
+  - [x] Added client_param_types preservation for proper binary decoding
+  - [x] Respect client-provided types (INT2, FLOAT8) instead of overriding with schema types
+  - [x] Fixed double execution issue with INSERT...RETURNING statements
+  - [x] Added binary encoding in fast path for DataRow messages
+- [x] **Performance Results** - Mixed results, beneficial for write operations
+  - [x] INSERT operations: 18.2% faster with binary (0.055ms → 0.045ms)
+  - [x] UPDATE operations: 11.5% faster with binary (0.061ms → 0.054ms)
+  - [x] DELETE operations: 12.9% faster with binary (0.031ms → 0.027ms)
+  - [x] SELECT operations: 7.5% slower with binary (0.616ms → 0.662ms)
+  - [x] SELECT (cached): 44.6% slower with binary (0.065ms → 0.094ms)
+  - [x] Binary format recommended for write-heavy workloads
+- [x] **Benchmark Support** - Added --binary-format flag to benchmark runner
+  - [x] Automatic psycopg3 selection for binary format testing
+  - [x] Autocommit mode enabled for binary cursors
+  - [x] Comprehensive comparison between text and binary formats
+
 ### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
 - [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()
   - [x] Root cause: Wire protocol cache was caching query results including generated UUIDs

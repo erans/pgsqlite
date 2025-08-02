@@ -10,8 +10,9 @@ use crate::query::ParameterParser;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use std::sync::Arc;
+use std::str::FromStr;
 use crate::protocol::binary::BinaryEncoder;
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
 
@@ -118,6 +119,7 @@ impl ExtendedQueryHandler {
                     query: query.clone(),
                     translated_query: None, // Will be translated during execute if needed
                     param_types: cached_info.param_types.clone(),
+                    client_param_types: cached_info.original_types.clone(), // Use cached original types
                     param_formats: vec![0; cached_info.param_types.len()],
                     field_descriptions: Vec::new(), // Will be populated during bind/execute
                     translation_metadata: None,
@@ -165,14 +167,26 @@ impl ExtendedQueryHandler {
             python_param_mapping.insert(name.clone(), python_params);
         }
         
-        // Check global prepared statement cache before expensive parsing
-        if let Some(cached_stmt) = GLOBAL_PREPARED_STATEMENT_CACHE.get(&cleaned_query, &param_types) {
-            // Use the cached prepared statement
-            session.prepared_statements.write().await.insert(name.clone(), cached_stmt);
-            
-            framed.send(BackendMessage::ParseComplete).await
-                .map_err(PgSqliteError::Io)?;
-            return Ok(());
+        // For prepared statement cache, we need to handle explicit client types
+        // Build the cache key with merged types (client explicit + analyzed for unknowns)
+        let cache_key_types = if param_types.iter().any(|&t| t != 0) {
+            // Has some explicit types - don't use cache yet, will merge after analysis
+            vec![]
+        } else {
+            // All unknown or empty - can use as-is
+            param_types.clone()
+        };
+        
+        // Only check cache if we have no explicit types (all 0 or empty)
+        if !cache_key_types.is_empty() || param_types.is_empty() {
+            if let Some(cached_stmt) = GLOBAL_PREPARED_STATEMENT_CACHE.get(&cleaned_query, &cache_key_types) {
+                // Use the cached prepared statement
+                session.prepared_statements.write().await.insert(name.clone(), cached_stmt);
+                
+                framed.send(BackendMessage::ParseComplete).await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
         }
         
         // Check if this is a SET command - handle it specially
@@ -183,6 +197,7 @@ impl ExtendedQueryHandler {
                 query: cleaned_query.clone(),
                 translated_query: None,
                 param_types: vec![], // SET commands don't have parameters
+                client_param_types: vec![], // SET commands don't have parameters
                 param_formats: vec![],
                 field_descriptions: if cleaned_query.trim().to_uppercase().starts_with("SHOW") {
                     // SHOW commands return one column
@@ -220,7 +235,18 @@ impl ExtendedQueryHandler {
         
         // For INSERT and SELECT queries, we need to determine parameter types from the target table schema
         let mut actual_param_types = param_types.clone();
-        if param_types.is_empty() && cleaned_query.contains('$') {
+        // Save the original client param types before we potentially override them with schema types
+        let original_client_param_types = param_types.clone();
+        info!("Parse received param_types: {:?}", param_types);
+        
+        // Only analyze INSERT/UPDATE queries if we have unknown parameter types (0)
+        // If client provides explicit types (like INT2=21, FLOAT8=701), we should respect them
+        let has_unknown_types = param_types.iter().any(|&t| t == 0);
+        let needs_schema_analysis = cleaned_query.contains('$') && has_unknown_types &&
+            (query_starts_with_ignore_case(&query, "INSERT") || 
+             query_starts_with_ignore_case(&query, "UPDATE"));
+        
+        if (param_types.is_empty() && cleaned_query.contains('$')) || needs_schema_analysis {
             // First check parameter cache
             if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
                 actual_param_types = cached_info.param_types;
@@ -241,8 +267,8 @@ impl ExtendedQueryHandler {
                     });
                 } else {
                     // Need to analyze the query
-                    let (analyzed_types, original_types_opt, table_name, column_names) = if query_starts_with_ignore_case(&query, "INSERT") {
-                        match Self::analyze_insert_params(&query, db).await {
+                    let (analyzed_types, _original_types_opt, table_name, column_names) = if query_starts_with_ignore_case(&query, "INSERT") {
+                        match Self::analyze_insert_params(&query, db, session).await {
                             Ok((types, orig_types)) => {
                                 info!("Analyzed INSERT parameter types: {:?} (original: {:?})", types, orig_types);
                                 
@@ -260,7 +286,7 @@ impl ExtendedQueryHandler {
                             }
                         }
                     } else if query_starts_with_ignore_case(&query, "SELECT") {
-                        let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
+                        let types = Self::analyze_select_params(&query, db, session).await.unwrap_or_else(|_| {
                             // If we can't determine types, default to text
                             let param_count = ParameterParser::count_parameters(&query);
                             vec![PgType::Text.to_oid(); param_count]
@@ -276,12 +302,24 @@ impl ExtendedQueryHandler {
                         (types.clone(), Some(types), None, Vec::new())
                     };
                     
-                    actual_param_types = analyzed_types.clone();
+                    // Merge analyzed types with client types - only override unknown (0) types
+                    actual_param_types = param_types.iter().enumerate().map(|(i, &client_type)| {
+                        if client_type == 0 {
+                            // Unknown type - use analyzed type
+                            analyzed_types.get(i).copied().unwrap_or(PgType::Text.to_oid())
+                        } else {
+                            // Client provided explicit type - respect it
+                            client_type
+                        }
+                    }).collect();
                     
-                    // Cache the parameter info
+                    info!("Merged parameter types: client {:?} + analyzed {:?} = actual {:?}", 
+                          param_types, analyzed_types, actual_param_types);
+                    
+                    // Cache the parameter info with the merged types
                     GLOBAL_PARAMETER_CACHE.insert(query.clone(), CachedParameterInfo {
-                        param_types: analyzed_types,
-                        original_types: original_types_opt.unwrap_or_else(|| actual_param_types.clone()),
+                        param_types: actual_param_types.clone(),
+                        original_types: param_types.clone(), // Store the original client types
                         table_name,
                         column_names,
                         created_at: std::time::Instant::now(),
@@ -452,21 +490,34 @@ impl ExtendedQueryHandler {
                         info!("Test query returned {} columns: {:?}", response.columns.len(), response.columns);
                         // Extract table name from query to look up schema
                         let table_name = extract_table_name_from_select(&query);
+                        info!("Extracted table name from query '{}': {:?}", query, table_name);
                         
                         // Pre-fetch schema types for all columns if we have a table name
                         let mut schema_types = std::collections::HashMap::new();
                         if let Some(ref table) = table_name {
+                            info!("Looking up schema types for table '{}' with columns: {:?}", table, response.columns);
                             // For aliased columns, try to find the source column
                             for col_name in &response.columns {
                                 // First try direct lookup
-                                if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
-                                    schema_types.insert(col_name.clone(), pg_type);
-                                } else {
+                                match db.get_schema_type_with_session(&session.id, table, col_name).await {
+                                    Ok(Some(pg_type)) => {
+                                        info!("Found schema type for {}.{}: {}", table, col_name, pg_type);
+                                        schema_types.insert(col_name.clone(), pg_type);
+                                    }
+                                    Ok(None) => {
+                                        info!("No schema type found for {}.{}", table, col_name);
+                                    }
+                                    Err(e) => {
+                                        info!("Error looking up schema type for {}.{}: {}", table, col_name, e);
+                                    }
+                                }
+                                
+                                if schema_types.get(col_name).is_none() {
                                         // First check translation metadata
                                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                                         // For datetime expressions, check if we have a source column and prefer its type
                                         if let Some(ref source_col) = hint.source_column {
-                                            if let Ok(Some(source_type)) = db.get_schema_type(table, source_col).await {
+                                            if let Ok(Some(source_type)) = db.get_schema_type_with_session(&session.id, table, source_col).await {
                                                 info!("Found source column type for datetime expression '{}' -> '{}': {}", col_name, source_col, source_type);
                                                 schema_types.insert(col_name.clone(), source_type);
                                             } else if let Some(suggested_type) = &hint.suggested_type {
@@ -507,7 +558,7 @@ impl ExtendedQueryHandler {
                                     } else {
                                         // Try to find source column if this is an alias
                                         if let Some(source_col) = Self::extract_source_column_for_alias(&cleaned_query, col_name) {
-                                            if let Ok(Some(pg_type)) = db.get_schema_type(table, &source_col).await {
+                                            if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, &source_col).await {
                                                 info!("Found schema type for alias '{}' -> source column '{}': {}", col_name, source_col, pg_type);
                                                 schema_types.insert(col_name.clone(), pg_type);
                                             }
@@ -672,6 +723,7 @@ impl ExtendedQueryHandler {
             query: cleaned_query.clone(),
             translated_query,
             param_types: actual_param_types.clone(),
+            client_param_types: original_client_param_types, // Store the original client-sent types
             param_formats: vec![0; actual_param_types.len()], // Default to text format
             field_descriptions,
             translation_metadata: if translation_metadata.column_mappings.is_empty() {
@@ -846,7 +898,11 @@ impl ExtendedQueryHandler {
                 result_formats
             },
             inferred_param_types: inferred_types,
+            client_param_types: stmt.client_param_types.clone(), // Store client types for binary decoding
         };
+        
+        // Debug: Log result formats for binary protocol debugging
+        info!("Bind portal '{}': result_formats = {:?}", portal, portal_obj.result_formats);
         
         drop(statements);
         
@@ -873,10 +929,10 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        // debug!("Executing portal '{}' with max_rows: {}", portal, max_rows);
+        info!("handle_execute: Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
-        let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
+        let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types, client_param_types) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(&portal)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {portal}")))?;
@@ -887,8 +943,11 @@ impl ExtendedQueryHandler {
              portal_obj.param_formats.clone(),
              portal_obj.result_formats.clone(),
              portal_obj.statement_name.clone(),
-             portal_obj.inferred_param_types.clone())
+             portal_obj.inferred_param_types.clone(),
+             portal_obj.client_param_types.clone())
         };
+        
+        info!("handle_execute: query='{}', result_formats={:?}", query, result_formats);
         
         // Get parameter types from the prepared statement
         let param_types = if let Some(inferred) = inferred_param_types {
@@ -901,17 +960,19 @@ impl ExtendedQueryHandler {
         };
         
         // Fast path for simple parameterized SELECT queries
-        if query_starts_with_ignore_case(&query, "SELECT") && 
+        let meets_fast_path_conditions = query_starts_with_ignore_case(&query, "SELECT") && 
            !query.contains("JOIN") && 
            !query.contains("GROUP BY") && 
            !query.contains("HAVING") &&
            !query.contains("::") &&
            !query.contains("UNION") &&
            !query.contains("INTERSECT") &&
-           !query.contains("EXCEPT") &&
-           (result_formats.is_empty() || result_formats[0] == 0) {
+           !query.contains("EXCEPT");
+        info!("Fast path conditions met: {}", meets_fast_path_conditions);
+        
+        if meets_fast_path_conditions {
             
-        // debug!("Using fast path for simple SELECT query: {}", query);
+        info!("Using fast path for simple SELECT query: {}", query);
             
             // Get cached connection first
             let _cached_conn = Self::get_or_cache_connection(session, db).await;
@@ -923,19 +984,61 @@ impl ExtendedQueryHandler {
                 &query
             };
             
-            match db.execute_with_params(query_to_execute, &bound_values, &session.id).await {
+            // Convert parameters to rusqlite values based on format and type
+            let mut converted_params = Vec::new();
+            for (i, value) in bound_values.iter().enumerate() {
+                match value {
+                    Some(bytes) => {
+                        let format = param_formats.get(i).unwrap_or(&0);
+                        // Use client param type for binary format, schema type for text format
+                        let param_type = if *format == 1 {
+                            client_param_types.get(i).unwrap_or(&25) // Use client type for binary decoding
+                        } else {
+                            param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
+                        };
+                        
+                        match Self::convert_parameter_to_value(bytes, *format, *param_type) {
+                            Ok(sql_value) => converted_params.push(sql_value),
+                            Err(e) => {
+                                warn!("Failed to convert parameter {}: {}", i, e);
+                                // Fall back to text conversion
+                                match std::str::from_utf8(bytes) {
+                                    Ok(text) => converted_params.push(rusqlite::types::Value::Text(text.to_string())),
+                                    Err(_) => converted_params.push(rusqlite::types::Value::Blob(bytes.clone())),
+                                }
+                            }
+                        }
+                    }
+                    None => converted_params.push(rusqlite::types::Value::Null),
+                }
+            }
+            
+            // Use the new execute method that accepts rusqlite values
+            info!("Fast path: About to call execute_with_rusqlite_params");
+            match db.execute_with_rusqlite_params(query_to_execute, &converted_params, &session.id).await {
                 Ok(response) => {
-                        // Send RowDescription if needed
-                        let send_row_desc = {
-                            let statements = session.prepared_statements.read().await;
-                            if let Some(stmt) = statements.get(&statement_name) {
-                                stmt.field_descriptions.is_empty()
+                    info!("Fast path: execute_with_rusqlite_params succeeded");
+                    // Send RowDescription if needed
+                    let send_row_desc = {
+                        let statements = session.prepared_statements.read().await;
+                        info!("Fast path: statement_name='{}'", statement_name);
+                        if let Some(stmt) = statements.get(&statement_name) {
+                                // Only send RowDescription if statement has no field descriptions
+                                // If it has field descriptions, that means Describe was already called
+                                // and already sent RowDescription to the client
+                                let needs_row_desc = stmt.field_descriptions.is_empty();
+                                info!("Fast path: stmt.field_descriptions.is_empty()={}, send_row_desc={}", 
+                                     stmt.field_descriptions.is_empty(), needs_row_desc);
+                                needs_row_desc
                             } else {
+                                info!("Fast path: No statement found, send_row_desc=true");
                                 true
                             }
                         };
                         
                         if send_row_desc {
+                            info!("Fast path: Sending RowDescription for binary format");
+                            let format = if result_formats.is_empty() { 0 } else { result_formats[0] };
                             let fields: Vec<FieldDescription> = response.columns.iter()
                                 .enumerate()
                                 .map(|(i, name)| FieldDescription {
@@ -945,18 +1048,50 @@ impl ExtendedQueryHandler {
                                     type_oid: PgType::Text.to_oid(),
                                     type_size: -1,
                                     type_modifier: -1,
-                                    format: 0,
+                                    format,
                                 })
                                 .collect();
-                            framed.send(BackendMessage::RowDescription(fields)).await
+                            framed.send(BackendMessage::RowDescription(fields.clone())).await
                                 .map_err(PgSqliteError::Io)?;
+                            info!("Fast path: RowDescription sent successfully with {} fields", fields.len());
+                        } else {
+                            info!("Fast path: Not sending RowDescription (send_row_desc=false)");
                         }
                         
                         // Send data rows
                         let row_count = response.rows.len();
-                        for row in response.rows {
-                            framed.send(BackendMessage::DataRow(row)).await
-                                .map_err(PgSqliteError::Io)?;
+                        info!("Fast path: About to send {} data rows", row_count);
+                        
+                        // If binary format is requested, we need to encode the rows
+                        if result_formats.iter().any(|&f| f == 1) {
+                            info!("Fast path: Binary format requested, encoding rows");
+                            // Get field types from the statement's field descriptions
+                            let field_types: Vec<i32> = {
+                                let statements = session.prepared_statements.read().await;
+                                if let Some(stmt) = statements.get(&statement_name) {
+                                    stmt.field_descriptions.iter()
+                                        .map(|f| f.type_oid)
+                                        .collect()
+                                } else {
+                                    // Fallback to TEXT if no field descriptions
+                                    response.columns.iter()
+                                        .map(|_| PgType::Text.to_oid())
+                                        .collect()
+                                }
+                            };
+                            info!("Fast path: Field types: {:?}", field_types);
+                            
+                            for row in response.rows {
+                                let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
+                                framed.send(BackendMessage::DataRow(encoded_row)).await
+                                    .map_err(PgSqliteError::Io)?;
+                            }
+                        } else {
+                            // Text format - send as-is
+                            for row in response.rows {
+                                framed.send(BackendMessage::DataRow(row)).await
+                                    .map_err(PgSqliteError::Io)?;
+                            }
                         }
                         
                         framed.send(BackendMessage::CommandComplete { 
@@ -971,30 +1106,31 @@ impl ExtendedQueryHandler {
                         }
                         
                         return Ok(());
-                    }
-                    Err(_) => {
-                        // Fall through to regular path
-                    }
                 }
+                Err(e) => {
+                    // Fall through to regular path
+                    info!("Fast path: execute_with_rusqlite_params failed: {}, falling back to substitution", e);
+                }
+            }
         }
+        
+        info!("After fast path block, continuing execution");
         
         // Try optimized extended fast path first for parameterized queries
         if !bound_values.is_empty() && query.contains('$') {
+            info!("Checking extended fast path for parameterized query");
             let query_type = super::extended_fast_path::QueryType::from_query(&query);
             
             // Early check: Skip fast path for SELECT with binary results
             if matches!(query_type, super::extended_fast_path::QueryType::Select) 
                 && !result_formats.is_empty() 
                 && result_formats[0] == 1 {
+                info!("Extended fast path: Skipping for binary SELECT results");
                 // Skip fast path entirely for binary SELECT results
             } else {
             
-            // Get original types from cache if available
-            let original_types = if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
-                cached_info.original_types
-            } else {
-                param_types.clone()
-            };
+            // Use client-sent types for binary parameter decoding
+            let original_types = client_param_types.clone();
             
             // Use optimized path for SELECT, INSERT, UPDATE, DELETE
             match query_type {
@@ -1041,6 +1177,7 @@ impl ExtendedQueryHandler {
                     &bound_values, 
                     &param_formats, 
                     &param_types,
+                    &client_param_types,
                     &fast_query, 
                     max_rows
                 ).await {
@@ -1053,11 +1190,12 @@ impl ExtendedQueryHandler {
         let query_to_use = translated_query.as_ref().unwrap_or(&query);
         
         // Validate numeric constraints before parameter substitution
-        let validation_error = if query_starts_with_ignore_case(query_to_use, "INSERT") {
+        // TEMPORARILY DISABLED to test binary parameter handling
+        let validation_error = if false && query_starts_with_ignore_case(query_to_use, "INSERT") {
             if let Some(table_name) = Self::extract_table_name_from_insert(query_to_use) {
                 // For parameterized queries, we need to check constraints with actual values
                 // Build a substituted query just for validation
-                let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+                let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types, &client_param_types)?;
                 
                 match db.with_session_connection(&session.id, |conn| {
                     match NumericValidator::validate_insert(conn, &validation_query, &table_name) {
@@ -1092,7 +1230,7 @@ impl ExtendedQueryHandler {
             if let Some(table_name) = Self::extract_table_name_from_update(query_to_use) {
                 // For parameterized queries, we need to check constraints with actual values
                 // Build a substituted query just for validation
-                let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+                let validation_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types, &client_param_types)?;
                 
                 match db.with_session_connection(&session.id, |conn| {
                     match NumericValidator::validate_update(conn, &validation_query, &table_name) {
@@ -1162,29 +1300,126 @@ impl ExtendedQueryHandler {
             return Ok(());
         }
         
-        // Convert bound values and substitute parameters
-        let mut final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types)?;
+        // Check if we have binary parameters or should use parameterized execution
+        let _has_binary_params = param_formats.iter().any(|&f| f == 1);
+        // Check the original query for $ parameters, not the translated one
+        let has_params = !bound_values.is_empty() && query.contains('$');
         
-        // Apply JSON operator translation if needed
-        if JsonTranslator::contains_json_operations(&final_query) {
-        // debug!("Query needs JSON operator translation: {}", final_query);
-            match JsonTranslator::translate_json_operators(&final_query) {
-                Ok(translated) => {
-        // debug!("Query after JSON operator translation: {}", translated);
-                    final_query = translated;
+        // Debug logging
+        if !bound_values.is_empty() {
+            info!("Original query '{}' has {} bound values, contains '$': {}", query, bound_values.len(), query.contains('$'));
+            info!("Query to use: '{}'", query_to_use);
+        }
+        
+        // Use parameterized path for queries without RETURNING clause
+        // (RETURNING requires special handling that parameterized path doesn't support)
+        let has_returning = ReturningTranslator::has_returning_clause(&query);
+        if has_params && !has_returning { 
+            info!("USING PARAMETERIZED PATH for query: {}", query);
+            // Convert parameters to rusqlite values
+            let mut converted_params = Vec::new();
+            for (i, value) in bound_values.iter().enumerate() {
+                match value {
+                    Some(bytes) => {
+                        let format = param_formats.get(i).unwrap_or(&0);
+                        // Use client param type for binary format, schema type for text format
+                        let param_type = if *format == 1 {
+                            client_param_types.get(i).unwrap_or(&25) // Use client type for binary decoding
+                        } else {
+                            param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
+                        };
+                        
+                        info!("Parameter {}: {} bytes, format={}, type={}", i, bytes.len(), format, param_type);
+                        
+                        match Self::convert_parameter_to_value(bytes, *format, *param_type) {
+                            Ok(sql_value) => {
+                                info!("Converted parameter {} to: {:?}", i, sql_value);
+                                converted_params.push(sql_value);
+                            }
+                            Err(e) => {
+                                warn!("Failed to convert parameter {}: {}", i, e);
+                                // Fall back to text conversion
+                                match std::str::from_utf8(bytes) {
+                                    Ok(text) => converted_params.push(rusqlite::types::Value::Text(text.to_string())),
+                                    Err(_) => converted_params.push(rusqlite::types::Value::Blob(bytes.clone())),
+                                }
+                            }
+                        }
+                    }
+                    None => converted_params.push(rusqlite::types::Value::Null),
                 }
-                Err(_e) => {
-        // debug!("JSON operator translation failed: {}", e);
-                    // Continue with original query - some operators might not be supported yet
+            }
+            
+            // Apply JSON operator translation if needed
+            // IMPORTANT: Use the original query with parameter placeholders, not the translated one
+            let mut parameterized_query = query.to_string();
+            if JsonTranslator::contains_json_operations(&parameterized_query) {
+                match JsonTranslator::translate_json_operators(&parameterized_query) {
+                    Ok(translated) => {
+                        parameterized_query = translated;
+                    }
+                    Err(_) => {
+                        // Continue with original query
+                    }
+                }
+            }
+            
+            // Execute based on query type using parameterized execution
+            if query_starts_with_ignore_case(&parameterized_query, "SELECT") {
+                // For SELECT, use the fast path we already set up
+                match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
+                    Ok(response) => {
+                        // Send response
+                        Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!("Parameterized SELECT failed: {}, falling back to substitution", e);
+                        // Fall through to substitution-based execution
+                    }
+                }
+            } else if (query_starts_with_ignore_case(&parameterized_query, "INSERT") 
+                || query_starts_with_ignore_case(&parameterized_query, "UPDATE") 
+                || query_starts_with_ignore_case(&parameterized_query, "DELETE"))
+                && !ReturningTranslator::has_returning_clause(&parameterized_query) {
+                // For DML without RETURNING, use parameterized execution
+                match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
+                    Ok(response) => {
+                        let tag = if query_starts_with_ignore_case(&parameterized_query, "INSERT") {
+                            format!("INSERT 0 {}", response.rows_affected)
+                        } else if query_starts_with_ignore_case(&parameterized_query, "UPDATE") {
+                            format!("UPDATE {}", response.rows_affected)
+                        } else {
+                            format!("DELETE {}", response.rows_affected)
+                        };
+                        framed.send(BackendMessage::CommandComplete { tag }).await?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!("Parameterized DML failed: {}, falling back to substitution", e);
+                        // Fall through to substitution-based execution
+                    }
                 }
             }
         }
         
-        // debug!("Executing query: {}", final_query);
-        // debug!("Original query: {}", query);
-        // debug!("Final query after substitution: {}", final_query);
-        // debug!("Original query had {} bound values", bound_values.len());
+        // Fall back to parameter substitution for non-parameterized queries or if parameterized execution failed
+        if !bound_values.is_empty() {
+            info!("FALLING BACK TO SUBSTITUTION for query: {}", query);
+        }
+        let mut final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types, &client_param_types)?;
         
+        // Apply JSON operator translation if needed
+        if JsonTranslator::contains_json_operations(&final_query) {
+            match JsonTranslator::translate_json_operators(&final_query) {
+                Ok(translated) => {
+                    final_query = translated;
+                }
+                Err(_e) => {
+                    // Continue with original query - some operators might not be supported yet
+                }
+            }
+        }
         
         // Debug: Check if this is a catalog query
         if final_query.contains("pg_catalog") || final_query.contains("pg_type") {
@@ -1193,6 +1428,7 @@ impl ExtendedQueryHandler {
         
         // Execute based on query type
         if query_starts_with_ignore_case(&final_query, "SELECT") {
+            info!("Calling execute_select for query: {}", final_query);
             Self::execute_select(framed, db, session, &portal, &final_query, max_rows).await?;
         } else if query_starts_with_ignore_case(&final_query, "INSERT") 
             || query_starts_with_ignore_case(&final_query, "UPDATE") 
@@ -1482,6 +1718,22 @@ impl ExtendedQueryHandler {
                 // If we have inferred parameter types, update field descriptions for parameter columns
                 let mut fields = stmt.field_descriptions.clone();
                 info!("Describe portal: original fields: {:?}", fields);
+                // Always update field formats based on portal's result_formats, regardless of inferred types
+                for (col_idx, field) in fields.iter_mut().enumerate() {
+                    // Update format based on portal's result_formats for ALL fields
+                    let format = if portal.result_formats.is_empty() {
+                        0 // Default to text if no formats specified
+                    } else if portal.result_formats.len() == 1 {
+                        portal.result_formats[0] // Single format applies to all columns
+                    } else if col_idx < portal.result_formats.len() {
+                        portal.result_formats[col_idx] // Use column-specific format
+                    } else {
+                        0 // Default to text if not enough formats
+                    };
+                    field.format = format;
+                    info!("Updated field '{}' format to {} (portal result_formats: {:?})", field.name, format, portal.result_formats);
+                }
+                
                 if let Some(ref inferred_types) = portal.inferred_param_types {
                     info!("Describe portal: inferred types available: {:?}", inferred_types);
                     info!("Describe portal: field count: {}", fields.len());
@@ -1491,7 +1743,7 @@ impl ExtendedQueryHandler {
                     let mut param_column_count = 0;
                     
                     for (col_idx, field) in fields.iter_mut().enumerate() {
-                        // Check if this is a parameter column
+                        // Check if this is a parameter column and update type
                         if field.name == "NULL" || field.name == "?column?" || field.name.starts_with('$') {
                             // This is a parameter column, use the parameter index
                             let param_idx = if field.name.starts_with('$') {
@@ -1563,6 +1815,7 @@ impl ExtendedQueryHandler {
         bound_values: &[Option<Vec<u8>>],
         param_formats: &[i16],
         param_types: &[i32],
+        client_param_types: &[i32],
         fast_query: &crate::query::FastPathQuery,
         max_rows: i32,
     ) -> Result<Option<Result<(), PgSqliteError>>, PgSqliteError>
@@ -1575,7 +1828,12 @@ impl ExtendedQueryHandler {
             match value {
                 Some(bytes) => {
                     let format = param_formats.get(i).unwrap_or(&0);
-                    let param_type = param_types.get(i).unwrap_or(&25); // Default to TEXT
+                    // Use client param type for binary format, schema type for text format
+                    let param_type = if *format == 1 {
+                        client_param_types.get(i).unwrap_or(&25) // Use client type for binary decoding
+                    } else {
+                        param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
+                    };
                     
                     match Self::convert_parameter_to_value(bytes, *format, *param_type) {
                         Ok(sql_value) => rusqlite_params.push(sql_value),
@@ -1708,8 +1966,92 @@ impl ExtendedQueryHandler {
                 _ => Ok(rusqlite::types::Value::Text(text.to_string())), // Default to TEXT
             }
         } else {
-            // Binary format - simplified for now, fall back to normal path
-            Err(PgSqliteError::Protocol("Binary format not supported in fast path".to_string()))
+            // Binary format - decode based on type
+            match param_type {
+                t if t == PgType::Bool.to_oid() => {
+                    // BOOL
+                    if bytes.len() == 1 {
+                        let val = bytes[0] != 0;
+                        Ok(rusqlite::types::Value::Integer(if val { 1 } else { 0 }))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid BOOL binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Int2.to_oid() => {
+                    // INT2
+                    if bytes.len() == 2 {
+                        let val = i16::from_be_bytes([bytes[0], bytes[1]]) as i64;
+                        Ok(rusqlite::types::Value::Integer(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid INT2 binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Int4.to_oid() => {
+                    // INT4
+                    if bytes.len() == 4 {
+                        let val = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64;
+                        Ok(rusqlite::types::Value::Integer(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid INT4 binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Int8.to_oid() => {
+                    // INT8
+                    if bytes.len() == 8 {
+                        let val = i64::from_be_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7]
+                        ]);
+                        Ok(rusqlite::types::Value::Integer(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid INT8 binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Float4.to_oid() => {
+                    // FLOAT4
+                    if bytes.len() == 4 {
+                        let bits = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        let val = f32::from_bits(bits) as f64;
+                        Ok(rusqlite::types::Value::Real(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid FLOAT4 binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Float8.to_oid() => {
+                    // FLOAT8
+                    if bytes.len() == 8 {
+                        let bits = u64::from_be_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7]
+                        ]);
+                        let val = f64::from_bits(bits);
+                        Ok(rusqlite::types::Value::Real(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid FLOAT8 binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Numeric.to_oid() => {
+                    // NUMERIC
+                    match crate::types::DecimalHandler::decode_numeric(bytes) {
+                        Ok(decimal) => Ok(rusqlite::types::Value::Text(decimal.to_string())),
+                        Err(e) => Err(PgSqliteError::Protocol(format!("Invalid binary NUMERIC: {e}"))),
+                    }
+                }
+                t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
+                    // TEXT/VARCHAR - binary format is just UTF-8 bytes
+                    match std::str::from_utf8(bytes) {
+                        Ok(text) => Ok(rusqlite::types::Value::Text(text.to_string())),
+                        Err(_) => {
+                            // Invalid UTF-8, store as blob
+                            Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
+                        }
+                    }
+                }
+                _ => {
+                    // For unsupported binary types, store as blob
+                    Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
+                }
+            }
         }
     }
     
@@ -1746,51 +2088,68 @@ impl ExtendedQueryHandler {
                 format,
             });
         }
-        framed.send(BackendMessage::RowDescription(field_descriptions)).await?;
+        framed.send(BackendMessage::RowDescription(field_descriptions.clone())).await?;
         
         // Send DataRows
-        for row in response.rows {
-            let mut values = Vec::new();
-            for (i, cell) in row.iter().enumerate() {
-                if let Some(bytes) = cell {
-                    let column_name = response.columns.get(i).map(|s| s.as_str()).unwrap_or("unknown");
-                    let column_lower = column_name.to_lowercase();
-        // debug!("Processing column '{}' (lowercase: '{}')", column_name, column_lower);
-                    // Check if this is a datetime function result that needs formatting
-                    if let Ok(s) = String::from_utf8(bytes.clone()) {
-        // debug!("Column '{}' value as string: '{}'", column_name, s);
-                        if let Ok(micros) = s.parse::<i64>() {
-        // debug!("Column '{}' parsed as i64: {}", column_name, micros);
-                            // Check if this looks like microseconds (large integer)
-                            if micros > 1_000_000_000_000 && 
-                               (column_lower.contains("now") || 
-                                column_lower.contains("current_timestamp") ||
-                                column_lower == "now" ||
-                                column_lower == "current_timestamp") {
-                                // This is likely a datetime function result, format it
-                                use crate::types::datetime_utils::format_microseconds_to_timestamp;
-                                let formatted = format_microseconds_to_timestamp(micros);
-        // debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
-                                values.push(Some(formatted.into_bytes()));
+        // Check if binary format is requested
+        let needs_encoding = result_formats.iter().any(|&f| f == 1);
+        
+        if needs_encoding {
+            // Binary format requested - need to encode rows
+            // Get field types from field descriptions we just sent
+            let field_types: Vec<i32> = field_descriptions.iter()
+                .map(|f| f.type_oid)
+                .collect();
+            
+            for row in response.rows {
+                let encoded_row = Self::encode_row(&row, result_formats, &field_types)?;
+                framed.send(BackendMessage::DataRow(encoded_row)).await?;
+            }
+        } else {
+            // Text format - apply datetime formatting but no binary encoding
+            for row in response.rows {
+                let mut values = Vec::new();
+                for (i, cell) in row.iter().enumerate() {
+                    if let Some(bytes) = cell {
+                        let column_name = response.columns.get(i).map(|s| s.as_str()).unwrap_or("unknown");
+                        let column_lower = column_name.to_lowercase();
+            // debug!("Processing column '{}' (lowercase: '{}')", column_name, column_lower);
+                        // Check if this is a datetime function result that needs formatting
+                        if let Ok(s) = String::from_utf8(bytes.clone()) {
+            // debug!("Column '{}' value as string: '{}'", column_name, s);
+                            if let Ok(micros) = s.parse::<i64>() {
+            // debug!("Column '{}' parsed as i64: {}", column_name, micros);
+                                // Check if this looks like microseconds (large integer)
+                                if micros > 1_000_000_000_000 && 
+                                   (column_lower.contains("now") || 
+                                    column_lower.contains("current_timestamp") ||
+                                    column_lower == "now" ||
+                                    column_lower == "current_timestamp") {
+                                    // This is likely a datetime function result, format it
+                                    use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                    let formatted = format_microseconds_to_timestamp(micros);
+            // debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
+                                    values.push(Some(formatted.into_bytes()));
+                                } else {
+            // debug!("Column '{}' not converted: micros={}, contains_now={}, contains_current_timestamp={}, eq_now={}, eq_current_timestamp={}", 
+            //                                column_name, micros, column_lower.contains("now"), column_lower.contains("current_timestamp"), 
+            //                                column_lower == "now", column_lower == "current_timestamp");
+                                    values.push(cell.clone());
+                                }
                             } else {
-        // debug!("Column '{}' not converted: micros={}, contains_now={}, contains_current_timestamp={}, eq_now={}, eq_current_timestamp={}", 
-        //                                column_name, micros, column_lower.contains("now"), column_lower.contains("current_timestamp"), 
-        //                                column_lower == "now", column_lower == "current_timestamp");
+            // debug!("Column '{}' failed to parse as i64", column_name);
                                 values.push(cell.clone());
                             }
                         } else {
-        // debug!("Column '{}' failed to parse as i64", column_name);
+            // debug!("Column '{}' failed to parse as UTF-8", column_name);
                             values.push(cell.clone());
                         }
                     } else {
-        // debug!("Column '{}' failed to parse as UTF-8", column_name);
                         values.push(cell.clone());
                     }
-                } else {
-                    values.push(cell.clone());
                 }
+                framed.send(BackendMessage::DataRow(values)).await?;
             }
-            framed.send(BackendMessage::DataRow(values)).await?;
         }
         
         // Send CommandComplete
@@ -1799,13 +2158,18 @@ impl ExtendedQueryHandler {
         Ok(())
     }
     
-    fn substitute_parameters(query: &str, values: &[Option<Vec<u8>>], formats: &[i16], param_types: &[i32]) -> Result<String, PgSqliteError> {
+    fn substitute_parameters(query: &str, values: &[Option<Vec<u8>>], formats: &[i16], param_types: &[i32], client_param_types: &[i32]) -> Result<String, PgSqliteError> {
         // Convert parameter values to strings for substitution
         let mut string_values = Vec::new();
         
         for (i, value) in values.iter().enumerate() {
             let format = formats.get(i).copied().unwrap_or(0); // Default to text format
-            let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to text
+            // Use client param type for binary format, schema type for text format
+            let param_type = if format == 1 {
+                client_param_types.get(i).copied().unwrap_or(PgType::Text.to_oid())
+            } else {
+                param_types.get(i).copied().unwrap_or(PgType::Text.to_oid())
+            };
             
             let replacement = match value {
                 None => "NULL".to_string(),
@@ -1813,6 +2177,16 @@ impl ExtendedQueryHandler {
                     if format == 1 {
                         // Binary format - decode based on expected type
                         match param_type {
+                            t if t == PgType::Int2.to_oid() => {
+                                // int2
+                                if bytes.len() == 2 {
+                                    let value = i16::from_be_bytes([bytes[0], bytes[1]]);
+                                    info!("Decoded binary int16 parameter {}: {}", i + 1, value);
+                                    value.to_string()
+                                } else {
+                                    format!("X'{}'", hex::encode(bytes))
+                                }
+                            }
                             t if t == PgType::Int4.to_oid() => {
                                 // int4
                                 if bytes.len() == 4 {
@@ -2417,13 +2791,17 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Int4.to_oid() => {
                                 // int4 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Ok(val) = s.parse::<i32>() {
+                                    if let Ok(val) = s.trim().parse::<i32>() {
                                         Some(BinaryEncoder::encode_int4(val))
                                     } else {
-                                        Some(bytes.clone())
+                                        // Invalid integer, return as error
+                                        info!("Invalid INT4 value: '{}'", s);
+                                        Some(BinaryEncoder::encode_int4(0)) // Default to 0
                                     }
                                 } else {
-                                    Some(bytes.clone())
+                                    // Invalid UTF-8 for integer
+                                    info!("Invalid UTF-8 for INT4: {:?}", bytes);
+                                    Some(BinaryEncoder::encode_int4(0)) // Default to 0
                                 }
                             }
                             t if t == PgType::Int8.to_oid() => {
@@ -2441,13 +2819,17 @@ impl ExtendedQueryHandler {
                             t if t == PgType::Float4.to_oid() => {
                                 // float4 - convert text to binary
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    if let Ok(val) = s.parse::<f32>() {
+                                    if let Ok(val) = s.trim().parse::<f32>() {
                                         Some(BinaryEncoder::encode_float4(val))
                                     } else {
-                                        Some(bytes.clone())
+                                        // Invalid float, return as NaN
+                                        info!("Invalid FLOAT4 value: '{}'", s);
+                                        Some(BinaryEncoder::encode_float4(0.0)) // Default to 0.0
                                     }
                                 } else {
-                                    Some(bytes.clone())
+                                    // Invalid UTF-8 for float
+                                    info!("Invalid UTF-8 for FLOAT4: {:?}", bytes);
+                                    Some(BinaryEncoder::encode_float4(0.0)) // Default to 0.0
                                 }
                             }
                             t if t == PgType::Float8.to_oid() => {
@@ -2532,12 +2914,19 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            // Numeric type - always use text format to avoid binary encoding issues
+                            // Numeric type - use proper PostgreSQL binary encoding
                             t if t == PgType::Numeric.to_oid() => {
-                                // Force text format for NUMERIC to prevent Unicode decode errors
-                                // Binary NUMERIC encoding can cause issues with SQLAlchemy and other clients
-        // debug!("NUMERIC type detected - forcing text format to avoid binary encoding issues");
-                                Some(bytes.clone())
+                                // Use our improved NUMERIC binary encoder
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Ok(decimal) = rust_decimal::Decimal::from_str(&s) {
+                                        Some(BinaryEncoder::encode_numeric(&decimal))
+                                    } else {
+                                        // If parsing fails, keep as text
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
                             }
                             // Money type
                             t if t == PgType::Money.to_oid() => {
@@ -2649,10 +3038,16 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            // Text types - these are fine as-is in binary format
+                            // Text types - ensure valid UTF-8 in binary format
                             t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() || t == PgType::Char.to_oid() => {
                                 // text/varchar/char - UTF-8 encoded text
-                                Some(bytes.clone())
+                                // Validate UTF-8 encoding to prevent client decode errors
+                                if let Ok(_) = std::str::from_utf8(bytes) {
+                                    Some(bytes.clone())
+                                } else {
+                                    // Invalid UTF-8, convert to error message
+                                    Some(b"<invalid UTF-8 data>".to_vec())
+                                }
                             }
                             // JSON types
                             t if t == PgType::Json.to_oid() => {
@@ -2684,8 +3079,14 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             _ => {
-                                // For unknown types, keep as-is (text)
-                                Some(bytes.clone())
+                                // For unknown types, validate UTF-8 and keep as text
+                                if let Ok(_) = std::str::from_utf8(bytes) {
+                                    Some(bytes.clone())
+                                } else {
+                                    // Invalid UTF-8, convert to error message
+                                    info!("Invalid UTF-8 for unknown type OID {}: {:?}", type_oid, bytes);
+                                    Some(format!("<invalid UTF-8 data for type {}>", type_oid).into_bytes())
+                                }
                             }
                         }
                     } else {
@@ -2772,6 +3173,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        debug!("execute_select called with query: {}", query);
         // Check if this is a catalog query first
         info!("execute_select: Checking if query is catalog query: {}", query);
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
@@ -2811,19 +3213,29 @@ impl ExtendedQueryHandler {
         // Check if we need to send RowDescription
         // We send it if:
         // 1. The prepared statement had no field descriptions (wasn't Described or Describe sent NoData)
+        // 2. OR if binary format is requested (psycopg3 binary cursors need RowDescription before DataRows)
         // BUT NOT for catalog queries - they should already have field descriptions from Describe
         let send_row_desc = {
             let portals = session.portals.read().await;
             let portal = portals.get(portal_name).unwrap();
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name).unwrap();
+            
+            // Only send RowDescription if statement has no field descriptions
+            // If it has field descriptions, that means Describe was already called
+            // and already sent RowDescription to the client
             let needs_row_desc = stmt.field_descriptions.is_empty() && !response.columns.is_empty();
+            debug!("Execute check: stmt.field_descriptions.is_empty()={}, response.columns.is_empty()={}, send_row_desc={}", 
+                   stmt.field_descriptions.is_empty(), response.columns.is_empty(), needs_row_desc);
+            
             drop(statements);
             drop(portals);
             needs_row_desc
         };
         
+        debug!("execute_select: send_row_desc = {}", send_row_desc);
         if send_row_desc {
+            debug!("Execute: Will send RowDescription");
             // Extract table name from query to look up schema
             let table_name = extract_table_name_from_select(query);
             
@@ -3467,9 +3879,15 @@ impl ExtendedQueryHandler {
             
             // Store the type mappings if we have any
         // debug!("Type mappings count: {}", type_mappings.len());
+            info!("CREATE TABLE processing: Found {} type mappings", type_mappings.len());
+            for (key, mapping) in &type_mappings {
+                info!("Type mapping: {} -> {} (sqlite: {})", key, mapping.pg_type, mapping.sqlite_type);
+            }
+            
             if !type_mappings.is_empty() {
                 // Extract table name from query
                 if let Some(table_name) = extract_table_name_from_create(query) {
+                    info!("CREATE TABLE: Extracted table name '{}' from query", table_name);
                     // Initialize the metadata table if it doesn't exist
                     let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
                         table_name TEXT NOT NULL,
@@ -3667,16 +4085,17 @@ impl ExtendedQueryHandler {
     }
     
     /// Analyze INSERT query to determine parameter types from schema
-    async fn analyze_insert_params(query: &str, db: &Arc<DbHandler>) -> Result<(Vec<i32>, Vec<i32>), PgSqliteError> {
+    async fn analyze_insert_params(query: &str, db: &Arc<DbHandler>, session: &Arc<SessionState>) -> Result<(Vec<i32>, Vec<i32>), PgSqliteError> {
         // Use QueryContextAnalyzer to extract table and column info
         let (table_name, columns) = crate::types::QueryContextAnalyzer::get_insert_column_info(query)
             .ok_or_else(|| PgSqliteError::Protocol("Failed to parse INSERT query".to_string()))?;
         
         info!("Analyzing INSERT for table '{}' with columns: {:?}", table_name, columns);
         
-        // Get cached table schema
-        let table_schema = db.get_table_schema(&table_name).await
-            .map_err(|e| PgSqliteError::Protocol(format!("Failed to get table schema: {e}")))?;
+        // Get table schema using session-aware method to see session-specific tables
+        let table_schema = db.with_session_connection(&session.id, |conn| {
+            db.get_schema_cache().get_or_load(conn, &table_name)
+        }).await.map_err(|e| PgSqliteError::Protocol(format!("Failed to get table schema: {e}")))?;
         
         // If no explicit columns, use all columns from the table
         let columns = if columns.is_empty() {
@@ -3771,7 +4190,7 @@ impl ExtendedQueryHandler {
     }
 
     /// Analyze SELECT query to determine parameter types from WHERE clause
-    async fn analyze_select_params(query: &str, db: &Arc<DbHandler>) -> Result<Vec<i32>, PgSqliteError> {
+    async fn analyze_select_params(query: &str, db: &Arc<DbHandler>, _session: &Arc<SessionState>) -> Result<Vec<i32>, PgSqliteError> {
         // First, check for explicit parameter casts like $1::int4
         let mut param_types = Vec::new();
         
@@ -4147,8 +4566,10 @@ impl ExtendedQueryHandler {
 
 /// Extract table name from SELECT query
 fn extract_table_name_from_select(query: &str) -> Option<String> {
+    info!("extract_table_name_from_select: Analyzing query: '{}'", query);
     // Look for FROM clause using case-insensitive search
     if let Some(from_pos) = find_keyword_position(query, " from ") {
+        info!("extract_table_name_from_select: Found FROM at position {}", from_pos);
         let after_from = &query[from_pos + 6..].trim();
         
         // Find the end of table name (space, where, order by, etc.)
@@ -4162,19 +4583,24 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
         let table_name = table_name.trim_matches('"').trim_matches('\'');
         
         if !table_name.is_empty() {
+            info!("extract_table_name_from_select: Extracted table name: '{}'", table_name);
             Some(table_name.to_string())
         } else {
+            info!("extract_table_name_from_select: Empty table name");
             None
         }
     } else {
+        info!("extract_table_name_from_select: No FROM clause found");
         None
     }
 }
 
 /// Extract table name from CREATE TABLE statement
 fn extract_table_name_from_create(query: &str) -> Option<String> {
+    info!("extract_table_name_from_create: Analyzing CREATE query: '{}'", query);
     // Look for CREATE TABLE pattern
     if let Some(table_pos) = find_keyword_position(query, "CREATE TABLE") {
+        info!("extract_table_name_from_create: Found CREATE TABLE at position {}", table_pos);
         let after_create = &query[table_pos + 12..].trim();
         
         // Skip IF NOT EXISTS if present
@@ -4195,11 +4621,14 @@ fn extract_table_name_from_create(query: &str) -> Option<String> {
         let table_name = table_name.trim_matches('"').trim_matches('\'');
         
         if !table_name.is_empty() {
+            info!("extract_table_name_from_create: Extracted table name: '{}'", table_name);
             Some(table_name.to_string())
         } else {
+            info!("extract_table_name_from_create: Empty table name");
             None
         }
     } else {
+        info!("extract_table_name_from_create: No CREATE TABLE found");
         None
     }
 }

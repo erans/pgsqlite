@@ -4,7 +4,26 @@ Benchmark script comparing SQLite direct access vs PostgreSQL client via pgsqlit
 """
 
 import sqlite3
-import psycopg2
+
+# Try to import both libraries
+HAS_PSYCOPG3 = False
+HAS_PSYCOPG2 = False
+
+try:
+    import psycopg  # psycopg3
+    HAS_PSYCOPG3 = True
+except ImportError:
+    pass
+
+try:
+    import psycopg2  # psycopg2
+    HAS_PSYCOPG2 = True
+except ImportError:
+    pass
+
+if not HAS_PSYCOPG3 and not HAS_PSYCOPG2:
+    raise ImportError("Neither psycopg3 nor psycopg2 is available")
+
 import time
 import random
 import string
@@ -27,7 +46,7 @@ class BenchmarkResult:
     count: int
 
 class BenchmarkRunner:
-    def __init__(self, iterations: int = 1000, batch_size: int = 100, in_memory: bool = False, port: int = 5432, socket_dir: str = None, sqlite_only: bool = False, pgsqlite_only: bool = False):
+    def __init__(self, iterations: int = 1000, batch_size: int = 100, in_memory: bool = False, port: int = 5432, socket_dir: str = None, sqlite_only: bool = False, pgsqlite_only: bool = False, binary_format: bool = False):
         self.iterations = iterations
         self.batch_size = batch_size
         self.in_memory = in_memory
@@ -35,6 +54,7 @@ class BenchmarkRunner:
         self.socket_dir = socket_dir
         self.sqlite_only = sqlite_only
         self.pgsqlite_only = pgsqlite_only
+        self.binary_format = binary_format
         if socket_dir:
             # Use Unix socket
             self.pg_host = socket_dir
@@ -186,16 +206,57 @@ class BenchmarkRunner:
         else:
             print(f"Connecting to pgsqlite via TCP on port {self.pg_port}")
         
-        # Connect using PostgreSQL client (disable SSL as pgsqlite doesn't support it)
-        conn = psycopg2.connect(
-            host=self.pg_host,
-            port=self.pg_port,
-            dbname=self.pg_dbname,
-            user="dummy",  # pgsqlite doesn't use auth
-            password="dummy",
-            sslmode="disable"  # pgsqlite doesn't support SSL
-        )
-        cursor = conn.cursor()
+        # Check binary format capability
+        if self.binary_format and HAS_PSYCOPG2 and not HAS_PSYCOPG3:
+            print(f"{Fore.RED}Warning: psycopg2 doesn't support binary format. Falling back to text format.{Style.RESET_ALL}")
+            self.binary_format = False
+        
+        # Determine which library to use
+        use_psycopg3 = HAS_PSYCOPG3 and self.binary_format  # Only use psycopg3 for binary format
+        if not self.binary_format and HAS_PSYCOPG2:
+            # Force psycopg2 for text format to avoid psycopg3 binary parameter issues
+            use_psycopg3 = False
+            print(f"{Fore.YELLOW}Forcing psycopg2 for text format to avoid psycopg3 binary parameter issues{Style.RESET_ALL}")
+        
+        # Connect using appropriate PostgreSQL client
+        if use_psycopg3:
+            print(f"{Fore.CYAN}Using psycopg3{Style.RESET_ALL}")
+            conn = psycopg.connect(
+                host=self.pg_host,
+                port=self.pg_port,
+                dbname=self.pg_dbname,
+                user="dummy",  # pgsqlite doesn't use auth
+                password="dummy",
+                sslmode="disable"  # pgsqlite doesn't support SSL
+            )
+            # Use autocommit for binary format to avoid protocol state issues
+            if self.binary_format:
+                conn.autocommit = True
+                print(f"{Fore.CYAN}Using autocommit mode for binary format{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.CYAN}Using psycopg2{Style.RESET_ALL}")
+            conn = psycopg2.connect(
+                host=self.pg_host,
+                port=self.pg_port,
+                dbname=self.pg_dbname,
+                user="dummy",  # pgsqlite doesn't use auth
+                password="dummy",
+                sslmode="disable"  # pgsqlite doesn't support SSL
+            )
+        
+        # Create cursor with binary format if requested
+        if self.binary_format:
+            if use_psycopg3:
+                cursor = conn.cursor(binary=True)
+                print(f"{Fore.CYAN}Using PostgreSQL binary wire format{Style.RESET_ALL}")
+            else:
+                # This shouldn't happen due to the check above, but just in case
+                cursor = conn.cursor()
+                print(f"{Fore.YELLOW}Binary format not supported with psycopg2, using text format{Style.RESET_ALL}")
+        else:
+            # Text format - just use regular cursor
+            cursor = conn.cursor()
+            print(f"{Fore.CYAN}Using PostgreSQL text wire format{Style.RESET_ALL}")
         
         # CREATE TABLE
         elapsed, _ = self.measure_time(
@@ -209,7 +270,8 @@ class BenchmarkRunner:
             )"""
         )
         self.pgsqlite_times["CREATE"].append(elapsed)
-        conn.commit()
+        if not (self.binary_format and use_psycopg3):
+            conn.commit()
         
         # Mixed operations with timing
         data_ids = []
@@ -251,7 +313,7 @@ class BenchmarkRunner:
                 data_ids.remove(id_to_delete)
                 
             elif operation == "SELECT" and data_ids:
-                # SELECT
+                # SELECT - with autocommit, no need for fresh cursors
                 elapsed, _ = self.measure_time(
                     cursor.execute,
                     "SELECT * FROM benchmark_table_pg WHERE int_col > %s",
@@ -260,11 +322,12 @@ class BenchmarkRunner:
                 cursor.fetchall()  # Ensure we fetch results
                 self.pgsqlite_times["SELECT"].append(elapsed)
             
-            # Commit periodically
-            if i % self.batch_size == 0:
+            # Commit periodically (only if not in autocommit mode)
+            if i % self.batch_size == 0 and not (self.binary_format and use_psycopg3):
                 conn.commit()
         
-        conn.commit()
+        if not (self.binary_format and use_psycopg3):
+            conn.commit()
         
         # Run cached query benchmarks
         print(f"{Fore.CYAN}Running pgsqlite cached query benchmarks...{Style.RESET_ALL}")
@@ -328,6 +391,12 @@ class BenchmarkRunner:
                 print(f"{Fore.YELLOW}Connection: Unix Socket{Style.RESET_ALL}")
             else:
                 print(f"{Fore.YELLOW}Connection: TCP{Style.RESET_ALL}")
+            
+            # Show wire format mode
+            if self.binary_format:
+                print(f"{Fore.YELLOW}Wire Format: Binary{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.YELLOW}Wire Format: Text{Style.RESET_ALL}")
             
         # Show database mode
         if self.in_memory:
@@ -491,6 +560,8 @@ def main():
                         help="Run only SQLite benchmarks")
     parser.add_argument("--pgsqlite-only", action="store_true",
                         help="Run only pgSQLite benchmarks")
+    parser.add_argument("--binary-format", action="store_true",
+                        help="Use PostgreSQL binary wire format instead of text format for query results (only affects pgsqlite benchmarks, may reduce serialization overhead)")
     
     args = parser.parse_args()
     
@@ -498,12 +569,17 @@ def main():
     if args.sqlite_only and args.pgsqlite_only:
         parser.error("Cannot specify both --sqlite-only and --pgsqlite-only")
     
+    # Validate binary format option
+    if args.binary_format and args.sqlite_only:
+        parser.error("--binary-format can only be used with pgsqlite benchmarks (not with --sqlite-only)")
+    
     # Default to in-memory mode unless --file-based is specified
     in_memory = not args.file_based
     
     runner = BenchmarkRunner(iterations=args.iterations, batch_size=args.batch_size, 
                            in_memory=in_memory, port=args.port, socket_dir=args.socket_dir,
-                           sqlite_only=args.sqlite_only, pgsqlite_only=args.pgsqlite_only)
+                           sqlite_only=args.sqlite_only, pgsqlite_only=args.pgsqlite_only,
+                           binary_format=args.binary_format)
     runner.run()
 
 if __name__ == "__main__":

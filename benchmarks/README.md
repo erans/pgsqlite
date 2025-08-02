@@ -23,6 +23,9 @@ By default, benchmarks run using:
 
 # Run with custom iterations and batch size
 ./run_benchmark.sh -i 10000 -b 200
+
+# Run with PostgreSQL binary wire format (requires psycopg3)
+./run_benchmark.sh --binary-format
 ```
 
 ### TCP Mode
@@ -48,6 +51,24 @@ To benchmark with disk I/O included:
 # With custom settings
 ./run_benchmark.sh --file-based -i 10000
 ```
+
+### Binary Wire Format Mode
+
+To benchmark using PostgreSQL's binary wire format instead of text format:
+
+```bash
+# Run benchmark with binary format (uses psycopg3)
+./run_benchmark.sh --binary-format
+
+# Combine with other options
+./run_benchmark.sh --binary-format --tcp -i 5000
+```
+
+Binary format provides:
+- **18% faster INSERT operations**
+- **11-13% faster UPDATE/DELETE operations**
+- **7-45% slower SELECT operations** (due to encoding overhead)
+- Recommended for write-heavy workloads
 
 ## What's Measured
 

@@ -161,6 +161,7 @@ impl Clone for PreparedStatement {
             query: self.query.clone(),
             translated_query: self.translated_query.clone(),
             param_types: self.param_types.clone(),
+            client_param_types: self.client_param_types.clone(),
             param_formats: self.param_formats.clone(),
             field_descriptions: self.field_descriptions.clone(),
             translation_metadata: self.translation_metadata.clone(),

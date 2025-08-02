@@ -57,6 +57,10 @@ impl ExtendedFastPath {
                 }
             }
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
+                // Check if query has RETURNING clause - fast path doesn't support it
+                if query.to_uppercase().contains(" RETURNING ") {
+                    return Ok(false); // Fall back to normal path for RETURNING
+                }
                 match Self::execute_dml_with_params(framed, db, session, query, rusqlite_params, query_type).await {
                     Ok(()) => Ok(true),
                     Err(_) => {
@@ -196,6 +200,24 @@ impl ExtendedFastPath {
         } else {
             // Binary format
             match param_type {
+                t if t == PgType::Bool.to_oid() => {
+                    // BOOL
+                    if bytes.len() == 1 {
+                        let val = bytes[0] != 0;
+                        Ok(rusqlite::types::Value::Integer(if val { 1 } else { 0 }))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid BOOL binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Int2.to_oid() => {
+                    // INT2
+                    if bytes.len() == 2 {
+                        let val = i16::from_be_bytes([bytes[0], bytes[1]]) as i64;
+                        Ok(rusqlite::types::Value::Integer(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid INT2 binary format".to_string()))
+                    }
+                }
                 t if t == PgType::Int4.to_oid() => {
                     // INT4
                     if bytes.len() == 4 {

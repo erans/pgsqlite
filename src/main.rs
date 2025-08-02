@@ -466,6 +466,8 @@ where
                 values,
                 result_formats,
             } => {
+                info!("Received Bind from {}: portal={}, statement={}, result_formats={:?}", 
+                     connection_info, portal, statement, result_formats);
                 match ExtendedQueryHandler::handle_bind(
                     &mut framed,
                     &session,
@@ -523,6 +525,7 @@ where
                 }
             }
             FrontendMessage::Describe { typ, name } => {
+                info!("Received Describe from {}: type={:02x}, name={}", connection_info, typ, name);
                 match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await
                 {
                     Ok(()) => {}
