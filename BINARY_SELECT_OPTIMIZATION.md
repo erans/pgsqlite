@@ -1,10 +1,13 @@
-# Binary Format SELECT Performance Optimization Plan
+# Binary Format Performance Analysis
 
-## Performance Issue - RESOLVED ✅
-- SELECT: Now 10.5% FASTER with binary (1.198ms → 1.072ms) 🎉
-- SELECT (cached): Still 2.3x slower with binary (needs Phase 2)
+## Current Status (2025-08-02)
+- SELECT: 10.5% FASTER with binary format ✅
+- SELECT (cached): 2.3x slower (needs binary result caching)
+- INSERT: 8.7x SLOWER ❌ (regression under investigation)
+- UPDATE: 1.9x SLOWER ❌ (regression under investigation)  
+- DELETE: 3.4x SLOWER ❌ (regression under investigation)
 
-Phase 1 optimization successfully improved SELECT performance!
+Phase 1 optimization successfully improved SELECT performance, but DML operations have significant regressions.
 
 ## Root Cause Analysis
 
@@ -87,6 +90,15 @@ Create specific benchmarks to measure:
 ## Expected Results
 
 With all optimizations:
-- Non-cached SELECT: From 7.5% slower to 5-10% faster than text
-- Cached SELECT: From 44.6% slower to 20-30% faster than text
-- Binary format becomes superior for both read and write operations
+- Non-cached SELECT: From 7.5% slower to 5-10% faster than text ✅ ACHIEVED
+- Cached SELECT: From 44.6% slower to 20-30% faster than text (pending Phase 2)
+- DML operations: Need investigation to fix regressions and achieve parity with text format
+
+## DML Performance Regression Analysis
+
+The DML operations (INSERT/UPDATE/DELETE) are significantly slower with binary format. Potential causes:
+
+1. **Binary Parameter Decoding Overhead**: Converting binary parameters to text for SQLite
+2. **No Fast Path for DML**: DML operations don't use the optimized fast path
+3. **Double Encoding**: RETURNING clauses may cause values to be encoded twice
+4. **Extended Protocol Overhead**: Additional round trips for Parse/Bind/Execute

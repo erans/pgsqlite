@@ -72,8 +72,8 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Added datetime translation support to LazyQueryProcessor
   - [x] AT TIME ZONE operator now properly handles float return values
 
-### PostgreSQL Binary Wire Protocol Format - COMPLETED (2025-08-02)
-- [x] **Implement Full Binary Format Support** - Now faster for all operations
+### PostgreSQL Binary Wire Protocol Format - PARTIALLY COMPLETED (2025-08-02)
+- [x] **Implement Full Binary Format Support** - Functionally complete
   - [x] Binary encoding/decoding for all major PostgreSQL types
   - [x] Support for binary parameters (input) and binary results (output)
   - [x] Fixed field description format codes to respect portal result formats
@@ -87,23 +87,45 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Respect client-provided types (INT2, FLOAT8) instead of overriding with schema types
   - [x] Fixed double execution issue with INSERT...RETURNING statements
   - [x] Added binary encoding in fast path for DataRow messages
+  - [x] Fixed field type detection in fast path (use statement types instead of inferring)
 - [x] **Binary Format SELECT Optimization** - Zero-copy encoding implementation
   - [x] Implemented BinaryResultEncoder with pre-allocated BytesMut buffers
   - [x] Fixed type detection for REAL columns (FLOAT8 instead of NUMERIC)
   - [x] Fixed binary format detection for single-format result requests
-  - [x] SELECT operations: Now 10.5% faster with binary (1.198ms → 1.072ms) 🎉
+  - [x] Fixed fast path to use INT4 instead of INT8 for integer type inference
+  - [x] SELECT operations: Now 10.5% faster with binary format ✅
   - [x] Binary encoding overhead reduced through batch processing
-- [x] **Performance Results** - Binary format now faster for all operations
-  - [x] INSERT operations: 18.2% faster with binary (0.100ms → 0.871ms text mode)
-  - [x] UPDATE operations: 11.5% faster with binary (0.109ms → 0.211ms text mode)
-  - [x] DELETE operations: 12.9% faster with binary (0.053ms → 0.182ms text mode)
-  - [x] SELECT operations: 10.5% faster with binary (1.198ms → 1.072ms)
+- [ ] **Performance Issues** - DML operations have significant regressions
+  - [ ] INSERT operations: 8.7x SLOWER with binary (0.100ms → 0.871ms)
+  - [ ] UPDATE operations: 1.9x SLOWER with binary (0.109ms → 0.211ms)
+  - [ ] DELETE operations: 3.4x SLOWER with binary (0.053ms → 0.182ms)
+  - [x] SELECT operations: 10.5% faster with binary (1.198ms → 1.072ms) ✅
+  - [ ] SELECT (cached): 2.3x slower - needs binary result caching
   - [x] SELECT (cached): Still 2.3x slower - needs binary result caching
   - [x] Binary format recommended for all workloads except cached queries
 - [x] **Benchmark Support** - Added --binary-format flag to benchmark runner
   - [x] Automatic psycopg3 selection for binary format testing
   - [x] Autocommit mode enabled for binary cursors
   - [x] Comprehensive comparison between text and binary formats
+
+### Binary Format DML Performance Investigation - IN PROGRESS (2025-08-02)
+- [ ] **Investigate DML Operation Performance Regressions** - Binary format slower for INSERT/UPDATE/DELETE
+  - [ ] Profile binary parameter decoding overhead in handle_bind
+    - [ ] Measure time spent converting binary to text for SQLite
+    - [ ] Identify if binary-to-text conversion is the bottleneck
+    - [ ] Consider caching decoded parameters for repeated statements
+  - [ ] Analyze why DML operations don't use fast path
+    - [ ] Check if INSERT/UPDATE/DELETE can use optimized paths
+    - [ ] Investigate if RETURNING clauses cause double encoding
+    - [ ] Profile extended_fast_path execution for DML operations
+  - [ ] Optimize binary parameter handling
+    - [ ] Consider direct binary-to-SQLite value conversion
+    - [ ] Reduce allocations in parameter decoding
+    - [ ] Batch parameter decoding where possible
+- [ ] **Implement Binary Result Caching** - Fix cached SELECT performance
+  - [ ] Cache encoded binary results alongside text results
+  - [ ] Skip re-encoding for cached binary queries
+  - [ ] Measure performance improvement for cached queries
 
 ### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
 - [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()

@@ -1057,7 +1057,7 @@ impl ExtendedQueryHandler {
                                                     } else if let Ok(_) = s.parse::<i64>() {
                                                         // Integer without decimal point
                                                         if !s.contains('.') {
-                                                            PgType::Int8.to_oid()
+                                                            PgType::Int4.to_oid()  // Use INT4 instead of INT8 for compatibility
                                                         } else {
                                                             // Should not happen - i64 parse would fail
                                                             PgType::Float8.to_oid()
@@ -1106,49 +1106,110 @@ impl ExtendedQueryHandler {
                         // If binary format is requested, we need to encode the rows
                         if result_formats.iter().any(|&f| f == 1) {
                             info!("Fast path: Binary format requested, using optimized encoding");
-                            // Get field types from the response data
-                            let field_types: Vec<i32> = response.columns.iter()
-                                .enumerate()
-                                .map(|(i, name)| {
-                                    // Try to infer type from data (same logic as RowDescription)
-                                    if !response.rows.is_empty() {
-                                        if let Some(value) = response.rows[0].get(i) {
-                                            if let Some(bytes) = value {
-                                                if let Ok(s) = std::str::from_utf8(bytes) {
-                                                    // Check aggregate functions
-                                                    let col_lower = name.to_lowercase();
-                                                    if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
-                                                        oid
-                                                    } else if s == "t" || s == "f" || s == "true" || s == "false" {
-                                                        PgType::Bool.to_oid()
-                                                    } else if let Ok(_) = s.parse::<i64>() {
-                                                        // Integer without decimal point
-                                                        if !s.contains('.') {
-                                                            PgType::Int8.to_oid()
+                            
+                            // Get field types from the statement's field descriptions if available
+                            let field_types: Vec<i32> = {
+                                let statements = session.prepared_statements.read().await;
+                                if let Some(stmt) = statements.get(&statement_name) {
+                                    if !stmt.field_descriptions.is_empty() {
+                                        // Use the field types from the statement's field descriptions
+                                        info!("Fast path: Using field types from statement field descriptions");
+                                        stmt.field_descriptions.iter()
+                                            .map(|field| field.type_oid)
+                                            .collect()
+                                    } else {
+                                        // Fall back to inferring from data
+                                        info!("Fast path: No field descriptions, inferring types from data");
+                                        response.columns.iter()
+                                            .enumerate()
+                                            .map(|(i, name)| {
+                                                // Try to infer type from data (same logic as RowDescription)
+                                                if !response.rows.is_empty() {
+                                                    if let Some(value) = response.rows[0].get(i) {
+                                                        if let Some(bytes) = value {
+                                                            if let Ok(s) = std::str::from_utf8(bytes) {
+                                                                // Check aggregate functions
+                                                                let col_lower = name.to_lowercase();
+                                                                if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                                                                    oid
+                                                                } else if s == "t" || s == "f" || s == "true" || s == "false" {
+                                                                    PgType::Bool.to_oid()
+                                                                } else if let Ok(_) = s.parse::<i64>() {
+                                                                    // Integer without decimal point
+                                                                    if !s.contains('.') {
+                                                                        PgType::Int4.to_oid()  // Use INT4 instead of INT8 for compatibility
+                                                                    } else {
+                                                                        // Should not happen - i64 parse would fail
+                                                                        PgType::Float8.to_oid()
+                                                                    }
+                                                                } else if let Ok(_) = s.parse::<f64>() {
+                                                                    // It's a float - use FLOAT8 for compatibility
+                                                                    PgType::Float8.to_oid()
+                                                                } else {
+                                                                    PgType::Text.to_oid()
+                                                                }
+                                                            } else {
+                                                                PgType::Bytea.to_oid()
+                                                            }
                                                         } else {
-                                                            // Should not happen - i64 parse would fail
-                                                            PgType::Float8.to_oid()
+                                                            PgType::Text.to_oid()
                                                         }
-                                                    } else if let Ok(_) = s.parse::<f64>() {
-                                                        // It's a float - use FLOAT8 for compatibility
-                                                        PgType::Float8.to_oid()
                                                     } else {
                                                         PgType::Text.to_oid()
                                                     }
                                                 } else {
-                                                    PgType::Bytea.to_oid()
+                                                    PgType::Text.to_oid()
+                                                }
+                                            })
+                                            .collect()
+                                    }
+                                } else {
+                                    // No statement found, fall back to inferring
+                                    info!("Fast path: No statement found, inferring types from data");
+                                    response.columns.iter()
+                                        .enumerate()
+                                        .map(|(i, name)| {
+                                            // Try to infer type from data (same logic as RowDescription)
+                                            if !response.rows.is_empty() {
+                                                if let Some(value) = response.rows[0].get(i) {
+                                                    if let Some(bytes) = value {
+                                                        if let Ok(s) = std::str::from_utf8(bytes) {
+                                                            // Check aggregate functions
+                                                            let col_lower = name.to_lowercase();
+                                                            if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                                                                oid
+                                                            } else if s == "t" || s == "f" || s == "true" || s == "false" {
+                                                                PgType::Bool.to_oid()
+                                                            } else if let Ok(_) = s.parse::<i64>() {
+                                                                // Integer without decimal point
+                                                                if !s.contains('.') {
+                                                                    PgType::Int4.to_oid()  // Use INT4 instead of INT8 for compatibility
+                                                                } else {
+                                                                    // Should not happen - i64 parse would fail
+                                                                    PgType::Float8.to_oid()
+                                                                }
+                                                            } else if let Ok(_) = s.parse::<f64>() {
+                                                                // It's a float - use FLOAT8 for compatibility
+                                                                PgType::Float8.to_oid()
+                                                            } else {
+                                                                PgType::Text.to_oid()
+                                                            }
+                                                        } else {
+                                                            PgType::Bytea.to_oid()
+                                                        }
+                                                    } else {
+                                                        PgType::Text.to_oid()
+                                                    }
+                                                } else {
+                                                    PgType::Text.to_oid()
                                                 }
                                             } else {
                                                 PgType::Text.to_oid()
                                             }
-                                        } else {
-                                            PgType::Text.to_oid()
-                                        }
-                                    } else {
-                                        PgType::Text.to_oid()
-                                    }
-                                })
-                                .collect();
+                                        })
+                                        .collect()
+                                }
+                            };
                             info!("Fast path: Field types: {:?}", field_types);
                             
                             // Use optimized batch encoder

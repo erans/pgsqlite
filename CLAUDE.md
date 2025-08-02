@@ -89,10 +89,13 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 2. **Enable Connection Pooling** with `PGSQLITE_USE_POOLING=true`
 3. **Batch operations** provide 10x-50x speedup for bulk operations
 4. **Cached queries** show dramatic improvement (up to 40x faster)
-5. **Use Binary Format** for 10-18% performance improvement (psycopg3 only)
-   - SELECT: 10.5% faster with binary format
-   - INSERT/UPDATE/DELETE: 11-18% faster with binary format
+5. **Binary Format** - Mixed results, only beneficial for SELECT operations
+   - SELECT: 10.5% faster with binary format ✅
+   - INSERT: 8.7x SLOWER (regression under investigation)
+   - UPDATE: 1.9x SLOWER (regression under investigation)
+   - DELETE: 3.4x SLOWER (regression under investigation)
    - Requires psycopg3 with `cursor(binary=True)`
+   - Currently only recommended for read-heavy workloads
 
 ### Optimized Configuration
 ```bash
@@ -166,7 +169,8 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - Preserved client parameter types (INT2, FLOAT8) for proper binary decoding
   - Fixed double execution bug with INSERT...RETURNING statements
   - Added binary encoding in fast path for DataRow messages
-  - Performance: 11-18% faster for DML operations, 7-45% slower for SELECT
+  - Fixed field type detection in fast path (INT4 instead of INT8)
+  - Performance: SELECT 10.5% faster, but DML operations have regressions
 
 ### Recently Fixed (2025-08-01)
 - **SQLAlchemy MAX/MIN Aggregate Types**: Fixed "Unknown PG numeric type: 25" error
@@ -205,9 +209,10 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ### Major Features
 - **Binary Wire Protocol**: Full support for PostgreSQL binary format (psycopg3 compatible)
-  - 11-18% faster write operations (INSERT/UPDATE/DELETE)
-  - Use with psycopg3's `cursor(binary=True)` for write-heavy workloads
-  - Benchmark with `./benchmarks/run_benchmark.sh --binary-format`
+  - SELECT operations 10.5% faster with binary format
+  - DML operations currently have performance regressions (under investigation)
+  - Use with psycopg3's `cursor(binary=True)` for read-heavy workloads only
+  - Benchmark with `python benchmarks/benchmark.py --binary-format`
 - **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
 - **40+ PostgreSQL Types**: Including arrays, JSON/JSONB, ENUMs
