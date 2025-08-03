@@ -108,24 +108,32 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Autocommit mode enabled for binary cursors
   - [x] Comprehensive comparison between text and binary formats
 
-### Binary Format DML Performance Investigation - IN PROGRESS (2025-08-02)
-- [ ] **Investigate DML Operation Performance Regressions** - Binary format slower for INSERT/UPDATE/DELETE
-  - [ ] Profile binary parameter decoding overhead in handle_bind
-    - [ ] Measure time spent converting binary to text for SQLite
-    - [ ] Identify if binary-to-text conversion is the bottleneck
-    - [ ] Consider caching decoded parameters for repeated statements
-  - [ ] Analyze why DML operations don't use fast path
-    - [ ] Check if INSERT/UPDATE/DELETE can use optimized paths
-    - [ ] Investigate if RETURNING clauses cause double encoding
-    - [ ] Profile extended_fast_path execution for DML operations
-  - [ ] Optimize binary parameter handling
-    - [ ] Consider direct binary-to-SQLite value conversion
-    - [ ] Reduce allocations in parameter decoding
-    - [ ] Batch parameter decoding where possible
-- [ ] **Implement Binary Result Caching** - Fix cached SELECT performance
-  - [ ] Cache encoded binary results alongside text results
-  - [ ] Skip re-encoding for cached binary queries
-  - [ ] Measure performance improvement for cached queries
+### Binary Format DML Performance Investigation - IN PROGRESS (2025-08-03)
+- [ ] **Critical Performance Regression** - Binary format 2.9x slower than text format overall
+  - [ ] **Latest Benchmark Results** (Unix Socket Performance):
+    - [ ] INSERT: 12.7x slower with binary (0.070ms → 0.870ms)
+    - [ ] UPDATE: 3.0x slower with binary (0.075ms → 0.218ms)
+    - [ ] DELETE: 6.2x slower with binary (0.040ms → 0.200ms)
+    - [ ] SELECT: 1.8x slower with binary (0.699ms → 1.189ms)
+    - [ ] SELECT (cached): 10.8x slower with binary (0.085ms → 0.778ms)
+  - [ ] **Root Cause Analysis Required**:
+    - [ ] Profile binary parameter decoding overhead in handle_bind
+    - [ ] Investigate why fast path doesn't work effectively for binary format
+    - [ ] Check if binary-to-text conversion for SQLite is the bottleneck
+    - [ ] Analyze memory allocations in binary encoding/decoding paths
+  - [ ] **Immediate Actions**:
+    - [ ] Add performance profiling to binary parameter handling
+    - [ ] Trace fast path execution for binary vs text formats
+    - [ ] Identify where the 800ms overhead comes from in INSERT operations
+- [ ] **Server Hanging Issue** - Fixed temporarily, needs proper solution
+  - [x] Temporary fix: Commented out session.cleanup_connection().await
+  - [ ] Root cause: cleanup_connection hanging, likely due to missing remove_session_connection
+  - [ ] Implement proper connection cleanup without hanging
+- [ ] **Optimize Binary Format Implementation**
+  - [ ] Fix DML operation performance regressions
+  - [ ] Implement binary result caching for cached queries
+  - [ ] Consider direct binary-to-SQLite value conversion
+  - [ ] Reduce allocations in parameter decoding
 
 ### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
 - [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()

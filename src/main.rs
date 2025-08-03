@@ -166,16 +166,19 @@ async fn main() -> Result<()> {
     {
         loop {
             let db_handler = db_handler.clone();
+            info!("Main server loop: waiting for connections...");
             
             tokio::select! {
                 // Handle TCP connections
                 result = async {
                     if let Some(ref listener) = tcp_listener {
+                        info!("Waiting for TCP connection...");
                         listener.accept().await
                     } else {
                         std::future::pending::<Result<(tokio::net::TcpStream, std::net::SocketAddr), std::io::Error>>().await
                     }
                 } => {
+                    info!("TCP accept result: {:?}", result.is_ok());
                     if let Ok((stream, addr)) = result {
                         info!("New TCP connection from {}", addr);
                         let db_handler = db_handler.clone();
@@ -190,6 +193,7 @@ async fn main() -> Result<()> {
                 
                 // Handle Unix socket connections
                 result = unix_listener.accept() => {
+                    info!("Unix socket accept result: {:?}", result.is_ok());
                     if let Ok((stream, _addr)) = result {
                         info!("New Unix socket connection");
                         let db_handler = db_handler.clone();
@@ -389,8 +393,12 @@ where
     info!("Sent authentication and ready response to {}", connection_info);
 
     // Main message loop
-    while let Some(msg) = framed.next().await {
-        match msg? {
+    loop {
+        info!("Waiting for next message from {}", connection_info);
+        match framed.next().await {
+            Some(Ok(msg)) => {
+                info!("Received message type from {}: {:?}", connection_info, std::mem::discriminant(&msg));
+                match msg {
             FrontendMessage::Query(sql) => {
                 debug!("Received query from {}: {}", connection_info, sql);
 
@@ -580,24 +588,43 @@ where
                 info!("Client {} requested termination", connection_info);
                 
                 // Clean up any active transaction before closing
-                if session.in_transaction().await {
+                let in_transaction = session.in_transaction().await;
+                info!("Transaction status check: in_transaction={}", in_transaction);
+                if in_transaction {
                     info!("Rolling back active transaction before client disconnect");
-                    if let Err(e) = db_handler.rollback_with_session(&session_id).await {
-                        error!("Failed to rollback transaction on disconnect: {}", e);
+                    match db_handler.rollback_with_session(&session_id).await {
+                        Ok(()) => info!("Transaction rolled back successfully"),
+                        Err(e) => error!("Failed to rollback transaction on disconnect: {}", e),
                     }
+                    info!("Setting transaction status to idle");
                     session.set_transaction_status(TransactionStatus::Idle).await;
+                    info!("Transaction status set to idle");
                 }
+                info!("Breaking from message loop");
                 
                 break;
             }
             other => {
                 info!("Received unhandled message from {}: {:?}", connection_info, other);
             }
+                }
+            }
+            Some(Err(e)) => {
+                error!("Error reading message from {}: {}", connection_info, e);
+                break;
+            }
+            None => {
+                info!("Connection closed by {}", connection_info);
+                break;
+            }
         }
     }
 
     // Clean up session connection explicitly
-    session.cleanup_connection().await;
+    info!("Cleaning up session connection for {}", connection_info);
+    // TODO: Fix cleanup_connection hanging issue
+    // session.cleanup_connection().await;
+    info!("Session connection cleanup skipped (TODO: fix hanging issue)");
     
     info!("Connection from {} closed", connection_info);
     Ok(())
