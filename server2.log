@@ -1,0 +1,219 @@
+[2m2025-08-03T16:51:48.753759Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.13
+[2m2025-08-03T16:51:48.755032Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.5433
+[2m2025-08-03T16:51:48.755059Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 5433
+[2m2025-08-03T16:51:48.755063Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: sqlite.db
+[2m2025-08-03T16:51:48.755065Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-08-03T16:51:48.755084Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Main server loop: waiting for connections...
+[2m2025-08-03T16:51:48.755087Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for TCP connection...
+[2m2025-08-03T16:51:48.756305Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-08-03T16:51:48.756328Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Prepared Statement Cache - Size: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0
+[2m2025-08-03T16:52:07.292591Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP accept result: true
+[2m2025-08-03T16:52:07.292628Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.292660Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Main server loop: waiting for connections...
+[2m2025-08-03T16:52:07.292666Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for TCP connection...
+[2m2025-08-03T16:52:07.292686Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.292717Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:35698 (SSL disabled)
+[2m2025-08-03T16:52:07.292802Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:35698: StartupMessage { protocol_version: 196608, parameters: {"database": "main", "user": "postgres"} }
+[2m2025-08-03T16:52:07.293982Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session b20e0436-67fa-4bb2-9261-38905db807ba (total connections: 1)
+[2m2025-08-03T16:52:07.294082Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:35698
+[2m2025-08-03T16:52:07.294089Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.294181Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(2)
+[2m2025-08-03T16:52:07.298928Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.299022Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(3)
+[2m2025-08-03T16:52:07.299031Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Parse from 127.0.0.1:35698: query=SELECT $1::INTEGER, name=
+[2m2025-08-03T16:52:07.299067Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: [21]
+[2m2025-08-03T16:52:07.299076Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Query needs cast translation: SELECT $1::INTEGER
+[2m2025-08-03T16:52:07.299212Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Cast translated to: SELECT CAST($1 AS INTEGER)
+[2m2025-08-03T16:52:07.301638Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT CAST($1 AS INTEGER)
+[2m2025-08-03T16:52:07.301661Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-03T16:52:07.301950Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT CAST($1 AS INTEGER)' for field descriptions
+[2m2025-08-03T16:52:07.301964Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT $1::INTEGER
+[2m2025-08-03T16:52:07.301970Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: true
+[2m2025-08-03T16:52:07.302006Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {0: "integer"}
+[2m2025-08-03T16:52:07.302739Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 1 columns: ["CAST(NULL AS INTEGER)"]
+[2m2025-08-03T16:52:07.302753Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT $1::INTEGER'
+[2m2025-08-03T16:52:07.302758Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: No FROM clause found
+[2m2025-08-03T16:52:07.302762Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Extracted table name from query 'SELECT $1::INTEGER': None
+[2m2025-08-03T16:52:07.302767Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 1 field descriptions from query with inferred types
+[2m2025-08-03T16:52:07.302785Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [21]
+[2m2025-08-03T16:52:07.302822Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.302828Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(4)
+[2m2025-08-03T16:52:07.302833Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Bind from 127.0.0.1:35698: portal=, statement=, result_formats=[0]
+[2m2025-08-03T16:52:07.302838Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: 2 bytes, expected type OID 21, format 1 (binary)
+[2m2025-08-03T16:52:07.302843Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 00 01
+[2m2025-08-03T16:52:07.302847Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Bind portal '': result_formats = [0]
+[2m2025-08-03T16:52:07.302866Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.302870Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(9)
+[2m2025-08-03T16:52:07.302874Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Describe from 127.0.0.1:35698: type=50, name=
+[2m2025-08-03T16:52:07.302884Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing portal '<unnamed>' (type byte: 50)
+[2m2025-08-03T16:52:07.302889Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: original fields: [FieldDescription { name: "CAST(NULL AS INTEGER)", table_oid: 0, column_id: 1, type_oid: 23, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-03T16:52:07.302895Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Updated field 'CAST(NULL AS INTEGER)' format to 0 (portal result_formats: [0])
+[2m2025-08-03T16:52:07.302899Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: sending updated fields: [FieldDescription { name: "CAST(NULL AS INTEGER)", table_oid: 0, column_id: 1, type_oid: 23, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-03T16:52:07.302914Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.302918Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(5)
+[2m2025-08-03T16:52:07.302922Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Execute from 127.0.0.1:35698: portal=, max_rows=0
+[2m2025-08-03T16:52:07.302932Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: Executing portal '' with max_rows: 0
+[2m2025-08-03T16:52:07.302936Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Portal '' has statement_name=''
+[2m2025-08-03T16:52:07.302940Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: query='SELECT $1::INTEGER', result_formats=[0]
+[2m2025-08-03T16:52:07.302945Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path conditions met: false (query type: SELECT)
+[2m2025-08-03T16:52:07.302957Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m After fast path block, continuing execution
+[2m2025-08-03T16:52:07.302961Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Checking extended fast path for parameterized query
+[2m2025-08-03T16:52:07.309852Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Using translated query: 'SELECT CAST($1 AS INTEGER)' (original: 'SELECT $1::INTEGER')
+[2m2025-08-03T16:52:07.309866Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query 'SELECT $1::INTEGER' has 1 bound values, contains '$': true
+[2m2025-08-03T16:52:07.309871Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Query to use: 'SELECT CAST($1 AS INTEGER)'
+[2m2025-08-03T16:52:07.309875Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m USING PARAMETERIZED PATH for query: SELECT $1::INTEGER (translated: SELECT CAST($1 AS INTEGER))
+[2m2025-08-03T16:52:07.309879Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parameter 0: 2 bytes, format=1, type=21
+[2m2025-08-03T16:52:07.309888Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Converted parameter 0 to: Integer(1)
+[2m2025-08-03T16:52:07.309910Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Non-fast path SELECT: checking statement_name=''
+[2m2025-08-03T16:52:07.309915Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Non-fast path SELECT: field_descriptions.is_empty()=false, send_row_desc=false
+[2m2025-08-03T16:52:07.309918Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m SELECT: Not sending RowDescription (already sent during Describe)
+[2m2025-08-03T16:52:07.309922Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m send_data_rows_only: Sending 1 data rows without RowDescription
+[2m2025-08-03T16:52:07.309957Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.309962Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(6)
+[2m2025-08-03T16:52:07.309975Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:35698
+[2m2025-08-03T16:52:07.310042Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:35698: Discriminant(7)
+[2m2025-08-03T16:52:07.310049Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:35698 requested termination
+[2m2025-08-03T16:52:07.310053Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Transaction status check: in_transaction=true
+[2m2025-08-03T16:52:07.310056Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rolling back active transaction before client disconnect
+[2m2025-08-03T16:52:07.310068Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Transaction rolled back successfully
+[2m2025-08-03T16:52:07.310072Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Setting transaction status to idle
+[2m2025-08-03T16:52:07.310075Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Transaction status set to idle
+[2m2025-08-03T16:52:07.310079Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Breaking from message loop
+[2m2025-08-03T16:52:07.310082Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Cleaning up session connection for 127.0.0.1:35698
+[2m2025-08-03T16:52:07.310087Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Removed connection for session b20e0436-67fa-4bb2-9261-38905db807ba (remaining connections: 0)
+[2m2025-08-03T16:52:07.310090Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:35698 closed
+[2m2025-08-03T16:52:13.899389Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP accept result: true
+[2m2025-08-03T16:52:13.899420Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.899439Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Main server loop: waiting for connections...
+[2m2025-08-03T16:52:13.899445Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for TCP connection...
+[2m2025-08-03T16:52:13.899465Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.899503Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:34430 (SSL disabled)
+[2m2025-08-03T16:52:13.899546Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:34430: StartupMessage { protocol_version: 196608, parameters: {"user": "postgres", "database": "main"} }
+[2m2025-08-03T16:52:13.900434Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session 607430ea-5c51-43ed-8a08-6a62f8376807 (total connections: 1)
+[2m2025-08-03T16:52:13.900523Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:34430
+[2m2025-08-03T16:52:13.900528Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.900624Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(2)
+[2m2025-08-03T16:52:13.900662Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.900704Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(2)
+[2m2025-08-03T16:52:13.902303Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: test_varchar
+[2m2025-08-03T16:52:13.905905Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: test_varchar
+[2m2025-08-03T16:52:13.905945Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.906016Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(2)
+[2m2025-08-03T16:52:13.906124Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.906211Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(3)
+[2m2025-08-03T16:52:13.906215Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Parse from 127.0.0.1:34430: query=SELECT * FROM test_varchar WHERE name = $1, name=
+[2m2025-08-03T16:52:13.906223Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: [0]
+[2m2025-08-03T16:52:13.906313Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT * FROM test_varchar WHERE name = $1
+[2m2025-08-03T16:52:13.906320Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-03T16:52:13.908191Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found 0 arithmetic type hints
+[2m2025-08-03T16:52:13.908201Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT * FROM test_varchar WHERE name = $1' for field descriptions
+[2m2025-08-03T16:52:13.908204Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT * FROM test_varchar WHERE name = $1
+[2m2025-08-03T16:52:13.908207Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-03T16:52:13.908214Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {}
+[2m2025-08-03T16:52:13.908504Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 1 columns: ["name"]
+[2m2025-08-03T16:52:13.908511Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT * FROM test_varchar WHERE name = $1'
+[2m2025-08-03T16:52:13.908515Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Found FROM at position 8
+[2m2025-08-03T16:52:13.908517Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Extracted table name: 'test_varchar'
+[2m2025-08-03T16:52:13.908528Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Extracted table name from query 'SELECT * FROM test_varchar WHERE name = $1': Some("test_varchar")
+[2m2025-08-03T16:52:13.908531Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Looking up schema types for table 'test_varchar' with columns: ["name"]
+[2m2025-08-03T16:52:13.908549Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found schema type for test_varchar.name: VARCHAR(50)
+[2m2025-08-03T16:52:13.908554Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'name'
+[2m2025-08-03T16:52:13.908558Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 1 field descriptions from query with inferred types
+[2m2025-08-03T16:52:13.908572Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [0]
+[2m2025-08-03T16:52:13.908594Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.908598Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(4)
+[2m2025-08-03T16:52:13.908602Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Bind from 127.0.0.1:34430: portal=, statement=, result_formats=[0]
+[2m2025-08-03T16:52:13.908607Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: inferred type OID 25 from value (format=0)
+[2m2025-08-03T16:52:13.908610Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: 4 bytes, expected type OID 0, format 0 (text)
+[2m2025-08-03T16:52:13.908620Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 74 65 73 74
+[2m2025-08-03T16:52:13.908626Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     As string: "test"
+[2m2025-08-03T16:52:13.908631Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Bind portal '': result_formats = [0]
+[2m2025-08-03T16:52:13.908652Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.908656Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(9)
+[2m2025-08-03T16:52:13.908659Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Describe from 127.0.0.1:34430: type=50, name=
+[2m2025-08-03T16:52:13.908662Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing portal '<unnamed>' (type byte: 50)
+[2m2025-08-03T16:52:13.908666Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: original fields: [FieldDescription { name: "name", table_oid: 0, column_id: 1, type_oid: 1043, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-03T16:52:13.908670Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Updated field 'name' format to 0 (portal result_formats: [0])
+[2m2025-08-03T16:52:13.908674Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: inferred types available: [25]
+[2m2025-08-03T16:52:13.908676Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: field count: 1
+[2m2025-08-03T16:52:13.908679Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: sending updated fields: [FieldDescription { name: "name", table_oid: 0, column_id: 1, type_oid: 1043, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-03T16:52:13.908691Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.908694Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(5)
+[2m2025-08-03T16:52:13.908696Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Execute from 127.0.0.1:34430: portal=, max_rows=0
+[2m2025-08-03T16:52:13.908700Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: Executing portal '' with max_rows: 0
+[2m2025-08-03T16:52:13.908702Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Portal '' has statement_name=''
+[2m2025-08-03T16:52:13.908712Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: query='SELECT * FROM test_varchar WHERE name = $1', result_formats=[0]
+[2m2025-08-03T16:52:13.908715Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path conditions met: true (query type: SELECT)
+[2m2025-08-03T16:52:13.908718Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Using fast path for simple parameterized query: SELECT * FROM test_varchar WHERE name = $1
+[2m2025-08-03T16:52:13.908722Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path: About to call execute_with_rusqlite_params
+[2m2025-08-03T16:52:13.908741Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path: execute_with_rusqlite_params succeeded
+[2m2025-08-03T16:52:13.908745Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path: statement_name=''
+[2m2025-08-03T16:52:13.908748Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path: stmt.field_descriptions.is_empty()=false, send_row_desc=false
+[2m2025-08-03T16:52:13.908751Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path: Not sending RowDescription (send_row_desc=false)
+[2m2025-08-03T16:52:13.908754Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path: About to send 1 data rows
+[2m2025-08-03T16:52:13.908773Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.908776Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(6)
+[2m2025-08-03T16:52:13.908786Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.908880Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(3)
+[2m2025-08-03T16:52:13.908884Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Parse from 127.0.0.1:34430: query=SELECT * FROM test_varchar WHERE name = $1::VARCHAR, name=
+[2m2025-08-03T16:52:13.908890Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: [0]
+[2m2025-08-03T16:52:13.908894Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Query needs cast translation: SELECT * FROM test_varchar WHERE name = $1::VARCHAR
+[2m2025-08-03T16:52:13.908946Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Cast translated to: SELECT * FROM test_varchar WHERE name = CAST($1 AS TEXT)
+[2m2025-08-03T16:52:13.908991Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT * FROM test_varchar WHERE name = CAST($1 AS TEXT)
+[2m2025-08-03T16:52:13.908999Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-03T16:52:13.909146Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found 0 arithmetic type hints
+[2m2025-08-03T16:52:13.909152Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT * FROM test_varchar WHERE name = CAST($1 AS TEXT)' for field descriptions
+[2m2025-08-03T16:52:13.909154Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT * FROM test_varchar WHERE name = $1::VARCHAR
+[2m2025-08-03T16:52:13.909157Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-03T16:52:13.909162Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {}
+[2m2025-08-03T16:52:13.909577Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 1 columns: ["name"]
+[2m2025-08-03T16:52:13.909585Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT * FROM test_varchar WHERE name = $1::VARCHAR'
+[2m2025-08-03T16:52:13.909588Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Found FROM at position 8
+[2m2025-08-03T16:52:13.909597Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Extracted table name: 'test_varchar'
+[2m2025-08-03T16:52:13.909600Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Extracted table name from query 'SELECT * FROM test_varchar WHERE name = $1::VARCHAR': Some("test_varchar")
+[2m2025-08-03T16:52:13.909603Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Looking up schema types for table 'test_varchar' with columns: ["name"]
+[2m2025-08-03T16:52:13.909624Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found schema type for test_varchar.name: VARCHAR(50)
+[2m2025-08-03T16:52:13.909631Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'name'
+[2m2025-08-03T16:52:13.909634Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 1 field descriptions from query with inferred types
+[2m2025-08-03T16:52:13.909647Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [0]
+[2m2025-08-03T16:52:13.909668Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.909672Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(4)
+[2m2025-08-03T16:52:13.909675Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Bind from 127.0.0.1:34430: portal=, statement=, result_formats=[0]
+[2m2025-08-03T16:52:13.909679Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: inferred type OID 25 from value (format=0)
+[2m2025-08-03T16:52:13.909682Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: 4 bytes, expected type OID 0, format 0 (text)
+[2m2025-08-03T16:52:13.909685Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 74 65 73 74
+[2m2025-08-03T16:52:13.909687Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     As string: "test"
+[2m2025-08-03T16:52:13.909691Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Bind portal '': result_formats = [0]
+[2m2025-08-03T16:52:13.909703Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.909707Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(9)
+[2m2025-08-03T16:52:13.909709Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Describe from 127.0.0.1:34430: type=50, name=
+[2m2025-08-03T16:52:13.909712Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing portal '<unnamed>' (type byte: 50)
+[2m2025-08-03T16:52:13.909715Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: original fields: [FieldDescription { name: "name", table_oid: 0, column_id: 1, type_oid: 1043, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-03T16:52:13.909718Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Updated field 'name' format to 0 (portal result_formats: [0])
+[2m2025-08-03T16:52:13.909721Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: inferred types available: [25]
+[2m2025-08-03T16:52:13.909723Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: field count: 1
+[2m2025-08-03T16:52:13.909726Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: sending updated fields: [FieldDescription { name: "name", table_oid: 0, column_id: 1, type_oid: 1043, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-03T16:52:13.909736Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.909739Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(5)
+[2m2025-08-03T16:52:13.909741Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Execute from 127.0.0.1:34430: portal=, max_rows=0
+[2m2025-08-03T16:52:13.909749Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: Executing portal '' with max_rows: 0
+[2m2025-08-03T16:52:13.909752Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Portal '' has statement_name=''
+[2m2025-08-03T16:52:13.909755Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: query='SELECT * FROM test_varchar WHERE name = $1::VARCHAR', result_formats=[0]
+[2m2025-08-03T16:52:13.909758Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path conditions met: false (query type: SELECT)
+[2m2025-08-03T16:52:13.909761Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m After fast path block, continuing execution
+[2m2025-08-03T16:52:13.909764Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Checking extended fast path for parameterized query
+[2m2025-08-03T16:52:13.912486Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Sending RowDescription with 1 fields
+[2m2025-08-03T16:52:13.912529Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.912533Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(6)
+[2m2025-08-03T16:52:13.912546Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Waiting for next message from 127.0.0.1:34430
+[2m2025-08-03T16:52:13.918259Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received message type from 127.0.0.1:34430: Discriminant(7)
+[2m2025-08-03T16:52:13.918284Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:34430 requested termination
+[2m2025-08-03T16:52:13.918289Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Transaction status check: in_transaction=true
+[2m2025-08-03T16:52:13.918292Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rolling back active transaction before client disconnect
+[2m2025-08-03T16:52:13.918375Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Transaction rolled back successfully
+[2m2025-08-03T16:52:13.918378Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Setting transaction status to idle
+[2m2025-08-03T16:52:13.918382Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Transaction status set to idle
+[2m2025-08-03T16:52:13.918384Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Breaking from message loop
+[2m2025-08-03T16:52:13.918387Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Cleaning up session connection for 127.0.0.1:34430
+[2m2025-08-03T16:52:13.918391Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Removed connection for session 607430ea-5c51-43ed-8a08-6a62f8376807 (remaining connections: 0)
+[2m2025-08-03T16:52:13.918395Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:34430 closed

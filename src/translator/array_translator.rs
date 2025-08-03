@@ -135,16 +135,18 @@ impl ArrayTranslator {
         
         let mut result = sql.to_string();
         
-        // Translate ARRAY[...] literals first (most specific)
+        // Translate ANY/ALL operators FIRST (before array literals)
+        // This ensures ANY(ARRAY[...]) patterns are converted to IN(...) before
+        // ARRAY literals are converted to JSON
+        result = Self::translate_any_operator(&result)?;
+        result = Self::translate_all_operator(&result)?;
+        
+        // Translate ARRAY[...] literals (after ANY/ALL)
         result = Self::translate_array_literals(&result)?;
         
         // Translate array subscript access
         result = Self::translate_array_subscript(&result)?;
         result = Self::translate_array_slice(&result)?;
-        
-        // Translate ANY/ALL operators
-        result = Self::translate_any_operator(&result)?;
-        result = Self::translate_all_operator(&result)?;
         
         // Translate array operators
         result = Self::translate_contains_operator(&result)?;
@@ -165,16 +167,18 @@ impl ArrayTranslator {
         let mut result = sql.to_string();
         let mut metadata = TranslationMetadata::new();
         
-        // Translate ARRAY[...] literals first (most specific)
+        // Translate ANY/ALL operators FIRST (before array literals)
+        // This ensures ANY(ARRAY[...]) patterns are converted to IN(...) before
+        // ARRAY literals are converted to JSON
+        result = Self::translate_any_operator(&result)?;
+        result = Self::translate_all_operator(&result)?;
+        
+        // Translate ARRAY[...] literals (after ANY/ALL)
         result = Self::translate_array_literals(&result)?;
         
         // Translate array subscript access
         result = Self::translate_array_subscript(&result)?;
         result = Self::translate_array_slice(&result)?;
-        
-        // Translate ANY/ALL operators
-        result = Self::translate_any_operator(&result)?;
-        result = Self::translate_all_operator(&result)?;
         
         // Translate array operators
         result = Self::translate_contains_operator(&result)?;
@@ -195,6 +199,9 @@ impl ArrayTranslator {
     /// Translate ARRAY[...] literals to JSON format: ARRAY[1,2,3] -> '[1,2,3]'
     fn translate_array_literals(sql: &str) -> Result<String, PgSqliteError> {
         let mut result = sql.to_string();
+        
+        // Note: ANY(ARRAY[...]) patterns are handled by translate_any_operator first,
+        // so they won't be converted to JSON format here
         
         while let Some(captures) = ARRAY_LITERAL_REGEX.captures(&result) {
             let array_contents = &captures[1];
@@ -289,14 +296,34 @@ impl ArrayTranslator {
         
         // First handle ANY(ARRAY[...]) patterns - common in catalog queries
         // Example: pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm'])
-        // Also handle parameter placeholders like $1, $2, etc (already converted from %(param)s)
-        let any_array_regex = Regex::new(r#"(\w+(?:\.\w+)*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[((?:'[^']*'(?:\s*,\s*'[^']*')*)|(?:\$\d+(?:\s*,\s*\$\d+)*)|(?:%\([^)]+\)s(?:\s*,\s*%\([^)]+\)s)*))\]\s*\)"#).unwrap();
+        // Also handle parameter placeholders like $1, $2, etc with optional casts like $1::VARCHAR
+        // Note: Allow space between ANY and opening parenthesis
+        let any_array_regex = Regex::new(r#"(\w+(?:\.\w+)*)\s*=\s*ANY\s*\(\s*ARRAY\s*\[([^\]]+)\]\s*\)"#).unwrap();
+        
         while let Some(captures) = any_array_regex.captures(&result) {
             let column = &captures[1];
             let values = &captures[2];
             
+            // Process the values to handle parameter casts properly
+            // Convert $1::VARCHAR to just $1 (the cast will be handled by CastTranslator)
+            let processed_values = if values.contains("::") {
+                // Split by comma and process each value
+                let items: Vec<&str> = values.split(',').map(|s| s.trim()).collect();
+                let processed_items: Vec<String> = items.iter().map(|item| {
+                    // If it has a cast, extract just the parameter part
+                    if let Some(cast_pos) = item.find("::") {
+                        item[..cast_pos].trim().to_string()
+                    } else {
+                        item.to_string()
+                    }
+                }).collect();
+                processed_items.join(", ")
+            } else {
+                values.to_string()
+            };
+            
             // Convert to IN clause for better performance
-            let replacement = format!("{column} IN ({values})");
+            let replacement = format!("{column} IN ({processed_values})");
             debug!("ArrayTranslator: Converting ANY(ARRAY[...]) to IN: {} -> {}", &captures[0], &replacement);
             result = result.replace(&captures[0], &replacement);
         }

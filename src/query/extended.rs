@@ -10,7 +10,7 @@ use crate::query::ParameterParser;
 use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, warn, error};
 use std::sync::Arc;
 use std::str::FromStr;
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
@@ -124,7 +124,8 @@ impl ExtendedQueryHandler {
                     translation_metadata: None,
                 };
                 
-                // Store as unnamed statement
+                // Store as unnamed statement (replaces any existing unnamed statement)
+                info!("Storing unnamed statement, replacing any existing one");
                 session.prepared_statements.write().await.insert(String::new(), stmt);
                 
                 framed.send(BackendMessage::ParseComplete).await
@@ -349,6 +350,9 @@ impl ExtendedQueryHandler {
             }
         }
         
+        // Initialize translation_metadata early
+        let mut translation_metadata = crate::translator::TranslationMetadata::new();
+        
         // Pre-translate the query first so we can analyze the translated version
         #[cfg(feature = "unified_processor")]
         let mut translated_for_analysis = {
@@ -358,17 +362,39 @@ impl ExtendedQueryHandler {
             }).await?
         };
         
+        // Translate array operators FIRST (before CastTranslator)
+        // This is important because ArrayTranslator needs to see ANY(ARRAY[...]) patterns
+        // before CastTranslator modifies the parameter casts
         #[cfg(not(feature = "unified_processor"))]
-        let mut translated_for_analysis = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
-            info!("Parse: Query needs cast translation: {}", cleaned_query);
+        let mut translated_for_analysis = {
+            use crate::translator::ArrayTranslator;
+            info!("Translating array operators for query: {}", cleaned_query);
+            match ArrayTranslator::translate_with_metadata(&cleaned_query) {
+                Ok((translated, metadata)) => {
+                    if translated != cleaned_query {
+                        info!("Array translation changed query to: {}", translated);
+                    }
+                    info!("Array metadata has {} hints", metadata.column_mappings.len());
+                    translation_metadata.merge(metadata);
+                    translated
+                }
+                Err(_) => {
+                    // Continue with original query
+                    cleaned_query.clone()
+                }
+            }
+        };
+        
+        // Now translate casts (after array translation)
+        #[cfg(not(feature = "unified_processor"))]
+        if crate::translator::CastTranslator::needs_translation(&translated_for_analysis) {
+            info!("Parse: Query needs cast translation: {}", translated_for_analysis);
             let translated = db.with_session_connection(&session.id, |conn| {
-                Ok(crate::translator::CastTranslator::translate_query(&cleaned_query, Some(conn)))
+                Ok(crate::translator::CastTranslator::translate_query(&translated_for_analysis, Some(conn)))
             }).await?;
             info!("Parse: Cast translated to: {}", translated);
-            translated
-        } else {
-            cleaned_query.clone()
-        };
+            translated_for_analysis = translated;
+        }
         
         // Translate NUMERIC to TEXT casts with proper formatting
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
@@ -379,32 +405,11 @@ impl ExtendedQueryHandler {
         }
         
         // Translate datetime functions if needed and capture metadata
-        let mut translation_metadata = crate::translator::TranslationMetadata::new();
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::DateTimeTranslator::needs_translation(&translated_for_analysis) {
             let (translated, metadata) = crate::translator::DateTimeTranslator::translate_with_metadata(&translated_for_analysis);
             translated_for_analysis = translated;
             translation_metadata.merge(metadata);
-        }
-        
-        // Translate array operators with metadata
-        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
-        {
-            use crate::translator::ArrayTranslator;
-            info!("Translating array operators for query: {}", translated_for_analysis);
-            match ArrayTranslator::translate_with_metadata(&translated_for_analysis) {
-            Ok((translated, metadata)) => {
-                if translated != translated_for_analysis {
-                    info!("Array translation changed query to: {}", translated);
-                    translated_for_analysis = translated;
-                }
-                info!("Array metadata has {} hints", metadata.column_mappings.len());
-                translation_metadata.merge(metadata);
-            }
-                Err(_) => {
-                    // Continue with original query
-                }
-            }
         }
         
         // Translate json_each()/jsonb_each() functions for PostgreSQL compatibility
@@ -1301,7 +1306,16 @@ impl ExtendedQueryHandler {
                         return Ok(());
                 }
                 Err(e) => {
-                    // Fall through to regular path
+                    // Check if this is an execution error vs compatibility issue
+                    if e.to_string().contains("SQLite error:") || 
+                       e.to_string().contains("constraint") ||
+                       e.to_string().contains("UNIQUE") {
+                        // This is an execution error, not a compatibility issue
+                        // Return the error instead of falling back
+                        error!("Fast path execution failed with SQLite error: {}", e);
+                        return Err(e);
+                    }
+                    // Only fall back for compatibility issues
                     info!("Fast path: execute_with_rusqlite_params failed: {}, falling back to substitution", e);
                 }
             }
@@ -1351,6 +1365,14 @@ impl ExtendedQueryHandler {
                         Ok(true) => return Ok(()), // Successfully executed via fast path
                         Ok(false) => {}, // Fall back to normal path
                         Err(e) => {
+                            // Check if this is an execution error vs compatibility issue
+                            if e.to_string().contains("SQLite error:") || 
+                               e.to_string().contains("constraint") ||
+                               e.to_string().contains("UNIQUE") {
+                                // This is an execution error, not a compatibility issue
+                                error!("Extended fast path execution failed with SQLite error: {}", e);
+                                return Err(e);
+                            }
                             warn!("Extended fast path failed with error: {}, falling back to normal path", e);
                             // Fall back to normal path on error
                         }
@@ -1595,6 +1617,14 @@ impl ExtendedQueryHandler {
                         return Ok(());
                     }
                     Err(e) => {
+                        // Check if this is an execution error vs compatibility issue
+                        if e.to_string().contains("SQLite error:") || 
+                           e.to_string().contains("constraint") ||
+                           e.to_string().contains("UNIQUE") {
+                            // This is an execution error, not a compatibility issue
+                            error!("Parameterized SELECT execution failed with SQLite error: {}", e);
+                            return Err(e);
+                        }
                         warn!("Parameterized SELECT failed: {}, falling back to substitution", e);
                         // Fall through to substitution-based execution
                     }
@@ -1626,10 +1656,17 @@ impl ExtendedQueryHandler {
                             return Ok(()); // Important: return here to avoid fallback
                         }
                         Err(e) => {
+                            // Check if this is an execution error vs compatibility issue
+                            if e.to_string().contains("SQLite error:") || 
+                               e.to_string().contains("constraint") ||
+                               e.to_string().contains("UNIQUE") {
+                                // This is an execution error, not a compatibility issue
+                                error!("DML with RETURNING execution failed with SQLite error: {}", e);
+                                return Err(e);
+                            }
                             info!("Failed to execute DML with RETURNING: {}", e);
                             warn!("Failed to execute DML with RETURNING: {}", e);
-                            // Fall through to substitution instead of returning error
-                            // return Err(e);
+                            // Fall through to substitution for compatibility issues
                         }
                     }
                 } else {
@@ -1647,6 +1684,14 @@ impl ExtendedQueryHandler {
                             return Ok(());
                         }
                         Err(e) => {
+                            // Check if this is an execution error vs compatibility issue
+                            if e.to_string().contains("SQLite error:") || 
+                               e.to_string().contains("constraint") ||
+                               e.to_string().contains("UNIQUE") {
+                                // This is an execution error, not a compatibility issue
+                                error!("Parameterized DML execution failed with SQLite error: {}", e);
+                                return Err(e);
+                            }
                             warn!("Parameterized DML failed: {}, falling back to substitution", e);
                             // Fall through to substitution-based execution
                         }

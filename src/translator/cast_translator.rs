@@ -64,6 +64,11 @@ impl CastTranslator {
                 continue;
             }
             
+            // Check if this :: is inside an ARRAY[] expression
+            if Self::is_inside_array(&result, cast_pos) {
+                continue;
+            }
+            
             // Find the start of the expression before ::
             let before = &result[..cast_pos];
             let expr_start = Self::find_expression_start(before);
@@ -304,6 +309,41 @@ impl CastTranslator {
         }
         
         in_single_quote || in_double_quote
+    }
+    
+    /// Check if position is inside an ARRAY[] expression
+    fn is_inside_array(query: &str, pos: usize) -> bool {
+        // Simple approach: find all ARRAY[ positions and check if pos is inside any of them
+        let query_upper = query.to_uppercase();
+        let mut search_pos = 0;
+        
+        while let Some(array_pos) = query_upper[search_pos..].find("ARRAY[") {
+            let array_start = search_pos + array_pos;
+            let bracket_start = array_start + 6; // Position of [
+            
+            // Find the matching closing bracket
+            let mut bracket_count = 1;
+            let mut i = bracket_start + 1;
+            
+            while i < query.len() && bracket_count > 0 {
+                match query.chars().nth(i) {
+                    Some('[') => bracket_count += 1,
+                    Some(']') => bracket_count -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            
+            // Check if pos is inside this ARRAY[...]
+            if bracket_count == 0 && pos > bracket_start && pos < i - 1 {
+                return true;
+            }
+            
+            // Continue searching from after this ARRAY
+            search_pos = array_start + 1;
+        }
+        
+        false
     }
     
     /// Find the start of an expression before :: cast
