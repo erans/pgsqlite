@@ -721,7 +721,7 @@ impl CatalogInterceptor {
                 };
                 
                 if is_oid_column {
-                    // Check if right side is a number (not a placeholder)
+                    // Check if right side is a number, placeholder, or function
                     match right.as_ref() {
                         Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) => {
                             *filter_oid = n.parse::<i32>().ok();
@@ -735,6 +735,17 @@ impl CatalogInterceptor {
                         Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) => {
                             *has_placeholder = true;
                             debug!("Found placeholder for OID filter");
+                        }
+                        Expr::Function(func) => {
+                            let func_name = func.name.to_string().to_lowercase();
+                            if func_name == "to_regtype" || func_name == "pg_catalog.to_regtype" {
+                                // to_regtype('typename') returns NULL for non-existent types
+                                // Since we don't have hstore or other extensions, return -1 which won't match any OID
+                                *filter_oid = Some(-1);
+                                debug!("Found to_regtype() function, setting filter to -1 (no match)");
+                            } else {
+                                debug!("Unknown function for OID filter: {}", func_name);
+                            }
                         }
                         _ => {
                             debug!("Unknown expression type for OID filter: {:?}", right);

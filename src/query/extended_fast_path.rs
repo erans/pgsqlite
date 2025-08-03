@@ -6,6 +6,7 @@ use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use std::sync::Arc;
+use tracing::info;
 
 /// Optimized parameter binding that avoids string substitution
 pub struct ExtendedFastPath;
@@ -24,6 +25,7 @@ impl ExtendedFastPath {
         param_types: &[i32],
         original_types: &[i32],
         query_type: QueryType,
+        execution_context: &crate::query::ExecutionContext,
     ) -> Result<bool, PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -48,7 +50,7 @@ impl ExtendedFastPath {
                     // TODO: Implement proper binary encoding for result formats
                     return Ok(false);
                 }
-                match Self::execute_select_with_params(framed, db, session, portal_name, query, rusqlite_params, result_formats).await {
+                match Self::execute_select_with_params(framed, db, session, portal_name, query, rusqlite_params, result_formats, execution_context).await {
                     Ok(()) => Ok(true),
                     Err(_) => {
                         // Fast path SELECT failed, fall back
@@ -324,6 +326,7 @@ impl ExtendedFastPath {
         query: &str,
         params: Vec<rusqlite::types::Value>,
         result_formats: &[i16],
+        _execution_context: &crate::query::ExecutionContext,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -341,7 +344,13 @@ impl ExtendedFastPath {
             let portal = portals.get(portal_name).unwrap();
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name).unwrap();
-            stmt.field_descriptions.is_empty() && !response.columns.is_empty()
+            // Only send RowDescription if statement has no field descriptions
+            // If it has field descriptions, that means Describe was already called
+            // and already sent RowDescription to the client
+            let needs_row_desc = stmt.field_descriptions.is_empty() && !response.columns.is_empty();
+            info!("Extended fast path SELECT: field_descriptions.is_empty()={}, response.columns.is_empty()={}, send_row_desc={}", 
+                 stmt.field_descriptions.is_empty(), response.columns.is_empty(), needs_row_desc);
+            needs_row_desc
         };
         
         if send_row_desc {

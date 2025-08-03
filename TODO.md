@@ -127,6 +127,16 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Handles CURRENT_TIMESTAMP and other text-stored timestamps
   - [x] Full compatibility with psycopg3 binary format
 
+### psycopg3 Parameter Cast Compatibility - IN PROGRESS (2025-08-03)
+- [ ] **Fix psycopg3 VARCHAR Cast Issue** - Queries with parameter casts still failing
+  - [x] Implemented ExecutionContext to track RowDescription state across execution paths
+  - [x] Fixed CastTranslator to handle parameter placeholders ($1, $2, etc.) and multi-word types
+  - [x] Updated extended protocol to use translated queries during execution
+  - [x] Modified all execution paths to check if field_descriptions exist before sending RowDescription
+  - [ ] **Remaining Issue**: psycopg3 queries with `$1::VARCHAR` still get duplicate RowDescription
+  - [ ] Root cause appears to be timing between Describe and Execute phases
+  - [ ] Need to investigate psycopg3's specific protocol flow for parameter casts
+
 ### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
 - [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()
   - [x] Root cause: Wire protocol cache was caching query results including generated UUIDs

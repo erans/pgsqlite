@@ -294,6 +294,7 @@ Environment variables:
 - Array ORDER BY in array_agg relies on outer query ORDER BY
 - Multi-array unnest (edge case)
 - Some catalog queries and CAST operations still use get_mut_connection (needs update for per-session)
+- psycopg3 queries with parameter casts like `$1::VARCHAR` still fail with duplicate RowDescription
 
 ## Code Style
 - Follow Rust conventions

@@ -42,6 +42,7 @@ from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.engine import URL
 
 # Base class for ORM models
 Base = declarative_base()
@@ -147,8 +148,10 @@ class OrderItem(Base):
 class SQLAlchemyTestSuite:
     """Comprehensive test suite for SQLAlchemy integration with pgsqlite."""
 
-    def __init__(self, port: int):
+    def __init__(self, port: int, driver: str = 'psycopg2', binary_format: bool = False):
         self.port = port
+        self.driver = driver
+        self.binary_format = binary_format
         self.engine = None
         self.Session = None
         self.test_results = []
@@ -159,13 +162,38 @@ class SQLAlchemyTestSuite:
             print(f"🔌 Connecting to pgsqlite on port {self.port}...")
             
             # Create engine with PostgreSQL dialect
-            connection_string = f"postgresql://postgres:postgres@localhost:{self.port}/main"
-            self.engine = create_engine(
-                connection_string,
-                echo=True,  # Set to True for SQL debugging
-                # Use proper connection pooling to test connection-per-session isolation
-                pool_size=5,  # Allow multiple connections
-                max_overflow=10,  # Allow connection overflow
+            if self.driver == 'psycopg3' or self.driver == 'psycopg':
+                # Use psycopg3 driver
+                connection_string = f"postgresql+psycopg://postgres:postgres@localhost:{self.port}/main"
+                
+                # Configure connection args
+                connect_args = {}
+                
+                if self.binary_format:
+                    print("📊 Using psycopg3 with binary format")
+                    print("⚠️  Note: Binary format requires raw psycopg3 cursor usage")
+                    print("    SQLAlchemy ORM will use automatic type conversions")
+                else:
+                    print("📊 Using psycopg3 with text format")
+                
+                self.engine = create_engine(
+                    connection_string,
+                    echo=True,  # Set to True for SQL debugging
+                    # Use proper connection pooling to test connection-per-session isolation
+                    pool_size=5,  # Allow multiple connections
+                    max_overflow=10,  # Allow connection overflow
+                    connect_args=connect_args
+                )
+            else:
+                # Use psycopg2 driver (default)
+                connection_string = f"postgresql://postgres:postgres@localhost:{self.port}/main"
+                print("📊 Using psycopg2 (text format only)")
+                self.engine = create_engine(
+                    connection_string,
+                    echo=True,  # Set to True for SQL debugging
+                    # Use proper connection pooling to test connection-per-session isolation
+                    pool_size=5,  # Allow multiple connections
+                    max_overflow=10,  # Allow connection overflow
                 pool_pre_ping=True,  # Verify connections before use
                 future=True,  # Enable SQLAlchemy 2.0 style
                 # Work around RETURNING issue
@@ -187,6 +215,7 @@ class SQLAlchemyTestSuite:
             
             # Create session factory
             self.Session = sessionmaker(bind=self.engine)
+            
             
             print("✅ Successfully connected to pgsqlite!")
             return True
@@ -784,11 +813,20 @@ def main() -> int:
     """Main entry point for the test script."""
     parser = argparse.ArgumentParser(description="SQLAlchemy ORM integration tests for pgsqlite")
     parser.add_argument("--port", type=int, required=True, help="Port number where pgsqlite is running")
+    parser.add_argument("--driver", choices=['psycopg2', 'psycopg3', 'psycopg'], default='psycopg2',
+                        help="PostgreSQL driver to use (default: psycopg2)")
+    parser.add_argument("--binary-format", action='store_true',
+                        help="Use binary format (only with psycopg3)")
     
     args = parser.parse_args()
     
+    # Validate arguments
+    if args.binary_format and args.driver == 'psycopg2':
+        print("❌ Binary format is only supported with psycopg3")
+        return 1
+    
     # Create and run test suite
-    test_suite = SQLAlchemyTestSuite(args.port)
+    test_suite = SQLAlchemyTestSuite(args.port, args.driver, args.binary_format)
     
     try:
         success = test_suite.run_all_tests()

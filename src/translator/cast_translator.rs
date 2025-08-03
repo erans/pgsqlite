@@ -119,18 +119,37 @@ impl CastTranslator {
                     
                     // Special handling for timestamp/date/time types
                     let upper_type = type_name.to_uppercase();
+                    
+                    // Check if expression is a parameter placeholder ($1, $2, etc.)
+                    let is_parameter = expr.starts_with('$') && expr[1..].chars().all(|c| c.is_numeric());
+                    
                     match upper_type.as_str() {
                         "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
-                            // Use pgsqlite's timestamp conversion function
-                            format!("pg_timestamp_from_text({expr})")
+                            if is_parameter {
+                                // For parameters, just use CAST to preserve the placeholder
+                                format!("CAST({expr} AS {sqlite_type})")
+                            } else {
+                                // Use pgsqlite's timestamp conversion function
+                                format!("pg_timestamp_from_text({expr})")
+                            }
                         }
                         "DATE" => {
-                            // Use pgsqlite's date conversion function
-                            format!("pg_date_from_text({expr})")
+                            if is_parameter {
+                                // For parameters, just use CAST to preserve the placeholder
+                                format!("CAST({expr} AS {sqlite_type})")
+                            } else {
+                                // Use pgsqlite's date conversion function
+                                format!("pg_date_from_text({expr})")
+                            }
                         }
                         "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
-                            // Use pgsqlite's time conversion function
-                            format!("pg_time_from_text({expr})")
+                            if is_parameter {
+                                // For parameters, just use CAST to preserve the placeholder
+                                format!("CAST({expr} AS {sqlite_type})")
+                            } else {
+                                // Use pgsqlite's time conversion function
+                                format!("pg_time_from_text({expr})")
+                            }
                         }
                         _ => {
                             // For non-datetime types, use regular cast logic
@@ -139,6 +158,9 @@ impl CastTranslator {
                             if sqlite_type == "TEXT" && !matches!(upper_type.as_str(), "TEXT" | "VARCHAR" | "CHAR" | "CHARACTER VARYING") {
                                 // Unknown type, just return the expression
                                 expr.to_string()
+                            } else if is_parameter && matches!(upper_type.as_str(), "VARCHAR" | "CHAR" | "CHARACTER VARYING") {
+                                // For parameter casts to text types, use CAST with TEXT
+                                format!("CAST({expr} AS TEXT)")
                             } else if sqlite_type == upper_type.as_str() {
                                 // Same type name, use CAST
                                 // Check if expression is a subquery
@@ -335,7 +357,7 @@ impl CastTranslator {
         let mut paren_depth = 0;
         
         // Debug for RETURNING issue
-        if after.contains("RETURNING") {
+        if after.contains("RETURNING") || after.contains("WITHOUT") {
             eprintln!("DEBUG find_type_end: after = '{after}'");
         }
         
@@ -353,13 +375,22 @@ impl CastTranslator {
         
         for (pattern, len) in multiword_types {
             if upper_after.starts_with(pattern) {
+                if after.contains("WITHOUT") {
+                    eprintln!("DEBUG: Found multi-word type pattern '{}', len={}", pattern, len);
+                }
                 // Make sure this is followed by a word boundary or end of string
                 if after.len() == len {
                     // Exact match - this is the end of the string
+                    if after.contains("WITHOUT") {
+                        eprintln!("DEBUG: Exact match, returning {}", len);
+                    }
                     return len;
                 } else if let Some(next_char) = after.as_bytes().get(len) {
                     // There's a character after the pattern - make sure it's a word boundary
                     if !next_char.is_ascii_alphanumeric() && *next_char != b'_' {
+                        if after.contains("WITHOUT") {
+                            eprintln!("DEBUG: Word boundary found after '{}', next_char='{}', returning {}", pattern, *next_char as char, len);
+                        }
                         return len;
                     }
                 }

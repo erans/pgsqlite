@@ -116,7 +116,7 @@ impl ExtendedQueryHandler {
                 // We already know about this query, create a fast prepared statement
                 let stmt = PreparedStatement {
                     query: query.clone(),
-                    translated_query: None, // Will be translated during execute if needed
+                    translated_query: cached_info.translated_query.clone(), // Use cached translated query
                     param_types: cached_info.param_types.clone(),
                     client_param_types: cached_info.original_types.clone(), // Use cached original types
                     param_formats: vec![0; cached_info.param_types.len()],
@@ -262,6 +262,7 @@ impl ExtendedQueryHandler {
                         original_types: actual_param_types.clone(), // Use same types since we don't have original info here
                         table_name: cached.table_names.first().cloned(),
                         column_names: Vec::new(), // Will be populated later if needed
+                        translated_query: None, // Will be set later if translation is needed
                         created_at: std::time::Instant::now(),
                     });
                 } else {
@@ -315,12 +316,13 @@ impl ExtendedQueryHandler {
                     info!("Merged parameter types: client {:?} + analyzed {:?} = actual {:?}", 
                           param_types, analyzed_types, actual_param_types);
                     
-                    // Cache the parameter info with the merged types
+                    // Cache the parameter info with the merged types (translated query will be added later)
                     GLOBAL_PARAMETER_CACHE.insert(query.clone(), CachedParameterInfo {
                         param_types: actual_param_types.clone(),
                         original_types: param_types.clone(), // Store the original client types
                         table_name,
                         column_names,
+                        translated_query: None, // Will be set after translation
                         created_at: std::time::Instant::now(),
                     });
                     
@@ -358,9 +360,12 @@ impl ExtendedQueryHandler {
         
         #[cfg(not(feature = "unified_processor"))]
         let mut translated_for_analysis = if crate::translator::CastTranslator::needs_translation(&cleaned_query) {
-            db.with_session_connection(&session.id, |conn| {
+            info!("Parse: Query needs cast translation: {}", cleaned_query);
+            let translated = db.with_session_connection(&session.id, |conn| {
                 Ok(crate::translator::CastTranslator::translate_query(&cleaned_query, Some(conn)))
-            }).await?
+            }).await?;
+            info!("Parse: Cast translated to: {}", translated);
+            translated
         } else {
             cleaned_query.clone()
         };
@@ -450,7 +455,8 @@ impl ExtendedQueryHandler {
         info!("Analyzing query '{}' for field descriptions", translated_for_analysis);
         info!("Original query: {}", cleaned_query);
         info!("Is simple param select: {}", is_simple_param_select);
-        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
+        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") || 
+                                   ReturningTranslator::has_returning_clause(&cleaned_query) {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
             if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") {
@@ -479,8 +485,10 @@ impl ExtendedQueryHandler {
                 let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
                 test_query = cast_regex.replace_all(&test_query, "").to_string();
                 
-                // Add LIMIT 1 to avoid processing too much data
-                test_query = format!("{test_query} LIMIT 1");
+                // Add LIMIT 1 to avoid processing too much data (but not for INSERT/UPDATE/DELETE RETURNING)
+                if query_starts_with_ignore_case(&test_query, "SELECT") {
+                    test_query = format!("{test_query} LIMIT 1");
+                }
                 let cached_conn = Self::get_or_cache_connection(session, db).await;
                 let test_response = db.query_with_session_cached(&test_query, &session.id, cached_conn.as_ref()).await;
                 
@@ -735,6 +743,12 @@ impl ExtendedQueryHandler {
         // Cache the prepared statement globally to avoid re-parsing
         GLOBAL_PREPARED_STATEMENT_CACHE.insert(&cleaned_query, &actual_param_types, stmt.clone());
         
+        // Update the parameter cache with the translated query
+        if let Some(mut cached_info) = GLOBAL_PARAMETER_CACHE.get(&cleaned_query) {
+            cached_info.translated_query = stmt.translated_query.clone();
+            GLOBAL_PARAMETER_CACHE.insert(cleaned_query.clone(), cached_info);
+        }
+        
         session.prepared_statements.write().await.insert(name.clone(), stmt);
         
         // Send ParseComplete
@@ -930,11 +944,16 @@ impl ExtendedQueryHandler {
     {
         info!("handle_execute: Executing portal '{}' with max_rows: {}", portal, max_rows);
         
+        // Create execution context to track state through all execution paths
+        let execution_context = crate::query::ExecutionContext::new(portal.clone());
+        
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types, client_param_types) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(&portal)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {portal}")))?;
+            
+            info!("Portal '{}' has statement_name='{}'", portal, portal_obj.statement_name);
             
             (portal_obj.query.clone(),
              portal_obj.translated_query.clone(),
@@ -1135,7 +1154,8 @@ impl ExtendedQueryHandler {
                                 .map_err(PgSqliteError::Io)?;
                             info!("Fast path: RowDescription sent successfully with {} fields", fields.len());
                         } else {
-                            info!("Fast path: Not sending RowDescription (send_row_desc=false)");
+                            info!("Fast path: Not sending RowDescription (send_row_desc={}, already_sent={})", 
+                                  send_row_desc, execution_context.is_row_description_sent());
                         }
                         
                         // Send data rows
@@ -1291,7 +1311,10 @@ impl ExtendedQueryHandler {
         
         // Try optimized extended fast path first for parameterized queries
         if !bound_values.is_empty() && query.contains('$') {
-            info!("Checking extended fast path for parameterized query");
+            info!("Checking extended fast path for parameterized query: '{}'", query);
+            if query.contains("::") {
+                info!("Query contains cast operator '::', may fall back to substitution path");
+            }
             let query_type = super::extended_fast_path::QueryType::from_query(&query);
             
             // Early check: Skip fast path for SELECT with binary results
@@ -1323,6 +1346,7 @@ impl ExtendedQueryHandler {
                         &param_types,
                         &original_types,
                         query_type,
+                        &execution_context,
                     ).await {
                         Ok(true) => return Ok(()), // Successfully executed via fast path
                         Ok(false) => {}, // Fall back to normal path
@@ -1352,7 +1376,8 @@ impl ExtendedQueryHandler {
                     &param_types,
                     &client_param_types,
                     &fast_query, 
-                    max_rows
+                    max_rows,
+                    &execution_context
                 ).await {
                     return result;
                 }
@@ -1360,7 +1385,13 @@ impl ExtendedQueryHandler {
         }
 
         // Use translated query if available, otherwise use original
-        let query_to_use = translated_query.as_ref().unwrap_or(&query);
+        let query_to_use = if let Some(ref tq) = translated_query {
+            info!("Using translated query: '{}' (original: '{}')", tq, query);
+            tq
+        } else {
+            info!("No translated query available, using original: '{}'", query);
+            &query
+        };
         
         // Validate numeric constraints before parameter substitution
         // TEMPORARILY DISABLED to test binary parameter handling
@@ -1487,7 +1518,7 @@ impl ExtendedQueryHandler {
         // Use parameterized path for all queries with parameters (including RETURNING)
         // Now that we use native SQLite RETURNING, we can handle it in the parameterized path
         if has_params { 
-            info!("USING PARAMETERIZED PATH for query: {}", query);
+            info!("USING PARAMETERIZED PATH for query: {} (translated: {})", query, query_to_use);
             // Convert parameters to rusqlite values
             let mut converted_params = Vec::new();
             for (i, value) in bound_values.iter().enumerate() {
@@ -1523,8 +1554,8 @@ impl ExtendedQueryHandler {
             }
             
             // Apply JSON operator translation if needed
-            // IMPORTANT: Use the original query with parameter placeholders, not the translated one
-            let mut parameterized_query = query.to_string();
+            // IMPORTANT: Use the translated query with parameter placeholders
+            let mut parameterized_query = query_to_use.to_string();
             if JsonTranslator::contains_json_operations(&parameterized_query) {
                 match JsonTranslator::translate_json_operators(&parameterized_query) {
                     Ok(translated) => {
@@ -1541,8 +1572,26 @@ impl ExtendedQueryHandler {
                 // For SELECT, use the fast path we already set up
                 match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
                     Ok(response) => {
-                        // Send response
-                        Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                        // Check if we need to send RowDescription
+                        let _send_row_desc = {
+                            let statements = session.prepared_statements.read().await;
+                            info!("Non-fast path SELECT: checking statement_name='{}'", statement_name);
+                            if let Some(stmt) = statements.get(&statement_name) {
+                                // Only send RowDescription if statement has no field descriptions
+                                // If it has field descriptions, that means Describe was already called
+                                // and already sent RowDescription to the client
+                                let needs_row_desc = stmt.field_descriptions.is_empty();
+                                info!("Non-fast path SELECT: field_descriptions.is_empty()={}, send_row_desc={}", 
+                                     stmt.field_descriptions.is_empty(), needs_row_desc);
+                                needs_row_desc
+                            } else {
+                                info!("Non-fast path SELECT: No statement found, send_row_desc=true");
+                                true
+                            }
+                        };
+                        
+                        // Always use send_select_response which will check ExecutionContext
+                        Self::send_select_response(framed, response, max_rows, &result_formats, Some(&execution_context)).await?;
                         return Ok(());
                     }
                     Err(e) => {
@@ -1560,8 +1609,10 @@ impl ExtendedQueryHandler {
                     info!("Executing DML with RETURNING using native SQLite support");
                     match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
                         Ok(response) => {
-                            // Send row description and data
-                            Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                            info!("DML with RETURNING succeeded, got {} columns and {} rows", response.columns.len(), response.rows.len());
+                            // Don't send RowDescription here - it was already sent during Describe
+                            // Just send the data rows
+                            Self::send_data_rows_only(framed, response, &result_formats).await?;
                             
                             // Send appropriate command complete tag
                             let tag = if query_starts_with_ignore_case(&parameterized_query, "INSERT") {
@@ -1572,10 +1623,13 @@ impl ExtendedQueryHandler {
                                 "DELETE 1".to_string()
                             };
                             framed.send(BackendMessage::CommandComplete { tag }).await?;
+                            return Ok(()); // Important: return here to avoid fallback
                         }
                         Err(e) => {
+                            info!("Failed to execute DML with RETURNING: {}", e);
                             warn!("Failed to execute DML with RETURNING: {}", e);
-                            return Err(e);
+                            // Fall through to substitution instead of returning error
+                            // return Err(e);
                         }
                     }
                 } else {
@@ -1605,7 +1659,9 @@ impl ExtendedQueryHandler {
         if !bound_values.is_empty() {
             info!("FALLING BACK TO SUBSTITUTION for query: {}", query);
         }
+        info!("Falling back to substitution path for query: '{}'", query_to_use);
         let mut final_query = Self::substitute_parameters(query_to_use, &bound_values, &param_formats, &param_types, &client_param_types)?;
+        info!("After substitution, final query: '{}'", final_query);
         
         // Apply JSON operator translation if needed
         if JsonTranslator::contains_json_operations(&final_query) {
@@ -1627,7 +1683,16 @@ impl ExtendedQueryHandler {
         // Execute based on query type
         if query_starts_with_ignore_case(&final_query, "SELECT") {
             info!("Calling execute_select for query: {}", final_query);
-            Self::execute_select(framed, db, session, &portal, &final_query, max_rows).await?;
+            info!("Statement name: '{}', checking if field_descriptions exist", statement_name);
+            {
+                let statements = session.prepared_statements.read().await;
+                if let Some(stmt) = statements.get(&statement_name) {
+                    info!("Statement has {} field_descriptions", stmt.field_descriptions.len());
+                } else {
+                    info!("Statement '{}' not found in prepared statements", statement_name);
+                }
+            }
+            Self::execute_select(framed, db, session, &portal, &final_query, max_rows, &execution_context).await?;
         } else if query_starts_with_ignore_case(&final_query, "INSERT") 
             || query_starts_with_ignore_case(&final_query, "UPDATE") 
             || query_starts_with_ignore_case(&final_query, "DELETE") {
@@ -2016,6 +2081,7 @@ impl ExtendedQueryHandler {
         client_param_types: &[i32],
         fast_query: &crate::query::FastPathQuery,
         max_rows: i32,
+        _execution_context: &crate::query::ExecutionContext,
     ) -> Result<Option<Result<(), PgSqliteError>>, PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -2061,8 +2127,33 @@ impl ExtendedQueryHandler {
                 };
                 framed.send(BackendMessage::CommandComplete { tag }).await?;
             } else {
-                // SELECT operation - send full response
-                Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                // SELECT operation - check if we need to send RowDescription
+                let send_row_desc = {
+                    let portals = session.portals.read().await;
+                    if let Some(portal_obj) = portals.get(portal) {
+                        let statements = session.prepared_statements.read().await;
+                        if let Some(stmt) = statements.get(&portal_obj.statement_name) {
+                            stmt.field_descriptions.is_empty()
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                };
+                
+                if send_row_desc {
+                    // Send full response with RowDescription
+                    Self::send_select_response(framed, response, max_rows, &result_formats, None).await?;
+                } else {
+                    // Just send data rows without RowDescription
+                    info!("try_execute_fast_path_with_params: Not sending RowDescription (already sent during Describe)");
+                    let row_count = response.rows.len();
+                    Self::send_data_rows_only(framed, response, &result_formats).await?;
+                    framed.send(BackendMessage::CommandComplete { 
+                        tag: format!("SELECT {}", row_count) 
+                    }).await?;
+                }
             }
             return Ok(Some(Ok(())));
         }
@@ -2079,8 +2170,33 @@ impl ExtendedQueryHandler {
                 };
                 framed.send(BackendMessage::CommandComplete { tag }).await?;
             } else {
-                // SELECT operation
-                Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                // SELECT operation - check if we need to send RowDescription
+                let send_row_desc = {
+                    let portals = session.portals.read().await;
+                    if let Some(portal_obj) = portals.get(portal) {
+                        let statements = session.prepared_statements.read().await;
+                        if let Some(stmt) = statements.get(&portal_obj.statement_name) {
+                            stmt.field_descriptions.is_empty()
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                };
+                
+                if send_row_desc {
+                    // Send full response with RowDescription
+                    Self::send_select_response(framed, response, max_rows, &result_formats, None).await?;
+                } else {
+                    // Just send data rows without RowDescription
+                    info!("try_execute_fast_path_with_params (statement pool): Not sending RowDescription (already sent during Describe)");
+                    let row_count = response.rows.len();
+                    Self::send_data_rows_only(framed, response, &result_formats).await?;
+                    framed.send(BackendMessage::CommandComplete { 
+                        tag: format!("SELECT {}", row_count) 
+                    }).await?;
+                }
             }
             return Ok(Some(Ok(())));
         }
@@ -2258,12 +2374,13 @@ impl ExtendedQueryHandler {
         response: crate::session::db_handler::DbResponse,
         _max_rows: i32,
         result_formats: &[i16],
+        execution_context: Option<&crate::query::ExecutionContext>,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
         // debug!("send_select_response called with {} columns: {:?}", response.columns.len(), response.columns);
-        // Send RowDescription
+        // Send RowDescription only if we should
         let mut field_descriptions = Vec::new();
         for (i, column_name) in response.columns.iter().enumerate() {
             let format = if result_formats.is_empty() {
@@ -2286,7 +2403,19 @@ impl ExtendedQueryHandler {
                 format,
             });
         }
-        framed.send(BackendMessage::RowDescription(field_descriptions.clone())).await?;
+        
+        // Only send RowDescription if ExecutionContext allows it (or if no context provided)
+        let should_send = match execution_context {
+            Some(ctx) => ctx.should_send_row_description(),
+            None => true, // If no context, default to sending (backward compatibility)
+        };
+        
+        if should_send {
+            info!("Sending RowDescription with {} fields", field_descriptions.len());
+            framed.send(BackendMessage::RowDescription(field_descriptions.clone())).await?;
+        } else {
+            info!("Not sending RowDescription (already sent)");
+        }
         
         // Send DataRows
         // Check if binary format is requested
@@ -3396,6 +3525,7 @@ impl ExtendedQueryHandler {
         portal_name: &str,
         query: &str,
         max_rows: i32,
+        execution_context: &crate::query::ExecutionContext,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -3444,20 +3574,30 @@ impl ExtendedQueryHandler {
         // BUT NOT for catalog queries - they should already have field descriptions from Describe
         let send_row_desc = {
             let portals = session.portals.read().await;
-            let portal = portals.get(portal_name).unwrap();
-            let statements = session.prepared_statements.read().await;
-            let stmt = statements.get(&portal.statement_name).unwrap();
+            let portal = portals.get(portal_name);
+            info!("execute_select: Looking for portal '{}'", portal_name);
             
-            // Only send RowDescription if statement has no field descriptions
-            // If it has field descriptions, that means Describe was already called
-            // and already sent RowDescription to the client
-            let needs_row_desc = stmt.field_descriptions.is_empty() && !response.columns.is_empty();
-            debug!("Execute check: stmt.field_descriptions.is_empty()={}, response.columns.is_empty()={}, send_row_desc={}", 
-                   stmt.field_descriptions.is_empty(), response.columns.is_empty(), needs_row_desc);
-            
-            drop(statements);
-            drop(portals);
-            needs_row_desc
+            if let Some(portal) = portal {
+                info!("execute_select: Found portal with statement_name='{}'", portal.statement_name);
+                let statements = session.prepared_statements.read().await;
+                let stmt = statements.get(&portal.statement_name);
+                
+                if let Some(stmt) = stmt {
+                    // Only send RowDescription if statement has no field descriptions
+                    // If it has field descriptions, that means Describe was already called
+                    // and already sent RowDescription to the client
+                    let needs_row_desc = stmt.field_descriptions.is_empty() && !response.columns.is_empty();
+                    info!("execute_select: stmt.field_descriptions.len()={}, response.columns.is_empty()={}, send_row_desc={}", 
+                           stmt.field_descriptions.len(), response.columns.is_empty(), needs_row_desc);
+                    needs_row_desc
+                } else {
+                    info!("execute_select: No statement found for name '{}', sending RowDescription", portal.statement_name);
+                    true
+                }
+            } else {
+                info!("execute_select: No portal found for name '{}', sending RowDescription", portal_name);
+                true
+            }
         };
         
         debug!("execute_select: send_row_desc = {}", send_row_desc);
@@ -3643,6 +3783,9 @@ impl ExtendedQueryHandler {
             info!("Sending RowDescription with {} fields during Execute with inferred types", fields.len());
             framed.send(BackendMessage::RowDescription(fields)).await
                 .map_err(PgSqliteError::Io)?;
+        } else {
+            info!("execute_select: Not sending RowDescription (send_row_desc={}, already_sent={})", 
+                  send_row_desc, execution_context.is_row_description_sent());
         }
         
         // Get result formats and field types from the portal and statement
@@ -4693,6 +4836,44 @@ impl ExtendedQueryHandler {
         } else {
             None
         }
+    }
+    
+    async fn send_data_rows_only<T>(
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        response: crate::session::db_handler::DbResponse,
+        result_formats: &[i16],
+    ) -> Result<(), PgSqliteError>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        info!("send_data_rows_only: Sending {} data rows without RowDescription", response.rows.len());
+        
+        // Send DataRows only (no RowDescription)
+        for row in &response.rows {
+            let mut values = Vec::new();
+            for (i, value) in row.iter().enumerate() {
+                let format = if result_formats.is_empty() {
+                    0 // Default to text
+                } else if result_formats.len() == 1 {
+                    result_formats[0]
+                } else if i < result_formats.len() {
+                    result_formats[i]
+                } else {
+                    0
+                };
+                
+                if format == 0 {
+                    // Text format
+                    values.push(value.clone());
+                } else {
+                    // Binary format - for now just pass through
+                    values.push(value.clone());
+                }
+            }
+            framed.send(BackendMessage::DataRow(values)).await?;
+        }
+        
+        Ok(())
     }
 }
 

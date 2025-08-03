@@ -771,6 +771,13 @@ impl QueryExecutor {
             QueryType::Begin | QueryType::Commit | QueryType::Rollback => {
                 Self::execute_transaction(framed, db, session, query_to_execute, query_router).await
             }
+            QueryType::Deallocate => {
+                // DEALLOCATE is a no-op in pgsqlite since we don't maintain prepared statements
+                // Just send CommandComplete
+                framed.send(BackendMessage::CommandComplete { tag: "DEALLOCATE".to_string() }).await
+                    .map_err(PgSqliteError::Io)?;
+                Ok(())
+            }
             _ => {
                 // Check if it's a SET command
                 if crate::query::SetHandler::is_set_command(query_to_execute) {

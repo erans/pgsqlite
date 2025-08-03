@@ -57,6 +57,13 @@ impl QueryTypeDetector {
             }
         }
         
+        if bytes.len() >= 10 {
+            match &bytes[0..10] {
+                b"DEALLOCATE" | b"deallocate" | b"Deallocate" => return QueryType::Deallocate,
+                _ => {}
+            }
+        }
+        
         // Fall back to eq_ignore_ascii_case for less common or mixed case patterns
         if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("WITH") {
             QueryType::Select
@@ -82,6 +89,8 @@ impl QueryTypeDetector {
             QueryType::Commit
         } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("ROLLBACK") {
             QueryType::Rollback
+        } else if trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("DEALLOCATE") {
+            QueryType::Deallocate
         } else {
             QueryType::Other
         }
@@ -157,6 +166,7 @@ pub enum QueryType {
     Begin,
     Commit,
     Rollback,
+    Deallocate,
     Other,
 }
 
@@ -174,6 +184,7 @@ impl QueryType {
             QueryType::Begin => "BEGIN",
             QueryType::Commit => "COMMIT",
             QueryType::Rollback => "ROLLBACK",
+            QueryType::Deallocate => "DEALLOCATE",
             QueryType::Other => "",
         }
     }
