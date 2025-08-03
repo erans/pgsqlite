@@ -412,6 +412,17 @@ impl ExtendedQueryHandler {
             translation_metadata.merge(metadata);
         }
         
+        // Remove schema prefixes (e.g., pg_catalog.) from tables and functions
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
+        {
+            use crate::translator::SchemaPrefixTranslator;
+            let translated = SchemaPrefixTranslator::translate_query(&translated_for_analysis);
+            if translated != translated_for_analysis {
+                info!("Schema prefix translation changed query to: {}", translated);
+                translated_for_analysis = translated;
+            }
+        }
+        
         // Translate json_each()/jsonb_each() functions for PostgreSQL compatibility
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         {
