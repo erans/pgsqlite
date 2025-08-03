@@ -622,9 +622,7 @@ where
 
     // Clean up session connection explicitly
     info!("Cleaning up session connection for {}", connection_info);
-    // TODO: Fix cleanup_connection hanging issue
-    // session.cleanup_connection().await;
-    info!("Session connection cleanup skipped (TODO: fix hanging issue)");
+    session.cleanup_connection().await;
     
     info!("Connection from {} closed", connection_info);
     Ok(())

@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use once_cell::sync::Lazy;
 use crate::session::DbHandler;
 use parking_lot::Mutex as ParkingMutex;
+use tracing::debug;
 use rusqlite::Connection;
 
 // Global query cache shared across all sessions
@@ -138,8 +139,12 @@ impl SessionState {
         // Clear the cached connection first
         self.cached_connection.lock().take();
         
-        if let Some(ref db_handler) = *self.db_handler.lock().await {
-            db_handler.remove_session_connection(&self.id);
+        // Get a clone of the db_handler to avoid holding the lock
+        let db_handler = self.db_handler.lock().await.clone();
+        
+        if let Some(ref handler) = db_handler {
+            handler.remove_session_connection(&self.id);
+            debug!("Successfully removed session connection for {}", self.id);
         }
     }
     

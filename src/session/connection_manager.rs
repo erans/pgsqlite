@@ -185,8 +185,9 @@ impl ConnectionManager {
     
     /// Remove a connection when session ends
     pub fn remove_connection(&self, session_id: &Uuid) {
-        // Remove from thread-local cache first
-        ThreadLocalConnectionCache::remove(session_id);
+        // Skip thread-local cache removal to avoid potential deadlock
+        // The cache will be cleaned up naturally via LRU eviction
+        debug!("Removing connection for session {}", session_id);
         
         let mut connections = self.connections.write();
         if connections.remove(session_id).is_some() {
