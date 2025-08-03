@@ -108,32 +108,29 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Autocommit mode enabled for binary cursors
   - [x] Comprehensive comparison between text and binary formats
 
-### Binary Format DML Performance Investigation - IN PROGRESS (2025-08-03)
-- [ ] **Critical Performance Regression** - Binary format 2.9x slower than text format overall
-  - [ ] **Latest Benchmark Results** (Unix Socket Performance):
-    - [ ] INSERT: 12.7x slower with binary (0.070ms → 0.870ms)
-    - [ ] UPDATE: 3.0x slower with binary (0.075ms → 0.218ms)
-    - [ ] DELETE: 6.2x slower with binary (0.040ms → 0.200ms)
-    - [ ] SELECT: 1.8x slower with binary (0.699ms → 1.189ms)
-    - [ ] SELECT (cached): 10.8x slower with binary (0.085ms → 0.778ms)
-  - [ ] **Root Cause Analysis Required**:
-    - [ ] Profile binary parameter decoding overhead in handle_bind
-    - [ ] Investigate why fast path doesn't work effectively for binary format
-    - [ ] Check if binary-to-text conversion for SQLite is the bottleneck
-    - [ ] Analyze memory allocations in binary encoding/decoding paths
-  - [ ] **Immediate Actions**:
-    - [ ] Add performance profiling to binary parameter handling
-    - [ ] Trace fast path execution for binary vs text formats
-    - [ ] Identify where the 800ms overhead comes from in INSERT operations
+### Binary Format DML Performance Investigation - ROOT CAUSE FOUND (2025-08-03)
+- [x] **Root Cause Identified** - RETURNING clause handling causes the regression
+  - [x] **Key Discovery**: Binary format is FASTER without RETURNING (0.7x of text format)
+  - [x] **Problem**: With RETURNING clause, binary format is 6.9x slower
+  - [x] **Implementation Issue**: execute_dml_with_returning runs TWO queries:
+    1. Executes the INSERT/UPDATE/DELETE
+    2. Runs a separate SELECT to fetch RETURNING data
+    3. Binary encoding of SELECT results adds ~0.6ms overhead
+  - [x] **Benchmark Impact**: All INSERT operations use RETURNING id, explaining 12.7x regression
+- [ ] **Fix RETURNING Clause Performance** - HIGHEST PRIORITY
+  - [ ] Use SQLite's native RETURNING support (SQLite 3.35.0+) instead of double queries
+  - [ ] Optimize binary encoding for RETURNING results
+  - [ ] Consider caching binary-encoded RETURNING results
+  - [ ] Test if removing double query execution fixes the regression
 - [ ] **Server Hanging Issue** - Fixed temporarily, needs proper solution
   - [x] Temporary fix: Commented out session.cleanup_connection().await
   - [ ] Root cause: cleanup_connection hanging, likely due to missing remove_session_connection
   - [ ] Implement proper connection cleanup without hanging
-- [ ] **Optimize Binary Format Implementation**
-  - [ ] Fix DML operation performance regressions
-  - [ ] Implement binary result caching for cached queries
-  - [ ] Consider direct binary-to-SQLite value conversion
-  - [ ] Reduce allocations in parameter decoding
+- [ ] **Binary Format Optimization** - After RETURNING fix
+  - [ ] Implement fast path for DML with RETURNING
+  - [ ] Cache binary encoding for common result patterns
+  - [ ] Profile and optimize binary result encoder
+  - [ ] Add benchmark without RETURNING to show true performance
 
 ### UUID Generation and Caching Fix - COMPLETED (2025-07-27)
 - [x] **UUID Generation Caching Issue** - Fixed duplicate UUID values from gen_random_uuid()
