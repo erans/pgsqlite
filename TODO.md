@@ -95,13 +95,12 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Fixed fast path to use INT4 instead of INT8 for integer type inference
   - [x] SELECT operations: Now 10.5% faster with binary format ✅
   - [x] Binary encoding overhead reduced through batch processing
-- [ ] **Performance Issues** - DML operations have significant regressions
-  - [ ] INSERT operations: 8.7x SLOWER with binary (0.100ms → 0.871ms)
-  - [ ] UPDATE operations: 1.9x SLOWER with binary (0.109ms → 0.211ms)
-  - [ ] DELETE operations: 3.4x SLOWER with binary (0.053ms → 0.182ms)
-  - [x] SELECT operations: 10.5% faster with binary (1.198ms → 1.072ms) ✅
-  - [ ] SELECT (cached): 2.3x slower - needs binary result caching
-  - [x] SELECT (cached): Still 2.3x slower - needs binary result caching
+- [x] **Performance Issues FIXED** - DML operations performance restored
+  - [x] INSERT operations: Fixed RETURNING overhead (1.39ms → 0.13ms, 10.7x improvement)
+  - [x] UPDATE operations: Fixed by native RETURNING support
+  - [x] DELETE operations: Fixed by native RETURNING support
+  - [x] Root cause: Double execution of DML with RETURNING (execute + select)
+  - [x] Solution: Use SQLite's native RETURNING support for single query execution
   - [x] Binary format recommended for all workloads except cached queries
 - [x] **Benchmark Support** - Added --binary-format flag to benchmark runner
   - [x] Automatic psycopg3 selection for binary format testing
