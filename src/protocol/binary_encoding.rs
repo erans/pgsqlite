@@ -151,6 +151,84 @@ impl BinaryResultEncoder {
                         false
                     }
                 }
+                t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                    // Handle timestamp stored as text (e.g., "2025-08-03 04:40:12")
+                    // First try to parse as integer (microseconds)
+                    if let Ok(micros) = text.parse::<i64>() {
+                        let encoded = BinaryEncoder::encode_timestamp(micros as f64);
+                        self.buffer.put_slice(&encoded);
+                        true
+                    } else {
+                        // Try to parse as ISO timestamp string
+                        use chrono::{DateTime, NaiveDateTime};
+                        
+                        // Try various timestamp formats
+                        let parsed = if let Ok(dt) = DateTime::parse_from_rfc3339(text) {
+                            Some(dt.timestamp_micros())
+                        } else if let Ok(dt) = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S%.f") {
+                            Some(dt.and_utc().timestamp_micros())
+                        } else if let Ok(dt) = NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S") {
+                            Some(dt.and_utc().timestamp_micros())
+                        } else {
+                            None
+                        };
+                        
+                        if let Some(micros) = parsed {
+                            let encoded = BinaryEncoder::encode_timestamp(micros as f64);
+                            self.buffer.put_slice(&encoded);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+                t if t == PgType::Date.to_oid() => {
+                    // Handle date stored as text (e.g., "2025-08-03")
+                    if let Ok(days) = text.parse::<i32>() {
+                        // Already in days format
+                        let encoded = BinaryEncoder::encode_date(days as f64);
+                        self.buffer.put_slice(&encoded);
+                        true
+                    } else {
+                        // Try to parse as date string
+                        use chrono::NaiveDate;
+                        if let Ok(date) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+                            let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                            let days_since_epoch = (date - epoch).num_days();
+                            let encoded = BinaryEncoder::encode_date(days_since_epoch as f64);
+                            self.buffer.put_slice(&encoded);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
+                t if t == PgType::Time.to_oid() || t == PgType::Timetz.to_oid() => {
+                    // Handle time stored as text (e.g., "14:30:45.123456")
+                    if let Ok(micros) = text.parse::<i64>() {
+                        // Already in microseconds format
+                        let encoded = BinaryEncoder::encode_time(micros as f64);
+                        self.buffer.put_slice(&encoded);
+                        true
+                    } else {
+                        // Try to parse as time string
+                        use chrono::{NaiveTime, Timelike};
+                        if let Ok(time) = NaiveTime::parse_from_str(text, "%H:%M:%S%.f") {
+                            let micros = time.num_seconds_from_midnight() as i64 * 1_000_000 
+                                       + (time.nanosecond() as i64 / 1000);
+                            let encoded = BinaryEncoder::encode_time(micros as f64);
+                            self.buffer.put_slice(&encoded);
+                            true
+                        } else if let Ok(time) = NaiveTime::parse_from_str(text, "%H:%M:%S") {
+                            let micros = time.num_seconds_from_midnight() as i64 * 1_000_000;
+                            let encoded = BinaryEncoder::encode_time(micros as f64);
+                            self.buffer.put_slice(&encoded);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                }
                 _ => false
             }
         } else if type_oid == PgType::Bytea.to_oid() {
