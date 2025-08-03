@@ -958,20 +958,32 @@ impl ExtendedQueryHandler {
             stmt.param_types.clone()
         };
         
-        // Fast path for simple parameterized SELECT queries
-        let meets_fast_path_conditions = query_starts_with_ignore_case(&query, "SELECT") && 
+        // Fast path for simple parameterized queries (SELECT, INSERT, UPDATE, DELETE)
+        let is_simple_dml = query_starts_with_ignore_case(&query, "INSERT") ||
+                           query_starts_with_ignore_case(&query, "UPDATE") ||
+                           query_starts_with_ignore_case(&query, "DELETE");
+        
+        let meets_fast_path_conditions = (query_starts_with_ignore_case(&query, "SELECT") || is_simple_dml) && 
            !query.contains("JOIN") && 
            !query.contains("GROUP BY") && 
            !query.contains("HAVING") &&
            !query.contains("::") &&
            !query.contains("UNION") &&
            !query.contains("INTERSECT") &&
-           !query.contains("EXCEPT");
-        info!("Fast path conditions met: {}", meets_fast_path_conditions);
+           !query.contains("EXCEPT") &&
+           !bound_values.is_empty() &&  // Must have parameters
+           query.contains('$');          // Must be parameterized
+        info!("Fast path conditions met: {} (query type: {})", 
+              meets_fast_path_conditions, 
+              if query_starts_with_ignore_case(&query, "SELECT") { "SELECT" } 
+              else if query_starts_with_ignore_case(&query, "INSERT") { "INSERT" }
+              else if query_starts_with_ignore_case(&query, "UPDATE") { "UPDATE" }
+              else if query_starts_with_ignore_case(&query, "DELETE") { "DELETE" }
+              else { "OTHER" });
         
         if meets_fast_path_conditions {
             
-        info!("Using fast path for simple SELECT query: {}", query);
+        info!("Using fast path for simple parameterized query: {}", query);
             
             // Get cached connection first
             let _cached_conn = Self::get_or_cache_connection(session, db).await;
@@ -1017,7 +1029,33 @@ impl ExtendedQueryHandler {
             match db.execute_with_rusqlite_params(query_to_execute, &converted_params, &session.id).await {
                 Ok(response) => {
                     info!("Fast path: execute_with_rusqlite_params succeeded");
-                    // Send RowDescription if needed
+                    
+                    // Check if this is a DML operation
+                    let is_select = query_starts_with_ignore_case(&query, "SELECT");
+                    let is_insert = query_starts_with_ignore_case(&query, "INSERT");
+                    let is_update = query_starts_with_ignore_case(&query, "UPDATE");
+                    let is_delete = query_starts_with_ignore_case(&query, "DELETE");
+                    
+                    if !is_select {
+                        // DML operation - send CommandComplete
+                        let tag = if is_insert {
+                            format!("INSERT 0 {}", response.rows_affected)
+                        } else if is_update {
+                            format!("UPDATE {}", response.rows_affected)
+                        } else if is_delete {
+                            format!("DELETE {}", response.rows_affected)
+                        } else {
+                            format!("OK")
+                        };
+                        
+                        info!("Fast path: Sending CommandComplete for DML operation: {}", tag);
+                        framed.send(BackendMessage::CommandComplete { tag }).await
+                            .map_err(PgSqliteError::Io)?;
+                        
+                        return Ok(());
+                    }
+                    
+                    // SELECT operation - continue with RowDescription and DataRows
                     let send_row_desc = {
                         let statements = session.prepared_statements.read().await;
                         info!("Fast path: statement_name='{}'", statement_name);
@@ -2318,7 +2356,7 @@ impl ExtendedQueryHandler {
                                 // int2
                                 if bytes.len() == 2 {
                                     let value = i16::from_be_bytes([bytes[0], bytes[1]]);
-                                    info!("Decoded binary int16 parameter {}: {}", i + 1, value);
+                                    debug!("Decoded binary int16 parameter {}: {}", i + 1, value);
                                     value.to_string()
                                 } else {
                                     format!("X'{}'", hex::encode(bytes))
@@ -2328,7 +2366,7 @@ impl ExtendedQueryHandler {
                                 // int4
                                 if bytes.len() == 4 {
                                     let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                                    info!("Decoded binary int32 parameter {}: {}", i + 1, value);
+                                    debug!("Decoded binary int32 parameter {}: {}", i + 1, value);
                                     value.to_string()
                                 } else {
                                     format!("X'{}'", hex::encode(bytes))
@@ -2341,7 +2379,7 @@ impl ExtendedQueryHandler {
                                         bytes[0], bytes[1], bytes[2], bytes[3],
                                         bytes[4], bytes[5], bytes[6], bytes[7]
                                     ]);
-                                    info!("Decoded binary int64 parameter {}: {}", i + 1, value);
+                                    debug!("Decoded binary int64 parameter {}: {}", i + 1, value);
                                     value.to_string()
                                 } else {
                                     format!("X'{}'", hex::encode(bytes))
@@ -2356,7 +2394,7 @@ impl ExtendedQueryHandler {
                                     ]);
                                     let dollars = cents as f64 / 100.0;
                                     let formatted = format!("'${dollars:.2}'");
-                                    info!("Decoded binary money parameter {}: {} cents -> {}", i + 1, cents, formatted);
+                                    debug!("Decoded binary money parameter {}: {} cents -> {}", i + 1, cents, formatted);
                                     formatted
                                 } else {
                                     format!("X'{}'", hex::encode(bytes))
@@ -2367,7 +2405,7 @@ impl ExtendedQueryHandler {
                                 match DecimalHandler::decode_numeric(bytes) {
                                     Ok(decimal) => {
                                         let s = decimal.to_string();
-                                        info!("Decoded binary numeric parameter {}: {}", i + 1, s);
+                                        debug!("Decoded binary numeric parameter {}: {}", i + 1, s);
                                         format!("'{}'", s.replace('\'', "''"))
                                     }
                                     Err(e) => {
