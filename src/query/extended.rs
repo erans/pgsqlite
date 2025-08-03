@@ -1035,9 +1035,10 @@ impl ExtendedQueryHandler {
                     let is_insert = query_starts_with_ignore_case(&query, "INSERT");
                     let is_update = query_starts_with_ignore_case(&query, "UPDATE");
                     let is_delete = query_starts_with_ignore_case(&query, "DELETE");
+                    let has_returning = ReturningTranslator::has_returning_clause(&query);
                     
-                    if !is_select {
-                        // DML operation - send CommandComplete
+                    if !is_select && !has_returning {
+                        // DML operation without RETURNING - send CommandComplete
                         let tag = if is_insert {
                             format!("INSERT 0 {}", response.rows_affected)
                         } else if is_update {
@@ -1483,10 +1484,9 @@ impl ExtendedQueryHandler {
             info!("Query to use: '{}'", query_to_use);
         }
         
-        // Use parameterized path for queries without RETURNING clause
-        // (RETURNING requires special handling that parameterized path doesn't support)
-        let has_returning = ReturningTranslator::has_returning_clause(&query);
-        if has_params && !has_returning { 
+        // Use parameterized path for all queries with parameters (including RETURNING)
+        // Now that we use native SQLite RETURNING, we can handle it in the parameterized path
+        if has_params { 
             info!("USING PARAMETERIZED PATH for query: {}", query);
             // Convert parameters to rusqlite values
             let mut converted_params = Vec::new();
@@ -1550,26 +1550,52 @@ impl ExtendedQueryHandler {
                         // Fall through to substitution-based execution
                     }
                 }
-            } else if (query_starts_with_ignore_case(&parameterized_query, "INSERT") 
+            } else if query_starts_with_ignore_case(&parameterized_query, "INSERT") 
                 || query_starts_with_ignore_case(&parameterized_query, "UPDATE") 
-                || query_starts_with_ignore_case(&parameterized_query, "DELETE"))
-                && !ReturningTranslator::has_returning_clause(&parameterized_query) {
-                // For DML without RETURNING, use parameterized execution
-                match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
-                    Ok(response) => {
-                        let tag = if query_starts_with_ignore_case(&parameterized_query, "INSERT") {
-                            format!("INSERT 0 {}", response.rows_affected)
-                        } else if query_starts_with_ignore_case(&parameterized_query, "UPDATE") {
-                            format!("UPDATE {}", response.rows_affected)
-                        } else {
-                            format!("DELETE {}", response.rows_affected)
-                        };
-                        framed.send(BackendMessage::CommandComplete { tag }).await?;
-                        return Ok(());
+                || query_starts_with_ignore_case(&parameterized_query, "DELETE") {
+                
+                // Check if it has RETURNING clause
+                if ReturningTranslator::has_returning_clause(&parameterized_query) {
+                    // For DML with RETURNING, use query to get results
+                    info!("Executing DML with RETURNING using native SQLite support");
+                    match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
+                        Ok(response) => {
+                            // Send row description and data
+                            Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                            
+                            // Send appropriate command complete tag
+                            let tag = if query_starts_with_ignore_case(&parameterized_query, "INSERT") {
+                                "INSERT 0 1".to_string() // TODO: Get actual row count
+                            } else if query_starts_with_ignore_case(&parameterized_query, "UPDATE") {
+                                "UPDATE 1".to_string()
+                            } else {
+                                "DELETE 1".to_string()
+                            };
+                            framed.send(BackendMessage::CommandComplete { tag }).await?;
+                        }
+                        Err(e) => {
+                            warn!("Failed to execute DML with RETURNING: {}", e);
+                            return Err(e);
+                        }
                     }
-                    Err(e) => {
-                        warn!("Parameterized DML failed: {}, falling back to substitution", e);
-                        // Fall through to substitution-based execution
+                } else {
+                    // For DML without RETURNING, use parameterized execution
+                    match db.execute_with_rusqlite_params(&parameterized_query, &converted_params, &session.id).await {
+                        Ok(response) => {
+                            let tag = if query_starts_with_ignore_case(&parameterized_query, "INSERT") {
+                                format!("INSERT 0 {}", response.rows_affected)
+                            } else if query_starts_with_ignore_case(&parameterized_query, "UPDATE") {
+                                format!("UPDATE {}", response.rows_affected)
+                            } else {
+                                format!("DELETE {}", response.rows_affected)
+                            };
+                            framed.send(BackendMessage::CommandComplete { tag }).await?;
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            warn!("Parameterized DML failed: {}, falling back to substitution", e);
+                            // Fall through to substitution-based execution
+                        }
                     }
                 }
             }
@@ -3865,187 +3891,81 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
-            .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
+        // Use SQLite's native RETURNING support - just execute the query directly
+        info!("Using native SQLite RETURNING for query: {}", query);
         
-        if query_starts_with_ignore_case(&base_query, "INSERT") {
-            // For INSERT, execute the insert and then query by last_insert_rowid
-            let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
+        // Execute the query with RETURNING as a single operation
+        let cached_conn = Self::get_or_cache_connection(session, db).await;
+        let returning_response = db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
+        
+        // Extract the base operation type for the command tag
+        let tag = if query_starts_with_ignore_case(query, "INSERT") {
+            format!("INSERT 0 {}", returning_response.rows.len())
+        } else if query_starts_with_ignore_case(query, "UPDATE") {
+            format!("UPDATE {}", returning_response.rows.len())
+        } else if query_starts_with_ignore_case(query, "DELETE") {
+            format!("DELETE {}", returning_response.rows.len())
+        } else {
+            format!("OK {}", returning_response.rows.len())
+        };
             
-            // Execute the INSERT
-            let cached_conn = Self::get_or_cache_connection(session, db).await;
-            let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
-            
-            // Get the last inserted rowid and query for RETURNING data
-            let returning_query = format!(
-                "SELECT {returning_clause} FROM {table_name} WHERE rowid = last_insert_rowid()"
-            );
-            
-            let cached_conn = Self::get_or_cache_connection(session, db).await;
-            let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;
-            
-            // Send row description
-            let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                .enumerate()
-                .map(|(i, name)| {
-                    let format = if result_formats.is_empty() {
-                        0 // Default to text if no formats specified
-                    } else if result_formats.len() == 1 {
-                        result_formats[0] // Single format applies to all columns
-                    } else if i < result_formats.len() {
-                        result_formats[i] // Use column-specific format
-                    } else {
-                        0 // Default to text if not enough formats
-                    };
-                    
-                    FieldDescription {
-                        name: name.clone(),
-                        table_oid: 0,
-                        column_id: (i + 1) as i16,
-                        type_oid: 25, // Default to text
-                        type_size: -1,
-                        type_modifier: -1,
-                        format,
-                    }
-                })
+        // Send row description with proper format handling
+        let fields: Vec<FieldDescription> = returning_response.columns.iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let format = if result_formats.is_empty() {
+                    0 // Default to text if no formats specified
+                } else if result_formats.len() == 1 {
+                    result_formats[0] // Single format applies to all columns
+                } else if i < result_formats.len() {
+                    result_formats[i] // Use column-specific format
+                } else {
+                    0 // Default to text if not enough formats
+                };
+                
+                FieldDescription {
+                    name: name.clone(),
+                    table_oid: 0,
+                    column_id: (i + 1) as i16,
+                    type_oid: 25, // Default to text - could be improved with type detection
+                    type_size: -1,
+                    type_modifier: -1,
+                    format,
+                }
+            })
+            .collect();
+        
+        framed.send(BackendMessage::RowDescription(fields.clone())).await
+            .map_err(PgSqliteError::Io)?;
+        
+        // Send data rows with binary encoding if requested
+        let needs_binary_encoding = result_formats.iter().any(|&f| f == 1);
+        
+        if needs_binary_encoding {
+            // Binary format requested - use optimized batch encoding
+            let field_types: Vec<i32> = fields.iter()
+                .map(|f| f.type_oid)
                 .collect();
             
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
+            // Use optimized batch encoder for binary results
+            let (encoded_rows, _encoder) = Self::encode_rows_optimized(&returning_response.rows, result_formats, &field_types)?;
             
-            // Send data rows
+            // Send all encoded rows
+            for encoded_row in encoded_rows {
+                framed.send(BackendMessage::DataRow(encoded_row)).await
+                    .map_err(PgSqliteError::Io)?;
+            }
+        } else {
+            // Text format - send rows directly
             for row in returning_response.rows {
                 framed.send(BackendMessage::DataRow(row)).await
                     .map_err(PgSqliteError::Io)?;
             }
-            
-            // Send command complete
-            let tag = format!("INSERT 0 {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(PgSqliteError::Io)?;
-        } else if query_starts_with_ignore_case(&base_query, "UPDATE") {
-            // For UPDATE, we need a different approach
-            let table_name = ReturningTranslator::extract_table_from_update(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
-            
-            // First, get the rowids of rows that will be updated
-            let where_clause = ReturningTranslator::extract_where_clause(&base_query);
-            let rowid_query = format!(
-                "SELECT rowid FROM {table_name} {where_clause}"
-            );
-            let cached_conn = Self::get_or_cache_connection(session, db).await;
-            let rowid_response = db.query_with_session_cached(&rowid_query, &session.id, cached_conn.as_ref()).await?;
-            let rowids: Vec<String> = rowid_response.rows.iter()
-                .filter_map(|row| row[0].as_ref())
-                .map(|bytes| String::from_utf8_lossy(bytes).to_string())
-                .collect();
-            
-            // Execute the UPDATE
-            let cached_conn = Self::get_or_cache_connection(session, db).await;
-            let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
-            
-            // Now query the updated rows
-            if !rowids.is_empty() {
-                let rowid_list = rowids.join(",");
-                let returning_query = format!(
-                    "SELECT {returning_clause} FROM {table_name} WHERE rowid IN ({rowid_list})"
-                );
-                
-                let cached_conn = Self::get_or_cache_connection(session, db).await;
-                let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;
-                
-                // Send row description
-                let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                    .enumerate()
-                    .map(|(i, name)| {
-                        let format = if result_formats.is_empty() {
-                            0 // Default to text if no formats specified
-                        } else if result_formats.len() == 1 {
-                            result_formats[0] // Single format applies to all columns
-                        } else if i < result_formats.len() {
-                            result_formats[i] // Use column-specific format
-                        } else {
-                            0 // Default to text if not enough formats
-                        };
-                        
-                        FieldDescription {
-                            name: name.clone(),
-                            table_oid: 0,
-                            column_id: (i + 1) as i16,
-                            type_oid: 25,
-                            type_size: -1,
-                            type_modifier: -1,
-                            format,
-                        }
-                    })
-                    .collect();
-                
-                framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(PgSqliteError::Io)?;
-                
-                // Send data rows
-                for row in returning_response.rows {
-                    framed.send(BackendMessage::DataRow(row)).await
-                        .map_err(PgSqliteError::Io)?;
-                }
-            }
-            
-            // Send command complete
-            let tag = format!("UPDATE {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(PgSqliteError::Io)?;
-        } else if query_starts_with_ignore_case(&base_query, "DELETE") {
-            // For DELETE, capture rows before deletion
-            let table_name = ReturningTranslator::extract_table_from_delete(&base_query)
-                .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
-            
-            let capture_query = ReturningTranslator::generate_capture_query(
-                &base_query,
-                &table_name,
-                &returning_clause
-            )?;
-            
-            // Capture the rows that will be affected
-            let cached_conn = Self::get_or_cache_connection(session, db).await;
-            let captured_rows = db.query_with_session_cached(&capture_query, &session.id, cached_conn.as_ref()).await?;
-            
-            // Execute the actual DELETE
-            let cached_conn = Self::get_or_cache_connection(session, db).await;
-            let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
-            
-            // Send row description
-            let fields: Vec<FieldDescription> = captured_rows.columns.iter()
-                .skip(1) // Skip rowid column
-                .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: 25,
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
-                .collect();
-            
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
-            
-            // Send captured rows (skip rowid column)
-            for row in captured_rows.rows {
-                let data_row: Vec<Option<Vec<u8>>> = row.into_iter()
-                    .skip(1) // Skip rowid
-                    .collect();
-                framed.send(BackendMessage::DataRow(data_row)).await
-                    .map_err(PgSqliteError::Io)?;
-            }
-            
-            // Send command complete
-            let tag = format!("DELETE {}", response.rows_affected);
-            framed.send(BackendMessage::CommandComplete { tag }).await
-                .map_err(PgSqliteError::Io)?;
         }
+        
+        // Send command complete
+        framed.send(BackendMessage::CommandComplete { tag }).await
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }

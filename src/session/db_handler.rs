@@ -309,6 +309,9 @@ impl DbHandler {
             
             let query_type = QueryTypeDetector::detect_query_type(query);
             
+            // Check if query has RETURNING clause - it needs to be treated as SELECT
+            let has_returning = query.to_uppercase().contains(" RETURNING ");
+            
             match query_type {
                 QueryType::Select => {
                     let column_count = stmt.column_count();
@@ -339,12 +342,42 @@ impl DbHandler {
                     })
                 }
                 _ => {
-                    let rows_affected = stmt.execute(rusqlite::params_from_iter(params.iter()))?;
-                    Ok(DbResponse {
-                        columns: vec![],
-                        rows: vec![],
-                        rows_affected,
-                    })
+                    // For DML with RETURNING, treat as SELECT
+                    if has_returning {
+                        let column_count = stmt.column_count();
+                        let mut columns = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            columns.push(stmt.column_name(i)?.to_string());
+                        }
+                        
+                        let rows: Result<Vec<_>, _> = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+                            let mut row_data = Vec::with_capacity(column_count);
+                            for i in 0..column_count {
+                                let value: Option<rusqlite::types::Value> = row.get(i)?;
+                                row_data.push(match value {
+                                    Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                    Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                    Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                    Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                    Some(rusqlite::types::Value::Null) | None => None,
+                                });
+                            }
+                            Ok(row_data)
+                        })?.collect();
+                        
+                        Ok(DbResponse {
+                            columns,
+                            rows: rows?,
+                            rows_affected: 0,
+                        })
+                    } else {
+                        let rows_affected = stmt.execute(rusqlite::params_from_iter(params.iter()))?;
+                        Ok(DbResponse {
+                            columns: vec![],
+                            rows: vec![],
+                            rows_affected,
+                        })
+                    }
                 }
             }
         })
