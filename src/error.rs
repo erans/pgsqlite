@@ -286,6 +286,27 @@ pub fn sqlite_error_to_pg(err: &rusqlite::Error, _query: &str) -> ErrorResponse 
                                 line: None,
                                 routine: None,
                             };
+                        } else if msg.contains("invalid input value for enum") {
+                            // Extract the specific enum error message
+                            return ErrorResponse {
+                                severity: "ERROR".to_string(),
+                                code: "22P02".to_string(), // invalid_text_representation
+                                message: msg.clone(),
+                                detail: None,
+                                hint: None,
+                                position: None,
+                                internal_position: None,
+                                internal_query: None,
+                                where_: None,
+                                schema: None,
+                                table: None,
+                                column: None,
+                                datatype: None,
+                                constraint: None,
+                                file: None,
+                                line: None,
+                                routine: None,
+                            };
                         }
                     }
                     ErrorResponse::new(

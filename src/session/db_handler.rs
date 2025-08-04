@@ -31,6 +31,19 @@ pub struct DbHandler {
 }
 
 impl DbHandler {
+    /// Convert PostgreSQL-style parameters ($1, $2, etc.) to SQLite-style (?)
+    fn convert_pg_params_to_sqlite(query: &str) -> String {
+        let mut result = query.to_string();
+        let mut param_num = 1;
+        
+        // Replace $1, $2, etc. with ? in order
+        while result.contains(&format!("${param_num}")) {
+            result = result.replace(&format!("${param_num}"), "?");
+            param_num += 1;
+        }
+        
+        result
+    }
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
         Self::new_with_config(db_path, &Config::load())
     }
@@ -305,7 +318,11 @@ impl DbHandler {
         self.connection_manager.execute_with_session(session_id, |conn| {
             // For parameterized queries, don't process_query as it removes parameter placeholders
             // We need the placeholders for proper parameterized execution
-            let mut stmt = conn.prepare(query)?;
+            
+            // Convert PostgreSQL-style parameters ($1, $2, etc.) to SQLite-style (?)
+            let sqlite_query = Self::convert_pg_params_to_sqlite(query);
+            
+            let mut stmt = conn.prepare(&sqlite_query)?;
             
             let query_type = QueryTypeDetector::detect_query_type(query);
             
@@ -794,12 +811,15 @@ impl DbHandler {
     /// Try fast path execution with parameters
     pub async fn try_execute_fast_path_with_params(
         &self,
-        _query: &str,
-        _params: &[rusqlite::types::Value],
-        _session_id: &Uuid,
+        query: &str,
+        params: &[rusqlite::types::Value],
+        session_id: &Uuid,
     ) -> Result<Option<DbResponse>, PgSqliteError> {
-        // For now, always return None to fall back to regular execution
-        Ok(None)
+        // Use execute_with_rusqlite_params
+        match self.execute_with_rusqlite_params(query, params, session_id).await {
+            Ok(response) => Ok(Some(response)),
+            Err(e) => Err(e),
+        }
     }
     
     /// Query with statement pool and parameters

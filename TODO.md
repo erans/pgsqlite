@@ -633,6 +633,35 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
 
+### psycopg3 & SQLAlchemy Compatibility - COMPLETED (2025-08-04)
+- [x] **Extended Query Protocol Fixes** - Critical fixes for psycopg3 compatibility
+  - [x] Fixed parameter type inference for binary protocol (INT4 instead of TEXT)
+  - [x] Fixed empty param_types handling to use analyzed types
+  - [x] Added proper binary parameter conversion for extended fast path
+  - [x] Fixed PostgreSQL parameter syntax ($1) to SQLite (?) conversion
+- [x] **Test Infrastructure Improvements** - Fixed failing integration tests
+  - [x] Fixed arithmetic_aliasing_test - parameter type conversion issues
+  - [x] Fixed batch_insert_comprehensive_test - already passing
+  - [x] Fixed catalog_enum_test - already passing
+  - [x] Fixed enum_error_handling_test - added proper error message formatting
+  - [x] Fixed migration_test - updated to expect 11 migrations instead of 10
+- [x] **Error Message Improvements** - Better PostgreSQL compatibility
+  - [x] Added specific error handling for enum constraint violations
+  - [x] Fixed "invalid input value for enum" error messages
+  - [x] Preserved original error messages from SQLite RAISE() functions
+
+### Remaining Test Issues (Lower Priority)
+- [ ] **Binary Protocol Edge Cases** - 3 tests failing in binary_protocol_types_test
+  - [ ] Implement binary format for NUMRANGE type
+  - [ ] Implement binary format for BIT/VARBIT types
+  - [ ] Fix NUMRANGE returning "empty" for all values
+- [ ] **Extended Protocol Edge Cases** - 1 test failing in extended_protocol_test
+  - [ ] Fix parameter cast handling for $1::int4 syntax
+  - [ ] Debug why prepared statement with cast returns 0 rows
+- [ ] **Numeric Constraint Validation** - 4 tests failing in numeric_constraints_extended_test
+  - [ ] Fix numeric constraint validation not triggering for invalid precision/scale
+  - [ ] Ensure NUMERIC(10,2) rejects values with >2 decimal places
+
 ### Batch Operations Support - COMPLETED (2025-01-xx)
 - [x] **PostgreSQL Batch UPDATE Support** - Complete implementation with CASE statement translation
   - [x] Implemented `UPDATE table AS t SET col = v.val FROM (VALUES...) AS v(cols) WHERE condition` syntax

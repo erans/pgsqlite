@@ -239,12 +239,15 @@ impl ExtendedQueryHandler {
         let original_client_param_types = param_types.clone();
         info!("Parse received param_types: {:?}", param_types);
         
-        // Only analyze INSERT/UPDATE queries if we have unknown parameter types (0)
+        // Only analyze INSERT/UPDATE/SELECT queries if we have unknown parameter types (0)
         // If client provides explicit types (like INT2=21, FLOAT8=701), we should respect them
-        let has_unknown_types = param_types.iter().any(|&t| t == 0);
+        let has_unknown_types = param_types.is_empty() || param_types.iter().any(|&t| t == 0);
         let needs_schema_analysis = cleaned_query.contains('$') && has_unknown_types &&
             (query_starts_with_ignore_case(&query, "INSERT") || 
-             query_starts_with_ignore_case(&query, "UPDATE"));
+             query_starts_with_ignore_case(&query, "UPDATE") ||
+             query_starts_with_ignore_case(&query, "SELECT"));
+        
+        info!("has_unknown_types: {}, needs_schema_analysis: {}", has_unknown_types, needs_schema_analysis);
         
         if (param_types.is_empty() && cleaned_query.contains('$')) || needs_schema_analysis {
             // First check parameter cache
@@ -304,15 +307,20 @@ impl ExtendedQueryHandler {
                     };
                     
                     // Merge analyzed types with client types - only override unknown (0) types
-                    actual_param_types = param_types.iter().enumerate().map(|(i, &client_type)| {
-                        if client_type == 0 {
-                            // Unknown type - use analyzed type
-                            analyzed_types.get(i).copied().unwrap_or(PgType::Text.to_oid())
-                        } else {
-                            // Client provided explicit type - respect it
-                            client_type
-                        }
-                    }).collect();
+                    // If param_types is empty, use all analyzed types
+                    actual_param_types = if param_types.is_empty() {
+                        analyzed_types.clone()
+                    } else {
+                        param_types.iter().enumerate().map(|(i, &client_type)| {
+                            if client_type == 0 {
+                                // Unknown type - use analyzed type
+                                analyzed_types.get(i).copied().unwrap_or(PgType::Text.to_oid())
+                            } else {
+                                // Client provided explicit type - respect it
+                                client_type
+                            }
+                        }).collect()
+                    };
                     
                     info!("Merged parameter types: client {:?} + analyzed {:?} = actual {:?}", 
                           param_types, analyzed_types, actual_param_types);
@@ -719,8 +727,9 @@ impl ExtendedQueryHandler {
             Vec::new()
         };
         
-        // If param_types is empty but query has parameters, infer basic types
-        if actual_param_types.is_empty() && cleaned_query.contains('$') {
+        // If param_types is still empty after analysis but query has parameters, infer basic types
+        // This should only happen if analysis failed completely
+        if actual_param_types.is_empty() && cleaned_query.contains('$') && !needs_schema_analysis {
             // Count parameters in the query
             let mut max_param = 0;
             for i in 1..=99 {
@@ -731,7 +740,7 @@ impl ExtendedQueryHandler {
                 }
             }
             
-            info!("Query has {} parameters, defaulting all to text", max_param);
+            info!("Query has {} parameters and analysis didn't run, defaulting all to text", max_param);
             // Default all to text - we'll handle type conversion during execution
             actual_param_types = vec![PgType::Text.to_oid(); max_param];
         }
@@ -1038,18 +1047,26 @@ impl ExtendedQueryHandler {
                         let format = param_formats.get(i).unwrap_or(&0);
                         // Use client param type for binary format, schema type for text format
                         let param_type = if *format == 1 {
-                            client_param_types.get(i).unwrap_or(&25) // Use client type for binary decoding
+                            // For binary format, prefer client type if available, otherwise use analyzed type
+                            client_param_types.get(i).copied()
+                                .filter(|&t| t != 0) // Ignore unknown types
+                                .or_else(|| param_types.get(i).copied())
+                                .unwrap_or(25) // Default to TEXT
                         } else {
-                            param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
+                            *param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
                         };
                         
-                        match Self::convert_parameter_to_value(bytes, *format, *param_type) {
-                            Ok(sql_value) => converted_params.push(sql_value),
+                        match Self::convert_parameter_to_value(bytes, *format, param_type) {
+                            Ok(sql_value) => {
+                                converted_params.push(sql_value)
+                            },
                             Err(e) => {
                                 warn!("Failed to convert parameter {}: {}", i, e);
                                 // Fall back to text conversion
                                 match std::str::from_utf8(bytes) {
-                                    Ok(text) => converted_params.push(rusqlite::types::Value::Text(text.to_string())),
+                                    Ok(text) => {
+                                        converted_params.push(rusqlite::types::Value::Text(text.to_string()))
+                                    },
                                     Err(_) => converted_params.push(rusqlite::types::Value::Blob(bytes.clone())),
                                 }
                             }
@@ -1322,9 +1339,24 @@ impl ExtendedQueryHandler {
                        e.to_string().contains("constraint") ||
                        e.to_string().contains("UNIQUE") {
                         // This is an execution error, not a compatibility issue
-                        // Return the error instead of falling back
                         error!("Fast path execution failed with SQLite error: {}", e);
-                        return Err(e);
+                        
+                        // Convert SQLite errors to appropriate PostgreSQL error codes
+                        let error_response = match &e {
+                            PgSqliteError::Sqlite(sqlite_err) => {
+                                crate::error::sqlite_error_to_pg(sqlite_err, query_to_execute)
+                            }
+                            PgSqliteError::Validation(pg_err) => {
+                                pg_err.to_error_response()
+                            }
+                            _ => crate::protocol::ErrorResponse::new(
+                                "ERROR".to_string(),
+                                "42000".to_string(),
+                                e.to_string(),
+                            )
+                        };
+                        framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await?;
+                        return Ok(());
                     }
                     // Only fall back for compatibility issues
                     info!("Fast path: execute_with_rusqlite_params failed: {}, falling back to substitution", e);
@@ -1350,8 +1382,12 @@ impl ExtendedQueryHandler {
                 // Skip fast path entirely for binary SELECT results
             } else {
             
-            // Use client-sent types for binary parameter decoding
-            let original_types = client_param_types.clone();
+            // Use client-sent types for binary parameter decoding, but fall back to analyzed types if empty
+            let original_types = if client_param_types.is_empty() || client_param_types.iter().all(|&t| t == 0) {
+                param_types.clone()
+            } else {
+                client_param_types.clone()
+            };
             
             // Use optimized path for SELECT, INSERT, UPDATE, DELETE
             match query_type {
@@ -1560,23 +1596,28 @@ impl ExtendedQueryHandler {
                         let format = param_formats.get(i).unwrap_or(&0);
                         // Use client param type for binary format, schema type for text format
                         let param_type = if *format == 1 {
-                            client_param_types.get(i).unwrap_or(&25) // Use client type for binary decoding
+                            // For binary format, prefer client type if available, otherwise use analyzed type
+                            client_param_types.get(i).copied()
+                                .filter(|&t| t != 0) // Ignore unknown types
+                                .or_else(|| param_types.get(i).copied())
+                                .unwrap_or(25) // Default to TEXT
                         } else {
-                            param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
+                            *param_types.get(i).unwrap_or(&25) // Use schema type for text parsing
                         };
                         
                         info!("Parameter {}: {} bytes, format={}, type={}", i, bytes.len(), format, param_type);
                         
-                        match Self::convert_parameter_to_value(bytes, *format, *param_type) {
+                        match Self::convert_parameter_to_value(bytes, *format, param_type) {
                             Ok(sql_value) => {
-                                info!("Converted parameter {} to: {:?}", i, sql_value);
                                 converted_params.push(sql_value);
                             }
                             Err(e) => {
                                 warn!("Failed to convert parameter {}: {}", i, e);
                                 // Fall back to text conversion
                                 match std::str::from_utf8(bytes) {
-                                    Ok(text) => converted_params.push(rusqlite::types::Value::Text(text.to_string())),
+                                    Ok(text) => {
+                                        converted_params.push(rusqlite::types::Value::Text(text.to_string()))
+                                    },
                                     Err(_) => converted_params.push(rusqlite::types::Value::Blob(bytes.clone())),
                                 }
                             }
@@ -1673,7 +1714,23 @@ impl ExtendedQueryHandler {
                                e.to_string().contains("UNIQUE") {
                                 // This is an execution error, not a compatibility issue
                                 error!("DML with RETURNING execution failed with SQLite error: {}", e);
-                                return Err(e);
+                                
+                                // Convert SQLite errors to appropriate PostgreSQL error codes
+                                let error_response = match &e {
+                                    PgSqliteError::Sqlite(sqlite_err) => {
+                                        crate::error::sqlite_error_to_pg(sqlite_err, &parameterized_query)
+                                    }
+                                    PgSqliteError::Validation(pg_err) => {
+                                        pg_err.to_error_response()
+                                    }
+                                    _ => crate::protocol::ErrorResponse::new(
+                                        "ERROR".to_string(),
+                                        "42000".to_string(),
+                                        e.to_string(),
+                                    )
+                                };
+                                framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await?;
+                                return Ok(());
                             }
                             info!("Failed to execute DML with RETURNING: {}", e);
                             warn!("Failed to execute DML with RETURNING: {}", e);
@@ -1701,7 +1758,23 @@ impl ExtendedQueryHandler {
                                e.to_string().contains("UNIQUE") {
                                 // This is an execution error, not a compatibility issue
                                 error!("Parameterized DML execution failed with SQLite error: {}", e);
-                                return Err(e);
+                                
+                                // Convert SQLite errors to appropriate PostgreSQL error codes
+                                let error_response = match &e {
+                                    PgSqliteError::Sqlite(sqlite_err) => {
+                                        crate::error::sqlite_error_to_pg(sqlite_err, &parameterized_query)
+                                    }
+                                    PgSqliteError::Validation(pg_err) => {
+                                        pg_err.to_error_response()
+                                    }
+                                    _ => crate::protocol::ErrorResponse::new(
+                                        "ERROR".to_string(),
+                                        "42000".to_string(),
+                                        e.to_string(),
+                                    )
+                                };
+                                framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await?;
+                                return Ok(());
                             }
                             warn!("Parameterized DML failed: {}, falling back to substitution", e);
                             // Fall through to substitution-based execution

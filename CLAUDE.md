@@ -16,7 +16,7 @@ cargo check             # Check for errors/warnings
 **Pre-commit checklist**: Run ALL of these before committing:
 1. `cargo check` - No errors or warnings
 2. `cargo build` - Successful build
-3. `cargo test` - All tests pass
+3. `cargo test` - All tests pass (372/376 passing as of 2025-08-04)
 
 ### Development Workflow
 1. Check TODO.md for prioritized tasks
@@ -161,8 +161,25 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v8: Array support
 - v9: Full-Text Search support
 - v10: typcategory column in pg_type view
+- v11: typdelim column in pg_type view for psycopg3 compatibility
 
 ## Key Features & Fixes
+
+### Recently Fixed (2025-08-04)
+- **Test Infrastructure Improvements**: Fixed multiple failing integration tests
+  - Fixed arithmetic_aliasing_test - parameter type conversion for binary protocol
+  - Fixed enum_error_handling_test - proper error message formatting for enum violations
+  - Fixed migration_test - updated to expect 11 migrations after adding typdelim
+  - Fixed parameter type inference when client_param_types is empty or unknown
+  - Added PostgreSQL to SQLite parameter syntax conversion ($1 → ?)
+- **Extended Query Protocol Fixes**: Improved psycopg3 compatibility
+  - Fixed empty param_types handling to use analyzed types instead of defaulting to TEXT
+  - Fixed binary parameter conversion in extended_fast_path
+  - Improved parameter type selection for binary format parameters
+- **Error Handling Improvements**: Better PostgreSQL compatibility
+  - Added specific handling for "invalid input value for enum" errors
+  - Preserved original error messages from SQLite RAISE() functions
+  - Fixed generic "constraint violation" being returned instead of specific messages
 
 ### Recently Fixed (2025-08-03)
 - **PostgreSQL Binary Wire Protocol**: Full implementation with major performance improvements
@@ -294,6 +311,9 @@ Environment variables:
 - Array ORDER BY in array_agg relies on outer query ORDER BY
 - Multi-array unnest (edge case)
 - Some catalog queries and CAST operations still use get_mut_connection (needs update for per-session)
+- Binary format not implemented for NUMRANGE, BIT, VARBIT types (3 tests failing)
+- Parameter cast handling edge cases with $1::int4 syntax (1 test failing)
+- Numeric constraint validation edge cases (4 tests failing)
 - psycopg3 queries with parameter casts like `$1::VARCHAR` still fail with duplicate RowDescription
 
 ## Code Style
