@@ -322,6 +322,12 @@ impl DbHandler {
             // Convert PostgreSQL-style parameters ($1, $2, etc.) to SQLite-style (?)
             let sqlite_query = Self::convert_pg_params_to_sqlite(query);
             
+            // Debug logging for cast queries
+            if query.contains("::") && query.contains("WHERE") {
+                debug!("execute_with_rusqlite_params: original query='{}', sqlite_query='{}', params={:?}", 
+                       query, sqlite_query, params);
+            }
+            
             let mut stmt = conn.prepare(&sqlite_query)?;
             
             let query_type = QueryTypeDetector::detect_query_type(query);

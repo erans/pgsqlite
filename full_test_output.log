@@ -1,0 +1,2172 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s
+     Running unittests src/lib.rs (target/debug/deps/pgsqlite-10510f877229bad0)
+
+running 376 tests
+test cache::enhanced_statement_pool::tests::test_should_cache_decisions ... ok
+test cache::enhanced_statement_pool::tests::test_priority_scoring ... ok
+test cache::enhanced_statement_pool::tests::test_enhanced_statement_pool_creation ... ok
+test cache::enhanced_statement_pool::tests::test_cache_key_generation ... ok
+test cache::query_fingerprint::tests::test_fingerprint_case_normalization ... ok
+test cache::query_fingerprint::tests::test_fingerprint_literal_normalization ... ok
+test cache::query_fingerprint::tests::test_fingerprint_whitespace_normalization ... ok
+test cache::query_fingerprint::tests::test_fingerprint_with_literals_preserved ... ok
+test cache::result_cache::tests::test_result_cache_key ... ok
+test cache::result_cache::tests::test_should_cache_heuristics ... ok
+test cache::result_cache::tests::test_result_cache_basic ... ok
+test cache::row_description::tests::test_query_normalization ... ok
+test cache::statement_pool::tests::test_batch_insert_fingerprint ... ok
+test cache::row_description::tests::test_row_description_cache_basic ... ok
+test cache::wire_protocol_cache::tests::test_encode_data_row ... ok
+test cache::wire_protocol_cache::tests::test_is_cacheable ... ok
+test catalog::where_evaluator::tests::test_like_match_function ... ok
+test cache::lazy_schema_loader::tests::test_nonexistent_table ... ok
+test catalog::where_evaluator::tests::test_simple_equality ... ok
+test catalog::where_evaluator::tests::test_like_pattern ... ok
+test ddl::enum_ddl_handler::tests::test_parse_enum_values ... ok
+test cache::wire_protocol_cache::tests::test_wire_protocol_cache ... ok
+test functions::datetime_functions::tests::test_date_functions ... ok
+test catalog::where_evaluator::tests::test_in_list ... ok
+test ddl::enum_ddl_handler::tests::test_is_enum_ddl ... ok
+test cache::statement_pool::tests::test_statement_pool_basic ... ok
+test cache::lazy_schema_loader::tests::test_lazy_schema_loading ... ok
+test functions::catalog_functions::tests::test_regclass_cast ... ok
+test functions::hash_functions::tests::test_oid_hash_function ... ok
+test functions::catalog_functions::tests::test_pg_table_is_visible ... ok
+test cache::lazy_schema_loader::tests::test_preloading ... ok
+test functions::array_functions::tests::test_array_functions ... ok
+test functions::datetime_functions::tests::test_pg_timestamp_from_text ... ok
+test functions::hash_functions::tests::test_hash_function ... ok
+test functions::decimal_functions::tests::test_decimal_arithmetic ... ok
+test cache::statement_pool::tests::test_statement_pool_execute ... ok
+test functions::json_functions::tests::test_custom_json_path_functions ... ok
+test functions::json_functions::tests::test_json_existence_functions ... ok
+test functions::json_functions::tests::test_json_populate_record_function ... ok
+test functions::json_functions::tests::test_json_functions ... ok
+test functions::math_functions::tests::test_angle_conversion ... ok
+test functions::math_functions::tests::test_ceil_floor ... ok
+test functions::json_functions::tests::test_json_to_record_function ... ok
+test functions::math_functions::tests::test_logarithms ... ok
+test cache::enum_cache::tests::test_enum_cache ... ok
+test functions::json_functions::tests::test_json_agg_functions ... ok
+test functions::json_functions::tests::test_jsonb_delete_function ... ok
+test functions::math_functions::tests::test_round_with_precision ... ok
+test functions::math_functions::tests::test_sign ... ok
+test functions::json_functions::tests::test_jsonb_insert_function ... ok
+test functions::math_functions::tests::test_power_sqrt ... ok
+test functions::json_functions::tests::test_jsonb_pretty_function ... ok
+test functions::regex_functions::tests::test_invalid_regex ... ok
+test functions::string_functions::tests::test_ascii_chr ... ok
+test functions::string_functions::tests::test_lpad_rpad ... ok
+test functions::string_functions::tests::test_left_right ... ok
+test functions::math_functions::tests::test_trigonometric ... ok
+test functions::math_functions::tests::test_trunc ... ok
+test functions::string_functions::tests::test_repeat ... ok
+test functions::string_functions::tests::test_split_part ... ok
+test functions::system_functions::tests::test_current_database ... ok
+test functions::string_functions::tests::test_reverse ... ok
+test functions::string_functions::tests::test_translate ... ok
+test optimization::read_only_optimizer::tests::test_cache_key_generation ... ok
+test optimization::read_only_optimizer::tests::test_can_use_read_only_optimization ... ok
+test optimization::read_only_optimizer::tests::test_query_complexity_classification ... ok
+test optimization::read_only_optimizer::tests::test_read_only_optimizer_creation ... ok
+test functions::system_functions::tests::test_current_schema ... ok
+test optimization::read_only_optimizer::tests::test_table_name_extraction ... ok
+test functions::system_functions::tests::test_current_user ... ok
+test functions::regex_functions::tests::test_regexp_function ... ok
+test optimization::statement_cache_optimizer::tests::test_enable_disable_caching ... ok
+test optimization::statement_cache_optimizer::tests::test_should_use_cache_decisions ... ok
+test optimization::statement_cache_optimizer::tests::test_statement_cache_optimizer_creation ... ok
+test functions::system_functions::tests::test_version_function ... ok
+test functions::unnest_vtab::tests::test_json_each_equivalent ... ok
+test functions::system_functions::tests::test_pg_backend_pid ... ok
+test functions::unnest_vtab::tests::test_unnest_helper_functions ... ok
+test optimization::tests::test_optimization_manager_creation ... ok
+test functions::system_functions::tests::test_pg_is_in_recovery ... ok
+test optimization::tests::test_disabled_optimization ... ok
+test protocol::binary::tests::test_binary_bool ... ok
+test protocol::binary::tests::test_binary_floats ... ok
+test protocol::binary::tests::test_binary_integers ... ok
+test protocol::binary::tests::test_date_encoding ... ok
+test protocol::binary::tests::test_interval_encoding ... ok
+test protocol::binary::tests::test_json_encoding ... ok
+test protocol::binary::tests::test_jsonb_encoding ... ok
+test protocol::binary::tests::test_numeric_encoding ... ok
+test protocol::binary::tests::test_time_encoding ... ok
+test functions::uuid_functions::tests::test_uuid_functions ... ok
+test protocol::binary::tests::test_timestamp_encoding ... ok
+test protocol::binary::tests::test_zero_copy_encoder ... ok
+test protocol::buffer_pool::tests::test_buffer_allocation_and_reuse ... ok
+test protocol::buffer_pool::tests::test_buffer_capacity_limit ... ok
+test protocol::buffer_pool::tests::test_buffer_pool_creation ... ok
+test protocol::buffer_pool::tests::test_buffer_pool_size_limit ... ok
+test protocol::buffer_pool::tests::test_config_from_env ... ok
+test protocol::buffer_pool::tests::test_global_buffer_pool ... ok
+test protocol::buffer_pool::tests::test_pooled_bytes_mut_operations ... ok
+test protocol::memory_mapped::tests::test_mapped_value_factory ... ok
+test optimization::tests::test_schema_loading ... ok
+test protocol::memory_mapped::tests::test_memory_mapped_config ... ok
+test functions::system_functions::tests::test_privilege_functions ... ok
+test protocol::memory_mapped::tests::test_small_value_storage ... ok
+test metadata::enum_metadata::tests::test_enum_metadata_creation ... ok
+test protocol::memory_mapped::tests::test_value_slicing ... ok
+test optimization::read_only_optimizer::tests::test_query_execution ... ok
+test protocol::memory_mapped::tests::test_memory_mapped_value_write ... ok
+test protocol::memory_monitor::tests::test_config_from_env ... ok
+test protocol::memory_mapped::tests::test_memory_mapped_value_read ... ok
+test protocol::memory_monitor::tests::test_memory_allocation_tracking ... ok
+test protocol::memory_monitor::tests::test_global_memory_monitor ... ok
+test protocol::memory_monitor::tests::test_memory_monitor_creation ... ok
+test protocol::memory_monitor::tests::test_monitoring_enable_disable ... ok
+test protocol::memory_monitor::tests::test_pressure_level_calculation ... ok
+test protocol::memory_mapped::tests::test_large_value_temp_file ... ok
+test protocol::memory_monitor::tests::test_stats_reset ... ok
+test metadata::enum_metadata::tests::test_create_enum_type ... ok
+test protocol::small_value::tests::test_binary_conversion ... ok
+test protocol::memory_monitor::tests::test_memory_deallocation ... ok
+test protocol::small_value::tests::test_small_value_creation ... ok
+test protocol::small_value::tests::test_text_formatting ... ok
+test protocol::value_handler::tests::test_integer_value_handling ... ok
+test protocol::value_handler::tests::test_mmap_enabled_config ... ok
+test protocol::value_handler::tests::test_null_value_handling ... ok
+test protocol::value_handler::tests::test_row_conversion ... ok
+test protocol::value_handler::tests::test_small_blob_handling ... ok
+test protocol::value_handler::tests::test_text_value_handling ... ok
+test protocol::value_handler::tests::test_value_handler_creation ... ok
+test query::comment_stripper::tests::test_comment_like_operators ... ok
+test query::comment_stripper::tests::test_escaped_quotes ... ok
+test query::comment_stripper::tests::test_mixed_comments ... ok
+test query::comment_stripper::tests::test_nested_comments ... ok
+test query::comment_stripper::tests::test_preserve_strings ... ok
+test query::comment_stripper::tests::test_strip_multi_line_comments ... ok
+test query::execution_context::tests::test_execution_context ... ok
+test query::executor::tests::test_json_to_pg_array_conversion ... ok
+test query::executor::tests::test_json_to_pg_array_numbers ... ok
+test query::executor::tests::test_array_type_detection ... ok
+test query::comment_stripper::tests::test_strip_single_line_comments ... ok
+test query::executor::tests::test_non_array_json ... ok
+test query::parameter_parser::tests::test_double_quoted_identifiers ... ok
+test query::parameter_parser::tests::test_escaped_quotes ... ok
+test query::parameter_parser::tests::test_json_path_dollar_signs ... ok
+test query::parameter_parser::tests::test_parameter_counting ... ok
+test query::parameter_parser::tests::test_parameter_finding ... ok
+test query::parameter_parser::tests::test_parameter_substitution ... ok
+test query::parameter_parser::tests::test_python_parameter_counting ... ok
+test query::parameter_parser::tests::test_python_parameter_parsing ... ok
+test query::parameter_parser::tests::test_python_parameter_substitution ... ok
+test functions::regex_functions::tests::test_regexpi_function ... ok
+test ddl::enum_ddl_handler::tests::test_parse_create_type_enum ... ok
+test query::join_type_inference::tests::test_extract_all_tables ... ok
+test query::pattern_optimizer::tests::test_batch_insert_recognition ... ok
+test protocol::value_handler::tests::test_large_blob_with_mmap_disabled ... ok
+test query::query_type_detection::tests::test_is_ddl ... ok
+test query::query_type_detection::tests::test_query_type_detection ... ok
+test query::set_handler::tests::test_is_set_command ... ok
+test query::set_handler::tests::test_set_timezone_pattern ... ok
+test query::fast_path::tests::test_batch_insert_fast_path ... ok
+test query::simple_query_detector::tests::test_array_insert_detection ... ok
+test query::set_handler::tests::test_show_parameter_pattern ... ok
+test query::simple_query_detector::tests::test_fast_path_simple_query ... ok
+test query::simple_query_detector::tests::test_returning_optimization ... ok
+test protocol::memory_monitor::tests::test_cleanup_callbacks ... ok
+test query::fast_path::tests::test_where_clause_operators ... ok
+test query::unified_processor::tests::test_complex_queries_need_translation ... ok
+test query::unified_processor::tests::test_simple_queries_zero_allocation ... ok
+test query::unified_processor::tests::test_simple_returning_passthrough ... ok
+test rewriter::context_optimizer::tests::test_context_caching ... ok
+test rewriter::context_optimizer::tests::test_context_merging ... ok
+test rewriter::context_optimizer::tests::test_nested_context_optimization ... ok
+test session::pool::tests::test_connection_acquisition ... ok
+test query::pattern_optimizer::tests::test_caching_behavior ... ok
+test optimization::tests::test_query_analysis ... ok
+test query::pattern_optimizer::tests::test_simple_select_recognition ... ok
+test session::pool::tests::test_health_check ... ok
+test session::portal_manager::tests::test_portal_lifecycle ... ok
+test session::pool::tests::test_pool_stats ... ok
+test session::pool::tests::test_pool_creation ... ok
+test session::portal_manager::tests::test_portal_manager_creation ... ok
+test session::portal_manager::tests::test_stale_portal_cleanup ... ok
+test query::fast_path::tests::test_extract_table_name ... ok
+test query::fast_path::tests::test_can_use_fast_path ... ok
+test session::read_only_handler::tests::test_is_read_only_query ... ok
+test query::join_type_inference::tests::test_column_to_table_mapping ... ok
+test session::read_only_handler::tests::test_read_only_handler_creation ... ok
+test session::thread_local_cache::tests::test_thread_local_cache ... ok
+test query::simple_query_detector::tests::test_batch_insert_detection ... ok
+test query::pattern_optimizer::tests::test_complex_query_recognition ... ok
+test session::read_only_handler::tests::test_write_query_rejection ... ok
+test query::fast_path::tests::test_parameterized_queries ... ok
+test translator::arithmetic_analyzer::tests::test_needs_analysis ... ok
+test query::pattern_optimizer::tests::test_count_query_recognition ... ok
+test optimization::tests::test_effectiveness_metrics ... ok
+test query::simple_query_detector::tests::test_ultra_simple_detection ... ok
+test query::fast_path::tests::test_enhanced_fast_path_detection ... ok
+test query::simple_query_detector::tests::test_table_extraction ... ok
+test translator::array_agg_translator::tests::test_contains_enhanced_array_agg ... ok
+test translator::array_agg_translator::tests::test_no_enhanced_array_agg ... ok
+test translator::array_agg_translator::tests::test_array_agg_distinct_order_by ... ok
+test translator::array_agg_translator::tests::test_array_agg_order_by ... ok
+test translator::array_agg_translator::tests::test_array_agg_distinct ... ok
+test translator::arithmetic_analyzer::tests::test_no_false_positives_for_keywords ... ok
+test translator::arithmetic_analyzer::tests::test_analyze_arithmetic_with_implicit_alias ... ok
+test translator::arithmetic_analyzer::tests::test_analyze_arithmetic_with_explicit_alias ... ok
+test translator::array_agg_translator::tests::test_array_agg_with_alias ... ok
+test session::portal_manager::tests::test_portal_limit_enforcement ... ok
+test translator::array_translator::tests::test_is_likely_array_concatenation ... ok
+test translator::arithmetic_analyzer::tests::test_analyze_multiple_arithmetic_expressions ... ok
+test translator::arithmetic_analyzer::tests::test_analyze_complex_expressions ... ok
+test translator::batch_delete_translator::tests::test_contains_batch_delete ... ok
+test translator::batch_delete_translator::tests::test_generate_where_in_statement ... ok
+test translator::batch_delete_translator::tests::test_no_table_alias ... ok
+test translator::batch_delete_translator::tests::test_parse_delete_using ... ok
+test translator::batch_delete_translator::tests::test_parse_row_values ... ok
+test translator::batch_delete_translator::tests::test_translate_batch_delete_multi_column ... ok
+test translator::batch_delete_translator::tests::test_translate_batch_delete_single_column ... ok
+test translator::batch_delete_translator::tests::test_translate_simple_case ... ok
+test protocol::buffer_pool::tests::test_buffer_cleanup ... ok
+test translator::batch_update_translator::tests::test_contains_batch_update ... ok
+test translator::batch_update_translator::tests::test_generate_case_statement ... ok
+test translator::batch_update_translator::tests::test_parse_row_values ... ok
+test translator::batch_update_translator::tests::test_multiple_columns_update ... ok
+test translator::batch_update_translator::tests::test_parse_update_values ... ok
+test translator::batch_update_translator::tests::test_translate_simple_case ... ok
+test translator::create_table_translator::tests::test_extract_type_modifier ... ok
+test translator::batch_update_translator::tests::test_translate_batch_update ... ok
+test translator::create_table_translator::tests::test_parse_array_type ... ok
+test translator::array_translator::tests::test_contains_operator ... ok
+test translator::array_translator::tests::test_all_operator_debug ... ok
+test translator::array_translator::tests::test_any_operator ... ok
+test translator::create_table_translator::tests::test_translate_array_columns ... ok
+test translator::create_table_translator::tests::test_mixed_case_types ... ok
+test translator::array_translator::tests::test_overlap_operator ... ok
+test translator::datetime_translator::tests::test_interval_parsing ... ok
+test translator::create_table_translator::tests::test_translate_without_constraints ... ok
+test translator::fts_translator::tests::test_convert_phrase_to_fts5 ... ok
+test translator::fts_translator::tests::test_convert_plain_to_fts5 ... ok
+test translator::fts_translator::tests::test_convert_tsquery_to_fts5 ... ok
+test translator::create_table_translator::tests::test_translate_varchar_constraints ... ok
+test translator::array_translator::tests::test_array_subscript ... ok
+test translator::function_parentheses_translator::tests::test_current_user_translation ... ok
+test translator::function_parentheses_translator::tests::test_no_translation_needed ... ok
+test translator::function_parentheses_translator::tests::test_uppercase_translation ... ok
+test translator::insert_translator::tests::test_convert_array_value ... ok
+test translator::insert_translator::tests::test_convert_date_value ... ok
+test translator::insert_translator::tests::test_convert_select_expression ... ok
+test translator::array_translator::tests::test_array_literal_with_concatenation ... ok
+test translator::create_table_translator::tests::test_translate_default_now ... ok
+test translator::insert_translator::tests::test_parse_array_elements ... ok
+test translator::insert_translator::tests::test_parse_select_expressions ... ok
+test translator::insert_translator::tests::test_parse_values ... ok
+test translator::array_translator::tests::test_all_operator ... ok
+test translator::json_each_translator::tests::test_contains_json_each ... ok
+test translator::insert_translator::tests::test_needs_translation ... ok
+test translator::insert_translator::tests::test_regex_matches_multiline_insert ... ok
+test translator::fts_translator::tests::test_resolve_table_alias ... ok
+test translator::array_translator::tests::test_type_aware_resolution ... ok
+test translator::json_each_translator::tests::test_json_each_from_clause ... ok
+test translator::json_each_translator::tests::test_json_each_from_clause_with_alias ... ok
+test translator::json_each_translator::tests::test_json_each_text_cross_join ... ok
+test translator::fts_translator::tests::test_contains_fts_operations ... ok
+test translator::fts_translator::tests::test_performance_optimization_early_exit ... ok
+test translator::json_each_translator::tests::test_no_json_each ... ok
+test translator::json_each_translator::tests::test_json_each_select_clause ... ok
+test translator::insert_translator::tests::test_needs_translation_array_types ... ok
+test translator::fts_translator::tests::test_select_with_alias_translation ... ok
+test translator::json_each_translator::tests::test_json_each_text_from_clause ... ok
+test translator::json_each_translator::tests::test_json_each_text_with_alias ... ok
+test translator::json_translator::tests::test_alter_table_json_translation ... ok
+test translator::json_translator::tests::test_create_table_json_translation ... ok
+test translator::json_translator::tests::test_json_operation_detection ... ok
+test translator::json_each_translator::tests::test_jsonb_each_from_clause ... ok
+test translator::json_each_translator::tests::test_jsonb_each_text_from_clause ... ok
+test translator::metadata::tests::test_expression_hints ... ok
+test translator::metadata::tests::test_metadata_creation ... ok
+test translator::metadata::tests::test_metadata_merge ... ok
+test translator::array_translator::tests::test_array_concatenation_enhanced ... ok
+test translator::json_each_translator::tests::test_json_each_with_metadata ... ok
+test translator::numeric_cast_translator::tests::test_cast_to_numeric_detection ... ok
+test translator::query_analyzer::tests::test_array_detection ... ok
+test translator::query_analyzer::tests::test_cast_detection ... ok
+test translator::query_analyzer::tests::test_cast_syntax_detection ... ok
+test translator::query_analyzer::tests::test_datetime_detection ... ok
+test translator::query_analyzer::tests::test_insert_array_detection ... ok
+test translator::query_analyzer::tests::test_insert_datetime_detection ... ok
+test translator::query_analyzer::tests::test_json_detection ... ok
+test translator::query_analyzer::tests::test_multiple_flags ... ok
+test translator::query_analyzer::tests::test_numeric_cast_detection ... ok
+test translator::query_analyzer::tests::test_simple_select ... ok
+test translator::regex_translator::tests::test_case_insensitive_match ... ok
+test translator::numeric_cast_translator::tests::test_cast_translation ... ok
+test translator::regex_translator::tests::test_collate_stripping ... ok
+test translator::regex_translator::tests::test_no_regex_operators ... ok
+test translator::regex_translator::tests::test_complex_where_clause ... ok
+test translator::regex_translator::tests::test_operator_syntax_not_match ... ok
+test translator::regex_translator::tests::test_operator_syntax_translation ... ok
+test translator::regex_translator::tests::test_regex_match_operator ... ok
+test translator::regex_translator::tests::test_regex_not_match_operator ... ok
+test translator::returning_translator::tests::test_extract_returning_clause ... ok
+test translator::returning_translator::tests::test_generate_capture_query ... ok
+test translator::returning_translator::tests::test_has_returning_clause ... ok
+test translator::row_to_json_translator::tests::test_contains_row_to_json_call ... ok
+test translator::row_to_json_translator::tests::test_extract_columns_from_select ... ok
+test translator::array_translator::tests::test_array_literal_translation ... ok
+test translator::schema_prefix_translator::tests::test_function_prefix_removal ... ok
+test translator::schema_prefix_translator::tests::test_join_prefix_removal ... ok
+test translator::schema_prefix_translator::tests::test_schema_prefix_removal ... ok
+test translator::simd_search::tests::test_simd_cast_keyword ... ok
+test translator::simd_search::tests::test_simd_cast_outside_strings ... ok
+test translator::simd_search::tests::test_simd_double_colon_search ... ok
+test translator::unnest_translator::tests::test_contains_unnest ... ok
+test translator::returning_translator::tests::test_extract_table_names ... ok
+test translator::unnest_translator::tests::test_no_unnest ... ok
+test translator::row_to_json_translator::tests::test_translate_subquery_pattern ... ok
+test translator::unnest_translator::tests::test_unnest_from_clause ... ok
+test translator::unnest_translator::tests::test_unnest_from_clause_with_alias ... ok
+test translator::unnest_translator::tests::test_integration_test_query ... ok
+test translator::numeric_format_translator::tests::test_numeric_format_translation ... ok
+test translator::unnest_translator::tests::test_unnest_select_clause ... ok
+test translator::unnest_translator::tests::test_unnest_with_ordinality ... ok
+test translator::unnest_translator::tests::test_unnest_with_ordinality_complex ... ok
+test types::datetime_utils::tests::test_date_conversions ... ok
+test types::datetime_utils::tests::test_time_conversions ... ok
+test types::datetime_utils::tests::test_timestamp_conversions ... ok
+test types::decimal_handler::tests::test_encode_decode_numeric ... ok
+test types::decimal_handler::tests::test_parse_decimal ... ok
+test types::type_mapper::tests::test_extract_base_type ... ok
+test types::type_mapper::tests::test_normalize_parametric_type ... ok
+test types::type_mapper::tests::test_pg_to_sqlite_for_create_table_multiword ... ok
+test types::type_mapper::tests::test_pg_to_sqlite_for_create_table_parametric ... ok
+test types::type_mapper::tests::test_pg_to_sqlite_for_create_table_serial ... ok
+test types::type_resolution::tests::test_function_types ... ok
+test types::type_resolution::tests::test_type_propagation ... ok
+test types::uuid::tests::test_generate_uuid_v4 ... ok
+test types::uuid::tests::test_uuid_conversions ... ok
+test types::uuid::tests::test_validate_uuid ... ok
+test types::value_converter::tests::test_bit_conversion ... ok
+test types::value_converter::tests::test_cidr_conversion ... ok
+test types::value_converter::tests::test_date_conversion ... ok
+test types::value_converter::tests::test_inet_conversion ... ok
+test translator::unnest_translator::tests::test_unnest_with_ordinality_uppercase ... ok
+test types::value_converter::tests::test_macaddr_conversion ... ok
+test types::value_converter::tests::test_money_conversion ... ok
+test types::value_converter::tests::test_time_conversion ... ok
+test types::value_converter::tests::test_timestamp_conversion ... ok
+test types::value_converter::tests::test_interval_conversion ... ok
+test validator::numeric_constraints::tests::test_format_value ... ok
+test validator::numeric_constraints::tests::test_load_constraints ... ok
+test validator::numeric_constraints::tests::test_validate_invalid_precision ... ok
+test translator::unnest_translator::tests::test_unnest_with_ordinality_no_alias ... ok
+test validator::numeric_constraints::tests::test_validate_invalid_scale ... ok
+test validator::numeric_validator::tests::test_is_computed_expression ... ok
+test validator::numeric_constraints::tests::test_validate_valid_values ... ok
+test validator::string_constraints::tests::test_cache_invalidation ... ok
+test validator::string_constraints::tests::test_char_padding ... ok
+test validator::string_constraints::tests::test_multibyte_character_counting ... ok
+test validator::string_constraints::tests::test_no_constraint ... ok
+test validator::string_constraints::tests::test_validate_value_exceeds_constraint ... ok
+test validator::string_constraints::tests::test_validate_value_within_constraint ... ok
+test translator::unnest_translator::tests::test_unnest_with_metadata ... ok
+test translator::datetime_translator::tests::test_datetime_translation ... ok
+test validator::numeric_validator::tests::test_parse_update_statement_with_computed_expressions ... ok
+test session::query_router::tests::test_query_classification ... ok
+test session::pool::tests::test_connection_timeout_and_cleanup ... ok
+test translator::json_translator::tests::test_combined_operators ... ok
+test translator::json_translator::tests::test_chained_operators ... ok
+test translator::json_translator::tests::test_text_extract_operator ... ok
+test translator::json_translator::tests::test_contains_operators ... ok
+test translator::json_translator::tests::test_path_operators ... ok
+test translator::json_translator::tests::test_json_extract_operator ... ok
+test translator::json_translator::tests::test_existence_operators ... ok
+test session::query_router::tests::test_route_determination ... ok
+test session::query_router::tests::test_read_only_pragma_detection ... ok
+
+test result: ok. 376 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running unittests src/bin/benchmark_pooling.rs (target/debug/deps/benchmark_pooling-706709af9794a269)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/pgsqlite-94a5e696448a8607)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/rusqlite_test.rs (target/debug/deps/rusqlite_test-54ed21bd66b38148)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/arithmetic_aliasing_test.rs (target/debug/deps/arithmetic_aliasing_test-dc38ca2a3d00e657)
+
+running 5 tests
+test test_arithmetic_aliasing_extended_protocol ... FAILED
+test test_arithmetic_integer_columns ... ok
+test test_arithmetic_mixed_with_datetime ... ok
+test test_arithmetic_no_alias ... ok
+test test_arithmetic_aliasing_simple_protocol ... ok
+
+failures:
+
+---- test_arithmetic_aliasing_extended_protocol stdout ----
+
+thread 'test_arithmetic_aliasing_extended_protocol' panicked at tests/arithmetic_aliasing_test.rs:111:52:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_arithmetic_aliasing_extended_protocol
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+error: test failed, to rerun pass `--test arithmetic_aliasing_test`
+     Running tests/arithmetic_complex_test.rs (target/debug/deps/arithmetic_complex_test-0b04821aa96aedbf)
+
+running 6 tests
+test test_arithmetic_with_case_expressions ... ignored
+test test_arithmetic_with_functions ... ignored
+test test_very_long_expressions ... ok
+test test_multiple_columns_arithmetic ... ok
+test test_mixed_type_arithmetic ... ok
+test test_nested_parentheses ... ok
+
+test result: ok. 4 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.53s
+
+     Running tests/arithmetic_edge_cases_test.rs (target/debug/deps/arithmetic_edge_cases_test-d03a6c4bcbae0e06)
+
+running 7 tests
+test test_floating_point_precision ... ok
+test test_very_large_numbers ... ok
+test test_division_by_zero ... ok
+test test_arithmetic_with_cast ... ok
+test test_negative_number_arithmetic ... ok
+test test_case_sensitivity_in_aliases ... ok
+test test_multiple_arithmetic_operators ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.74s
+
+     Running tests/arithmetic_null_test.rs (target/debug/deps/arithmetic_null_test-c92812719a711e99)
+
+running 5 tests
+test test_coalesce_with_arithmetic ... ignored
+test test_null_handling_extended_protocol ... ignored
+test test_null_with_constants ... ok
+test test_null_in_complex_expressions ... ok
+test test_null_arithmetic_propagation ... ok
+
+test result: ok. 3 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/arithmetic_subquery_test.rs (target/debug/deps/arithmetic_subquery_test-5c572f0b45e91343)
+
+running 5 tests
+test test_arithmetic_aliases_in_join_subqueries ... ignored
+test test_arithmetic_in_ctes ... ignored
+test test_arithmetic_in_subqueries ... ignored
+test test_nested_subquery_arithmetic ... ignored
+test test_recursive_cte_arithmetic ... ignored
+
+test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/array_concat_test.rs (target/debug/deps/array_concat_test-a7581d5aa14141c1)
+
+running 6 tests
+test test_array_concatenation_with_aliases ... ok
+test test_array_concatenation_function_calls ... ok
+test test_array_concatenation_edge_cases ... ok
+test test_array_concatenation_naming_patterns ... ok
+test test_array_syntax_concatenation ... ok
+test test_array_concatenation_operators ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.05s
+
+     Running tests/array_operators_test.rs (target/debug/deps/array_operators_test-b26aafc406a05459)
+
+running 5 tests
+test test_unnest_with_ordinality ... ignored
+test test_array_slice ... ok
+test test_array_aggregation ... ok
+test test_array_operators ... ok
+test test_array_functions ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.45s
+
+     Running tests/array_types_test.rs (target/debug/deps/array_types_test-94d8ac1f289ba767)
+
+running 8 tests
+test test_array_declarations ... ok
+test test_array_unnest_workaround ... ok
+test test_array_aggregation ... ok
+test test_array_in_where_clause ... ok
+test test_array_with_nulls ... ok
+test test_multi_dimensional_arrays ... ok
+test test_array_literals ... ok
+test test_array_operations ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s
+
+     Running tests/batch_delete_test.rs (target/debug/deps/batch_delete_test-e9f62b8116bc041d)
+
+running 7 tests
+test test_batch_delete_edge_cases ... ok
+test test_batch_delete_no_alias ... ok
+test test_batch_delete_with_quotes ... ok
+test test_regular_delete_still_works ... ok
+test test_batch_delete_multi_column ... ok
+test test_batch_delete_single_column ... ok
+test test_batch_delete_performance ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.46s
+
+     Running tests/batch_insert_comprehensive_test.rs (target/debug/deps/batch_insert_comprehensive_test-747db9ae1b021b3e)
+
+running 8 tests
+test test_batch_insert_performance_comparison ... FAILED
+test test_batch_insert_with_escaped_quotes ... ok
+test test_batch_insert_with_nulls ... ok
+test test_batch_insert_type_conversions ... ok
+test test_batch_insert_with_returning ... ok
+test test_batch_insert_constraint_violations ... ok
+test test_batch_insert_mixed_value_types ... ok
+test test_batch_insert_edge_cases ... ok
+
+failures:
+
+---- test_batch_insert_performance_comparison stdout ----
+
+thread 'test_batch_insert_performance_comparison' panicked at tests/batch_insert_comprehensive_test.rs:297:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_batch_insert_performance_comparison
+
+test result: FAILED. 7 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+error: test failed, to rerun pass `--test batch_insert_comprehensive_test`
+     Running tests/batch_insert_datetime_functions_test.rs (target/debug/deps/batch_insert_datetime_functions_test-82da83ca862a6b6e)
+
+running 3 tests
+test test_mixed_datetime_values_and_functions ... ok
+test test_single_insert_with_datetime_functions ... ok
+test test_batch_insert_with_datetime_functions ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+     Running tests/batch_insert_error_test.rs (target/debug/deps/batch_insert_error_test-f2e35a1dfe2ca7d6)
+
+running 5 tests
+test test_batch_insert_timestamp_format_error ... ok
+test test_batch_insert_time_format_error ... ok
+test test_batch_insert_date_format_error ... ok
+test test_batch_insert_column_count_error ... ok
+test test_batch_insert_partial_failure_rollback ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.57s
+
+     Running tests/batch_update_test.rs (target/debug/deps/batch_update_test-dc06c136764cc071)
+
+running 6 tests
+test test_regular_update_still_works ... ok
+test test_batch_update_single_column ... ok
+test test_batch_update_no_alias ... ok
+test test_batch_update_with_quotes ... ok
+test test_batch_update_with_values ... ok
+test test_batch_update_performance ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.58s
+
+     Running tests/benchmark_baseline.rs (target/debug/deps/benchmark_baseline-85ea2e7608dac2ff)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_batch_insert.rs (target/debug/deps/benchmark_batch_insert-ade600ad5872107b)
+
+running 1 test
+test benchmark_batch_insert_performance ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_batch_operations.rs (target/debug/deps/benchmark_batch_operations-48fe4e045c761676)
+
+running 1 test
+test benchmark_batch_operations ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_cache_effectiveness.rs (target/debug/deps/benchmark_cache_effectiveness-c291a3945db7bf35)
+
+running 2 tests
+test benchmark_cache_disabled_comparison ... ignored
+test benchmark_cache_effectiveness ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_concurrent.rs (target/debug/deps/benchmark_concurrent-6eb06b33fdb409c5)
+
+running 5 tests
+test benchmark_transaction_consistency ... ignored
+test benchmark_mixed_workload_80_20 ... ok
+test benchmark_mixed_workload_50_50 ... ok
+test benchmark_mixed_workload_20_80 ... ok
+test benchmark_connection_pool_scaling ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 20.57s
+
+     Running tests/benchmark_concurrent_simple.rs (target/debug/deps/benchmark_concurrent_simple-bd2dde69e3d30800)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_extended_protocol.rs (target/debug/deps/benchmark_extended_protocol-50ce987adb00d002)
+
+running 1 test
+test benchmark_extended_protocol_parameters ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_fast_path.rs (target/debug/deps/benchmark_fast_path-4bd339908411629c)
+
+running 1 test
+test benchmark_fast_path ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_pooling_comparison.rs (target/debug/deps/benchmark_pooling_comparison-df603ddc9fc1597e)
+
+running 2 tests
+test test_pooling_environment_variable ... ok
+test benchmark_pooling_comparison ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 13.10s
+
+     Running tests/benchmark_pooling_enabled.rs (target/debug/deps/benchmark_pooling_enabled-b040c0a320d5b571)
+
+running 3 tests
+test test_pooled_mixed_workload ... ok
+test test_pooled_concurrent_reads ... ok
+test test_pooling_effectiveness ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.97s
+
+     Running tests/benchmark_pooling_simple.rs (target/debug/deps/benchmark_pooling_simple-2b838b380bebf640)
+
+running 3 tests
+test test_write_contention ... ok
+test test_concurrent_reads_baseline ... ok
+test test_read_write_mix ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s
+
+     Running tests/benchmark_portal_direct.rs (target/debug/deps/benchmark_portal_direct-1f6d43542fcd00f6)
+
+running 1 test
+test benchmark_portal_performance_direct ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+     Running tests/benchmark_portal_management.rs (target/debug/deps/benchmark_portal_management-633620817ed4bfab)
+
+running 2 tests
+test benchmark_portal_management_comprehensive ... ignored
+test benchmark_portal_memory_stress ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_portal_realistic.rs (target/debug/deps/benchmark_portal_realistic-52acc67a707d1d40)
+
+running 1 test
+test benchmark_realistic_portal_scenarios ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_portal_simple.rs (target/debug/deps/benchmark_portal_simple-1216e325684e237a)
+
+running 1 test
+test benchmark_simple_portal_demo ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_profiling.rs (target/debug/deps/benchmark_profiling-ddfa96fcd13f9265)
+
+running 1 test
+test benchmark_with_profiling ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_protocol_serialization.rs (target/debug/deps/benchmark_protocol_serialization-353f1b408799efab)
+
+running 1 test
+test benchmark_protocol_serialization ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_select_detailed.rs (target/debug/deps/benchmark_select_detailed-4dcab0a34b6f447a)
+
+running 1 test
+test benchmark_select_detailed ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/benchmark_select_simple.rs (target/debug/deps/benchmark_select_simple-7282ac1dcba2e552)
+
+running 1 test
+test benchmark_select_simple ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/binary_protocol_types_test.rs (target/debug/deps/binary_protocol_types_test-35708d1cefc82f39)
+
+running 10 tests
+test test_money_binary_protocol ... FAILED
+test test_bit_binary_protocol ... FAILED
+test test_cidr_binary_protocol ... FAILED
+test test_int8range_binary_protocol ... FAILED
+test test_numrange_binary_protocol ... FAILED
+test test_bit_varying_binary_protocol ... FAILED
+test test_inet_binary_protocol ... FAILED
+test test_int4range_binary_protocol ... FAILED
+test test_macaddr_binary_protocol ... FAILED
+test test_macaddr8_binary_protocol ... FAILED
+
+failures:
+
+---- test_money_binary_protocol stdout ----
+
+thread 'test_money_binary_protocol' panicked at tests/binary_protocol_types_test.rs:155:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_bit_binary_protocol stdout ----
+
+thread 'test_bit_binary_protocol' panicked at tests/binary_protocol_types_test.rs:699:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_cidr_binary_protocol stdout ----
+
+thread 'test_cidr_binary_protocol' panicked at tests/binary_protocol_types_test.rs:427:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_int8range_binary_protocol stdout ----
+
+thread 'test_int8range_binary_protocol' panicked at tests/binary_protocol_types_test.rs:291:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_numrange_binary_protocol stdout ----
+
+thread 'test_numrange_binary_protocol' panicked at tests/binary_protocol_types_test.rs:359:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_bit_varying_binary_protocol stdout ----
+
+thread 'test_bit_varying_binary_protocol' panicked at tests/binary_protocol_types_test.rs:775:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_inet_binary_protocol stdout ----
+
+thread 'test_inet_binary_protocol' panicked at tests/binary_protocol_types_test.rs:495:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_int4range_binary_protocol stdout ----
+
+thread 'test_int4range_binary_protocol' panicked at tests/binary_protocol_types_test.rs:223:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_macaddr_binary_protocol stdout ----
+
+thread 'test_macaddr_binary_protocol' panicked at tests/binary_protocol_types_test.rs:563:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_macaddr8_binary_protocol stdout ----
+
+thread 'test_macaddr8_binary_protocol' panicked at tests/binary_protocol_types_test.rs:631:17:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+
+failures:
+    test_bit_binary_protocol
+    test_bit_varying_binary_protocol
+    test_cidr_binary_protocol
+    test_inet_binary_protocol
+    test_int4range_binary_protocol
+    test_int8range_binary_protocol
+    test_macaddr8_binary_protocol
+    test_macaddr_binary_protocol
+    test_money_binary_protocol
+    test_numrange_binary_protocol
+
+test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.48s
+
+error: test failed, to rerun pass `--test binary_protocol_types_test`
+     Running tests/cast_simple_test.rs (target/debug/deps/cast_simple_test-febafc7074988d84)
+
+running 1 test
+test test_simple_cast ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/catalog_basic_test.rs (target/debug/deps/catalog_basic_test-1425e1685bb23cda)
+
+running 1 test
+test test_catalog_basic_functionality ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+     Running tests/catalog_enum_test.rs (target/debug/deps/catalog_enum_test-cea66d4726d504d7)
+
+running 2 tests
+test test_pg_enum_filtering ... FAILED
+test test_pg_attribute_enum_types ... FAILED
+
+failures:
+
+---- test_pg_enum_filtering stdout ----
+Found 2 enum types in pg_type:
+  ENUM type: color (OID: 261805)
+  ENUM type: size (OID: 441243)
+
+thread 'test_pg_enum_filtering' panicked at tests/catalog_enum_test.rs:235:13:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_pg_attribute_enum_types stdout ----
+Table created successfully
+SQLite table definition: CREATE TABLE test_enum_table (id INTEGER PRIMARY KEY, current_status TEXT)
+__pgsqlite_schema entries for test_enum_table:
+  test_enum_table.current_status -> status
+  test_enum_table.id -> INTEGER
+__pgsqlite_enum_types entries:
+  980965 -> status
+Tables in pg_class:
+  pg_constraint
+  pg_attrdef
+  pg_index
+  test_enum_table
+Table OID: 347037
+Querying pg_attribute for table OID 347037 and column 'current_status'
+pg_attribute query returned 1 rows
+Looking for type with OID: 980965
+All enum types in pg_type:
+  980965 - status
+
+thread 'test_pg_attribute_enum_types' panicked at tests/catalog_enum_test.rs:151:13:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+
+failures:
+    test_pg_attribute_enum_types
+    test_pg_enum_filtering
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
+error: test failed, to rerun pass `--test catalog_enum_test`
+     Running tests/catalog_extended_protocol_test.rs (target/debug/deps/catalog_extended_protocol_test-753de7b9a4f78483)
+
+running 1 test
+test test_catalog_extended_protocol ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/catalog_query_test.rs (target/debug/deps/catalog_query_test-7aed7a7e0051086d)
+
+running 1 test
+[2m2025-08-04T04:21:36.908841Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: []
+[2m2025-08-04T04:21:36.908885Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT typname FROM pg_type WHERE oid = 23
+[2m2025-08-04T04:21:36.908931Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-04T04:21:36.927399Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT typname FROM pg_type WHERE oid = 23' for field descriptions
+[2m2025-08-04T04:21:36.927410Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT typname FROM pg_type WHERE oid = 23
+[2m2025-08-04T04:21:36.927414Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-04T04:21:36.927421Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Skipping field description for catalog query
+[2m2025-08-04T04:21:36.927425Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: []
+[2m2025-08-04T04:21:36.927493Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing statement 's0' (type byte: 53)
+[2m2025-08-04T04:21:36.927518Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Catalog query detected in Describe, generating field descriptions
+[2m2025-08-04T04:21:36.927824Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Sending RowDescription with 1 catalog fields in Describe
+[2m2025-08-04T04:21:36.927837Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Updated statement 's0' with 1 catalog field descriptions
+[2m2025-08-04T04:21:36.967928Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Bind portal '': result_formats = [1]
+[2m2025-08-04T04:21:36.968021Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: Executing portal '' with max_rows: 0
+[2m2025-08-04T04:21:36.968040Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Portal '' has statement_name='s0'
+[2m2025-08-04T04:21:36.968051Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: query='SELECT typname FROM pg_type WHERE oid = 23', result_formats=[1]
+[2m2025-08-04T04:21:36.968076Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path conditions met: false (query type: SELECT)
+[2m2025-08-04T04:21:36.968085Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m After fast path block, continuing execution
+[2m2025-08-04T04:21:36.977864Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Using translated query: 'SELECT typname FROM pg_type WHERE oid = 23' (original: 'SELECT typname FROM pg_type WHERE oid = 23')
+[2m2025-08-04T04:21:36.977876Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Falling back to substitution path for query: 'SELECT typname FROM pg_type WHERE oid = 23'
+[2m2025-08-04T04:21:36.980167Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m After substitution, final query: 'SELECT typname FROM pg_type WHERE oid = 23'
+[2m2025-08-04T04:21:36.980186Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected catalog query in extended protocol: SELECT typname FROM pg_type WHERE oid = 23
+[2m2025-08-04T04:21:36.980191Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Calling execute_select for query: SELECT typname FROM pg_type WHERE oid = 23
+[2m2025-08-04T04:21:36.980194Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Statement name: 's0', checking if field_descriptions exist
+[2m2025-08-04T04:21:36.980201Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Statement has 1 field_descriptions
+[2m2025-08-04T04:21:36.980209Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Checking if query is catalog query: SELECT typname FROM pg_type WHERE oid = 23
+[2m2025-08-04T04:21:36.980223Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Intercepting catalog query: SELECT typname FROM pg_type WHERE oid = 23
+[2m2025-08-04T04:21:36.980353Z[0m [34mDEBUG[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Processing pg_type query with 1 projections
+[2m2025-08-04T04:21:36.980361Z[0m [34mDEBUG[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m   Column 0: typname
+[2m2025-08-04T04:21:36.980368Z[0m [34mDEBUG[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Extracted numeric OID filter: Some(23)
+[2m2025-08-04T04:21:36.980372Z[0m [34mDEBUG[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Filters - OID: Some(23), typtype: None, has_placeholder: false
+[2m2025-08-04T04:21:36.980376Z[0m [34mDEBUG[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Query has placeholder: false, filter_oid: Some(23)
+[2m2025-08-04T04:21:36.980504Z[0m [34mDEBUG[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Found 0 enum types in metadata
+[2m2025-08-04T04:21:36.980512Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m pg_type query: filter_oid=Some(23), filter_typtype=None, has_placeholder=false
+[2m2025-08-04T04:21:36.980516Z[0m [32m INFO[0m [2mpgsqlite::catalog::query_interceptor[0m[2m:[0m Returning 1 rows for pg_type query with 1 columns: ["typname"]
+[2m2025-08-04T04:21:36.980532Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Query intercepted by catalog handler
+[2m2025-08-04T04:21:36.980543Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Looking for portal ''
+[2m2025-08-04T04:21:36.980548Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Found portal with statement_name='s0'
+[2m2025-08-04T04:21:36.980552Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: stmt.field_descriptions.len()=1, response.columns.is_empty()=false, send_row_desc=false
+[2m2025-08-04T04:21:36.980558Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Not sending RowDescription (send_row_desc=false, already_sent=false)
+[2m2025-08-04T04:21:37.008929Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Closing statement 's0'
+[2m2025-08-04T04:21:37.009037Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: []
+[2m2025-08-04T04:21:37.012765Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found explicit cast for parameter 1: int4 (OID 23)
+[2m2025-08-04T04:21:37.012800Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzed SELECT parameter types: [23]
+[2m2025-08-04T04:21:37.012809Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT $1::int4'
+[2m2025-08-04T04:21:37.012816Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: No FROM clause found
+[2m2025-08-04T04:21:37.012826Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Merged parameter types: client [] + analyzed [23] = actual []
+[2m2025-08-04T04:21:37.012966Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT $1::int4
+[2m2025-08-04T04:21:37.012985Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-04T04:21:37.013003Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Query needs cast translation: SELECT $1::int4
+[2m2025-08-04T04:21:37.013201Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Cast translated to: SELECT CAST($1 AS INTEGER)
+[2m2025-08-04T04:21:37.013435Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT CAST($1 AS INTEGER)' for field descriptions
+[2m2025-08-04T04:21:37.013441Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT $1::int4
+[2m2025-08-04T04:21:37.013444Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: true
+[2m2025-08-04T04:21:37.013467Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {0: "int4"}
+[2m2025-08-04T04:21:37.016240Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 1 columns: ["CAST(NULL AS INTEGER)"]
+[2m2025-08-04T04:21:37.016251Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT $1::int4'
+[2m2025-08-04T04:21:37.016255Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: No FROM clause found
+[2m2025-08-04T04:21:37.016259Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Extracted table name from query 'SELECT $1::int4': None
+[2m2025-08-04T04:21:37.016269Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 1 field descriptions from query with inferred types
+[2m2025-08-04T04:21:37.016298Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Query has 1 parameters, defaulting all to text
+[2m2025-08-04T04:21:37.016302Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [25]
+[2m2025-08-04T04:21:37.016337Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing statement 's1' (type byte: 53)
+[2m2025-08-04T04:21:37.016352Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Sending RowDescription with 1 fields in Describe
+test test_catalog_query_handling ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.52s
+
+     Running tests/catalog_simple_repro.rs (target/debug/deps/catalog_simple_repro-885bb5e80ca781c3)
+
+running 1 test
+test catalog_simple_repro ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/catalog_test.rs (target/debug/deps/catalog_test-69c12d3d2ef18fa7)
+
+running 4 tests
+test test_catalog_with_joins ... ok
+test test_catalog_interceptor ... ok
+test test_pg_class_queries ... ok
+test test_pg_attribute_queries ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/catalog_text_format_test.rs (target/debug/deps/catalog_text_format_test-4a991cdad912256a)
+
+running 1 test
+test test_catalog_text_format ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/catalog_where_basic_test.rs (target/debug/deps/catalog_where_basic_test-707999d9ed1d6c08)
+
+running 1 test
+test test_catalog_where_basic ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.63s
+
+     Running tests/catalog_where_simple_test.rs (target/debug/deps/catalog_where_simple_test-366bf0c732227b24)
+
+running 1 test
+test test_catalog_where_simple ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.95s
+
+     Running tests/catalog_where_test.rs (target/debug/deps/catalog_where_test-1064d562678c089a)
+
+running 3 tests
+test test_pg_class_where_filtering ... ignored, Flaky in CI due to WHERE evaluator issues
+test test_psql_common_patterns ... ok
+test test_pg_attribute_where_filtering ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.59s
+
+     Running tests/connection_pool_test.rs (target/debug/deps/connection_pool_test-4bf95bdba0cca554)
+
+running 4 tests
+test test_db_handler_basic ... ok
+test test_db_handler_transactions ... ok
+test test_db_handler_schema_cache ... ok
+test test_db_handler_concurrent_access ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+
+     Running tests/datatype_compat_test.rs (target/debug/deps/datatype_compat_test-a125df86000a70e9)
+
+running 9 tests
+test test_parameter_type_inference ... FAILED
+test test_special_values ... ok
+test test_numeric_types ... ok
+test test_boolean_representations ... ok
+test test_type_coercion ... ok
+test test_bytea_type ... ok
+test test_date_time_types ... ok
+test test_null_handling ... ok
+test test_text_and_string_types ... ok
+
+failures:
+
+---- test_parameter_type_inference stdout ----
+
+thread 'test_parameter_type_inference' panicked at tests/datatype_compat_test.rs:405:13:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_parameter_type_inference
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.09s
+
+error: test failed, to rerun pass `--test datatype_compat_test`
+     Running tests/datetime_basic_test.rs (target/debug/deps/datetime_basic_test-c2cae861ea478f97)
+
+running 5 tests
+test test_extract_function_direct ... ok
+test test_current_date_function ... ok
+test test_interval_arithmetic_direct ... ok
+test test_date_trunc_function_direct ... ok
+test test_now_function ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests/datetime_column_test.rs (target/debug/deps/datetime_column_test-a77d1b198a3817aa)
+
+running 1 test
+test test_datetime_on_columns ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.67s
+
+     Running tests/datetime_conversion_success_test.rs (target/debug/deps/datetime_conversion_success_test-eca64631b65b462d)
+
+running 1 test
+test test_datetime_conversion_success ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.46s
+
+     Running tests/datetime_debug_test.rs (target/debug/deps/datetime_debug_test-00fa945064fea66d)
+
+running 6 tests
+test test_extract_simple ... ok
+test test_extract_uppercase ... ok
+test test_date_trunc_simple ... ok
+test test_extract_query_one ... ok
+test test_multiple_extracts ... ok
+test test_extract_with_format ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/datetime_functions_test.rs (target/debug/deps/datetime_functions_test-2cddb9a663e871d9)
+
+running 5 tests
+test test_now_function ... ok
+test test_current_date_function ... ok
+test test_interval_arithmetic ... ok
+test test_date_trunc_function ... ok
+test test_extract_function ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+     Running tests/datetime_query_debug_test.rs (target/debug/deps/datetime_query_debug_test-8d3e886a093e99d4)
+
+running 1 test
+test test_datetime_query_debug ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.70s
+
+     Running tests/datetime_roundtrip_test.rs (target/debug/deps/datetime_roundtrip_test-e00161010b6df084)
+
+running 2 tests
+test test_simple_query_datetime_conversion ... ok
+test test_datetime_roundtrip ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/datetime_storage_type_test.rs (target/debug/deps/datetime_storage_type_test-0f1a3ef407988245)
+
+running 7 tests
+test test_create_table_with_constraints_and_defaults ... ok
+test test_pgsqlite_schema_metadata ... ok
+test test_datetime_type_aliases_stored_as_integer ... ok
+test test_datetime_storage_known_limitations ... ok
+test test_datetime_types_stored_as_integer ... ok
+test test_datetime_value_storage_and_retrieval ... ok
+test test_datetime_edge_cases ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.99s
+
+     Running tests/datetime_translator_test.rs (target/debug/deps/datetime_translator_test-42e7abfe4862c308)
+
+running 2 tests
+test test_insert_translator_conversion ... ok
+test test_datetime_trigger_creation ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/datetime_working_test.rs (target/debug/deps/datetime_working_test-94c6a84ddfbc9592)
+
+running 5 tests
+test test_current_date_text ... ok
+test test_now_function ... ok
+test test_datetime_functions_with_table ... FAILED
+test test_interval_arithmetic_with_table ... FAILED
+test test_date_trunc_with_table ... FAILED
+
+failures:
+
+---- test_datetime_functions_with_table stdout ----
+
+thread 'test_datetime_functions_with_table' panicked at tests/datetime_working_test.rs:61:13:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+---- test_interval_arithmetic_with_table stdout ----
+
+thread 'test_interval_arithmetic_with_table' panicked at tests/datetime_working_test.rs:188:13:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_date_trunc_with_table stdout ----
+
+thread 'test_date_trunc_with_table' panicked at tests/datetime_working_test.rs:139:13:
+called `Result::unwrap()` on an `Err` value: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+
+
+failures:
+    test_date_trunc_with_table
+    test_datetime_functions_with_table
+    test_interval_arithmetic_with_table
+
+test result: FAILED. 2 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+
+error: test failed, to rerun pass `--test datetime_working_test`
+     Running tests/decimal_group_order_test.rs (target/debug/deps/decimal_group_order_test-51516f8ddb48556b)
+
+running 7 tests
+test test_order_by_aggregate_decimal ... ok
+test test_group_by_decimal_column ... ok
+test test_order_by_multiple_columns_with_decimal ... ok
+test test_order_by_decimal_column ... ok
+test test_order_by_decimal_expression ... ok
+test test_complex_group_order_query ... ok
+test test_group_by_with_decimal_having ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/decimal_integration_test.rs (target/debug/deps/decimal_integration_test-d696a4337c233152)
+
+running 10 tests
+test test_insert_select_with_decimal ... ok
+test test_complex_decimal_queries ... ok
+test test_decimal_arithmetic_execution ... ok
+test test_mixed_type_operations ... ok
+test test_null_handling ... ok
+test test_decimal_comparisons ... ok
+test test_decimal_precision_preservation ... ok
+test test_decimal_aggregates ... ok
+test test_update_with_decimal_operations ... ok
+test test_error_handling ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.60s
+
+     Running tests/decimal_optimization_test.rs (target/debug/deps/decimal_optimization_test-dd3fa4ebee4f6b03)
+
+running 7 tests
+test test_mixed_table_queries ... ok
+test test_rewrite_queries_with_decimal_tables ... ok
+test test_subquery_optimization ... ok
+test test_union_optimization ... ok
+test test_update_delete_optimization ... ok
+test test_skip_rewriting_for_non_decimal_tables ... ok
+test test_cte_optimization ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/decimal_order_integration_test.rs (target/debug/deps/decimal_order_integration_test-b84810d2610c14ea)
+
+running 2 tests
+test test_decimal_grouping_integration ... ok
+test test_decimal_ordering_integration ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/decimal_rewriter_test.rs (target/debug/deps/decimal_rewriter_test-4f1c5547ef64a1b9)
+
+running 16 tests
+test test_already_wrapped_expressions ... ok
+test integration_tests::test_precision_preservation ... ok
+test integration_tests::test_end_to_end_decimal_operations ... ok
+test test_insert_with_numeric_values ... ok
+test test_column_aliases ... ok
+test test_having_clause ... ok
+test test_mixed_type_operations ... ok
+test test_delete_with_numeric_condition ... ok
+test test_non_numeric_operations_unchanged ... ok
+test test_joins_with_numeric_operations ... ok
+test test_comparison_operations ... ok
+test test_update_with_numeric_operations ... ok
+test test_complex_expressions ... ok
+test test_nested_expressions ... ok
+test test_basic_arithmetic_operations ... ok
+test test_aggregate_functions ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/decimal_simple_select_test.rs (target/debug/deps/decimal_simple_select_test-86284ff685e90c7f)
+
+running 4 tests
+test test_simple_column_selection ... ok
+test test_arithmetic_needs_wrapping ... ok
+test test_comparison_needs_wrapping ... ok
+test test_aggregate_needs_wrapping ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/enum_cast_extended_test.rs (target/debug/deps/enum_cast_extended_test-e22ec906ac25626a)
+
+running 2 tests
+test test_cast_in_cte ... ok
+test test_enum_cast_extended_protocol ... FAILED
+
+failures:
+
+---- test_enum_cast_extended_protocol stdout ----
+
+thread 'test_enum_cast_extended_protocol' panicked at tests/enum_cast_extended_test.rs:26:10:
+Failed to insert with parameterized cast: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_enum_cast_extended_protocol
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+error: test failed, to rerun pass `--test enum_cast_extended_test`
+     Running tests/enum_cast_test.rs (target/debug/deps/enum_cast_test-717338237ec1c9c7)
+
+running 5 tests
+test test_enum_cast_with_functions ... ok
+test test_invalid_enum_cast ... FAILED
+test test_enum_cast_in_where_clause ... ok
+test test_enum_to_text_cast ... ok
+test test_text_to_enum_cast ... ok
+
+failures:
+
+---- test_invalid_enum_cast stdout ----
+
+thread 'test_invalid_enum_cast' panicked at tests/enum_cast_test.rs:122:9:
+Error should mention CHECK constraint or invalid value, got: db error: ERROR: constraint violation
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_invalid_enum_cast
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+error: test failed, to rerun pass `--test enum_cast_test`
+     Running tests/enum_error_handling_test.rs (target/debug/deps/enum_error_handling_test-5f6078fa871fdd7f)
+
+running 5 tests
+test test_alter_type_that_does_not_exist ... ok
+test test_type_does_not_exist_error ... ok
+test test_cannot_drop_type_with_dependencies ... ok
+test test_if_exists_clause ... ok
+test test_invalid_enum_value_error ... FAILED
+
+failures:
+
+---- test_invalid_enum_value_error stdout ----
+
+thread 'test_invalid_enum_value_error' panicked at tests/enum_error_handling_test.rs:28:5:
+Expected PostgreSQL-compatible error message, got: db error: ERROR: constraint violation
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_invalid_enum_value_error
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.51s
+
+error: test failed, to rerun pass `--test enum_error_handling_test`
+     Running tests/enum_metadata_test.rs (target/debug/deps/enum_metadata_test-7d144d62aaa3b1f5)
+
+running 7 tests
+test test_stable_oid_generation ... ok
+test test_enum_metadata_initialization ... ok
+test test_create_and_retrieve_enum ... ok
+test test_get_all_enum_types ... ok
+test test_enum_values ... ok
+test test_drop_enum_type ... ok
+test test_add_enum_value ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/enum_simple_test.rs (target/debug/deps/enum_simple_test-8f994743d803080f)
+
+running 2 tests
+test test_enum_check_constraint ... FAILED
+test test_enum_simple_query ... ok
+
+failures:
+
+---- test_enum_check_constraint stdout ----
+
+thread 'test_enum_check_constraint' panicked at tests/enum_simple_test.rs:78:5:
+Error should mention invalid enum value or CHECK constraint. Got: db error: ERROR: constraint violation
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_enum_check_constraint
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
+
+error: test failed, to rerun pass `--test enum_simple_test`
+     Running tests/enum_table_test.rs (target/debug/deps/enum_table_test-7986d7c807e9c634)
+
+running 4 tests
+test test_enum_check_constraint ... ok
+test test_multiple_enum_columns ... ok
+test test_create_table_with_enum ... ok
+test test_enum_with_quotes ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/enum_type_oid_test.rs (target/debug/deps/enum_type_oid_test-1915a6cd397c9251)
+
+running 2 tests
+test test_enum_with_text_protocol ... FAILED
+test test_enum_type_oid_in_schema ... ok
+
+failures:
+
+---- test_enum_with_text_protocol stdout ----
+
+thread 'test_enum_with_text_protocol' panicked at tests/enum_type_oid_test.rs:113:10:
+Failed to insert with text protocol: Error { kind: ToSql(0), cause: Some(WrongType { postgres: Text, rust: "i32" }) }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_enum_with_text_protocol
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+error: test failed, to rerun pass `--test enum_type_oid_test`
+     Running tests/enum_unit_test.rs (target/debug/deps/enum_unit_test-06b788c9b72fa069)
+
+running 4 tests
+test test_enum_ddl_handler ... ok
+test test_enum_ddl_drop_if_exists ... ok
+test test_enum_ddl_drop_type ... ok
+test test_enum_ddl_alter_type ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/enum_where_test.rs (target/debug/deps/enum_where_test-8da758314710d2f0)
+
+running 4 tests
+test test_enum_where_ordering ... ok
+test test_enum_where_null_handling ... ok
+test test_enum_where_in_list ... ok
+test test_enum_where_equality ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+
+     Running tests/expression_type_resolver_test.rs (target/debug/deps/expression_type_resolver_test-f9bbdd0563f0bc85)
+
+running 11 tests
+test test_cast_expression_types ... ok
+test test_decimal_function_types ... ok
+test test_query_context_building ... ok
+test test_unknown_columns ... ok
+test test_nested_expressions ... ok
+test test_resolve_literal_types ... ok
+test test_resolve_column_types ... ok
+test test_resolve_binary_operation_types ... ok
+test test_resolve_qualified_columns ... ok
+test test_involves_decimal ... ok
+test test_resolve_function_types ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/extended_protocol_test.rs (target/debug/deps/extended_protocol_test-71bea9c1c00dc380)
+
+running 1 test
+[2m2025-08-04T04:21:52.359354Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, will run initial migrations...
+[2m2025-08-04T04:21:52.366565Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Running initial migrations...
+[2m2025-08-04T04:21:52.366753Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Registering regex functions
+[2m2025-08-04T04:21:52.366768Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Regex functions registered successfully
+[2m2025-08-04T04:21:52.366778Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Registering catalog functions
+[2m2025-08-04T04:21:52.366788Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Catalog functions registered successfully
+[2m2025-08-04T04:21:52.366793Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Registering hash functions
+[2m2025-08-04T04:21:52.366800Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Hash functions registered successfully
+[2m2025-08-04T04:21:52.366844Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Registering string functions
+[2m2025-08-04T04:21:52.366867Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Successfully registered string functions
+[2m2025-08-04T04:21:52.366872Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Registering math functions
+[2m2025-08-04T04:21:52.366918Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Successfully registered math functions
+[2m2025-08-04T04:21:52.366923Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m Registering system functions
+[2m2025-08-04T04:21:52.366961Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m System functions registered successfully
+[2m2025-08-04T04:21:52.368679Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-08-04T04:21:52.369062Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-08-04T04:21:52.369107Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-08-04T04:21:52.369717Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-08-04T04:21:52.369762Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-08-04T04:21:52.370523Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-08-04T04:21:52.370567Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-08-04T04:21:52.370775Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-08-04T04:21:52.370819Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-08-04T04:21:52.518497Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 147ms
+[2m2025-08-04T04:21:52.518563Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-08-04T04:21:52.519437Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-08-04T04:21:52.519484Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-08-04T04:21:52.519839Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-08-04T04:21:52.519884Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-08-04T04:21:52.520778Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-08-04T04:21:52.520823Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-08-04T04:21:52.523127Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 2ms
+[2m2025-08-04T04:21:52.523174Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 10: Add typcategory column to pg_type view for PostgreSQL compatibility
+[2m2025-08-04T04:21:52.524251Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 10 completed in 0ms
+[2m2025-08-04T04:21:52.524296Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 11: Add typdelim column to pg_type view for psycopg3 SQLAlchemy compatibility
+[2m2025-08-04T04:21:52.525378Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 11 completed in 0ms
+[2m2025-08-04T04:21:52.525429Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Applied 11 migrations to new database
+[2m2025-08-04T04:21:52.532149Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with per-session connection architecture
+[2m2025-08-04T04:21:52.532166Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler::execute - db_path: /tmp/pgsqlite_test_74738e02ae9b46f99db59c3b42229314.db, query: CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)
+[2m2025-08-04T04:21:52.533645Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD SLOW PATH (LazyQueryProcessor) for query: CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)
+[2m2025-08-04T04:21:52.539589Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler::execute - db_path: /tmp/pgsqlite_test_74738e02ae9b46f99db59c3b42229314.db, query: INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)
+[2m2025-08-04T04:21:52.541259Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD FAST PATH for query: INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)
+[2m2025-08-04T04:21:52.544303Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler::execute - db_path: /tmp/pgsqlite_test_74738e02ae9b46f99db59c3b42229314.db, query: INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)
+[2m2025-08-04T04:21:52.545801Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD FAST PATH for query: INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)
+[2m2025-08-04T04:21:52.560590Z[0m [34mDEBUG[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Creating connection for session f9685908-c370-487a-81ef-88e6df524770 with path: /tmp/pgsqlite_test_74738e02ae9b46f99db59c3b42229314.db
+[2m2025-08-04T04:21:52.561584Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Registering regex functions
+[2m2025-08-04T04:21:52.561597Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Regex functions registered successfully
+[2m2025-08-04T04:21:52.561601Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Registering catalog functions
+[2m2025-08-04T04:21:52.561608Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Catalog functions registered successfully
+[2m2025-08-04T04:21:52.561612Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Registering hash functions
+[2m2025-08-04T04:21:52.561623Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Hash functions registered successfully
+[2m2025-08-04T04:21:52.561657Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Registering string functions
+[2m2025-08-04T04:21:52.561674Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Successfully registered string functions
+[2m2025-08-04T04:21:52.561678Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Registering math functions
+[2m2025-08-04T04:21:52.561714Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Successfully registered math functions
+[2m2025-08-04T04:21:52.561718Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m Registering system functions
+[2m2025-08-04T04:21:52.561747Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m System functions registered successfully
+[2m2025-08-04T04:21:52.561974Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session f9685908-c370-487a-81ef-88e6df524770 (total connections: 1)
+[2m2025-08-04T04:21:52.562645Z[0m [34mDEBUG[0m [2mtokio_postgres::prepare[0m[2m:[0m preparing query s0: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id    
+[2m2025-08-04T04:21:52.562719Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Parse { name: "s0", query: "SELECT id, name, age FROM users WHERE age > 20 ORDER BY id", param_types: [] }
+[2m2025-08-04T04:21:52.562762Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: []
+[2m2025-08-04T04:21:52.562768Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.562802Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-04T04:21:52.579140Z[0m [34mDEBUG[0m [2mpgsqlite::translator::schema_prefix_translator[0m[2m:[0m Schema prefix translation: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id -> SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.581092Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id' for field descriptions
+[2m2025-08-04T04:21:52.581108Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.581112Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-04T04:21:52.581133Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {}
+[2m2025-08-04T04:21:52.583377Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD FAST PATH for query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id LIMIT 1
+[2m2025-08-04T04:21:52.583455Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 3 columns: ["id", "name", "age"]
+[2m2025-08-04T04:21:52.583464Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id'
+[2m2025-08-04T04:21:52.583469Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Found FROM at position 20
+[2m2025-08-04T04:21:52.583477Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Extracted table name: 'users'
+[2m2025-08-04T04:21:52.583480Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Extracted table name from query 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id': Some("users")
+[2m2025-08-04T04:21:52.583485Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Looking up schema types for table 'users' with columns: ["id", "name", "age"]
+[2m2025-08-04T04:21:52.583535Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No schema type found for users.id
+[2m2025-08-04T04:21:52.583568Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No schema type found for users.name
+[2m2025-08-04T04:21:52.583596Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No schema type found for users.age
+[2m2025-08-04T04:21:52.583607Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'id'
+[2m2025-08-04T04:21:52.591875Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Column 'id': inferring type from value '1' -> type OID 23
+[2m2025-08-04T04:21:52.591886Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'name'
+[2m2025-08-04T04:21:52.601017Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Column 'name': inferring type from value 'Alice' -> type OID 25
+[2m2025-08-04T04:21:52.601028Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'age'
+[2m2025-08-04T04:21:52.609979Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Column 'age': inferring type from value '30' -> type OID 23
+[2m2025-08-04T04:21:52.610001Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 3 field descriptions from query with inferred types
+[2m2025-08-04T04:21:52.610030Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: []
+[2m2025-08-04T04:21:52.610049Z[0m [34mDEBUG[0m [2mpgsqlite::cache::prepared_statement_cache[0m[2m:[0m Cached prepared statement for query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.610117Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Describe { typ: 83, name: "s0" }
+[2m2025-08-04T04:21:52.610134Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing statement 's0' (type byte: 53)
+[2m2025-08-04T04:21:52.610152Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Sending RowDescription with 3 fields in Describe
+[2m2025-08-04T04:21:52.610164Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Sync
+[2m2025-08-04T04:21:52.650738Z[0m [34mDEBUG[0m [2mtokio_postgres::query[0m[2m:[0m executing statement s0 with parameters: []    
+[2m2025-08-04T04:21:52.650832Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Bind { portal: "", statement: "s0", formats: [], values: [], result_formats: [1] }
+[2m2025-08-04T04:21:52.650860Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Bind portal '': result_formats = [1]
+[2m2025-08-04T04:21:52.650896Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Execute { portal: "", max_rows: 0 }
+[2m2025-08-04T04:21:52.650917Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: Executing portal '' with max_rows: 0
+[2m2025-08-04T04:21:52.650926Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Portal '' has statement_name='s0'
+[2m2025-08-04T04:21:52.650933Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m handle_execute: query='SELECT id, name, age FROM users WHERE age > 20 ORDER BY id', result_formats=[1]
+[2m2025-08-04T04:21:52.650948Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Fast path conditions met: false (query type: SELECT)
+[2m2025-08-04T04:21:52.650954Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m After fast path block, continuing execution
+[2m2025-08-04T04:21:52.650972Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Using translated query: 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id' (original: 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id')
+[2m2025-08-04T04:21:52.650980Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Falling back to substitution path for query: 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id'
+[2m2025-08-04T04:21:52.653777Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m After substitution, final query: 'SELECT id, name, age FROM users WHERE age > 20 ORDER BY id'
+[2m2025-08-04T04:21:52.653799Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Calling execute_select for query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.653804Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Statement name: 's0', checking if field_descriptions exist
+[2m2025-08-04T04:21:52.653810Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Statement has 3 field_descriptions
+[2m2025-08-04T04:21:52.653816Z[0m [34mDEBUG[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select called with query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.653820Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Checking if query is catalog query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.653832Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Query not intercepted, executing normally
+[2m2025-08-04T04:21:52.653865Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD FAST PATH for query: SELECT id, name, age FROM users WHERE age > 20 ORDER BY id
+[2m2025-08-04T04:21:52.653974Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Looking for portal ''
+[2m2025-08-04T04:21:52.653981Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Found portal with statement_name='s0'
+[2m2025-08-04T04:21:52.653986Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: stmt.field_descriptions.len()=3, response.columns.is_empty()=false, send_row_desc=false
+[2m2025-08-04T04:21:52.653992Z[0m [34mDEBUG[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: send_row_desc = false
+[2m2025-08-04T04:21:52.653996Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m execute_select: Not sending RowDescription (send_row_desc=false, already_sent=false)
+[2m2025-08-04T04:21:52.654023Z[0m [34mDEBUG[0m [2mpgsqlite::query::extended[0m[2m:[0m Binary encoding stats: 24 bytes used, 60 capacity, 2 rows
+[2m2025-08-04T04:21:52.654050Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Sync
+[2m2025-08-04T04:21:52.691770Z[0m [34mDEBUG[0m [2mtokio_postgres::prepare[0m[2m:[0m preparing query s1: SELECT name FROM users WHERE id = $1::int4    
+[2m2025-08-04T04:21:52.691847Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Close { typ: 83, name: "s0" }
+[2m2025-08-04T04:21:52.691861Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Closing statement 's0'
+[2m2025-08-04T04:21:52.691891Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Sync
+[2m2025-08-04T04:21:52.691906Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Parse { name: "s1", query: "SELECT name FROM users WHERE id = $1::int4", param_types: [] }
+[2m2025-08-04T04:21:52.691941Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse received param_types: []
+[2m2025-08-04T04:21:52.695691Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found explicit cast for parameter 1: int4 (OID 23)
+[2m2025-08-04T04:21:52.695723Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzed SELECT parameter types: [23]
+[2m2025-08-04T04:21:52.695729Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT name FROM users WHERE id = $1::int4'
+[2m2025-08-04T04:21:52.695734Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Found FROM at position 11
+[2m2025-08-04T04:21:52.695741Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Extracted table name: 'users'
+[2m2025-08-04T04:21:52.695747Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Merged parameter types: client [] + analyzed [23] = actual []
+[2m2025-08-04T04:21:52.695815Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m Parsing sql 'SELECT name FROM users WHERE id = $1::int4'...    
+[2m2025-08-04T04:21:52.695919Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.695970Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Identifier(Ident { value: "name", quote_style: None, span: Span(Location(1,8)..Location(1,12)) })    
+[2m2025-08-04T04:21:52.695987Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Word(Word { value: "FROM", quote_style: None, keyword: FROM }), span: Span(Location(1,13)..Location(1,17)) }    
+[2m2025-08-04T04:21:52.695993Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Word(Word { value: "FROM", quote_style: None, keyword: FROM }), span: Span(Location(1,13)..Location(1,17)) }    
+[2m2025-08-04T04:21:52.696000Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.696023Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.696031Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Identifier(Ident { value: "id", quote_style: None, span: Span(Location(1,30)..Location(1,32)) })    
+[2m2025-08-04T04:21:52.696036Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Eq, span: Span(Location(1,33)..Location(1,34)) }    
+[2m2025-08-04T04:21:52.696040Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Eq, span: Span(Location(1,33)..Location(1,34)) }    
+[2m2025-08-04T04:21:52.696044Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 50    
+[2m2025-08-04T04:21:52.696054Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.696064Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Value(ValueWithSpan { value: Placeholder("$1"), span: Span(Location(1,35)..Location(1,37)) })    
+[2m2025-08-04T04:21:52.696070Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: DoubleColon, span: Span(Location(1,37)..Location(1,39)) }    
+[2m2025-08-04T04:21:52.696074Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: DoubleColon, span: Span(Location(1,37)..Location(1,39)) }    
+[2m2025-08-04T04:21:52.696078Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 140    
+[2m2025-08-04T04:21:52.696084Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: EOF, span: Span(Location(0,0)..Location(0,0)) }    
+[2m2025-08-04T04:21:52.696089Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: EOF, span: Span(Location(0,0)..Location(0,0)) }    
+[2m2025-08-04T04:21:52.696093Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.696097Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: EOF, span: Span(Location(0,0)..Location(0,0)) }    
+[2m2025-08-04T04:21:52.696102Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: EOF, span: Span(Location(0,0)..Location(0,0)) }    
+[2m2025-08-04T04:21:52.696106Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.696180Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT name FROM users WHERE id = $1::int4
+[2m2025-08-04T04:21:52.696209Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-04T04:21:52.696227Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Query needs cast translation: SELECT name FROM users WHERE id = $1::int4
+[2m2025-08-04T04:21:52.696432Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parse: Cast translated to: SELECT name FROM users WHERE id = CAST($1 AS INTEGER)
+[2m2025-08-04T04:21:52.696539Z[0m [34mDEBUG[0m [2mpgsqlite::translator::schema_prefix_translator[0m[2m:[0m Schema prefix translation: SELECT name FROM users WHERE id = CAST($1 AS INTEGER) -> SELECT name FROM users WHERE id = CAST($1 AS INTEGER)
+[2m2025-08-04T04:21:52.696578Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT name FROM users WHERE id = CAST($1 AS INTEGER)' for field descriptions
+[2m2025-08-04T04:21:52.696584Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT name FROM users WHERE id = $1::int4
+[2m2025-08-04T04:21:52.696587Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-04T04:21:52.696607Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {}
+[2m2025-08-04T04:21:52.698894Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD SLOW PATH (LazyQueryProcessor) for query: SELECT name FROM users WHERE id = CAST(NULL AS INTEGER) LIMIT 1
+[2m2025-08-04T04:21:52.698919Z[0m [34mDEBUG[0m [2mpgsqlite::query::lazy_processor[0m[2m:[0m Before decimal rewriting (SELECT): SELECT name FROM users WHERE id = CAST(NULL AS INTEGER) LIMIT 1
+[2m2025-08-04T04:21:52.698928Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m Parsing sql 'SELECT name FROM users WHERE id = CAST(NULL AS INTEGER) LIMIT 1'...    
+[2m2025-08-04T04:21:52.698966Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.698980Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Identifier(Ident { value: "name", quote_style: None, span: Span(Location(1,8)..Location(1,12)) })    
+[2m2025-08-04T04:21:52.698986Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Word(Word { value: "FROM", quote_style: None, keyword: FROM }), span: Span(Location(1,13)..Location(1,17)) }    
+[2m2025-08-04T04:21:52.698992Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Word(Word { value: "FROM", quote_style: None, keyword: FROM }), span: Span(Location(1,13)..Location(1,17)) }    
+[2m2025-08-04T04:21:52.698996Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.699008Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.699016Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Identifier(Ident { value: "id", quote_style: None, span: Span(Location(1,30)..Location(1,32)) })    
+[2m2025-08-04T04:21:52.699022Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Eq, span: Span(Location(1,33)..Location(1,34)) }    
+[2m2025-08-04T04:21:52.699026Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Eq, span: Span(Location(1,33)..Location(1,34)) }    
+[2m2025-08-04T04:21:52.699030Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 50    
+[2m2025-08-04T04:21:52.699036Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.699048Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.699058Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Value(ValueWithSpan { value: Null, span: Span(Location(1,40)..Location(1,44)) })    
+[2m2025-08-04T04:21:52.699064Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Word(Word { value: "AS", quote_style: None, keyword: AS }), span: Span(Location(1,45)..Location(1,47)) }    
+[2m2025-08-04T04:21:52.699069Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Word(Word { value: "AS", quote_style: None, keyword: AS }), span: Span(Location(1,45)..Location(1,47)) }    
+[2m2025-08-04T04:21:52.699075Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.699081Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Cast { kind: Cast, expr: Value(ValueWithSpan { value: Null, span: Span(Location(1,40)..Location(1,44)) }), data_type: Integer(None), format: None }    
+[2m2025-08-04T04:21:52.699087Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Word(Word { value: "LIMIT", quote_style: None, keyword: LIMIT }), span: Span(Location(1,57)..Location(1,62)) }    
+[2m2025-08-04T04:21:52.699091Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Word(Word { value: "LIMIT", quote_style: None, keyword: LIMIT }), span: Span(Location(1,57)..Location(1,62)) }    
+[2m2025-08-04T04:21:52.699096Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.699100Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: Word(Word { value: "LIMIT", quote_style: None, keyword: LIMIT }), span: Span(Location(1,57)..Location(1,62)) }    
+[2m2025-08-04T04:21:52.699104Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: Word(Word { value: "LIMIT", quote_style: None, keyword: LIMIT }), span: Span(Location(1,57)..Location(1,62)) }    
+[2m2025-08-04T04:21:52.699108Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.699123Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m parsing expr    
+[2m2025-08-04T04:21:52.699130Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m prefix: Value(ValueWithSpan { value: Number("1", false), span: Span(Location(1,63)..Location(1,64)) })    
+[2m2025-08-04T04:21:52.699136Z[0m [34mDEBUG[0m [2msqlparser::dialect::postgresql[0m[2m:[0m get_next_precedence() TokenWithSpan { token: EOF, span: Span(Location(0,0)..Location(0,0)) }    
+[2m2025-08-04T04:21:52.699140Z[0m [34mDEBUG[0m [2msqlparser::dialect[0m[2m:[0m get_next_precedence_full() TokenWithSpan { token: EOF, span: Span(Location(0,0)..Location(0,0)) }    
+[2m2025-08-04T04:21:52.699144Z[0m [34mDEBUG[0m [2msqlparser::parser[0m[2m:[0m next precedence: 0    
+[2m2025-08-04T04:21:52.699320Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Decimal rewriter output: SELECT name FROM users WHERE id = CAST(NULL AS INTEGER) LIMIT 1
+[2m2025-08-04T04:21:52.699363Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 1 columns: ["name"]
+[2m2025-08-04T04:21:52.699370Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Analyzing query: 'SELECT name FROM users WHERE id = $1::int4'
+[2m2025-08-04T04:21:52.699374Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Found FROM at position 11
+[2m2025-08-04T04:21:52.699381Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m extract_table_name_from_select: Extracted table name: 'users'
+[2m2025-08-04T04:21:52.699384Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Extracted table name from query 'SELECT name FROM users WHERE id = $1::int4': Some("users")
+[2m2025-08-04T04:21:52.699391Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Looking up schema types for table 'users' with columns: ["name"]
+[2m2025-08-04T04:21:52.699426Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No schema type found for users.name
+[2m2025-08-04T04:21:52.699436Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'name'
+[2m2025-08-04T04:21:52.708764Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Column 'name': no data rows, defaulting to text
+[2m2025-08-04T04:21:52.708779Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 1 field descriptions from query with inferred types
+[2m2025-08-04T04:21:52.708807Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Query has 1 parameters, defaulting all to text
+[2m2025-08-04T04:21:52.708812Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [25]
+[2m2025-08-04T04:21:52.708828Z[0m [34mDEBUG[0m [2mpgsqlite::cache::prepared_statement_cache[0m[2m:[0m Cached prepared statement for query: SELECT name FROM users WHERE id = $1::int4
+[2m2025-08-04T04:21:52.708870Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Describe { typ: 83, name: "s1" }
+[2m2025-08-04T04:21:52.708878Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing statement 's1' (type byte: 53)
+[2m2025-08-04T04:21:52.708892Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Sending RowDescription with 1 fields in Describe
+[2m2025-08-04T04:21:52.708902Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Sync
+[2m2025-08-04T04:21:52.732748Z[0m [34mDEBUG[0m [2mtokio_postgres::query[0m[2m:[0m executing statement s1 with parameters: [1]    
+test test_extended_protocol ... FAILED
+
+failures:
+
+---- test_extended_protocol stdout ----
+Test server listening on port 41161
+Test data initialized
+Connecting to test server on port 41161
+Accepted connection from 127.0.0.1:57854
+Connected successfully
+Test 1: Query without parameters
+Query successful, got 2 rows
+Test 2: Prepared statement
+Prepared statement successfully
+
+thread 'test_extended_protocol' panicked at tests/extended_protocol_test.rs:121:39:
+Prepared statement execution failed: error serializing parameter 0: cannot convert between the Rust type `i32` and the Postgres type `text`
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_extended_protocol
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.38s
+
+error: test failed, to rerun pass `--test extended_protocol_test`
+     Running tests/extract_debug_test.rs (target/debug/deps/extract_debug_test-4bec61cf087116c4)
+
+running 1 test
+test test_extract_debug ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.55s
+
+     Running tests/extract_minimal_test.rs (target/debug/deps/extract_minimal_test-0f5fb5876af5b618)
+
+running 1 test
+test test_extract_minimal ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.54s
+
+     Running tests/extract_simple_test.rs (target/debug/deps/extract_simple_test-c5a15bc67e670f03)
+
+running 1 test
+test test_extract_simple_case ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.56s
+
+     Running tests/extract_translation_test.rs (target/debug/deps/extract_translation_test-437c51be1db1da11)
+
+running 1 test
+test test_extract_translation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/fast_path_debug_test.rs (target/debug/deps/fast_path_debug_test-c08ea4bf8efb2926)
+
+running 2 tests
+test test_fast_path_decimal_handling ... ok
+test test_fast_path_with_metadata ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s
+
+     Running tests/fast_path_test.rs (target/debug/deps/fast_path_test-9f9bc1ad5e48d104)
+
+running 2 tests
+test test_fast_path_detection ... ok
+test test_fast_path_performance ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.41s
+
+     Running tests/float_decimal_test.rs (target/debug/deps/float_decimal_test-06cb1addad83352f)
+
+running 7 tests
+test test_double_precision_arithmetic ... ok
+test test_float_in_subquery ... ok
+test test_mixed_float_numeric_operations ... ok
+test test_float_type_comparison ... ok
+test test_expression_type_resolver_float_types ... ok
+test test_float_aggregates ... ok
+test test_real_type_arithmetic ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/fts_integration_test.rs (target/debug/deps/fts_integration_test-6051114dec01910b)
+
+running 5 tests
+test test_type_mapping_integration ... ok
+test test_fts_query_conversion ... ok
+test test_fts_translator_unit ... ok
+test test_fts_functions_registration ... ok
+test test_fts_create_table_integration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s
+
+     Running tests/implicit_cast_test.rs (target/debug/deps/implicit_cast_test-bd1039c8523c69f6)
+
+running 9 tests
+test test_implicit_cast_integer_plus_decimal ... ok
+test test_implicit_cast_function_argument ... ok
+test test_implicit_cast_mixed_arithmetic ... ok
+test test_implicit_cast_update_assignment ... ok
+test test_implicit_cast_integer_column_eq_decimal_string ... ok
+test test_implicit_cast_insert_values ... ok
+test test_implicit_cast_decimal_column_eq_integer ... ok
+test test_implicit_cast_in_where_clause ... ok
+test test_no_implicit_cast_when_types_match ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/insert_detailed_analysis.rs (target/debug/deps/insert_detailed_analysis-620de1ad341cc5ed)
+
+running 1 test
+test test_insert_detailed_timing ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+     Running tests/insert_optimization_test.rs (target/debug/deps/insert_optimization_test-b35c503c6b9afd8d)
+
+running 5 tests
+test test_insert_fast_path_detection ... ok
+test test_insert_complex_queries_no_fast_path ... ok
+test test_insert_performance_improvement ... ok
+test test_insert_with_decimal_columns_fallback ... ok
+test test_insert_bottleneck_analysis ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+
+     Running tests/insert_performance_benchmark.rs (target/debug/deps/insert_performance_benchmark-94b37ba47ddb90a7)
+
+running 1 test
+test test_insert_performance_comparison ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/insert_translator_unit_test.rs (target/debug/deps/insert_translator_unit_test-2eea407bad7e3f07)
+
+running 1 test
+test test_insert_execution_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+     Running tests/integration_test.rs (target/debug/deps/integration_test-a675df3d31939871)
+
+running 1 test
+[2m2025-08-04T04:21:58.434391Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, will run initial migrations...
+[2m2025-08-04T04:21:58.440225Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Running initial migrations...
+[2m2025-08-04T04:21:58.440424Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Registering regex functions
+[2m2025-08-04T04:21:58.440446Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Regex functions registered successfully
+[2m2025-08-04T04:21:58.440452Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Registering catalog functions
+[2m2025-08-04T04:21:58.440462Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Catalog functions registered successfully
+[2m2025-08-04T04:21:58.440467Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Registering hash functions
+[2m2025-08-04T04:21:58.440476Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Hash functions registered successfully
+[2m2025-08-04T04:21:58.440523Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Registering string functions
+[2m2025-08-04T04:21:58.440547Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Successfully registered string functions
+[2m2025-08-04T04:21:58.440552Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Registering math functions
+[2m2025-08-04T04:21:58.440600Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Successfully registered math functions
+[2m2025-08-04T04:21:58.440606Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m Registering system functions
+[2m2025-08-04T04:21:58.440655Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m System functions registered successfully
+[2m2025-08-04T04:21:58.442325Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-08-04T04:21:58.442698Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-08-04T04:21:58.442743Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-08-04T04:21:58.443326Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-08-04T04:21:58.443369Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-08-04T04:21:58.444124Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-08-04T04:21:58.444167Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-08-04T04:21:58.444338Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-08-04T04:21:58.444379Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-08-04T04:21:58.592339Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 147ms
+[2m2025-08-04T04:21:58.592406Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-08-04T04:21:58.593286Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-08-04T04:21:58.593333Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-08-04T04:21:58.593689Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-08-04T04:21:58.593735Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-08-04T04:21:58.594628Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-08-04T04:21:58.594673Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-08-04T04:21:58.596943Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 2ms
+[2m2025-08-04T04:21:58.596991Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 10: Add typcategory column to pg_type view for PostgreSQL compatibility
+[2m2025-08-04T04:21:58.598066Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 10 completed in 0ms
+[2m2025-08-04T04:21:58.598111Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 11: Add typdelim column to pg_type view for psycopg3 SQLAlchemy compatibility
+[2m2025-08-04T04:21:58.599193Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 11 completed in 0ms
+[2m2025-08-04T04:21:58.599245Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Applied 11 migrations to new database
+[2m2025-08-04T04:21:58.605939Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler initialized with per-session connection architecture
+[2m2025-08-04T04:21:58.605961Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler::execute - db_path: /tmp/pgsqlite_test_3640952.db, query: CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)
+[2m2025-08-04T04:21:58.607460Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD SLOW PATH (LazyQueryProcessor) for query: CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)
+[2m2025-08-04T04:21:58.610821Z[0m [34mDEBUG[0m [2mpgsqlite::session::db_handler[0m[2m:[0m DbHandler::execute - db_path: /tmp/pgsqlite_test_3640952.db, query: INSERT INTO test (id, name) VALUES (1, 'Alice'), (2, 'Bob')
+[2m2025-08-04T04:21:58.612276Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD FAST PATH for query: INSERT INTO test (id, name) VALUES (1, 'Alice'), (2, 'Bob')
+[2m2025-08-04T04:21:58.635563Z[0m [34mDEBUG[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Creating connection for session c7b9f02b-bf9b-4531-b147-862aa7e1d2d7 with path: /tmp/pgsqlite_test_3640952.db
+[2m2025-08-04T04:21:58.636680Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Registering regex functions
+[2m2025-08-04T04:21:58.636694Z[0m [34mDEBUG[0m [2mpgsqlite::functions::regex_functions[0m[2m:[0m Regex functions registered successfully
+[2m2025-08-04T04:21:58.636698Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Registering catalog functions
+[2m2025-08-04T04:21:58.636705Z[0m [34mDEBUG[0m [2mpgsqlite::functions::catalog_functions[0m[2m:[0m Catalog functions registered successfully
+[2m2025-08-04T04:21:58.636709Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Registering hash functions
+[2m2025-08-04T04:21:58.636714Z[0m [34mDEBUG[0m [2mpgsqlite::functions::hash_functions[0m[2m:[0m Hash functions registered successfully
+[2m2025-08-04T04:21:58.636746Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Registering string functions
+[2m2025-08-04T04:21:58.636763Z[0m [34mDEBUG[0m [2mpgsqlite::functions::string_functions[0m[2m:[0m Successfully registered string functions
+[2m2025-08-04T04:21:58.636767Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Registering math functions
+[2m2025-08-04T04:21:58.636804Z[0m [34mDEBUG[0m [2mpgsqlite::functions::math_functions[0m[2m:[0m Successfully registered math functions
+[2m2025-08-04T04:21:58.636809Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m Registering system functions
+[2m2025-08-04T04:21:58.636840Z[0m [34mDEBUG[0m [2mpgsqlite::functions::system_functions[0m[2m:[0m System functions registered successfully
+[2m2025-08-04T04:21:58.637068Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session c7b9f02b-bf9b-4531-b147-862aa7e1d2d7 (total connections: 1)
+[2m2025-08-04T04:21:58.637725Z[0m [34mDEBUG[0m [2mtokio_postgres::simple_query[0m[2m:[0m executing simple query: SELECT id, name FROM test ORDER BY id    
+[2m2025-08-04T04:21:58.637788Z[0m [34mDEBUG[0m [2mpgsqlite[0m[2m:[0m Received message: Query("SELECT id, name FROM test ORDER BY id")
+[2m2025-08-04T04:21:58.637819Z[0m [34mDEBUG[0m [2mpgsqlite::query::simple_query_detector[0m[2m:[0m Checking if ultra-simple: SELECT id, name FROM test ORDER BY id
+[2m2025-08-04T04:21:58.660989Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m Query type detected: Select for query: SELECT id, name FROM test ORDER BY id
+[2m2025-08-04T04:21:58.660999Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m Calling execute_select for query: SELECT id, name FROM test ORDER BY id
+[2m2025-08-04T04:21:58.661033Z[0m [34mDEBUG[0m [2mpgsqlite::query::query_processor[0m[2m:[0m Using OLD FAST PATH for query: SELECT id, name FROM test ORDER BY id
+[2m2025-08-04T04:21:58.662683Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m extract_table_name_from_select: query='SELECT id, name FROM test ORDER BY id' -> table='test'
+[2m2025-08-04T04:21:58.662711Z[0m [32m INFO[0m [2mpgsqlite::cache::row_description[0m[2m:[0m Initializing RowDescription cache with capacity 1000 and TTL 10 minutes
+[2m2025-08-04T04:21:58.686883Z[0m [34mDEBUG[0m [2mpgsqlite::cache::row_description[0m[2m:[0m Cached RowDescription for query: SELECT id, name FROM test ORDER BY id
+[2m2025-08-04T04:21:58.686922Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m Converting array data for 2 rows
+[2m2025-08-04T04:21:58.686927Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m About to convert array data for 2 rows
+[2m2025-08-04T04:21:58.686933Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m Type OIDs for conversion: [25, 25]
+[2m2025-08-04T04:21:58.686938Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m Boolean type OID: 16
+[2m2025-08-04T04:21:58.686943Z[0m [34mDEBUG[0m [2mpgsqlite::query::executor[0m[2m:[0m Completed array data conversion
+test test_basic_protocol ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running tests/json_agg_test.rs (target/debug/deps/json_agg_test-8f1046b7bfac5719)
+
+running 2 tests
+test test_json_agg_with_nulls ... ok
+test test_json_agg_integration ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+
+     Running tests/json_each_test.rs (target/debug/deps/json_each_test-78ae61290f8a8f79)
+
+running 5 tests
+test test_json_each_integration ... ok
+test test_jsonb_each_integration ... ok
+test test_json_each_empty_object ... ok
+test test_json_each_with_array ... ok
+test test_json_each_with_table_data ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/json_each_text_test.rs (target/debug/deps/json_each_text_test-d847d083b589e569)
+
+running 5 tests
+test test_json_each_text_basic ... ok
+test test_json_each_text_with_filter ... ok
+test test_json_each_text_empty_and_null ... ok
+test test_jsonb_each_text_with_nested ... ok
+test test_json_each_text_with_table ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.82s
+
+     Running tests/json_existence_operators_test.rs (target/debug/deps/json_existence_operators_test-fa1de14846d5dfcb)
+
+running 2 tests
+test test_json_existence_operators_with_table_alias ... ok
+test test_json_existence_operators ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.47s
+
+     Running tests/json_object_agg_test.rs (target/debug/deps/json_object_agg_test-108398f951cce30c)
+
+running 6 tests
+test test_json_object_agg_empty_result ... ok
+test test_json_object_agg_basic ... ok
+test test_json_object_agg_mixed_types ... ok
+test test_jsonb_object_agg_basic ... ok
+test test_json_object_agg_duplicate_keys ... ok
+test test_json_object_agg_with_table ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running tests/json_operator_test.rs (target/debug/deps/json_operator_test-071d6a89fbf27b5f)
+
+running 2 tests
+test test_json_functions ... ok
+test test_json_operators ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.13s
+
+     Running tests/json_test.rs (target/debug/deps/json_test-f757e4dcf5b39e01)
+
+running 1 test
+test test_json_support ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.25s
+
+     Running tests/jsonb_delete_test.rs (target/debug/deps/jsonb_delete_test-41c5a8e5d2135d29)
+
+running 6 tests
+test test_jsonb_delete_nested_object_integration ... ok
+test test_jsonb_delete_nonexistent_key_integration ... ok
+test test_jsonb_delete_object_integration ... ok
+test test_jsonb_delete_path_integration ... ok
+test test_jsonb_delete_array_integration ... ok
+test test_jsonb_delete_with_table_data_integration ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/jsonb_insert_test.rs (target/debug/deps/jsonb_insert_test-18c88bec12f4dd06)
+
+running 6 tests
+test test_jsonb_insert_object_integration ... ok
+test test_jsonb_insert_nested_object_integration ... ok
+test test_jsonb_insert_existing_key_integration ... ok
+test test_jsonb_insert_array_integration ... ok
+test test_jsonb_insert_array_after_integration ... ok
+test test_jsonb_insert_with_table_data_integration ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+
+     Running tests/jsonb_pretty_test.rs (target/debug/deps/jsonb_pretty_test-2d90b7fc6f68c2f8)
+
+running 5 tests
+test test_jsonb_pretty_simple_object_integration ... ok
+test test_jsonb_pretty_nested_structure_integration ... ok
+test test_jsonb_pretty_array_of_objects_integration ... ok
+test test_jsonb_pretty_edge_cases_integration ... ok
+test test_jsonb_pretty_with_table_data_integration ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.81s
+
+     Running tests/manual_extended_test.rs (target/debug/deps/manual_extended_test-a03512a4ac109e70)
+
+running 1 test
+test test_manual_extended_protocol ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running tests/migration_test.rs (target/debug/deps/migration_test-ecdb967ae176854f)
+
+running 6 tests
+test test_migration_history ... FAILED
+test test_idempotent_migrations ... FAILED
+test test_fresh_database_migration ... FAILED
+test test_existing_schema_detection ... FAILED
+test test_check_up_to_date_database ... ok
+test test_concurrent_migration_lock ... ok
+
+failures:
+
+---- test_migration_history stdout ----
+
+thread 'test_migration_history' panicked at tests/migration_test.rs:155:5:
+assertion `left == right` failed
+  left: 11
+ right: 10
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_idempotent_migrations stdout ----
+
+thread 'test_idempotent_migrations' panicked at tests/migration_test.rs:70:5:
+assertion `left == right` failed
+  left: 11
+ right: 10
+
+---- test_fresh_database_migration stdout ----
+
+thread 'test_fresh_database_migration' panicked at tests/migration_test.rs:26:5:
+assertion `left == right` failed
+  left: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+ right: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+---- test_existing_schema_detection stdout ----
+
+thread 'test_existing_schema_detection' panicked at tests/migration_test.rs:112:5:
+assertion `left == right` failed
+  left: 10
+ right: 9
+
+
+failures:
+    test_existing_schema_detection
+    test_fresh_database_migration
+    test_idempotent_migrations
+    test_migration_history
+
+test result: FAILED. 2 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+error: test failed, to rerun pass `--test migration_test`
+     Running tests/multirow_insert_returning_test.rs (target/debug/deps/multirow_insert_returning_test-877de10af3bec3f0)
+
+running 2 tests
+test test_sqlalchemy_style_insert_returning ... ok
+test test_multirow_insert_returning ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+     Running tests/multirow_insert_test.rs (target/debug/deps/multirow_insert_test-de83ed66d1db1a53)
+
+running 1 test
+test test_multirow_insert_with_dates ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+
+     Running tests/numeric_constraints_extended_test.rs (target/debug/deps/numeric_constraints_extended_test-6fef2e90e0ae5744)
+
+running 8 tests
+test test_numeric_error_messages ... FAILED
+test test_numeric_literal_validation ... FAILED
+test test_numeric_transaction_behavior ... FAILED
+test test_numeric_mixed_operations ... FAILED
+test test_numeric_with_default_values ... ok
+test test_numeric_with_computed_expressions ... ok
+test test_numeric_special_values ... ok
+test test_numeric_cast_operations ... ok
+
+failures:
+
+---- test_numeric_error_messages stdout ----
+
+thread 'test_numeric_error_messages' panicked at tests/numeric_constraints_extended_test.rs:111:5:
+assertion failed: result.is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_numeric_literal_validation stdout ----
+
+thread 'test_numeric_literal_validation' panicked at tests/numeric_constraints_extended_test.rs:30:5:
+Expected precision overflow to fail
+
+---- test_numeric_transaction_behavior stdout ----
+
+thread 'test_numeric_transaction_behavior' panicked at tests/numeric_constraints_extended_test.rs:82:5:
+assertion failed: result.is_err()
+
+---- test_numeric_mixed_operations stdout ----
+
+thread 'test_numeric_mixed_operations' panicked at tests/numeric_constraints_extended_test.rs:146:5:
+assertion failed: result.is_err()
+
+
+failures:
+    test_numeric_error_messages
+    test_numeric_literal_validation
+    test_numeric_mixed_operations
+    test_numeric_transaction_behavior
+
+test result: FAILED. 4 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+
+error: test failed, to rerun pass `--test numeric_constraints_extended_test`
+     Running tests/numeric_constraints_integration_test.rs (target/debug/deps/numeric_constraints_integration_test-67c4431beae2c84f)
+
+running 6 tests
+test test_numeric_multi_row_insert ... FAILED
+test test_numeric_formatting_retrieval ... ok
+test test_numeric_edge_cases ... FAILED
+test test_numeric_constraint_enforcement ... FAILED
+test test_numeric_null_handling ... ok
+test test_numeric_constraint_updates ... ok
+
+failures:
+
+---- test_numeric_multi_row_insert stdout ----
+
+thread 'test_numeric_multi_row_insert' panicked at tests/numeric_constraints_integration_test.rs:224:5:
+assertion failed: result.is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- test_numeric_edge_cases stdout ----
+
+thread 'test_numeric_edge_cases' panicked at tests/numeric_constraints_integration_test.rs:272:5:
+assertion failed: result.is_err()
+
+---- test_numeric_constraint_enforcement stdout ----
+
+thread 'test_numeric_constraint_enforcement' panicked at tests/numeric_constraints_integration_test.rs:36:5:
+Expected precision overflow to fail
+
+
+failures:
+    test_numeric_constraint_enforcement
+    test_numeric_edge_cases
+    test_numeric_multi_row_insert
+
+test result: FAILED. 3 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+
+error: test failed, to rerun pass `--test numeric_constraints_integration_test`
+     Running tests/numeric_constraints_test.rs (target/debug/deps/numeric_constraints_test-ddd2a54a9b7349d1)
+
+running 5 tests
+test test_numeric_formatting ... ok
+test test_numeric_constraint_validator ... ok
+test test_numeric_constraint_migration ... ok
+test test_numeric_triggers ... ok
+test test_create_table_translator_numeric_parsing ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/numeric_debug_test.rs (target/debug/deps/numeric_debug_test-c9285961360539f9)
+
+running 1 test
+test test_numeric_constraint_debug ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+     Running tests/numeric_single_test.rs (target/debug/deps/numeric_single_test-e8d38dff6c2b709e)
+
+running 1 test
+test test_single_numeric_constraint ... FAILED
+
+failures:
+
+---- test_single_numeric_constraint stdout ----
+✓ Valid value 99999999.99 inserted successfully
+
+thread 'test_single_numeric_constraint' panicked at tests/numeric_single_test.rs:32:18:
+✗ ERROR: Value 99999999.999 was accepted but should have been rejected (too many decimal places)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    test_single_numeric_constraint
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s
+
+error: test failed, to rerun pass `--test numeric_single_test`
+     Running tests/numeric_type_test.rs (target/debug/deps/numeric_type_test-b242133a1edba50c)
+
+running 6 tests
+test test_numeric_precision_scale ... ok
+test test_numeric_type_in_ranges ... ok
+test test_numeric_invalid_parameters ... ok
+test test_numeric_binary_format ... ok
+test test_numeric_text_parameters ... ok
+test test_numeric_arithmetic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.79s
+
+     Running tests/portal_management_test.rs (target/debug/deps/portal_management_test-3eb55ebd420977ed)
+
+running 6 tests
+test test_portal_cleanup ... ok
+test test_portal_with_values ... ok
+test test_multiple_concurrent_portals ... ok
+test test_portal_limit_enforcement ... ok
+test test_stale_portal_cleanup ... ok
+test test_portal_lifecycle ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+
+     Running tests/profile_protocol_overhead.rs (target/debug/deps/profile_protocol_overhead-a4f8ee5ec3ebef4a)
+
+running 1 test
+test profile_protocol_overhead ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/protocol_edge_cases_test.rs (target/debug/deps/protocol_edge_cases_test-e32a98f96ab1d788)
+
+running 10 tests
+test test_empty_query ... ok
+test test_special_characters_in_strings ... FAILED
+test test_multiple_statements ... ok
+test test_large_parameter_values ... FAILED
+test test_parameter_limit ... ok
+test test_null_parameters ... FAILED
+test test_mixed_format_modes ... FAILED
+test test_query_timeout ... ok
+test test_portal_suspension ... ok

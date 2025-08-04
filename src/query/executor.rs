@@ -1,4 +1,4 @@
-use crate::protocol::{BackendMessage, FieldDescription};
+use crate::protocol::{BackendMessage, FieldDescription, ErrorResponse};
 use crate::session::{DbHandler, SessionState, QueryRouter};
 use crate::translator::{JsonTranslator, ReturningTranslator, BatchUpdateTranslator, BatchDeleteTranslator, FtsTranslator};
 use crate::types::PgType;
@@ -1307,11 +1307,32 @@ impl QueryExecutor {
         }
         
         // Route query through query router if available
-        let response = if let Some(router) = query_router {
-            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+        let response = match if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))
         } else {
             let cached_conn = Self::get_or_cache_connection(session, db).await;
-            db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
+            db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await
+        } {
+            Ok(response) => response,
+            Err(e) => {
+                // Convert SQLite errors to appropriate PostgreSQL error codes
+                let error_response = match &e {
+                    PgSqliteError::Sqlite(sqlite_err) => {
+                        crate::error::sqlite_error_to_pg(sqlite_err, query)
+                    }
+                    PgSqliteError::Validation(pg_err) => {
+                        pg_err.to_error_response()
+                    }
+                    _ => ErrorResponse::new(
+                        "ERROR".to_string(),
+                        "42000".to_string(),
+                        e.to_string(),
+                    )
+                };
+                framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
         };
         
         // Optimized tag creation with static strings for common cases and buffer pooling for larger counts
@@ -1342,11 +1363,32 @@ impl QueryExecutor {
         
         // SQLite 3.35.0+ supports native RETURNING clause
         // Execute the query with RETURNING clause directly
-        let returning_response = if let Some(router) = query_router {
-            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+        let returning_response = match if let Some(router) = query_router {
+            router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))
         } else {
             let cached_conn = Self::get_or_cache_connection(session, db).await;
-            db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
+            db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await
+        } {
+            Ok(response) => response,
+            Err(e) => {
+                // Convert SQLite errors to appropriate PostgreSQL error codes
+                let error_response = match &e {
+                    PgSqliteError::Sqlite(sqlite_err) => {
+                        crate::error::sqlite_error_to_pg(sqlite_err, query)
+                    }
+                    PgSqliteError::Validation(pg_err) => {
+                        pg_err.to_error_response()
+                    }
+                    _ => ErrorResponse::new(
+                        "ERROR".to_string(),
+                        "42000".to_string(),
+                        e.to_string(),
+                    )
+                };
+                framed.send(BackendMessage::ErrorResponse(Box::new(error_response))).await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
         };
         
         // Extract table name from query for type lookup

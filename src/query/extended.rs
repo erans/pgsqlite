@@ -118,7 +118,12 @@ impl ExtendedQueryHandler {
                     query: query.clone(),
                     translated_query: cached_info.translated_query.clone(), // Use cached translated query
                     param_types: cached_info.param_types.clone(),
-                    client_param_types: cached_info.original_types.clone(), // Use cached original types
+                    // For binary parameter decoding, use analyzed types when original types are empty
+                    client_param_types: if cached_info.original_types.is_empty() || cached_info.original_types.iter().all(|&t| t == 0) {
+                        cached_info.param_types.clone() // Use analyzed types for binary decoding
+                    } else {
+                        cached_info.original_types.clone() // Use cached original types
+                    },
                     param_formats: vec![0; cached_info.param_types.len()],
                     field_descriptions: Vec::new(), // Will be populated during bind/execute
                     translation_metadata: None,
@@ -755,7 +760,12 @@ impl ExtendedQueryHandler {
             query: cleaned_query.clone(),
             translated_query,
             param_types: actual_param_types.clone(),
-            client_param_types: original_client_param_types, // Store the original client-sent types
+            // For binary parameter decoding, use analyzed types when client sends empty or unknown types
+            client_param_types: if original_client_param_types.is_empty() || original_client_param_types.iter().all(|&t| t == 0) {
+                actual_param_types.clone() // Use analyzed types for binary decoding
+            } else {
+                original_client_param_types // Use client-specified types
+            },
             param_formats: vec![0; actual_param_types.len()], // Default to text format
             field_descriptions,
             translation_metadata: if translation_metadata.column_mappings.is_empty() {
@@ -1389,6 +1399,12 @@ impl ExtendedQueryHandler {
                 client_param_types.clone()
             };
             
+            // Debug: Log parameter information for cast queries
+            if query.contains("::") {
+                debug!("Execute with cast: query='{}', client_param_types={:?}, param_types={:?}, param_formats={:?}, bound_values len={}", 
+                       query, client_param_types, param_types, param_formats, bound_values.len());
+            }
+            
             // Use optimized path for SELECT, INSERT, UPDATE, DELETE
             match query_type {
                 super::extended_fast_path::QueryType::Select |
@@ -1463,8 +1479,7 @@ impl ExtendedQueryHandler {
         };
         
         // Validate numeric constraints before parameter substitution
-        // TEMPORARILY DISABLED to test binary parameter handling
-        let validation_error = if false && query_starts_with_ignore_case(query_to_use, "INSERT") {
+        let validation_error = if query_starts_with_ignore_case(query_to_use, "INSERT") {
             if let Some(table_name) = Self::extract_table_name_from_insert(query_to_use) {
                 // For parameterized queries, we need to check constraints with actual values
                 // Build a substituted query just for validation

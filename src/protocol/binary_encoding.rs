@@ -1,6 +1,7 @@
 use bytes::{BytesMut, BufMut};
 use crate::protocol::binary::BinaryEncoder;
 use crate::types::PgType;
+use crate::types::decimal_handler::DecimalHandler;
 use crate::PgSqliteError;
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -144,7 +145,7 @@ impl BinaryResultEncoder {
                 t if t == PgType::Numeric.to_oid() => {
                     // Parse text as decimal and encode
                     if let Ok(decimal) = Decimal::from_str(text) {
-                        let encoded = BinaryEncoder::encode_numeric(&decimal);
+                        let encoded = DecimalHandler::encode_numeric(&decimal);
                         self.buffer.put_slice(&encoded);
                         true
                     } else {
@@ -229,6 +230,10 @@ impl BinaryResultEncoder {
                         }
                     }
                 }
+                t if t == PgType::Numrange.to_oid() => {
+                    // Encode NUMRANGE in PostgreSQL binary format
+                    self.encode_numrange(text)
+                }
                 _ => false
             }
         } else if type_oid == PgType::Bytea.to_oid() {
@@ -238,6 +243,85 @@ impl BinaryResultEncoder {
         } else {
             false
         }
+    }
+
+    /// Encode NUMRANGE value in PostgreSQL binary format
+    fn encode_numrange(&mut self, text: &str) -> bool {
+        // Parse NUMRANGE text format: "empty", "[1.5,10.5)", etc.
+        let trimmed = text.trim();
+        
+        if trimmed == "empty" {
+            // Empty range - just the flags byte with EMPTY flag set
+            self.buffer.put_u8(0x01); // EMPTY flag
+            return true;
+        }
+        
+        // Parse range format: [lower,upper) or (lower,upper] etc.
+        if trimmed.len() < 3 {
+            return false;
+        }
+        
+        let lower_inclusive = trimmed.starts_with('[');
+        let upper_inclusive = trimmed.ends_with(']');
+        
+        // Extract the bounds part (remove brackets)
+        let bounds = &trimmed[1..trimmed.len()-1];
+        
+        // Split on comma to get lower and upper bounds
+        let parts: Vec<&str> = bounds.split(',').collect();
+        if parts.len() != 2 {
+            return false;
+        }
+        
+        let lower_str = parts[0].trim();
+        let upper_str = parts[1].trim();
+        
+        // Check for infinite bounds (PostgreSQL uses empty string or special values)
+        let lower_infinite = lower_str.is_empty() || lower_str == "-infinity";
+        let upper_infinite = upper_str.is_empty() || upper_str == "infinity";
+        
+        // Build flags byte
+        let mut flags = 0u8;
+        if lower_inclusive {
+            flags |= 0x02; // LB_INC
+        }
+        if upper_inclusive {
+            flags |= 0x04; // UB_INC
+        }
+        if lower_infinite {
+            flags |= 0x08; // LB_INF
+        }
+        if upper_infinite {
+            flags |= 0x10; // UB_INF
+        }
+        
+        // Write flags
+        self.buffer.put_u8(flags);
+        
+        // Write bounds (only if not infinite)
+        if !lower_infinite {
+            if let Ok(lower_val) = Decimal::from_str(lower_str) {
+                // Encode as NUMERIC
+                let encoded = DecimalHandler::encode_numeric(&lower_val);
+                self.buffer.put_i32(encoded.len() as i32);
+                self.buffer.put_slice(&encoded);
+            } else {
+                return false;
+            }
+        }
+        
+        if !upper_infinite {
+            if let Ok(upper_val) = Decimal::from_str(upper_str) {
+                // Encode as NUMERIC
+                let encoded = DecimalHandler::encode_numeric(&upper_val);
+                self.buffer.put_i32(encoded.len() as i32);
+                self.buffer.put_slice(&encoded);
+            } else {
+                return false;
+            }
+        }
+        
+        true
     }
 
     /// Get buffer statistics for monitoring

@@ -198,11 +198,20 @@ pub async fn handle_test_connection_with_pool(
                                 session.set_transaction_status(TransactionStatus::InFailedTransaction).await;
                             }
                             
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Query execution failed: {e}"),
-                            );
+                            // Map error to appropriate PostgreSQL error code
+                            let err = match &e {
+                                PgSqliteError::Sqlite(sqlite_err) => {
+                                    error::sqlite_error_to_pg(sqlite_err, &sql)
+                                }
+                                PgSqliteError::Validation(pg_err) => {
+                                    pg_err.to_error_response()
+                                }
+                                _ => ErrorResponse::new(
+                                    "ERROR".to_string(),
+                                    "42000".to_string(),
+                                    format!("Query execution failed: {e}"),
+                                )
+                            };
                             framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         }
                     }
@@ -245,11 +254,26 @@ pub async fn handle_test_connection_with_pool(
                     match ExtendedQueryHandler::handle_execute(&mut framed, &db_handler, &session, portal, max_rows).await {
                         Ok(()) => {},
                         Err(e) => {
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Execute failed: {e}"),
-                            );
+                            // Map error to appropriate PostgreSQL error code
+                            debug!("Execute error type: {:?}", std::any::type_name_of_val(&e));
+                            let err = match &e {
+                                PgSqliteError::Sqlite(sqlite_err) => {
+                                    debug!("Mapping SQLite error to PostgreSQL error code");
+                                    error::sqlite_error_to_pg(sqlite_err, "")
+                                }
+                                PgSqliteError::Validation(pg_err) => {
+                                    debug!("Using validation error response");
+                                    pg_err.to_error_response()
+                                }
+                                _ => {
+                                    debug!("Using generic error response for type: {:?}", e);
+                                    ErrorResponse::new(
+                                        "ERROR".to_string(),
+                                        "42000".to_string(),
+                                        format!("Execute failed: {e}"),
+                                    )
+                                }
+                            };
                             framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
                         }
                     }

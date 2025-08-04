@@ -102,7 +102,7 @@ impl BinaryEncoder {
             // For fractional-only numbers, skip the leading zero
             fractional_part.to_string()
         } else {
-            format!("{}{}", integer_part, fractional_part)
+            format!("{integer_part}{fractional_part}")
         };
         
         // Group digits into 4-digit chunks (from right to left for proper weight calculation)
@@ -317,11 +317,7 @@ impl BinaryEncoder {
                     }
                     rusqlite::types::Value::Real(f) => {
                         // Convert float to decimal
-                        if let Some(decimal) = Decimal::from_f64_retain(*f) {
-                            Some(Self::encode_numeric(&decimal))
-                        } else {
-                            None
-                        }
+                        Decimal::from_f64_retain(*f).map(|decimal| Self::encode_numeric(&decimal))
                     }
                     rusqlite::types::Value::Integer(i) => {
                         // Convert integer to decimal

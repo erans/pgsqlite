@@ -195,6 +195,7 @@ impl CreateTableTranslator {
         false
     }
     
+    #[allow(clippy::ptr_arg)]
     fn translate_column_definition(
         column_def: &str,
         table_name: &str,

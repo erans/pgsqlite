@@ -108,6 +108,9 @@ async fn test_arithmetic_aliasing_extended_protocol() {
     
     // Test arithmetic aliasing with prepared statements
     let stmt = client.prepare("SELECT cost * markup AS selling_price FROM items WHERE id = $1").await.unwrap();
+    println!("Statement params: {:?}", stmt.params());
+    println!("Statement columns: {:?}", stmt.columns());
+    
     let rows = client.query(&stmt, &[&1i32]).await.unwrap();
     
     assert_eq!(rows.len(), 1);

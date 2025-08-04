@@ -397,7 +397,7 @@ impl CatalogInterceptor {
             } else {
                 db.get_mut_connection()
                     .and_then(|conn| crate::metadata::EnumMetadata::get_all_enum_types(&conn))
-                    .map_err(|e| PgSqliteError::Sqlite(e))
+                    .map_err(PgSqliteError::Sqlite)
             };
             
             if let Ok(enum_types) = enum_types_result {
@@ -509,26 +509,24 @@ impl CatalogInterceptor {
         // Check if there's a WHERE clause filtering by OID
         let mut filter_oid = None;
         
-        if let Some(selection) = &select.selection {
-            if let Expr::BinaryOp { left, op, right } = selection {
-                if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
-                    let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
-                        left_parts.last().unwrap().value.to_lowercase() == "oid"
-                    } else if let Expr::Identifier(ident) = left.as_ref() {
-                        ident.value.to_lowercase() == "oid"
-                    } else {
-                        false
-                    };
-                    
-                    if is_oid_column {
-                        // Check if right side is a number or placeholder
-                        if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) = right.as_ref() {
-                            filter_oid = n.parse::<i32>().ok();
-                        } else if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) = right.as_ref() {
-                            // For placeholders in JOIN queries, we return all types
-                            // tokio-postgres will filter client-side
-                            filter_oid = None;
-                        }
+        if let Some(Expr::BinaryOp { left, op, right }) = &select.selection {
+            if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
+                let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
+                    left_parts.last().unwrap().value.to_lowercase() == "oid"
+                } else if let Expr::Identifier(ident) = left.as_ref() {
+                    ident.value.to_lowercase() == "oid"
+                } else {
+                    false
+                };
+                
+                if is_oid_column {
+                    // Check if right side is a number or placeholder
+                    if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) = right.as_ref() {
+                        filter_oid = n.parse::<i32>().ok();
+                    } else if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) = right.as_ref() {
+                        // For placeholders in JOIN queries, we return all types
+                        // tokio-postgres will filter client-side
+                        filter_oid = None;
                     }
                 }
             }
@@ -776,6 +774,7 @@ impl CatalogInterceptor {
     }
 
     /// Process an expression and replace system function calls with their results
+    #[allow(clippy::type_complexity)]
     fn process_expression<'a>(
         expr: &'a mut Expr,
         db: Arc<DbHandler>,
@@ -918,7 +917,7 @@ impl CatalogInterceptor {
         // Build rows
         let mut rows = Vec::new();
         for table_row in &tables_response.rows {
-            if let Some(Some(table_name_bytes)) = table_row.get(0) {
+            if let Some(Some(table_name_bytes)) = table_row.first() {
                 let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
                 
                 // Create full row with all columns

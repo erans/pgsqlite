@@ -2,8 +2,11 @@ use rusqlite::Connection;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+/// Type alias for the numeric constraints cache structure
+type ConstraintCache = Arc<RwLock<HashMap<String, HashMap<String, (i32, i32)>>>>;
+
 /// Cache for numeric constraints to avoid repeated database queries
-static NUMERIC_CONSTRAINT_CACHE: once_cell::sync::Lazy<Arc<RwLock<HashMap<String, HashMap<String, (i32, i32)>>>>> = 
+static NUMERIC_CONSTRAINT_CACHE: once_cell::sync::Lazy<ConstraintCache> = 
     once_cell::sync::Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// Format a numeric value according to its scale constraint

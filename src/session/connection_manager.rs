@@ -111,7 +111,7 @@ impl ConnectionManager {
                     }
                 }
                 Err(e) => {
-                    return Err(PgSqliteError::Protocol(format!("Migration failed for session {}: {}", session_id, e)));
+                    return Err(PgSqliteError::Protocol(format!("Migration failed for session {session_id}: {e}")));
                 }
             }
             // Get the connection back from the runner
@@ -144,7 +144,7 @@ impl ConnectionManager {
         // Use thread affinity for fastest lookup
         if let Some(conn_arc) = ThreadLocalConnectionCache::get_with_affinity(session_id) {
             let conn = conn_arc.lock();
-            return f(&*conn).map_err(|e| PgSqliteError::Sqlite(e));
+            return f(&conn).map_err(PgSqliteError::Sqlite);
         }
         
         // Fall back to global map (slow path)
@@ -167,7 +167,7 @@ impl ConnectionManager {
         
         // Now lock the individual connection
         let conn = conn_arc.lock();
-        f(&*conn).map_err(|e| PgSqliteError::Sqlite(e))
+        f(&conn).map_err(PgSqliteError::Sqlite)
     }
     
     /// Execute a query with a cached connection Arc (avoids HashMap lookup)
@@ -180,7 +180,7 @@ impl ConnectionManager {
         F: FnOnce(&Connection) -> Result<R, rusqlite::Error>
     {
         let conn = conn_arc.lock();
-        f(&*conn).map_err(PgSqliteError::Sqlite)
+        f(&conn).map_err(PgSqliteError::Sqlite)
     }
     
     /// Remove a connection when session ends
@@ -277,7 +277,7 @@ impl ConnectionManager {
         // Use thread affinity for fastest lookup
         if let Some(conn_arc) = ThreadLocalConnectionCache::get_with_affinity(session_id) {
             let mut conn = conn_arc.lock();
-            return f(&mut *conn).map_err(|e| PgSqliteError::Sqlite(e));
+            return f(&mut conn).map_err(PgSqliteError::Sqlite);
         }
         
         // Fall back to global map (slow path)
@@ -298,7 +298,7 @@ impl ConnectionManager {
         
         // Now lock the individual connection for mutable access
         let mut conn = conn_arc.lock();
-        f(&mut *conn).map_err(PgSqliteError::Sqlite)
+        f(&mut conn).map_err(PgSqliteError::Sqlite)
     }
     
     /// Get the connection Arc for a session (for caching)
@@ -329,6 +329,6 @@ impl ConnectionManager {
         F: FnOnce(&mut Connection) -> Result<R, rusqlite::Error>
     {
         let mut conn = conn_arc.lock();
-        f(&mut *conn).map_err(PgSqliteError::Sqlite)
+        f(&mut conn).map_err(PgSqliteError::Sqlite)
     }
 }

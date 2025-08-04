@@ -416,13 +416,13 @@ impl CastTranslator {
         for (pattern, len) in multiword_types {
             if upper_after.starts_with(pattern) {
                 if after.contains("WITHOUT") {
-                    eprintln!("DEBUG: Found multi-word type pattern '{}', len={}", pattern, len);
+                    eprintln!("DEBUG: Found multi-word type pattern '{pattern}', len={len}");
                 }
                 // Make sure this is followed by a word boundary or end of string
                 if after.len() == len {
                     // Exact match - this is the end of the string
                     if after.contains("WITHOUT") {
-                        eprintln!("DEBUG: Exact match, returning {}", len);
+                        eprintln!("DEBUG: Exact match, returning {len}");
                     }
                     return len;
                 } else if let Some(next_char) = after.as_bytes().get(len) {
@@ -537,8 +537,7 @@ impl CastTranslator {
             } else {
                 // Create an expression that will fail when evaluated
                 format!(
-                    "(SELECT CASE WHEN 1=1 THEN CAST(NULL AS INTEGER) NOT NULL ELSE {} END)",
-                    expr
+                    "(SELECT CASE WHEN 1=1 THEN CAST(NULL AS INTEGER) NOT NULL ELSE {expr} END)"
                 )
             }
         } else {
