@@ -124,6 +124,124 @@ impl BinaryEncoder {
         Ok(cents_i64.to_be_bytes().to_vec())
     }
     
+    /// Encode an array value
+    /// PostgreSQL array binary format:
+    /// - ndim (i32): number of dimensions
+    /// - dataoffset (i32): offset to data, 0 if no NULLs
+    /// - elemtype (i32): element type OID
+    /// - For each dimension:
+    ///   - dim_size (i32): number of elements in this dimension
+    ///   - lower_bound (i32): lower bound (typically 1)
+    /// - NULL bitmap (optional): bit array indicating NULL positions
+    /// - Elements: each prefixed with length (i32), -1 for NULL
+    pub fn encode_array(
+        json_array_str: &str,
+        elem_type_oid: i32,
+    ) -> Result<Vec<u8>, String> {
+        // Parse JSON array
+        let array: serde_json::Value = serde_json::from_str(json_array_str)
+            .map_err(|e| format!("Invalid JSON array: {e}"))?;
+        
+        let elements = array.as_array()
+            .ok_or_else(|| "Not a JSON array".to_string())?;
+        
+        if elements.is_empty() {
+            // Empty array
+            let mut result = Vec::new();
+            result.extend_from_slice(&0i32.to_be_bytes()); // ndim = 0
+            result.extend_from_slice(&0i32.to_be_bytes()); // dataoffset = 0
+            result.extend_from_slice(&elem_type_oid.to_be_bytes()); // elemtype
+            return Ok(result);
+        }
+        
+        // Check for NULLs
+        let has_nulls = elements.iter().any(|e| e.is_null());
+        
+        let mut result = Vec::new();
+        
+        // Header
+        result.extend_from_slice(&1i32.to_be_bytes()); // ndim = 1 (1D array)
+        result.extend_from_slice(&(if has_nulls { 1i32 } else { 0i32 }).to_be_bytes()); // dataoffset placeholder
+        result.extend_from_slice(&elem_type_oid.to_be_bytes()); // elemtype
+        
+        // Dimension info
+        result.extend_from_slice(&(elements.len() as i32).to_be_bytes()); // dim_size
+        result.extend_from_slice(&1i32.to_be_bytes()); // lower_bound = 1
+        
+        // NULL bitmap if needed
+        let bitmap_start = result.len();
+        if has_nulls {
+            // Create bitmap (1 bit per element, padded to byte boundary)
+            let bitmap_bytes = (elements.len() + 7) / 8;
+            let mut bitmap = vec![0u8; bitmap_bytes];
+            
+            for (i, elem) in elements.iter().enumerate() {
+                if !elem.is_null() {
+                    let byte_idx = i / 8;
+                    let bit_idx = i % 8;
+                    bitmap[byte_idx] |= 1 << (7 - bit_idx);
+                }
+            }
+            
+            result.extend_from_slice(&bitmap);
+        }
+        
+        // Update dataoffset if we have nulls
+        if has_nulls {
+            let dataoffset = (bitmap_start + ((elements.len() + 7) / 8)) as i32;
+            result[4..8].copy_from_slice(&dataoffset.to_be_bytes());
+        }
+        
+        // Encode elements
+        for elem in elements {
+            if elem.is_null() {
+                // NULL element
+                result.extend_from_slice(&(-1i32).to_be_bytes());
+            } else {
+                // Encode element based on type
+                let elem_bytes = match elem_type_oid {
+                    t if t == PgType::Int4.to_oid() => {
+                        elem.as_i64()
+                            .and_then(|v| v.try_into().ok())
+                            .map(|v: i32| v.to_be_bytes().to_vec())
+                    }
+                    t if t == PgType::Int8.to_oid() => {
+                        elem.as_i64()
+                            .map(|v| v.to_be_bytes().to_vec())
+                    }
+                    t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
+                        elem.as_str()
+                            .map(|s| s.as_bytes().to_vec())
+                    }
+                    t if t == PgType::Float8.to_oid() => {
+                        elem.as_f64()
+                            .map(|v| v.to_be_bytes().to_vec())
+                    }
+                    t if t == PgType::Bool.to_oid() => {
+                        elem.as_bool()
+                            .map(|v| vec![if v { 1 } else { 0 }])
+                    }
+                    _ => {
+                        // Fall back to string representation
+                        Some(elem.to_string().into_bytes())
+                    }
+                };
+                
+                match elem_bytes {
+                    Some(bytes) => {
+                        result.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+                        result.extend_from_slice(&bytes);
+                    }
+                    None => {
+                        return Err(format!("Cannot encode array element: {:?}", elem));
+                    }
+                }
+            }
+        }
+        
+        Ok(result)
+    }
+    
     /// Encode DATE (days since 2000-01-01)
     pub fn encode_date(unix_timestamp: f64) -> Vec<u8> {
         // For dates stored as INTEGER days since epoch in SQLite, treat as days
@@ -348,6 +466,67 @@ impl BinaryEncoder {
                 match value {
                     rusqlite::types::Value::Text(s) => {
                         match Self::encode_money(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            // Array types
+            t if t == PgType::Int4Array.to_oid() => {
+                // INT4 array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_array(s, PgType::Int4.to_oid()) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Int8Array.to_oid() => {
+                // INT8 array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_array(s, PgType::Int8.to_oid()) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::TextArray.to_oid() => {
+                // TEXT array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_array(s, PgType::Text.to_oid()) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Float8Array.to_oid() => {
+                // FLOAT8 array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_array(s, PgType::Float8.to_oid()) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::BoolArray.to_oid() => {
+                // BOOL array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_array(s, PgType::Bool.to_oid()) {
                             Ok(bytes) => Some(bytes),
                             Err(_) => None,
                         }
@@ -580,5 +759,35 @@ mod tests {
         let decimal = Decimal::from_str("123.45").unwrap();
         let encoded = BinaryEncoder::encode_numeric(&decimal);
         assert!(!encoded.is_empty());
+    }
+    
+    #[test]
+    fn test_array_encoding() {
+        // Test empty array
+        let empty = BinaryEncoder::encode_array("[]", PgType::Int4.to_oid()).unwrap();
+        assert_eq!(empty.len(), 12); // 3 * 4 bytes for header
+        assert_eq!(&empty[0..4], &0i32.to_be_bytes()); // ndim = 0
+        
+        // Test simple int array
+        let int_array = BinaryEncoder::encode_array("[1, 2, 3]", PgType::Int4.to_oid()).unwrap();
+        // Verify header
+        assert_eq!(i32::from_be_bytes(int_array[0..4].try_into().unwrap()), 1); // ndim = 1
+        assert_eq!(i32::from_be_bytes(int_array[4..8].try_into().unwrap()), 0); // no nulls
+        assert_eq!(i32::from_be_bytes(int_array[8..12].try_into().unwrap()), PgType::Int4.to_oid()); // elemtype
+        assert_eq!(i32::from_be_bytes(int_array[12..16].try_into().unwrap()), 3); // dim size
+        assert_eq!(i32::from_be_bytes(int_array[16..20].try_into().unwrap()), 1); // lower bound
+        
+        // Test array with nulls
+        let null_array = BinaryEncoder::encode_array("[1, null, 3]", PgType::Int4.to_oid()).unwrap();
+        assert_eq!(i32::from_be_bytes(null_array[0..4].try_into().unwrap()), 1); // ndim = 1
+        assert!(i32::from_be_bytes(null_array[4..8].try_into().unwrap()) > 0); // has nulls
+        
+        // Test text array
+        let text_array = BinaryEncoder::encode_array(r#"["hello", "world"]"#, PgType::Text.to_oid()).unwrap();
+        assert_eq!(i32::from_be_bytes(text_array[8..12].try_into().unwrap()), PgType::Text.to_oid());
+        
+        // Test bool array
+        let bool_array = BinaryEncoder::encode_array("[true, false, true]", PgType::Bool.to_oid()).unwrap();
+        assert_eq!(i32::from_be_bytes(bool_array[8..12].try_into().unwrap()), PgType::Bool.to_oid());
     }
 }
