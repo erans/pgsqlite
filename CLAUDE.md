@@ -136,7 +136,14 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-08-01)
+### Recently Fixed (2025-08-04)
+- **Binary Protocol Support for psycopg3**: Implemented core binary format encoders
+  - Added binary encoders for Numeric/Decimal, UUID, JSON/JSONB, Money types
+  - PostgreSQL binary NUMERIC format with proper weight/scale/digit encoding
+  - Test infrastructure updated to support psycopg2, psycopg3-text, psycopg3-binary drivers
+  - SQLAlchemy tests can now run with `--driver psycopg3-binary` option
+
+### Previously Fixed (2025-08-01)
 - **SQLAlchemy MAX/MIN Aggregate Types**: Fixed "Unknown PG numeric type: 25" error
   - Added aggregate_type_fixer.rs to detect aliased aggregate columns
   - SQLite returns TEXT for MAX/MIN on TEXT columns storing decimals
@@ -172,6 +179,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
 
 ### Major Features
+- **Binary Protocol Support**: psycopg3 compatibility with binary format encoders
 - **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
 - **40+ PostgreSQL Types**: Including arrays, JSON/JSONB, ENUMs
@@ -217,6 +225,21 @@ pgsqlite --database mydb.db
 # Journal mode options (both work with connection-per-session):
 PGSQLITE_JOURNAL_MODE=WAL pgsqlite --database mydb.db    # Better performance
 PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db  # More conservative
+```
+
+**psycopg3 Binary Protocol Support**:
+```bash
+# Test with different PostgreSQL drivers
+./tests/python/run_sqlalchemy_tests.sh                    # Default psycopg2
+./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-text
+./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-binary
+
+# psycopg3 automatically uses binary format when beneficial
+# Binary format provides better performance for:
+# - Large binary data (BYTEA)
+# - Numeric/Decimal values
+# - UUID, JSON/JSONB data
+# - Date/Time types
 ```
 
 ## Connection Pooling

@@ -1,7 +1,9 @@
 use bytes::{BufMut, BytesMut};
 use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 use std::convert::TryInto;
-use crate::types::PgType;
+use std::str::FromStr;
+use crate::types::{PgType, DecimalHandler};
 
 /// Binary format encoders for PostgreSQL types
 pub struct BinaryEncoder;
@@ -58,12 +60,68 @@ impl BinaryEncoder {
     }
 
     /// Encode a numeric/decimal value (OID 1700)
-    /// This is complex - PostgreSQL uses a custom format
+    /// Uses PostgreSQL's binary NUMERIC format
     pub fn encode_numeric(value: &Decimal) -> Vec<u8> {
-        // For now, fall back to text representation
-        // Full binary numeric encoding is complex and requires
-        // converting to PostgreSQL's internal numeric format
-        value.to_string().into_bytes()
+        DecimalHandler::encode_numeric(value)
+    }
+    
+    /// Encode a UUID value (OID 2950)
+    /// Binary format is 16 bytes raw UUID
+    pub fn encode_uuid(uuid_str: &str) -> Result<Vec<u8>, String> {
+        // Remove hyphens and validate length
+        let hex_str = uuid_str.replace('-', "");
+        if hex_str.len() != 32 {
+            return Err("Invalid UUID format".to_string());
+        }
+        
+        // Convert hex string to bytes
+        let mut bytes = Vec::with_capacity(16);
+        for i in (0..32).step_by(2) {
+            let byte = u8::from_str_radix(&hex_str[i..i+2], 16)
+                .map_err(|_| "Invalid UUID hex characters")?;
+            bytes.push(byte);
+        }
+        
+        Ok(bytes)
+    }
+    
+    /// Encode JSON value (OID 114)
+    /// Binary format is the same as text for JSON
+    pub fn encode_json(json_str: &str) -> Vec<u8> {
+        json_str.as_bytes().to_vec()
+    }
+    
+    /// Encode JSONB value (OID 3802)
+    /// Binary format has a 1-byte version header
+    pub fn encode_jsonb(json_str: &str) -> Vec<u8> {
+        let mut result = Vec::with_capacity(json_str.len() + 1);
+        result.push(1); // JSONB version 1
+        result.extend_from_slice(json_str.as_bytes());
+        result
+    }
+    
+    /// Encode MONEY value (OID 790)
+    /// Binary format is 8-byte integer representing cents * 100
+    pub fn encode_money(amount_str: &str) -> Result<Vec<u8>, String> {
+        // Parse the string, removing currency symbols and commas
+        let clean_str = amount_str
+            .replace('$', "")
+            .replace(',', "")
+            .trim()
+            .to_string();
+        
+        // Parse as decimal to handle fractional cents
+        let decimal = Decimal::from_str(&clean_str)
+            .map_err(|e| format!("Invalid money value: {e}"))?;
+        
+        // Convert to cents (multiply by 100)
+        let cents = decimal * Decimal::from(100);
+        
+        // Convert to i64
+        let cents_i64 = cents.round().to_i64()
+            .ok_or_else(|| "Money value too large".to_string())?;
+        
+        Ok(cents_i64.to_be_bytes().to_vec())
     }
     
     /// Encode DATE (days since 2000-01-01)
@@ -229,6 +287,71 @@ impl BinaryEncoder {
                 match value {
                     rusqlite::types::Value::Real(f) => Some(Self::encode_interval(*f)),
                     rusqlite::types::Value::Integer(i) => Some(Self::encode_interval(*i as f64)),
+                    _ => None,
+                }
+            }
+            t if t == PgType::Numeric.to_oid() => {
+                // NUMERIC/DECIMAL - use proper binary encoding
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        // Parse and encode as PostgreSQL numeric
+                        match Decimal::from_str(s) {
+                            Ok(decimal) => Some(Self::encode_numeric(&decimal)),
+                            Err(_) => None,
+                        }
+                    }
+                    rusqlite::types::Value::Real(f) => {
+                        // Convert float to decimal (may lose precision)
+                        match Decimal::from_f64_retain(*f) {
+                            Some(decimal) => Some(Self::encode_numeric(&decimal)),
+                            None => None,
+                        }
+                    }
+                    rusqlite::types::Value::Integer(i) => {
+                        // Convert integer to decimal
+                        match Decimal::from_i64(*i) {
+                            Some(decimal) => Some(Self::encode_numeric(&decimal)),
+                            None => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Uuid.to_oid() => {
+                // UUID - 16 bytes binary
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_uuid(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Json.to_oid() => {
+                // JSON - same as text in binary format
+                match value {
+                    rusqlite::types::Value::Text(s) => Some(Self::encode_json(s)),
+                    _ => None,
+                }
+            }
+            t if t == PgType::Jsonb.to_oid() => {
+                // JSONB - with version header
+                match value {
+                    rusqlite::types::Value::Text(s) => Some(Self::encode_jsonb(s)),
+                    _ => None,
+                }
+            }
+            t if t == PgType::Money.to_oid() => {
+                // MONEY - 8-byte integer
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_money(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
                     _ => None,
                 }
             }
@@ -404,5 +527,58 @@ mod tests {
         let months = i32::from_be_bytes(encoded[12..16].try_into().unwrap());
         assert_eq!(days, 0);
         assert_eq!(months, 0);
+    }
+    
+    #[test]
+    fn test_uuid_encoding() {
+        // Test UUID encoding
+        let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
+        let encoded = BinaryEncoder::encode_uuid(uuid_str).unwrap();
+        assert_eq!(encoded.len(), 16);
+        
+        // Verify first few bytes
+        assert_eq!(encoded[0], 0x55);
+        assert_eq!(encoded[1], 0x0e);
+        assert_eq!(encoded[2], 0x84);
+        assert_eq!(encoded[3], 0x00);
+    }
+    
+    #[test]
+    fn test_json_jsonb_encoding() {
+        let json_str = r#"{"key": "value"}"#;
+        
+        // JSON encoding - same as text
+        let json_encoded = BinaryEncoder::encode_json(json_str);
+        assert_eq!(json_encoded, json_str.as_bytes());
+        
+        // JSONB encoding - with version header
+        let jsonb_encoded = BinaryEncoder::encode_jsonb(json_str);
+        assert_eq!(jsonb_encoded[0], 1); // version
+        assert_eq!(&jsonb_encoded[1..], json_str.as_bytes());
+    }
+    
+    #[test]
+    fn test_money_encoding() {
+        // Test various money formats
+        let encoded1 = BinaryEncoder::encode_money("123.45").unwrap();
+        let money1 = i64::from_be_bytes(encoded1.try_into().unwrap());
+        assert_eq!(money1, 12345); // $123.45 = 12345 cents
+        
+        let encoded2 = BinaryEncoder::encode_money("$1,234.56").unwrap();
+        let money2 = i64::from_be_bytes(encoded2.try_into().unwrap());
+        assert_eq!(money2, 123456); // $1,234.56 = 123456 cents
+        
+        let encoded3 = BinaryEncoder::encode_money("-99.99").unwrap();
+        let money3 = i64::from_be_bytes(encoded3.try_into().unwrap());
+        assert_eq!(money3, -9999); // -$99.99 = -9999 cents
+    }
+    
+    #[test]
+    fn test_numeric_encoding() {
+        // Test is already covered by decimal_handler tests
+        // Just verify the function is accessible
+        let decimal = Decimal::from_str("123.45").unwrap();
+        let encoded = BinaryEncoder::encode_numeric(&decimal);
+        assert!(!encoded.is_empty());
     }
 }

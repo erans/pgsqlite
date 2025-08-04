@@ -54,6 +54,29 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
 
+### Binary Protocol Support for psycopg3 - COMPLETED (2025-08-04)
+- [x] **Core Binary Format Encoders** - Implemented for commonly used types
+  - [x] Numeric/Decimal - Full PostgreSQL binary NUMERIC format with weight/scale/digits
+  - [x] UUID - 16-byte raw UUID format without hyphens
+  - [x] JSON/JSONB - JSON as text, JSONB with 1-byte version header
+  - [x] Money - 8-byte integer representing cents (amount * 100)
+- [x] **Test Infrastructure Updates** - Support for multiple PostgreSQL drivers
+  - [x] Added psycopg3 to Python test dependencies with binary extras
+  - [x] Updated run_sqlalchemy_tests.sh with --driver flag (psycopg2, psycopg3-text, psycopg3-binary)
+  - [x] Modified SQLAlchemy test suite to use selected driver with proper connection strings
+  - [x] Created test_psycopg3_binary.py for direct binary protocol testing
+- [x] **Extended Protocol Integration** - Binary format handling in wire protocol
+  - [x] Binary result format support in Execute message handling
+  - [x] Type-specific binary encoding based on format codes
+  - [x] Proper handling of single format code for all columns
+  - [x] NULL value encoding with length -1
+- [ ] **Remaining Binary Encoders** - For complete psycopg3 compatibility
+  - [ ] Array types - Complex nested structure with dimensions and element OIDs
+  - [ ] Range types (int4range, int8range, numrange) - Flags byte + bounds
+  - [ ] Network types (CIDR, INET, MACADDR) - Address family and byte encoding
+  - [ ] Bit/Varbit types - Bit string encoding
+  - [ ] Full-text search types (tsvector, tsquery) - Custom binary formats
+
 ### Connection-Per-Session Architecture - COMPLETED (2025-07-29)
 - [x] **Implement True Connection Isolation** - Match PostgreSQL behavior
   - [x] Each client session gets its own SQLite connection

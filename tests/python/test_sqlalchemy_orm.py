@@ -147,8 +147,9 @@ class OrderItem(Base):
 class SQLAlchemyTestSuite:
     """Comprehensive test suite for SQLAlchemy integration with pgsqlite."""
 
-    def __init__(self, port: int):
+    def __init__(self, port: int, driver: str = "psycopg2"):
         self.port = port
+        self.driver = driver
         self.engine = None
         self.Session = None
         self.test_results = []
@@ -156,21 +157,42 @@ class SQLAlchemyTestSuite:
     def connect_to_database(self) -> bool:
         """Establish connection to pgsqlite and test system functions."""
         try:
-            print(f"🔌 Connecting to pgsqlite on port {self.port}...")
+            print(f"🔌 Connecting to pgsqlite on port {self.port} using driver: {self.driver}")
             
-            # Create engine with PostgreSQL dialect
-            connection_string = f"postgresql://postgres:postgres@localhost:{self.port}/main"
-            self.engine = create_engine(
-                connection_string,
-                echo=True,  # Set to True for SQL debugging
+            # Create connection string based on driver
+            if self.driver == "psycopg2":
+                connection_string = f"postgresql://postgres:postgres@localhost:{self.port}/main"
+            elif self.driver in ["psycopg3-text", "psycopg3-binary"]:
+                # Use psycopg3 driver URL scheme
+                connection_string = f"postgresql+psycopg://postgres:postgres@localhost:{self.port}/main"
+            else:
+                raise ValueError(f"Unknown driver: {self.driver}")
+            
+            # Configure engine options based on driver
+            engine_kwargs = {
+                "echo": True,  # Set to True for SQL debugging
                 # Use proper connection pooling to test connection-per-session isolation
-                pool_size=5,  # Allow multiple connections
-                max_overflow=10,  # Allow connection overflow
-                pool_pre_ping=True,  # Verify connections before use
-                future=True,  # Enable SQLAlchemy 2.0 style
+                "pool_size": 5,  # Allow multiple connections
+                "max_overflow": 10,  # Allow connection overflow
+                "pool_pre_ping": True,  # Verify connections before use
+                "future": True,  # Enable SQLAlchemy 2.0 style
                 # Work around RETURNING issue
-                execution_options={"no_autoflush": False},
-            )
+                "execution_options": {"no_autoflush": False},
+            }
+            
+            # Add psycopg3-specific options
+            if self.driver == "psycopg3-binary":
+                # Configure psycopg3 to use binary format
+                engine_kwargs["connect_args"] = {
+                    "options": "-c default_transaction_isolation=read\\ committed",
+                    # psycopg3 automatically uses binary format when beneficial
+                    # We can force it for specific queries using cursor.execute(binary=True)
+                }
+                print("  📊 Using psycopg3 with binary format preference")
+            elif self.driver == "psycopg3-text":
+                print("  📝 Using psycopg3 with text format")
+            
+            self.engine = create_engine(connection_string, **engine_kwargs)
             
             # Test connection and system functions
             with self.engine.connect() as conn:
@@ -650,8 +672,13 @@ class SQLAlchemyTestSuite:
             print("  🔄 Step 3: Creating completely new engine and PostgreSQL connection...")
             
             # Create a completely separate engine with different connection parameters
+            if self.driver == "psycopg2":
+                conn_string = f"postgresql://postgres:postgres@localhost:{self.port}/main"
+            else:
+                conn_string = f"postgresql+psycopg://postgres:postgres@localhost:{self.port}/main"
+                
             separate_engine = create_engine(
-                f"postgresql://postgres:postgres@localhost:{self.port}/main",
+                conn_string,
                 echo=False,
                 pool_size=1,
                 max_overflow=0,
@@ -784,11 +811,14 @@ def main() -> int:
     """Main entry point for the test script."""
     parser = argparse.ArgumentParser(description="SQLAlchemy ORM integration tests for pgsqlite")
     parser.add_argument("--port", type=int, required=True, help="Port number where pgsqlite is running")
+    parser.add_argument("--driver", type=str, default="psycopg2",
+                       choices=["psycopg2", "psycopg3-text", "psycopg3-binary"],
+                       help="PostgreSQL driver to use (default: psycopg2)")
     
     args = parser.parse_args()
     
     # Create and run test suite
-    test_suite = SQLAlchemyTestSuite(args.port)
+    test_suite = SQLAlchemyTestSuite(args.port, args.driver)
     
     try:
         success = test_suite.run_all_tests()

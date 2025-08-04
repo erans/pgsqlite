@@ -12,6 +12,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_DB="$SCRIPT_DIR/test_sqlalchemy_orm.db"
 PORT=15500
 PGSQLITE_PID=""
+DRIVER="psycopg2"  # Default driver
 
 # Colors for output
 RED='\033[0;31m'
@@ -190,10 +191,25 @@ setup_python_env() {
         exit 1
     fi
     
-    if ! poetry run python -c "import psycopg2; print('✅ psycopg2 installed successfully')"; then
-        log_error "psycopg2 installation verification failed"
-        exit 1
-    fi
+    # Verify driver-specific installations
+    case "$DRIVER" in
+        psycopg2)
+            if ! poetry run python -c "import psycopg2; print('✅ psycopg2 installed successfully')"; then
+                log_error "psycopg2 installation verification failed"
+                exit 1
+            fi
+            ;;
+        psycopg3-text|psycopg3-binary)
+            if ! poetry run python -c "import psycopg; print(f'✅ psycopg3 version: {psycopg.__version__}')"; then
+                log_error "psycopg3 installation verification failed"
+                exit 1
+            fi
+            ;;
+        *)
+            log_error "Unknown driver: $DRIVER"
+            exit 1
+            ;;
+    esac
     
     # Show Python environment info
     poetry run python -c "
@@ -209,15 +225,15 @@ print(f'✅ Virtual environment: {os.environ.get(\"VIRTUAL_ENV\", \"Not detected
 
 # Run SQLAlchemy tests
 run_tests() {
-    log_info "Running SQLAlchemy ORM integration tests..."
+    log_info "Running SQLAlchemy ORM integration tests with driver: $DRIVER"
     
     cd "$SCRIPT_DIR"
     
     # Make test script executable
     chmod +x test_sqlalchemy_orm.py
     
-    # Run the comprehensive test suite
-    if poetry run python test_sqlalchemy_orm.py --port $PORT; then
+    # Run the comprehensive test suite with driver option
+    if poetry run python test_sqlalchemy_orm.py --port $PORT --driver $DRIVER; then
         log_success "All SQLAlchemy tests passed!"
         return 0
     else
@@ -275,39 +291,66 @@ main() {
 }
 
 # Handle command line arguments
-case "${1:-}" in
-    --help|-h)
-        echo "Usage: $0 [OPTIONS]"
-        echo ""
-        echo "Run comprehensive SQLAlchemy ORM integration tests for pgsqlite."
-        echo ""
-        echo "This script:"
-        echo "  1. Builds pgsqlite in release mode"
-        echo "  2. Starts pgsqlite server on port $PORT"
-        echo "  3. Sets up Poetry environment with SQLAlchemy"
-        echo "  4. Runs comprehensive ORM tests"
-        echo "  5. Cleans up automatically"
-        echo ""
-        echo "Options:"
-        echo "  --help, -h    Show this help message"
-        echo "  --info        Show system information only"
-        echo ""
-        echo "Environment variables:"
-        echo "  PORT          Override default port (default: $PORT)"
-        echo ""
-        exit 0
-        ;;
-    --info)
-        show_system_info
-        exit 0
-        ;;
-    "")
-        # No arguments, run main function
-        main
-        ;;
-    *)
-        log_error "Unknown option: $1"
-        log_error "Use --help for usage information"
-        exit 1
-        ;;
-esac
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Run comprehensive SQLAlchemy ORM integration tests for pgsqlite."
+            echo ""
+            echo "This script:"
+            echo "  1. Builds pgsqlite in release mode"
+            echo "  2. Starts pgsqlite server on port $PORT"
+            echo "  3. Sets up Poetry environment with SQLAlchemy"
+            echo "  4. Runs comprehensive ORM tests"
+            echo "  5. Cleans up automatically"
+            echo ""
+            echo "Options:"
+            echo "  --help, -h                Show this help message"
+            echo "  --info                    Show system information only"
+            echo "  --driver DRIVER           Select driver: psycopg2, psycopg3-text, psycopg3-binary"
+            echo "                           (default: psycopg2)"
+            echo ""
+            echo "Environment variables:"
+            echo "  PORT                      Override default port (default: $PORT)"
+            echo ""
+            echo "Examples:"
+            echo "  $0                        # Run with default psycopg2 driver"
+            echo "  $0 --driver psycopg3-text # Run with psycopg3 in text mode"
+            echo "  $0 --driver psycopg3-binary # Run with psycopg3 in binary mode"
+            echo ""
+            exit 0
+            ;;
+        --info)
+            show_system_info
+            exit 0
+            ;;
+        --driver)
+            shift
+            if [[ $# -eq 0 ]]; then
+                log_error "--driver requires an argument"
+                exit 1
+            fi
+            DRIVER="$1"
+            case "$DRIVER" in
+                psycopg2|psycopg3-text|psycopg3-binary)
+                    # Valid driver
+                    ;;
+                *)
+                    log_error "Invalid driver: $DRIVER"
+                    log_error "Valid options: psycopg2, psycopg3-text, psycopg3-binary"
+                    exit 1
+                    ;;
+            esac
+            shift
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            log_error "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Run main function
+main
