@@ -381,6 +381,9 @@ impl ExtendedQueryHandler {
         translation_metadata.merge(metadata);
         }
         
+        // Note: System function processing (like to_regtype) is handled during Execute phase
+        // after parameter substitution, not during Parse phase
+        
         // Analyze arithmetic expressions for type metadata
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
@@ -1791,6 +1794,16 @@ impl ExtendedQueryHandler {
                     if format == 1 {
                         // Binary format - decode based on expected type
                         match param_type {
+                            t if t == PgType::Int2.to_oid() => {
+                                // int2 (smallint)
+                                if bytes.len() == 2 {
+                                    let value = i16::from_be_bytes([bytes[0], bytes[1]]);
+                                    info!("Decoded binary int16 parameter {}: {}", i + 1, value);
+                                    value.to_string()
+                                } else {
+                                    format!("X'{}'", hex::encode(bytes))
+                                }
+                            }
                             t if t == PgType::Int4.to_oid() => {
                                 // int4
                                 if bytes.len() == 4 {

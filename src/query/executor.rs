@@ -811,8 +811,10 @@ impl QueryExecutor {
         }
         
         // Check if this is a catalog query first
-        // TODO: Fix CatalogInterceptor to accept &DbHandler instead of Arc<DbHandler>
-        let response = {
+        let response = if let Some(catalog_result) = crate::catalog::CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
+            info!("Query intercepted by catalog handler");
+            catalog_result?
+        } else {
             // Route query through query router if available
             if let Some(router) = query_router {
                 router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?

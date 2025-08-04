@@ -32,10 +32,25 @@ impl CatalogInterceptor {
             }));
         }
         
-        if !lower_query.contains("pg_catalog") && !lower_query.contains("pg_type") && 
-           !lower_query.contains("pg_namespace") && !lower_query.contains("pg_range") &&
-           !lower_query.contains("pg_class") && !lower_query.contains("pg_attribute") &&
-           !lower_query.contains("pg_enum") && !lower_query.contains("information_schema") {
+        // Special case: pg_catalog.version() should be handled by SQLite function, not catalog interceptor
+        if lower_query.trim() == "select pg_catalog.version()" || 
+           lower_query.trim() == "select version()" {
+            return None;
+        }
+        
+        // Check for catalog tables
+        let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") || 
+           lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
+           lower_query.contains("pg_class") || lower_query.contains("pg_attribute") ||
+           lower_query.contains("pg_enum") || lower_query.contains("information_schema");
+           
+        // Check for system functions
+        let has_system_functions = lower_query.contains("to_regtype") || 
+           lower_query.contains("pg_get_constraintdef") || lower_query.contains("pg_table_is_visible") ||
+           lower_query.contains("format_type") || lower_query.contains("pg_get_expr") ||
+           lower_query.contains("pg_get_userbyid") || lower_query.contains("pg_get_indexdef");
+           
+        if !has_catalog_tables && !has_system_functions {
             return None;
         }
         
@@ -66,12 +81,15 @@ impl CatalogInterceptor {
 
         // Parse the query (keep JSON path placeholders for now)
         let dialect = PostgreSqlDialect {};
+        debug!("About to parse query for system functions: {}", query_to_parse);
         match Parser::parse_sql(&dialect, &query_to_parse) {
             Ok(mut statements) => {
                 if statements.len() == 1 {
                     if let Statement::Query(query_stmt) = &mut statements[0] {
                         // First check if query contains system functions that need processing
-                        if Self::query_contains_system_functions(query_stmt) {
+                        let contains_functions = Self::query_contains_system_functions(query_stmt);
+                        debug!("Query contains system functions: {}", contains_functions);
+                        if contains_functions {
                             // Clone the query and process system functions
                             match Self::process_system_functions_in_query(query_stmt.clone(), db.clone()).await {
                                 Ok(processed_query) => {
@@ -90,10 +108,38 @@ impl CatalogInterceptor {
                                         }
                                     }
                                     
-                                    // Execute the rewritten query directly
-                                    match db.query(&processed_sql).await {
-                                        Ok(response) => return Some(Ok(response)),
-                                        Err(e) => return Some(Err(PgSqliteError::Sqlite(e))),
+                                    // Update the query_to_parse with the processed SQL and continue
+                                    // This ensures that catalog queries are handled properly after system function processing
+                                    debug!("System functions processed, continuing with catalog handling");
+                                    
+                                    // Check if the query contains catalog tables
+                                    let contains_catalog_tables = processed_sql.to_lowercase().contains("pg_") || 
+                                                                 processed_sql.to_lowercase().contains("information_schema");
+                                    
+                                    if !contains_catalog_tables {
+                                        // This is a standalone system function query, execute it directly
+                                        debug!("Executing standalone system function query: {}", processed_sql);
+                                        match db.query(&processed_sql).await {
+                                            Ok(response) => return Some(Ok(response)),
+                                            Err(e) => return Some(Err(PgSqliteError::Sqlite(e))),
+                                        }
+                                    } else {
+                                        // Re-parse the processed query to continue with catalog handling
+                                        match Parser::parse_sql(&dialect, &processed_sql) {
+                                            Ok(mut new_statements) => {
+                                                if new_statements.len() == 1 {
+                                                    if let Statement::Query(new_query) = &mut new_statements[0] {
+                                                        // Replace the current query with the processed one
+                                                        *query_stmt = new_query.clone();
+                                                        // Continue to the catalog handling below
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                debug!("Failed to re-parse processed query: {}", e);
+                                                return Some(Err(PgSqliteError::Protocol(format!("Failed to parse processed query: {}", e))));
+                                            }
+                                        }
                                     }
                                 }
                                 Err(e) => {
@@ -260,6 +306,29 @@ impl CatalogInterceptor {
                         }
                     }
                 }
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    // For aliased expressions, we still need the source column for data lookup
+                    let source_col = match expr {
+                        Expr::Identifier(ident) => Some(ident.value.to_lowercase()),
+                        Expr::CompoundIdentifier(parts) => Some(parts.last().unwrap().value.to_lowercase()),
+                        Expr::Cast { expr, .. } => {
+                            match expr.as_ref() {
+                                Expr::Identifier(ident) => Some(ident.value.to_lowercase()),
+                                Expr::CompoundIdentifier(parts) => Some(parts.last().unwrap().value.to_lowercase()),
+                                _ => None,
+                            }
+                        }
+                        _ => None,
+                    };
+                    
+                    if let Some(col) = source_col {
+                        debug!("  Column {} (aliased as {}): {}", i, alias, col);
+                        columns.push(col);
+                        column_indices.push(i);
+                    } else {
+                        debug!("  Column {}: unknown aliased expression", i);
+                    }
+                }
                 SelectItem::Wildcard(_) => {
                     // Handle SELECT * queries - return all columns
                     debug!("  Wildcard selection - returning all columns");
@@ -303,6 +372,18 @@ impl CatalogInterceptor {
 
         // Build response based on columns requested
         let mut rows = Vec::new();
+        
+        // Special case: if filter_oid is -1 (our sentinel for NULL), return empty result
+        if filter_oid == Some(-1) {
+            debug!("NULL OID filter detected - returning empty result set");
+            let rows_affected = 0;
+            info!("pg_type query with NULL filter: returning 0 rows");
+            return DbResponse {
+                columns,
+                rows,
+                rows_affected,
+            };
+        }
         
         // Define our basic types - matching all types from type_mapper.rs
         let types = vec![
@@ -373,6 +454,32 @@ impl CatalogInterceptor {
                     "typrelid" => Some(typrelid.to_string().into_bytes()),
                     "nspname" => Some("pg_catalog".to_string().into_bytes()),
                     "rngsubtype" => None, // NULL for non-range types
+                    "typarray" => {
+                        // Find the array type OID for this base type
+                        let array_oid = match oid {
+                            16 => 1000,   // bool -> _bool
+                            17 => 1001,   // bytea -> _bytea
+                            20 => 1016,   // int8 -> _int8
+                            21 => 1005,   // int2 -> _int2
+                            23 => 1007,   // int4 -> _int4
+                            25 => 1009,   // text -> _text
+                            700 => 1021,  // float4 -> _float4
+                            701 => 1022,  // float8 -> _float8
+                            1042 => 1014, // char -> _char
+                            1043 => 1015, // varchar -> _varchar
+                            1082 => 1182, // date -> _date
+                            1083 => 1183, // time -> _time
+                            1114 => 1115, // timestamp -> _timestamp
+                            1184 => 1185, // timestamptz -> _timestamptz
+                            1700 => 1231, // numeric -> _numeric
+                            2950 => 2951, // uuid -> _uuid
+                            114 => 199,   // json -> _json
+                            3802 => 3807, // jsonb -> _jsonb
+                            _ => 0,       // No array type
+                        };
+                        Some(array_oid.to_string().into_bytes())
+                    }
+                    "typdelim" => Some(",".to_string().into_bytes()), // Default delimiter
                     _ => None,
                 };
                 row.push(value);
@@ -423,6 +530,8 @@ impl CatalogInterceptor {
                                 "typrelid" => Some("0".to_string().into_bytes()),
                                 "nspname" => Some("public".to_string().into_bytes()),
                                 "rngsubtype" => None, // NULL for non-range types
+                                "typarray" => Some("0".to_string().into_bytes()), // ENUMs don't have array types
+                                "typdelim" => Some(",".to_string().into_bytes()), // Default delimiter
                                 _ => None,
                             };
                             row.push(value);
@@ -590,6 +699,7 @@ impl CatalogInterceptor {
             let mut row = Vec::new();
             for col in &columns {
                 let value = match col.as_str() {
+                    "oid" => Some(oid.to_string().into_bytes()),
                     "typname" => Some(typname.to_string().into_bytes()),
                     "typtype" => Some(typtype.to_string().into_bytes()),
                     "typelem" => Some(typelem.to_string().into_bytes()),
@@ -597,6 +707,32 @@ impl CatalogInterceptor {
                     "typbasetype" => Some(typbasetype.to_string().into_bytes()),
                     "nspname" => Some("pg_catalog".to_string().into_bytes()),
                     "typrelid" => Some(typrelid.to_string().into_bytes()),
+                    "typarray" => {
+                        // Find the array type OID for this base type
+                        let array_oid = match oid {
+                            16 => 1000,   // bool -> _bool
+                            17 => 1001,   // bytea -> _bytea
+                            20 => 1016,   // int8 -> _int8
+                            21 => 1005,   // int2 -> _int2
+                            23 => 1007,   // int4 -> _int4
+                            25 => 1009,   // text -> _text
+                            700 => 1021,  // float4 -> _float4
+                            701 => 1022,  // float8 -> _float8
+                            1042 => 1014, // char -> _char
+                            1043 => 1015, // varchar -> _varchar
+                            1082 => 1182, // date -> _date
+                            1083 => 1183, // time -> _time
+                            1114 => 1115, // timestamp -> _timestamp
+                            1184 => 1185, // timestamptz -> _timestamptz
+                            1700 => 1231, // numeric -> _numeric
+                            2950 => 2951, // uuid -> _uuid
+                            114 => 199,   // json -> _json
+                            3802 => 3807, // jsonb -> _jsonb
+                            _ => 0,       // No array type
+                        };
+                        Some(array_oid.to_string().into_bytes())
+                    }
+                    "typdelim" => Some(",".to_string().into_bytes()), // Default delimiter
                     _ => None,
                 };
                 row.push(value);
@@ -617,7 +753,7 @@ impl CatalogInterceptor {
     }
 
     /// Check if a query contains system function calls
-    fn query_contains_system_functions(query: &sqlparser::ast::Query) -> bool {
+    pub fn query_contains_system_functions(query: &sqlparser::ast::Query) -> bool {
         if let SetExpr::Select(select) = &*query.body {
             // Check projections
             for item in &select.projection {
@@ -643,13 +779,14 @@ impl CatalogInterceptor {
         match expr {
             Expr::Function(func) => {
                 let func_name = func.name.to_string().to_lowercase();
+                debug!("Found function in expression: {}", func_name);
                 // Check if it's a known system function
                 matches!(func_name.as_str(), 
                     "pg_get_constraintdef" | "pg_table_is_visible" | "format_type" |
-                    "pg_get_expr" | "pg_get_userbyid" | "pg_get_indexdef" |
+                    "pg_get_expr" | "pg_get_userbyid" | "pg_get_indexdef" | "to_regtype" |
                     "pg_catalog.pg_get_constraintdef" | "pg_catalog.pg_table_is_visible" |
                     "pg_catalog.format_type" | "pg_catalog.pg_get_expr" |
-                    "pg_catalog.pg_get_userbyid" | "pg_catalog.pg_get_indexdef"
+                    "pg_catalog.pg_get_userbyid" | "pg_catalog.pg_get_indexdef" | "pg_catalog.to_regtype"
                 )
             }
             Expr::BinaryOp { left, right, .. } => {
@@ -679,7 +816,7 @@ impl CatalogInterceptor {
     }
 
     /// Process system functions in a query by replacing them with their results
-    async fn process_system_functions_in_query(
+    pub async fn process_system_functions_in_query(
         mut query: Box<sqlparser::ast::Query>,
         db: Arc<DbHandler>,
     ) -> Result<Box<sqlparser::ast::Query>, Box<dyn std::error::Error + Send + Sync>> {
@@ -729,12 +866,28 @@ impl CatalogInterceptor {
                         }
                         Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => {
                             // Handle quoted numeric strings (from parameter substitution)
-                            *filter_oid = s.parse::<i32>().ok();
-                            debug!("Extracted string OID filter: {:?}", filter_oid);
+                            if s.to_uppercase() == "NULL" {
+                                // Handle 'NULL' string literal as NULL filter
+                                *filter_oid = Some(-1); // Use -1 as a sentinel value for NULL
+                                debug!("Found 'NULL' string literal - treating as NULL filter");
+                            } else {
+                                *filter_oid = s.parse::<i32>().ok();
+                                debug!("Extracted string OID filter: {:?}", filter_oid);
+                            }
                         }
                         Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Placeholder(_), .. }) => {
                             *has_placeholder = true;
                             debug!("Found placeholder for OID filter");
+                        }
+                        Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Null, .. }) => {
+                            // NULL filter means no rows should be returned
+                            *filter_oid = Some(-1); // Use -1 as a sentinel value for NULL
+                            debug!("Found NULL OID filter - no rows will match");
+                        }
+                        Expr::Function(func) if func.name.to_string().to_lowercase() == "to_regtype" => {
+                            // This is a to_regtype function call that hasn't been processed yet
+                            debug!("Found to_regtype function in OID filter - needs processing");
+                            *has_placeholder = true; // Treat it like a placeholder for now
                         }
                         _ => {
                             debug!("Unknown expression type for OID filter: {:?}", right);

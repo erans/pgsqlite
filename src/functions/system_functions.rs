@@ -13,7 +13,8 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         |_ctx| {
             // Return a PostgreSQL-compatible version string
             // This format is what SQLAlchemy expects to parse
-            Ok("PostgreSQL 15.0 (pgsqlite 0.0.11) on x86_64-pc-linux-gnu, compiled by rustc, 64-bit".to_string())
+            Ok(format!("PostgreSQL 15.0 (pgsqlite {}) on x86_64-pc-linux-gnu, compiled by rustc, 64-bit", 
+                env!("CARGO_PKG_VERSION")))
         },
     )?;
     

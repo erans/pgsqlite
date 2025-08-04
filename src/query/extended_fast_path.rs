@@ -196,6 +196,15 @@ impl ExtendedFastPath {
         } else {
             // Binary format
             match param_type {
+                t if t == PgType::Int2.to_oid() => {
+                    // INT2
+                    if bytes.len() == 2 {
+                        let val = i16::from_be_bytes([bytes[0], bytes[1]]) as i64;
+                        Ok(rusqlite::types::Value::Integer(val))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid INT2 binary format".to_string()))
+                    }
+                }
                 t if t == PgType::Int4.to_oid() => {
                     // INT4
                     if bytes.len() == 4 {
@@ -274,6 +283,61 @@ impl ExtendedFastPath {
                             // Invalid UTF-8, store as blob
                             Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
                         }
+                    }
+                }
+                t if t == PgType::Date.to_oid() => {
+                    // DATE - 4 bytes, days since 2000-01-01
+                    if bytes.len() == 4 {
+                        let days_since_2000 = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        // Convert to days since 1970-01-01 (Unix epoch)
+                        let days_since_1970 = days_since_2000 + 10957; // 10957 days between 1970-01-01 and 2000-01-01
+                        Ok(rusqlite::types::Value::Integer(days_since_1970 as i64))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid DATE binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Time.to_oid() || t == PgType::Timetz.to_oid() => {
+                    // TIME - 8 bytes, microseconds since midnight
+                    if bytes.len() == 8 {
+                        let micros = i64::from_be_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7]
+                        ]);
+                        Ok(rusqlite::types::Value::Integer(micros))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid TIME binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                    // TIMESTAMP - 8 bytes, microseconds since 2000-01-01
+                    if bytes.len() == 8 {
+                        let pg_micros = i64::from_be_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7]
+                        ]);
+                        // Convert to microseconds since 1970-01-01 (Unix epoch)
+                        const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
+                        let unix_micros = pg_micros + PG_EPOCH_OFFSET;
+                        Ok(rusqlite::types::Value::Integer(unix_micros))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid TIMESTAMP binary format".to_string()))
+                    }
+                }
+                t if t == PgType::Interval.to_oid() => {
+                    // INTERVAL - 16 bytes: 8 bytes microseconds + 4 bytes days + 4 bytes months
+                    if bytes.len() == 16 {
+                        let micros = i64::from_be_bytes([
+                            bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7]
+                        ]);
+                        let days = i32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+                        let _months = i32::from_be_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]);
+                        
+                        // Convert to total microseconds (simple intervals only)
+                        let total_micros = micros + (days as i64 * 86400 * 1_000_000);
+                        Ok(rusqlite::types::Value::Integer(total_micros))
+                    } else {
+                        Err(PgSqliteError::Protocol("Invalid INTERVAL binary format".to_string()))
                     }
                 }
                 t if t == PgType::Macaddr.to_oid() || t == PgType::Macaddr8.to_oid() || t == PgType::Inet.to_oid() ||

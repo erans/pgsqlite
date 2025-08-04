@@ -22,6 +22,7 @@ impl SystemFunctions {
             "pg_get_expr" => Self::pg_get_expr(args, db).await,
             "pg_get_userbyid" => Self::pg_get_userbyid(args).await,
             "pg_get_indexdef" => Self::pg_get_indexdef(args, db).await,
+            "to_regtype" => Self::to_regtype(args, db).await,
             _ => Ok(None), // Unknown function, let it pass through
         }
     }
@@ -276,6 +277,96 @@ impl SystemFunctions {
             Ok(Some("".to_string()))
         } else {
             Ok(Some("".to_string()))
+        }
+    }
+
+    /// to_regtype(type_name) - Converts type name to OID, returns NULL if type doesn't exist
+    async fn to_regtype(
+        args: &[Expr],
+        _db: Arc<DbHandler>,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        if args.is_empty() {
+            return Ok(Some("NULL".to_string()));
+        }
+
+        // Extract the type name from the first argument
+        let type_name = match &args[0] {
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => s.clone(),
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::DoubleQuotedString(s), .. }) => s.clone(),
+            _ => return Ok(Some("NULL".to_string())),
+        };
+
+        // Define type name to OID mapping - same as in handle_pg_type_query
+        let type_oid = match type_name.to_lowercase().as_str() {
+            // Basic types
+            "bool" | "boolean" => Some(16),
+            "bytea" => Some(17),
+            "int8" | "bigint" => Some(20),
+            "int2" | "smallint" => Some(21),
+            "int4" | "integer" | "int" => Some(23),
+            "text" => Some(25),
+            "json" => Some(114),
+            "float4" | "real" => Some(700),
+            "float8" | "double precision" => Some(701),
+            "char" => Some(1042),
+            "varchar" | "character varying" => Some(1043),
+            "date" => Some(1082),
+            "time" => Some(1083),
+            "timestamp" | "timestamp without time zone" => Some(1114),
+            "timestamptz" | "timestamp with time zone" => Some(1184),
+            "interval" => Some(1186),
+            "timetz" | "time with time zone" => Some(1266),
+            "bit" => Some(1560),
+            "varbit" | "bit varying" => Some(1562),
+            "numeric" | "decimal" => Some(1700),
+            "uuid" => Some(2950),
+            "jsonb" => Some(3802),
+            "money" => Some(790),
+            
+            // Network types
+            "cidr" => Some(650),
+            "inet" => Some(869),
+            "macaddr" => Some(829),
+            "macaddr8" => Some(774),
+            
+            // Array types
+            "_bool" | "bool[]" => Some(1000),
+            "_bytea" | "bytea[]" => Some(1001),
+            "_int2" | "int2[]" | "smallint[]" => Some(1005),
+            "_int4" | "int4[]" | "integer[]" | "int[]" => Some(1007),
+            "_text" | "text[]" => Some(1009),
+            "_float4" | "float4[]" | "real[]" => Some(1021),
+            "_float8" | "float8[]" | "double precision[]" => Some(1022),
+            "_char" | "char[]" => Some(1002),
+            "_varchar" | "varchar[]" => Some(1015),
+            "_date" | "date[]" => Some(1182),
+            "_time" | "time[]" => Some(1183),
+            "_timestamp" | "timestamp[]" => Some(1115),
+            "_timestamptz" | "timestamptz[]" => Some(1185),
+            "_interval" | "interval[]" => Some(1187),
+            "_timetz" | "timetz[]" => Some(1270),
+            "_numeric" | "numeric[]" | "decimal[]" => Some(1231),
+            "_uuid" | "uuid[]" => Some(2951),
+            "_json" | "json[]" => Some(199),
+            "_jsonb" | "jsonb[]" => Some(3807),
+            
+            // Range types
+            "int4range" => Some(3904),
+            "int8range" => Some(3926),
+            "numrange" => Some(3906),
+            "tsrange" => Some(3908),
+            "tstzrange" => Some(3910),
+            "daterange" => Some(3912),
+            
+            // Types that don't exist in our system (should return NULL)
+            "hstore" | "ltree" | "cube" | "seg" | "isn" | "lo" => None,
+            
+            _ => None, // Unknown type
+        };
+
+        match type_oid {
+            Some(oid) => Ok(Some(oid.to_string())),
+            None => Ok(Some("NULL".to_string())),
         }
     }
 }
