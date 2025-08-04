@@ -30,10 +30,24 @@ pgsqlite implements PostgreSQL's binary wire protocol format, enabling efficient
 - **Timestamptz (OID 1184)**: 8 bytes, microseconds since 2000-01-01 UTC
 - **Interval (OID 1186)**: 16 bytes (8 bytes microseconds + 4 bytes days + 4 bytes months)
 
+### Array Types (Implemented) 
+- **All PostgreSQL Array Types**: Complex structure with dimensions, flags, and element OIDs
+- **NULL Support**: Proper NULL bitmap handling for sparse arrays
+- **Multi-dimensional**: Support for 1D arrays with extensible format
+
+### Range Types (Implemented)
+- **Int4range (OID 3904)**: 32-bit integer ranges with inclusive/exclusive bounds
+- **Int8range (OID 3926)**: 64-bit integer ranges with infinite bound support  
+- **Numrange (OID 3906)**: Decimal ranges using PostgreSQL NUMERIC format
+- **Flags byte encoding**: Empty, bounds inclusivity, and infinity markers
+
+### Network Types (Implemented)
+- **CIDR (OID 650)**: IPv4/IPv6 network specifications with prefix validation
+- **INET (OID 869)**: IPv4/IPv6 host addresses with optional subnet information
+- **MACADDR (OID 829)**: 6-byte MAC addresses (IEEE 802 format)
+- **MACADDR8 (OID 774)**: 8-byte EUI-64 MAC addresses with automatic 6→8 byte conversion
+
 ### Pending Implementation
-- **Array Types**: Complex structure with dimensions, flags, and element OIDs
-- **Range Types** (int4range, int8range, numrange): Flags byte + bounds
-- **Network Types** (CIDR, INET, MACADDR): Address family + network bytes
 - **Bit/Varbit**: Bit string encoding
 - **Full-text Search** (tsvector, tsquery): Custom binary formats
 
@@ -102,6 +116,27 @@ struct NumericBinary {
 }
 ```
 
+### Example: Network Types Binary Format
+
+PostgreSQL's network types use a compact format:
+```
+struct NetworkBinary {
+    family: u8,      // 1=AF_INET, 2=AF_INET6
+    bits: u8,        // Prefix length (0-32 for IPv4, 0-128 for IPv6)
+    is_cidr: u8,     // 1 for CIDR, 0 for INET
+    addr_len: u8,    // 4 for IPv4, 16 for IPv6
+    addr: [u8],      // Network-order address bytes
+}
+
+struct MacAddrBinary {
+    bytes: [u8; 6],  // 6 bytes for MACADDR
+}
+
+struct MacAddr8Binary {
+    bytes: [u8; 8],  // 8 bytes for MACADDR8 (EUI-64)
+}
+```
+
 ## Testing Binary Protocol
 
 ### Unit Tests
@@ -109,10 +144,19 @@ struct NumericBinary {
 cargo test binary::tests --lib
 ```
 
-### Integration Test
+### Integration Tests
 ```python
-# tests/python/test_psycopg3_binary.py
-python test_psycopg3_binary.py
+# Core types
+python tests/python/test_psycopg3_binary.py
+
+# Array types  
+python tests/python/test_psycopg3_array_binary.py
+
+# Range types
+python tests/python/test_psycopg3_range_binary.py
+
+# Network types
+python tests/python/test_psycopg3_network_binary.py
 ```
 
 ### Performance Comparison

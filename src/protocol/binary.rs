@@ -504,6 +504,253 @@ impl BinaryEncoder {
         bytes
     }
 
+    /// Encode CIDR value (OID 650)
+    /// Binary format: 1 byte family + 1 byte bits + 1 byte is_cidr + 1 byte addr_len + addr bytes
+    pub fn encode_cidr(cidr_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = cidr_str.trim();
+        let mut result = Vec::new();
+        
+        // Parse CIDR format: address/prefix_length
+        let (addr_str, prefix_len) = if let Some(slash_pos) = trimmed.find('/') {
+            let addr = &trimmed[..slash_pos];
+            let prefix = &trimmed[slash_pos + 1..];
+            let len = prefix.parse::<u8>()
+                .map_err(|_| format!("Invalid prefix length: {}", prefix))?;
+            (addr, len)
+        } else {
+            return Err("CIDR must include prefix length".to_string());
+        };
+        
+        // Determine if IPv4 or IPv6
+        if addr_str.contains(':') {
+            // IPv6
+            let octets = Self::parse_ipv6(addr_str)?;
+            if prefix_len > 128 {
+                return Err("IPv6 prefix length cannot exceed 128".to_string());
+            }
+            
+            result.push(2); // AF_INET6
+            result.push(prefix_len); // bits
+            result.push(1); // is_cidr = true
+            result.push(16); // addr_len = 16 bytes for IPv6
+            result.extend_from_slice(&octets);
+        } else {
+            // IPv4
+            let octets = Self::parse_ipv4(addr_str)?;
+            if prefix_len > 32 {
+                return Err("IPv4 prefix length cannot exceed 32".to_string());
+            }
+            
+            result.push(1); // AF_INET
+            result.push(prefix_len); // bits
+            result.push(1); // is_cidr = true
+            result.push(4); // addr_len = 4 bytes for IPv4
+            result.extend_from_slice(&octets);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Encode INET value (OID 869)
+    /// Binary format: same as CIDR but is_cidr flag is 0
+    pub fn encode_inet(inet_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = inet_str.trim();
+        let mut result = Vec::new();
+        
+        // Parse INET format: address or address/prefix_length
+        let (addr_str, prefix_len) = if let Some(slash_pos) = trimmed.find('/') {
+            let addr = &trimmed[..slash_pos];
+            let prefix = &trimmed[slash_pos + 1..];
+            let len = prefix.parse::<u8>()
+                .map_err(|_| format!("Invalid prefix length: {}", prefix))?;
+            (addr, len)
+        } else if trimmed.contains(':') {
+            // IPv6 without prefix - default to /128
+            (trimmed, 128)
+        } else {
+            // IPv4 without prefix - default to /32
+            (trimmed, 32)
+        };
+        
+        // Determine if IPv4 or IPv6
+        if addr_str.contains(':') {
+            // IPv6
+            let octets = Self::parse_ipv6(addr_str)?;
+            if prefix_len > 128 {
+                return Err("IPv6 prefix length cannot exceed 128".to_string());
+            }
+            
+            result.push(2); // AF_INET6
+            result.push(prefix_len); // bits
+            result.push(0); // is_cidr = false
+            result.push(16); // addr_len = 16 bytes for IPv6
+            result.extend_from_slice(&octets);
+        } else {
+            // IPv4
+            let octets = Self::parse_ipv4(addr_str)?;
+            if prefix_len > 32 {
+                return Err("IPv4 prefix length cannot exceed 32".to_string());
+            }
+            
+            result.push(1); // AF_INET
+            result.push(prefix_len); // bits
+            result.push(0); // is_cidr = false
+            result.push(4); // addr_len = 4 bytes for IPv4
+            result.extend_from_slice(&octets);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Encode MACADDR value (OID 829)
+    /// Binary format: 6 bytes representing the MAC address
+    pub fn encode_macaddr(mac_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = mac_str.trim();
+        
+        // Parse MAC address format: aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff
+        let hex_parts: Vec<&str> = if trimmed.contains(':') {
+            trimmed.split(':').collect()
+        } else if trimmed.contains('-') {
+            trimmed.split('-').collect()
+        } else {
+            return Err("Invalid MAC address format".to_string());
+        };
+        
+        if hex_parts.len() != 6 {
+            return Err("MAC address must have 6 components".to_string());
+        }
+        
+        let mut result = Vec::with_capacity(6);
+        for part in hex_parts {
+            let byte = u8::from_str_radix(part, 16)
+                .map_err(|_| format!("Invalid MAC address component: {}", part))?;
+            result.push(byte);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Encode MACADDR8 value (OID 774)
+    /// Binary format: 8 bytes representing the EUI-64 MAC address
+    pub fn encode_macaddr8(mac_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = mac_str.trim();
+        
+        // Parse MAC address format: support both 6-byte and 8-byte formats
+        let hex_parts: Vec<&str> = if trimmed.contains(':') {
+            trimmed.split(':').collect()
+        } else if trimmed.contains('-') {
+            trimmed.split('-').collect()
+        } else {
+            return Err("Invalid MAC address format".to_string());
+        };
+        
+        let mut result = Vec::with_capacity(8);
+        
+        if hex_parts.len() == 6 {
+            // Convert 6-byte MAC to 8-byte EUI-64 format
+            // Insert FF:FE between 3rd and 4th bytes
+            for (i, part) in hex_parts.iter().enumerate() {
+                let byte = u8::from_str_radix(part, 16)
+                    .map_err(|_| format!("Invalid MAC address component: {}", part))?;
+                result.push(byte);
+                
+                if i == 2 {
+                    // Insert FF:FE after the 3rd byte
+                    result.push(0xFF);
+                    result.push(0xFE);
+                }
+            }
+        } else if hex_parts.len() == 8 {
+            // Already 8-byte format
+            for part in hex_parts {
+                let byte = u8::from_str_radix(part, 16)
+                    .map_err(|_| format!("Invalid MAC address component: {}", part))?;
+                result.push(byte);
+            }
+        } else {
+            return Err("MAC address must have 6 or 8 components".to_string());
+        }
+        
+        Ok(result)
+    }
+    
+    /// Parse IPv4 address string to 4-byte array
+    fn parse_ipv4(addr_str: &str) -> Result<[u8; 4], String> {
+        let parts: Vec<&str> = addr_str.split('.').collect();
+        if parts.len() != 4 {
+            return Err("IPv4 address must have 4 octets".to_string());
+        }
+        
+        let mut octets = [0u8; 4];
+        for (i, part) in parts.iter().enumerate() {
+            let octet = part.parse::<u8>()
+                .map_err(|_| format!("Invalid IPv4 octet: {}", part))?;
+            octets[i] = octet;
+        }
+        
+        Ok(octets)
+    }
+    
+    /// Parse IPv6 address string to 16-byte array
+    fn parse_ipv6(addr_str: &str) -> Result<[u8; 16], String> {
+        // Simple IPv6 parsing - for production, consider using a proper library
+        let addr_str = addr_str.trim();
+        
+        // Handle special cases
+        if addr_str == "::" {
+            return Ok([0u8; 16]);
+        }
+        
+        // Handle IPv6 address expansion for "::" compression
+        let (left, right) = if let Some(pos) = addr_str.find("::") {
+            let left_part = &addr_str[..pos];
+            let right_part = &addr_str[pos + 2..];
+            (left_part, right_part)
+        } else {
+            (addr_str, "")
+        };
+        
+        let mut result = [0u8; 16];
+        let mut pos = 0;
+        
+        // Parse left part
+        if !left.is_empty() {
+            for group in left.split(':') {
+                if group.is_empty() {
+                    continue;
+                }
+                let value = u16::from_str_radix(group, 16)
+                    .map_err(|_| format!("Invalid IPv6 group: {}", group))?;
+                result[pos] = (value >> 8) as u8;
+                result[pos + 1] = (value & 0xFF) as u8;
+                pos += 2;
+            }
+        }
+        
+        // Parse right part (if any)
+        if !right.is_empty() {
+            let mut right_groups = Vec::new();
+            for group in right.split(':') {
+                if group.is_empty() {
+                    continue;
+                }
+                let value = u16::from_str_radix(group, 16)
+                    .map_err(|_| format!("Invalid IPv6 group: {}", group))?;
+                right_groups.push(value);
+            }
+            
+            // Place right groups at the end
+            let mut right_pos = 16 - (right_groups.len() * 2);
+            for value in right_groups {
+                result[right_pos] = (value >> 8) as u8;
+                result[right_pos + 1] = (value & 0xFF) as u8;
+                right_pos += 2;
+            }
+        }
+        
+        Ok(result)
+    }
+
     /// Encode a value based on its PostgreSQL type OID
     pub fn encode_value(value: &rusqlite::types::Value, type_oid: i32, binary_format: bool) -> Option<Vec<u8>> {
         if !binary_format {
@@ -781,6 +1028,55 @@ impl BinaryEncoder {
                 match value {
                     rusqlite::types::Value::Text(s) => {
                         match Self::encode_numrange(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            // Network types
+            t if t == PgType::Cidr.to_oid() => {
+                // CIDR
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_cidr(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Inet.to_oid() => {
+                // INET
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_inet(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Macaddr.to_oid() => {
+                // MACADDR
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_macaddr(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Macaddr8.to_oid() => {
+                // MACADDR8
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_macaddr8(s) {
                             Ok(bytes) => Some(bytes),
                             Err(_) => None,
                         }
@@ -1077,5 +1373,99 @@ mod tests {
         
         let infinite_both = BinaryEncoder::encode_int4range("(,)").unwrap();
         assert_eq!(infinite_both[0], 0x18); // LB_INF | UB_INF
+    }
+    
+    #[test]
+    fn test_network_encoding() {
+        // Test IPv4 CIDR
+        let ipv4_cidr = BinaryEncoder::encode_cidr("192.168.1.0/24").unwrap();
+        assert_eq!(ipv4_cidr[0], 1); // AF_INET
+        assert_eq!(ipv4_cidr[1], 24); // prefix length
+        assert_eq!(ipv4_cidr[2], 1); // is_cidr = true
+        assert_eq!(ipv4_cidr[3], 4); // address length
+        assert_eq!(&ipv4_cidr[4..8], &[192, 168, 1, 0]); // address bytes
+        
+        // Test IPv4 INET
+        let ipv4_inet = BinaryEncoder::encode_inet("192.168.1.1").unwrap();
+        assert_eq!(ipv4_inet[0], 1); // AF_INET
+        assert_eq!(ipv4_inet[1], 32); // default prefix for IPv4
+        assert_eq!(ipv4_inet[2], 0); // is_cidr = false
+        assert_eq!(ipv4_inet[3], 4); // address length
+        assert_eq!(&ipv4_inet[4..8], &[192, 168, 1, 1]); // address bytes
+        
+        // Test IPv6 CIDR
+        let ipv6_cidr = BinaryEncoder::encode_cidr("2001:db8::/32").unwrap();
+        assert_eq!(ipv6_cidr[0], 2); // AF_INET6
+        assert_eq!(ipv6_cidr[1], 32); // prefix length
+        assert_eq!(ipv6_cidr[2], 1); // is_cidr = true
+        assert_eq!(ipv6_cidr[3], 16); // address length
+        assert_eq!(&ipv6_cidr[4..8], &[0x20, 0x01, 0x0d, 0xb8]); // first 4 bytes
+        
+        // Test IPv6 INET
+        let ipv6_inet = BinaryEncoder::encode_inet("::1").unwrap();
+        assert_eq!(ipv6_inet[0], 2); // AF_INET6
+        assert_eq!(ipv6_inet[1], 128); // default prefix for IPv6
+        assert_eq!(ipv6_inet[2], 0); // is_cidr = false
+        assert_eq!(ipv6_inet[3], 16); // address length
+        // Last two bytes should be [0, 1] for ::1
+        assert_eq!(&ipv6_inet[18..20], &[0, 1]);
+    }
+    
+    #[test]
+    fn test_macaddr_encoding() {
+        // Test MACADDR (6 bytes)
+        let mac6 = BinaryEncoder::encode_macaddr("08:00:2b:01:02:03").unwrap();
+        assert_eq!(mac6.len(), 6);
+        assert_eq!(mac6, vec![0x08, 0x00, 0x2b, 0x01, 0x02, 0x03]);
+        
+        // Test MACADDR with dashes
+        let mac6_dash = BinaryEncoder::encode_macaddr("aa-bb-cc-dd-ee-ff").unwrap();
+        assert_eq!(mac6_dash.len(), 6);
+        assert_eq!(mac6_dash, vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
+        
+        // Test MACADDR8 with 6-byte input (should be converted to 8-byte EUI-64)
+        let mac8_from6 = BinaryEncoder::encode_macaddr8("08:00:2b:01:02:03").unwrap();
+        assert_eq!(mac8_from6.len(), 8);
+        assert_eq!(mac8_from6, vec![0x08, 0x00, 0x2b, 0xff, 0xfe, 0x01, 0x02, 0x03]);
+        
+        // Test MACADDR8 with 8-byte input
+        let mac8_full = BinaryEncoder::encode_macaddr8("08:00:2b:01:02:03:04:05").unwrap();
+        assert_eq!(mac8_full.len(), 8);
+        assert_eq!(mac8_full, vec![0x08, 0x00, 0x2b, 0x01, 0x02, 0x03, 0x04, 0x05]);
+    }
+    
+    #[test]
+    fn test_ipv4_parsing() {
+        let addr = BinaryEncoder::parse_ipv4("127.0.0.1").unwrap();
+        assert_eq!(addr, [127, 0, 0, 1]);
+        
+        let addr2 = BinaryEncoder::parse_ipv4("255.255.255.255").unwrap();
+        assert_eq!(addr2, [255, 255, 255, 255]);
+        
+        // Test error cases
+        assert!(BinaryEncoder::parse_ipv4("256.0.0.1").is_err()); // Invalid octet
+        assert!(BinaryEncoder::parse_ipv4("1.2.3").is_err()); // Too few octets
+        assert!(BinaryEncoder::parse_ipv4("1.2.3.4.5").is_err()); // Too many octets
+    }
+    
+    #[test]
+    fn test_ipv6_parsing() {
+        // Test simple cases
+        let addr = BinaryEncoder::parse_ipv6("::").unwrap();
+        assert_eq!(addr, [0u8; 16]);
+        
+        let addr2 = BinaryEncoder::parse_ipv6("::1").unwrap();
+        let mut expected = [0u8; 16];
+        expected[15] = 1;
+        assert_eq!(addr2, expected);
+        
+        // Test 2001:db8::
+        let addr3 = BinaryEncoder::parse_ipv6("2001:db8::").unwrap();
+        let mut expected3 = [0u8; 16];
+        expected3[0] = 0x20;
+        expected3[1] = 0x01;
+        expected3[2] = 0x0d;
+        expected3[3] = 0xb8;
+        assert_eq!(addr3, expected3);
     }
 }
