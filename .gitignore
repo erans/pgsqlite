@@ -34,3 +34,8 @@ test_*.db*
 debug_*
 test_datetime_translation
 benchmark.db
+
+# Compiled test binaries
+test_array_any_regex
+test_cast_array_order
+test_translation_order_fix
