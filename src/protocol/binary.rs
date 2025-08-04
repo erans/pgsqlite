@@ -242,6 +242,223 @@ impl BinaryEncoder {
         Ok(result)
     }
     
+    /// Encode a range type value
+    /// PostgreSQL range binary format:
+    /// - flags (1 byte): 0x01=empty, 0x02=LB_INC, 0x04=UB_INC, 0x08=LB_INF, 0x10=UB_INF
+    /// - lower bound length + data (if not infinite)
+    /// - upper bound length + data (if not infinite)
+    pub fn encode_int4range(range_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = range_str.trim();
+        let mut result = Vec::new();
+        
+        // Handle empty range
+        if trimmed == "empty" {
+            result.push(0x01); // RANGE_EMPTY flag
+            return Ok(result);
+        }
+        
+        // Parse range format: [lower,upper), (lower,upper], etc.
+        if trimmed.len() < 3 {
+            return Err("Invalid range format".to_string());
+        }
+        
+        let lower_inclusive = trimmed.starts_with('[');
+        let upper_inclusive = trimmed.ends_with(']');
+        
+        // Extract bounds
+        let inner = &trimmed[1..trimmed.len()-1];
+        let parts: Vec<&str> = inner.split(',').collect();
+        
+        if parts.len() != 2 {
+            return Err("Invalid range format: expected two bounds".to_string());
+        }
+        
+        let lower_str = parts[0].trim();
+        let upper_str = parts[1].trim();
+        
+        // Calculate flags
+        let mut flags = 0u8;
+        if lower_inclusive {
+            flags |= 0x02; // LB_INC
+        }
+        if upper_inclusive {
+            flags |= 0x04; // UB_INC
+        }
+        
+        // Check for infinite bounds
+        let lower_infinite = lower_str == "-infinity" || lower_str.is_empty();
+        let upper_infinite = upper_str == "infinity" || upper_str.is_empty();
+        
+        if lower_infinite {
+            flags |= 0x08; // LB_INF
+        }
+        if upper_infinite {
+            flags |= 0x10; // UB_INF
+        }
+        
+        result.push(flags);
+        
+        // Encode lower bound if not infinite
+        if !lower_infinite {
+            let lower_val: i32 = lower_str.parse()
+                .map_err(|_| format!("Invalid lower bound: {}", lower_str))?;
+            let lower_bytes = lower_val.to_be_bytes();
+            result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
+            result.extend_from_slice(&lower_bytes);
+        }
+        
+        // Encode upper bound if not infinite
+        if !upper_infinite {
+            let upper_val: i32 = upper_str.parse()
+                .map_err(|_| format!("Invalid upper bound: {}", upper_str))?;
+            let upper_bytes = upper_val.to_be_bytes();
+            result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
+            result.extend_from_slice(&upper_bytes);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Encode an int8range value
+    pub fn encode_int8range(range_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = range_str.trim();
+        let mut result = Vec::new();
+        
+        // Handle empty range
+        if trimmed == "empty" {
+            result.push(0x01); // RANGE_EMPTY flag
+            return Ok(result);
+        }
+        
+        // Parse range format
+        if trimmed.len() < 3 {
+            return Err("Invalid range format".to_string());
+        }
+        
+        let lower_inclusive = trimmed.starts_with('[');
+        let upper_inclusive = trimmed.ends_with(']');
+        
+        let inner = &trimmed[1..trimmed.len()-1];
+        let parts: Vec<&str> = inner.split(',').collect();
+        
+        if parts.len() != 2 {
+            return Err("Invalid range format: expected two bounds".to_string());
+        }
+        
+        let lower_str = parts[0].trim();
+        let upper_str = parts[1].trim();
+        
+        // Calculate flags
+        let mut flags = 0u8;
+        if lower_inclusive {
+            flags |= 0x02; // LB_INC
+        }
+        if upper_inclusive {
+            flags |= 0x04; // UB_INC
+        }
+        
+        let lower_infinite = lower_str == "-infinity" || lower_str.is_empty();
+        let upper_infinite = upper_str == "infinity" || upper_str.is_empty();
+        
+        if lower_infinite {
+            flags |= 0x08; // LB_INF
+        }
+        if upper_infinite {
+            flags |= 0x10; // UB_INF
+        }
+        
+        result.push(flags);
+        
+        // Encode bounds
+        if !lower_infinite {
+            let lower_val: i64 = lower_str.parse()
+                .map_err(|_| format!("Invalid lower bound: {}", lower_str))?;
+            let lower_bytes = lower_val.to_be_bytes();
+            result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
+            result.extend_from_slice(&lower_bytes);
+        }
+        
+        if !upper_infinite {
+            let upper_val: i64 = upper_str.parse()
+                .map_err(|_| format!("Invalid upper bound: {}", upper_str))?;
+            let upper_bytes = upper_val.to_be_bytes();
+            result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
+            result.extend_from_slice(&upper_bytes);
+        }
+        
+        Ok(result)
+    }
+    
+    /// Encode a numrange value
+    pub fn encode_numrange(range_str: &str) -> Result<Vec<u8>, String> {
+        let trimmed = range_str.trim();
+        let mut result = Vec::new();
+        
+        // Handle empty range
+        if trimmed == "empty" {
+            result.push(0x01); // RANGE_EMPTY flag
+            return Ok(result);
+        }
+        
+        // Parse range format
+        if trimmed.len() < 3 {
+            return Err("Invalid range format".to_string());
+        }
+        
+        let lower_inclusive = trimmed.starts_with('[');
+        let upper_inclusive = trimmed.ends_with(']');
+        
+        let inner = &trimmed[1..trimmed.len()-1];
+        let parts: Vec<&str> = inner.split(',').collect();
+        
+        if parts.len() != 2 {
+            return Err("Invalid range format: expected two bounds".to_string());
+        }
+        
+        let lower_str = parts[0].trim();
+        let upper_str = parts[1].trim();
+        
+        // Calculate flags
+        let mut flags = 0u8;
+        if lower_inclusive {
+            flags |= 0x02; // LB_INC
+        }
+        if upper_inclusive {
+            flags |= 0x04; // UB_INC
+        }
+        
+        let lower_infinite = lower_str == "-infinity" || lower_str.is_empty();
+        let upper_infinite = upper_str == "infinity" || upper_str.is_empty();
+        
+        if lower_infinite {
+            flags |= 0x08; // LB_INF
+        }
+        if upper_infinite {
+            flags |= 0x10; // UB_INF
+        }
+        
+        result.push(flags);
+        
+        // Encode numeric bounds using DecimalHandler
+        if !lower_infinite {
+            let lower_decimal = Decimal::from_str(lower_str)
+                .map_err(|e| format!("Invalid lower bound: {e}"))?;
+            let lower_bytes = DecimalHandler::encode_numeric(&lower_decimal);
+            result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
+            result.extend_from_slice(&lower_bytes);
+        }
+        
+        if !upper_infinite {
+            let upper_decimal = Decimal::from_str(upper_str)
+                .map_err(|e| format!("Invalid upper bound: {e}"))?;
+            let upper_bytes = DecimalHandler::encode_numeric(&upper_decimal);
+            result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
+            result.extend_from_slice(&upper_bytes);
+        }
+        
+        Ok(result)
+    }
+    
     /// Encode DATE (days since 2000-01-01)
     pub fn encode_date(unix_timestamp: f64) -> Vec<u8> {
         // For dates stored as INTEGER days since epoch in SQLite, treat as days
@@ -534,6 +751,43 @@ impl BinaryEncoder {
                     _ => None,
                 }
             }
+            // Range types
+            t if t == PgType::Int4range.to_oid() => {
+                // INT4RANGE
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_int4range(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Int8range.to_oid() => {
+                // INT8RANGE
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_int8range(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Numrange.to_oid() => {
+                // NUMRANGE
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        match Self::encode_numrange(s) {
+                            Ok(bytes) => Some(bytes),
+                            Err(_) => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
             _ => {
                 // For other types, fall back to text format
                 None
@@ -789,5 +1043,39 @@ mod tests {
         // Test bool array
         let bool_array = BinaryEncoder::encode_array("[true, false, true]", PgType::Bool.to_oid()).unwrap();
         assert_eq!(i32::from_be_bytes(bool_array[8..12].try_into().unwrap()), PgType::Bool.to_oid());
+    }
+    
+    #[test]
+    fn test_range_encoding() {
+        // Test INT4RANGE
+        let empty_range = BinaryEncoder::encode_int4range("empty").unwrap();
+        assert_eq!(empty_range, vec![0x01]); // RANGE_EMPTY
+        
+        let inclusive_range = BinaryEncoder::encode_int4range("[1,10]").unwrap();
+        assert_eq!(inclusive_range[0], 0x06); // LB_INC | UB_INC
+        
+        let exclusive_range = BinaryEncoder::encode_int4range("(1,10)").unwrap();
+        assert_eq!(exclusive_range[0], 0x00); // neither inclusive
+        
+        let half_open = BinaryEncoder::encode_int4range("[1,10)").unwrap();
+        assert_eq!(half_open[0], 0x02); // LB_INC only
+        
+        // Test INT8RANGE
+        let int8_range = BinaryEncoder::encode_int8range("[1000000000000,2000000000000]").unwrap();
+        assert_eq!(int8_range[0], 0x06); // LB_INC | UB_INC
+        
+        // Test NUMRANGE
+        let num_range = BinaryEncoder::encode_numrange("[1.5,3.14]").unwrap();
+        assert_eq!(num_range[0], 0x06); // LB_INC | UB_INC
+        
+        // Test infinite bounds
+        let infinite_lower = BinaryEncoder::encode_int4range("(,100]").unwrap();
+        assert_eq!(infinite_lower[0], 0x0C); // UB_INC | LB_INF
+        
+        let infinite_upper = BinaryEncoder::encode_int4range("[0,)").unwrap();
+        assert_eq!(infinite_upper[0], 0x12); // LB_INC | UB_INF
+        
+        let infinite_both = BinaryEncoder::encode_int4range("(,)").unwrap();
+        assert_eq!(infinite_both[0], 0x18); // LB_INF | UB_INF
     }
 }
