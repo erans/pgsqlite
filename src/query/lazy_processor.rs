@@ -18,6 +18,7 @@ pub struct LazyQueryProcessor<'a> {
     needs_delete_using_translation: bool,
     needs_batch_update_translation: bool,
     needs_datetime_translation: bool,
+    needs_pg_table_is_visible_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -29,7 +30,7 @@ impl<'a> LazyQueryProcessor<'a> {
                          query.contains("PG_CATALOG") || query.contains("[") || query.contains("ANY(") ||
                          query.contains("ALL(") || query.contains("@>") || query.contains("<@") || 
                          query.contains("&&") || query.contains("DELETE") || query.contains("UPDATE") ||
-                         query.contains("AT TIME ZONE");
+                         query.contains("AT TIME ZONE") || query.contains("pg_table_is_visible");
         
         if !quick_check {
             // Fast path - no translation needed
@@ -45,6 +46,7 @@ impl<'a> LazyQueryProcessor<'a> {
                 needs_delete_using_translation: false,
                 needs_batch_update_translation: false,
                 needs_datetime_translation: false,
+                needs_pg_table_is_visible_translation: false,
             };
         }
         
@@ -63,6 +65,7 @@ impl<'a> LazyQueryProcessor<'a> {
             needs_delete_using_translation: BatchDeleteTranslator::contains_batch_delete(query),
             needs_batch_update_translation: BatchUpdateTranslator::contains_batch_update(query),
             needs_datetime_translation: crate::translator::DateTimeTranslator::needs_translation(query),
+            needs_pg_table_is_visible_translation: query.contains("pg_table_is_visible"),
         }
     }
     
@@ -105,6 +108,10 @@ impl<'a> LazyQueryProcessor<'a> {
             return true;
         }
         
+        if self.needs_pg_table_is_visible_translation {
+            return true;
+        }
+        
         // Check decimal rewrite need if not already determined
         if let Some(needs_decimal) = self.needs_decimal_rewrite {
             return needs_decimal;
@@ -140,7 +147,8 @@ impl<'a> LazyQueryProcessor<'a> {
         if !self.needs_cast_translation && !self.needs_regex_translation && 
            !self.needs_schema_translation && !self.needs_numeric_cast_translation &&
            !self.needs_array_translation && !self.needs_delete_using_translation &&
-           !self.needs_batch_update_translation && !self.needs_datetime_translation {
+           !self.needs_batch_update_translation && !self.needs_datetime_translation &&
+           !self.needs_pg_table_is_visible_translation {
             // Check if this is an INSERT that might need decimal rewrite
             if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert) {
                 if let Some(table_name) = extract_insert_table_name(self.original_query) {
@@ -156,7 +164,15 @@ impl<'a> LazyQueryProcessor<'a> {
         
         let mut current_query = Cow::Borrowed(self.original_query);
         
-        // Step 1: Schema prefix removal if needed
+        // Step 1: pg_table_is_visible removal if needed (must come before array translation)
+        if self.needs_pg_table_is_visible_translation {
+            tracing::debug!("Before pg_table_is_visible translation: {}", current_query);
+            let translated = crate::translator::PgTableIsVisibleTranslator::translate(&current_query);
+            tracing::debug!("After pg_table_is_visible translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+        
+        // Step 2: Schema prefix removal if needed
         if self.needs_schema_translation {
             tracing::debug!("Before schema translation: {}", current_query);
             let translated = crate::translator::SchemaPrefixTranslator::translate_query(&current_query);
@@ -164,7 +180,7 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 2: Numeric cast translation MUST come before general cast translation
+        // Step 3: Numeric cast translation MUST come before general cast translation
         // to ensure CAST(x AS NUMERIC(p,s)) is handled properly
         if self.needs_numeric_cast_translation {
             tracing::debug!("Before numeric cast translation: {}", current_query);
@@ -173,7 +189,7 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 3: Cast translation if needed (after numeric cast translation)
+        // Step 4: Cast translation if needed (after numeric cast translation)
         if self.needs_cast_translation {
             // Debug enum cast issue
             if current_query.contains("casted_status") {
@@ -207,7 +223,7 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 4: Regex translation if needed
+        // Step 5: Regex translation if needed
         if self.needs_regex_translation {
             tracing::debug!("Before regex translation: {}", current_query);
             match crate::translator::RegexTranslator::translate_query(&current_query) {
@@ -222,7 +238,7 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 5: Array translation if needed
+        // Step 6: Array translation if needed
         if self.needs_array_translation {
             tracing::debug!("Before array translation: {}", current_query);
             match crate::translator::ArrayTranslator::translate_array_operators(&current_query) {
@@ -239,7 +255,7 @@ impl<'a> LazyQueryProcessor<'a> {
             }
         }
         
-        // Step 6: DELETE USING translation if needed
+        // Step 7: DELETE USING translation if needed
         if self.needs_delete_using_translation {
             tracing::debug!("Before DELETE USING translation: {}", current_query);
             use std::collections::HashMap;
@@ -253,7 +269,7 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 7: Batch UPDATE translation if needed
+        // Step 8: Batch UPDATE translation if needed
         if self.needs_batch_update_translation {
             tracing::debug!("Before batch UPDATE translation: {}", current_query);
             use std::collections::HashMap;
@@ -267,7 +283,7 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 8: DateTime translation if needed
+        // Step 9: DateTime translation if needed
         if self.needs_datetime_translation {
             tracing::debug!("Before datetime translation: {}", current_query);
             let translated = crate::translator::DateTimeTranslator::translate_query(&current_query);
@@ -275,7 +291,7 @@ impl<'a> LazyQueryProcessor<'a> {
             current_query = Cow::Owned(translated);
         }
         
-        // Step 9: Decimal rewriting if needed  
+        // Step 10: Decimal rewriting if needed  
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
         
         // For performance, only rewrite when necessary

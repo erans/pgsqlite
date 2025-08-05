@@ -240,15 +240,36 @@ impl DbHandler {
             let mut stmt = conn.prepare(&processed_query)?;
             
             // Convert params to rusqlite values
+            // For now, be more aggressive about converting to text since most PostgreSQL
+            // parameters in text mode should be text-compatible
             let values: Vec<rusqlite::types::Value> = params.iter()
-                .map(|p| match p {
+                .enumerate()
+                .map(|(i, p)| match p {
                     Some(data) => {
                         match String::from_utf8(data.clone()) {
-                            Ok(s) => rusqlite::types::Value::Text(s),
-                            Err(_) => rusqlite::types::Value::Blob(data.clone()),
+                            Ok(s) => {
+                                debug!("Parameter {}: converted to text: '{}'", i, s);
+                                rusqlite::types::Value::Text(s)
+                            },
+                            Err(e) => {
+                                // For psycopg3 in text mode, all parameters should be UTF-8 text
+                                // If UTF-8 conversion fails, try to recover by using lossy conversion
+                                debug!("Parameter {}: UTF-8 conversion failed ({}), trying lossy conversion", i, e);
+                                let lossy_string = String::from_utf8_lossy(data);
+                                if lossy_string.len() > 0 {
+                                    debug!("Parameter {}: lossy conversion successful: '{}'", i, lossy_string);
+                                    rusqlite::types::Value::Text(lossy_string.into_owned())
+                                } else {
+                                    debug!("Parameter {}: lossy conversion failed, storing as blob ({} bytes)", i, data.len());
+                                    rusqlite::types::Value::Blob(data.clone())
+                                }
+                            },
                         }
                     }
-                    None => rusqlite::types::Value::Null,
+                    None => {
+                        debug!("Parameter {}: null", i);
+                        rusqlite::types::Value::Null
+                    },
                 })
                 .collect();
             
@@ -682,12 +703,108 @@ impl DbHandler {
     /// Try fast path execution with parameters
     pub async fn try_execute_fast_path_with_params(
         &self,
-        _query: &str,
-        _params: &[rusqlite::types::Value],
-        _session_id: &Uuid,
+        query: &str,
+        params: &[rusqlite::types::Value],
+        session_id: &Uuid,
     ) -> Result<Option<DbResponse>, PgSqliteError> {
-        // For now, always return None to fall back to regular execution
-        Ok(None)
+        eprintln!("🔍 DEBUG: try_execute_fast_path_with_params called with query: {}", query);
+        eprintln!("🔍 DEBUG: params: {:?}", params);
+        
+        // Use the connection manager to get the session connection
+        self.connection_manager.execute_with_session(session_id, |conn| {
+            // Execute the query directly with rusqlite parameters
+            let mut stmt = conn.prepare(query)?;
+            
+            let query_type = QueryTypeDetector::detect_query_type(query);
+            
+            let response: Result<DbResponse, rusqlite::Error> = match query_type {
+                QueryType::Select => {
+                    let column_count = stmt.column_count();
+                    let mut column_names = Vec::with_capacity(column_count);
+                    for i in 0..column_count {
+                        column_names.push(stmt.column_name(i).unwrap_or("").to_string());
+                    }
+                    
+                    let mut rows = Vec::new();
+                    let mut prepared_stmt = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+                    
+                    while let Some(row) = prepared_stmt.next()? {
+                        let mut row_data = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            let value: Option<Vec<u8>> = match row.get_ref(i)? {
+                                rusqlite::types::ValueRef::Null => None,
+                                rusqlite::types::ValueRef::Integer(i) => Some(i.to_string().into_bytes()),
+                                rusqlite::types::ValueRef::Real(f) => Some(f.to_string().into_bytes()),
+                                rusqlite::types::ValueRef::Text(s) => Some(s.to_vec()),
+                                rusqlite::types::ValueRef::Blob(b) => Some(b.to_vec()),
+                            };
+                            row_data.push(value);
+                        }
+                        rows.push(row_data);
+                    }
+                    
+                    Ok(DbResponse {
+                        columns: column_names,
+                        rows,
+                        rows_affected: 0,
+                    })
+                }
+                QueryType::Insert | QueryType::Update | QueryType::Delete => {
+                    if query.contains("RETURNING") {
+                        // Handle RETURNING clause
+                        let column_count = stmt.column_count();
+                        let mut column_names = Vec::with_capacity(column_count);
+                        for i in 0..column_count {
+                            column_names.push(stmt.column_name(i).unwrap_or("").to_string());
+                        }
+                        
+                        let mut rows = Vec::new();
+                        let mut prepared_stmt = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+                        let mut changes = 0;
+                        
+                        while let Some(row) = prepared_stmt.next()? {
+                            let mut row_data = Vec::with_capacity(column_count);
+                            for i in 0..column_count {
+                                let value: Option<Vec<u8>> = match row.get_ref(i)? {
+                                    rusqlite::types::ValueRef::Null => None,
+                                    rusqlite::types::ValueRef::Integer(i) => Some(i.to_string().into_bytes()),
+                                    rusqlite::types::ValueRef::Real(f) => Some(f.to_string().into_bytes()),
+                                    rusqlite::types::ValueRef::Text(s) => Some(s.to_vec()),
+                                    rusqlite::types::ValueRef::Blob(b) => Some(b.to_vec()),
+                                };
+                                row_data.push(value);
+                            }
+                            rows.push(row_data);
+                            changes += 1;
+                        }
+                        
+                        Ok(DbResponse {
+                            columns: column_names,
+                            rows,
+                            rows_affected: changes,
+                        })
+                    } else {
+                        // Regular DML without RETURNING
+                        let changes = stmt.execute(rusqlite::params_from_iter(params.iter()))?;
+                        
+                        Ok(DbResponse {
+                            columns: vec![],
+                            rows: vec![],
+                            rows_affected: changes,
+                        })
+                    }
+                }
+                _ => {
+                    // Unsupported query type, fall back
+                    return Ok(None);
+                }
+            };
+            
+            Ok(Some(response?))
+        }).map_err(|e| {
+            eprintln!("🔍 DEBUG: Fast path execution failed: {}", e);
+            e
+        })
     }
     
     /// Query with statement pool and parameters

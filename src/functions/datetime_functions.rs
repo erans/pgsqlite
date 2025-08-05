@@ -245,6 +245,13 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8,
         |ctx| {
+            // Check if the parameter is already an integer (microseconds)
+            if let Ok(micros) = ctx.get::<i64>(0) {
+                // Already converted to microseconds, just return it
+                return Ok(micros);
+            }
+            
+            // Otherwise, try to get as text and parse
             let text: String = ctx.get(0)?;
             
             // Try parsing with multiple formats
@@ -327,12 +334,25 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8,
         |ctx| {
+            use rusqlite::types::ValueRef;
+            
+            // Check if the parameter is NULL
+            if matches!(ctx.get_raw(0), ValueRef::Null) {
+                return Ok(rusqlite::types::Value::Null);
+            }
+            
+            // Check if the parameter is already an integer (days)
+            if let Ok(days) = ctx.get::<i64>(0) {
+                // Already converted to days, just return it
+                return Ok(rusqlite::types::Value::Integer(days));
+            }
+            
             let text: String = ctx.get(0)?;
             
             if let Ok(date) = NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
                 let epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
                 let days = (date - epoch).num_days();
-                return Ok(days);
+                return Ok(rusqlite::types::Value::Integer(days));
             }
             
             Err(Error::UserFunctionError(
@@ -347,6 +367,12 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
         1,
         FunctionFlags::SQLITE_UTF8,
         |ctx| {
+            // Check if the parameter is already an integer (microseconds)
+            if let Ok(micros) = ctx.get::<i64>(0) {
+                // Already converted to microseconds, just return it
+                return Ok(micros);
+            }
+            
             let text: String = ctx.get(0)?;
             
             // Try with fractional seconds

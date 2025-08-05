@@ -821,6 +821,38 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **WAL Mode Benefits**: Each session can see committed data from other sessions properly
   - [x] **Test Execution**: All test suites stable with no migration conflicts
 
+### SQLAlchemy Compatibility Fixes - IN PROGRESS (2025-08-05)
+- [x] **AVG Aggregate Type Detection** - Fixed "Unknown PG numeric type: 25" errors for aggregate functions
+  - [x] **Bug Identified**: AVG/MAX/MIN aggregate functions returned TEXT type OID (25) instead of NUMERIC (1700)
+  - [x] **Root Cause**: Type inference didn't recognize aggregate function aliases like "avg_views" from query context
+  - [x] **Solution**: Enhanced `get_aggregate_return_type_with_query()` to parse query context and detect aggregate aliases
+  - [x] **Impact**: SQLAlchemy aggregate queries now return correct NUMERIC types for mathematical operations
+- [x] **Multi-Row INSERT RETURNING Row Count Fix** - Fixed SQLAlchemy INSERT validation errors
+  - [x] **Bug Identified**: Multi-row INSERT RETURNING only returned last inserted row causing "did not produce correct number of rows" errors
+  - [x] **Root Cause**: `execute_dml_with_returning()` used `last_insert_rowid()` which only returns the last row ID
+  - [x] **Solution**: Implemented rowid range queries to fetch all inserted rows using `first_rowid = last_rowid - rows_affected + 1`
+  - [x] **Impact**: SQLAlchemy bulk insert operations with RETURNING now work correctly with proper row count validation
+- [x] **Date Function Translation Fix** - Fixed syntax errors in parameterized date functions
+  - [x] **Bug Identified**: `func.date('now', '-30 days')` generated malformed SQL with nested CAST operations
+  - [x] **Root Cause**: Cast translator ran before datetime translator, creating invalid `CAST(julianday(CAST(...) AS INTEGER)` syntax
+  - [x] **Solution**: Modified datetime translator to skip translation for parameterized queries containing '$' or 'CAST'
+  - [x] **Impact**: SQLAlchemy date functions now work correctly without SQL syntax errors
+- [x] **Column Alias Type Inference** - COMPLETED - Fixed wrong column types for aliased columns
+  - [x] **Bug Identified**: `SELECT users.id AS users_id, users.name AS users_name` returns users_id as TEXT(25) instead of INT4(23)
+  - [x] **Root Cause**: Type inference defaulted to TEXT when no data rows available and didn't resolve aliases to source schema
+  - [x] **Solution Implemented**: Added `extract_source_table_column_for_alias()` function to parse "table.column AS alias" patterns
+  - [x] **Implementation**: Enhanced type inference to call `db.get_schema_type(table, column)` for resolved aliases
+  - [x] **Testing**: Simple queries work correctly - `users_id` now returns INT4(23), `users_name` returns VARCHAR(1043)
+  - [ ] **Remaining Issue**: Multi-line SQLAlchemy queries still failing - pattern matching needs improvement for complex SELECT statements
+- [ ] **Transaction Resource Management** - Fix "cannot perform operation: another operation is in progress" errors
+  - [ ] **Bug Analysis**: psycopg connection management issues in lazy loading scenarios
+  - [ ] **Investigation Required**: Determine if this is connection pool exhaustion or connection state corruption
+  - [ ] **Testing Status**: 5/8 SQLAlchemy tests passing, remaining failures due to type inference and transaction issues
+- [x] **Code Quality Improvements** - Adhered to CLAUDE.md principles
+  - [x] **Removed Column Name-Based Type Inference**: Eliminated code that used column names like "price", "amount" to infer NUMERIC types
+  - [x] **Query Context Parsing**: Used proper SQL parsing to extract source columns for aliases instead of name patterns
+  - [x] **Type System Integrity**: Maintained strict adherence to schema-based type inference principles
+
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 
 ### Data Type Improvements

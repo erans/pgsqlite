@@ -17,6 +17,7 @@ lazy_static! {
         register_v8_array_support(&mut registry);
         register_v9_fts_support(&mut registry);
         register_v10_typcategory_support(&mut registry);
+        register_v11_fix_catalog_views(&mut registry);
         
         registry
     };
@@ -1294,5 +1295,240 @@ fn register_v10_typcategory_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![9],
+    });
+}
+
+/// Version 11: Fix catalog views to not use oid_hash function
+fn register_v11_fix_catalog_views(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(11, Migration {
+        version: 11,
+        name: "fix_catalog_views",
+        description: "Replace oid_hash function with built-in SQLite functions in catalog views",
+        up: MigrationAction::SqlBatch(&[
+            // Drop existing views
+            "DROP VIEW IF EXISTS pg_attribute;",
+            "DROP VIEW IF EXISTS pg_class;",
+            
+            // Recreate pg_class view with built-in functions
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_class AS
+            SELECT 
+                -- Generate stable OID from table name using SQLite's built-in functions
+                -- Use a deterministic formula based on the table name's character codes
+                -- Cast to TEXT to handle both numeric and string comparisons
+                CAST(
+                    (
+                        (unicode(substr(name, 1, 1)) * 1000000) +
+                        (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '  ', 3, 1)) * 100) +
+                        (length(name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as oid,
+                name as relname,
+                2200 as relnamespace,  -- public schema
+                CASE 
+                    WHEN type = 'table' THEN 'r'
+                    WHEN type = 'view' THEN 'v'
+                    WHEN type = 'index' THEN 'i'
+                END as relkind,
+                10 as relowner,
+                CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                0 as relfilenode,
+                0 as reltablespace,
+                0 as relpages,
+                -1 as reltuples,
+                0 as relallvisible,
+                0 as reltoastrelid,
+                CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                'f' as relisshared,
+                'p' as relpersistence,
+                -- Generate type OID using a different formula to avoid collisions
+                CAST(
+                    (
+                        (unicode(substr(name || '_type', 1, 1)) * 1000000) +
+                        (unicode(substr(name || '_type' || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '_type' || '  ', 3, 1)) * 100) +
+                        (length(name || '_type') * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as reltype,
+                0 as reloftype,
+                0 as relnatts,
+                0 as relchecks,
+                'f' as relhasrules,
+                'f' as relhastriggers,
+                'f' as relhassubclass,
+                't' as relispopulated,
+                'p' as relreplident,
+                't' as relispartition,
+                0 as relrewrite,
+                0 as relfrozenxid,
+                '{}' as relminmxid,
+                '' as relacl,
+                '' as reloptions,
+                '' as relpartbound
+            FROM sqlite_master
+            WHERE type IN ('table', 'view', 'index')
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%';
+            "#,
+            
+            // Recreate pg_attribute view with built-in functions
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_attribute AS
+            SELECT 
+                -- Use same formula as pg_class to ensure consistent OIDs
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,     -- table OID
+                p.cid + 1 as attnum,                             -- column number (1-based)
+                p.name as attname,                               -- column name
+                CASE 
+                    WHEN p.type LIKE '%INT%' THEN 23            -- int4
+                    WHEN p.type = 'TEXT' THEN 25                -- text
+                    WHEN p.type = 'REAL' THEN 700               -- float4
+                    WHEN p.type = 'BLOB' THEN 17                -- bytea
+                    WHEN p.type LIKE '%CHAR%' THEN 1043         -- varchar
+                    WHEN p.type = 'BOOLEAN' THEN 16             -- bool
+                    WHEN p.type = 'DATE' THEN 1082              -- date
+                    WHEN p.type LIKE 'TIME%' THEN 1083          -- time
+                    WHEN p.type LIKE 'TIMESTAMP%' THEN 1114     -- timestamp
+                    ELSE 25                                      -- default to text
+                END as atttypid,
+                -1 as attstattarget,
+                0 as attlen,
+                0 as attndims,
+                -1 as attcacheoff,
+                CASE WHEN p.type LIKE '%NOT NULL%' THEN 't' ELSE 'f' END as attnotnull,
+                'f' as atthasdef,
+                'f' as atthasmissing,
+                '' as attidentity,
+                '' as attgenerated,
+                't' as attisdropped,
+                't' as attislocal,
+                0 as attinhcount,
+                0 as attcollation,
+                '' as attacl,
+                '' as attoptions,
+                '' as attfdwoptions,
+                '' as attmissingval
+            FROM pragma_table_info(m.name) p
+            JOIN sqlite_master m ON m.type = 'table'
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+            
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata 
+            SET value = '11', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            // Drop new views
+            "DROP VIEW IF EXISTS pg_attribute;",
+            "DROP VIEW IF EXISTS pg_class;",
+            
+            // Restore old views with oid_hash (note: this won't work without the function)
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_class AS
+            SELECT 
+                CAST(oid_hash(name) AS TEXT) as oid,
+                name as relname,
+                2200 as relnamespace,
+                CASE 
+                    WHEN type = 'table' THEN 'r'
+                    WHEN type = 'view' THEN 'v'
+                    WHEN type = 'index' THEN 'i'
+                END as relkind,
+                10 as relowner,
+                CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                0 as relfilenode,
+                0 as reltablespace,
+                0 as relpages,
+                -1 as reltuples,
+                0 as relallvisible,
+                0 as reltoastrelid,
+                CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                'f' as relisshared,
+                'p' as relpersistence,
+                CAST(oid_hash(name || '_type') AS TEXT) as reltype,
+                0 as reloftype,
+                0 as relnatts,
+                0 as relchecks,
+                'f' as relhasrules,
+                'f' as relhastriggers,
+                'f' as relhassubclass,
+                't' as relispopulated,
+                'p' as relreplident,
+                't' as relispartition,
+                0 as relrewrite,
+                0 as relfrozenxid,
+                '{}' as relminmxid,
+                '' as relacl,
+                '' as reloptions,
+                '' as relpartbound
+            FROM sqlite_master
+            WHERE type IN ('table', 'view', 'index')
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%';
+            "#,
+            
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_attribute AS
+            SELECT 
+                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                p.cid + 1 as attnum,
+                p.name as attname,
+                CASE 
+                    WHEN p.type LIKE '%INT%' THEN 23
+                    WHEN p.type = 'TEXT' THEN 25
+                    WHEN p.type = 'REAL' THEN 700
+                    WHEN p.type = 'BLOB' THEN 17
+                    WHEN p.type LIKE '%CHAR%' THEN 1043
+                    WHEN p.type = 'BOOLEAN' THEN 16
+                    WHEN p.type = 'DATE' THEN 1082
+                    WHEN p.type LIKE 'TIME%' THEN 1083
+                    WHEN p.type LIKE 'TIMESTAMP%' THEN 1114
+                    ELSE 25
+                END as atttypid,
+                -1 as attstattarget,
+                0 as attlen,
+                0 as attndims,
+                -1 as attcacheoff,
+                CASE WHEN p.type LIKE '%NOT NULL%' THEN 't' ELSE 'f' END as attnotnull,
+                'f' as atthasdef,
+                'f' as atthasmissing,
+                '' as attidentity,
+                '' as attgenerated,
+                't' as attisdropped,
+                't' as attislocal,
+                0 as attinhcount,
+                0 as attcollation,
+                '' as attacl,
+                '' as attoptions,
+                '' as attfdwoptions,
+                '' as attmissingval
+            FROM pragma_table_info(m.name) p
+            JOIN sqlite_master m ON m.type = 'table'
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+            
+            // Restore version
+            r#"
+            UPDATE __pgsqlite_metadata 
+            SET value = '10', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![10],
     });
 }

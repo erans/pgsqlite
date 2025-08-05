@@ -169,6 +169,16 @@ impl QueryExecutor {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
         
+        // Handle PostgreSQL DEALLOCATE commands (used for prepared statement cleanup)
+        let query_upper = query_to_execute.to_uppercase();
+        if query_upper.starts_with("DEALLOCATE") {
+            debug!("DEALLOCATE command - treating as successful no-op (SQLite manages prepared statements automatically)");
+            // Send CommandComplete for successful DEALLOCATE
+            let msg = BackendMessage::CommandComplete { tag: "DEALLOCATE".to_string() };
+            framed.send(msg).await.map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+        
         // debug!("Executing query: {}", query_to_execute);
         
         // Check for Python-style parameters and provide helpful error
@@ -191,6 +201,15 @@ impl QueryExecutor {
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .collect();
+            
+            // Handle empty query case (just semicolon) - SQLAlchemy uses ";" for ping
+            if statements.is_empty() {
+                debug!("Empty query (just semicolon) - treating as successful no-op");
+                // Send CommandComplete for successful empty query
+                let msg = BackendMessage::CommandComplete { tag: "SELECT 0".to_string() };
+                framed.send(msg).await.map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
             
             if statements.len() > 1 {
                 debug!("Query contains {} statements", statements.len());
@@ -636,6 +655,13 @@ impl QueryExecutor {
             
             // Note: JSON path $ restoration will happen right before SQLite execution
             debug!("Query after JSON translation ($ placeholders preserved): {}", translated_query);
+        }
+        
+        // Translate catalog functions (remove pg_catalog prefix)
+        {
+            use crate::translator::{CatalogFunctionTranslator, PgTableIsVisibleTranslator};
+            translated_query = CatalogFunctionTranslator::translate(&translated_query);
+            translated_query = PgTableIsVisibleTranslator::translate(&translated_query);
         }
         
         // Translate array operators with metadata

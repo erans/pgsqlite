@@ -176,20 +176,84 @@ impl CatalogInterceptor {
         if let SetExpr::Select(select) = &*query.body {
             // Check if this is a JOIN query involving catalog tables
             if !select.from.is_empty() && !select.from[0].joins.is_empty() {
-                // For JOIN queries on catalog tables, return None to let SQLite handle it
-                // This allows the views to work properly with JOINs
-                if let TableFactor::Table { name, .. } = &select.from[0].relation {
-                    let table_name = name.to_string().to_lowercase();
-                    if table_name.contains("pg_") && (table_name.contains("pg_class") || 
-                        table_name.contains("pg_namespace") || table_name.contains("pg_attribute") ||
-                        table_name.contains("pg_constraint") || table_name.contains("pg_index")) {
-                        debug!("Passing JOIN query on catalog tables to SQLite views");
-                        return None;
+                // Check if the query contains system functions that need special handling
+                let query_str = query.to_string();
+                let contains_system_functions = query_str.contains("pg_table_is_visible") || 
+                                              query_str.contains("pg_get_constraintdef") ||
+                                              query_str.contains("format_type") ||
+                                              query_str.contains("pg_get_expr");
+                
+                if contains_system_functions {
+                    // This query contains system functions that need special handling
+                    debug!("JOIN query contains system functions, handling specially");
+                    
+                    // For SQLAlchemy table existence checks, we can handle this specially
+                    // The query pattern is checking if a table exists by joining pg_class and pg_namespace
+                    // and using pg_table_is_visible
+                    if query_str.contains("pg_table_is_visible") && query_str.contains("pg_class.relname") {
+                        // Extract the table name being checked
+                        let table_name_pattern = regex::Regex::new(r"relname\s*=\s*'([^']+)'").unwrap();
+                        if let Some(captures) = table_name_pattern.captures(&query_str) {
+                            if let Some(table_name) = captures.get(1) {
+                                let table_name_str = table_name.as_str();
+                                debug!("Checking existence of table: {}", table_name_str);
+                                
+                                // Check if the table exists in SQLite
+                                let check_query = format!(
+                                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{}' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'",
+                                    table_name_str
+                                );
+                                
+                                match db.query(&check_query).await {
+                                    Ok(response) => {
+                                        // If we found the table, return a result with the table name
+                                        if !response.rows.is_empty() {
+                                            debug!("Table {} exists", table_name_str);
+                                            return Some(DbResponse {
+                                                columns: vec!["relname".to_string()],
+                                                rows: vec![vec![Some(table_name_str.as_bytes().to_vec())]],
+                                                rows_affected: 1,
+                                            });
+                                        } else {
+                                            debug!("Table {} does not exist", table_name_str);
+                                            return Some(DbResponse {
+                                                columns: vec!["relname".to_string()],
+                                                rows: vec![],
+                                                rows_affected: 0,
+                                            });
+                                        }
+                                    }
+                                    Err(e) => {
+                                        debug!("Error checking table existence: {}", e);
+                                    }
+                                }
+                            }
+                        }
                     }
+                    
+                    // For other system functions, fall through to default handling
+                    debug!("Unable to handle this specific system function query pattern");
+                } else {
+                    // For JOIN queries on catalog tables without system functions, 
+                    // return None to let SQLite handle it
+                    // This allows the views to work properly with JOINs
+                    if let TableFactor::Table { name, .. } = &select.from[0].relation {
+                        let table_name = name.to_string().to_lowercase();
+                        if table_name.contains("pg_") && (table_name.contains("pg_class") || 
+                            table_name.contains("pg_namespace") || table_name.contains("pg_attribute") ||
+                            table_name.contains("pg_constraint") || table_name.contains("pg_index")) {
+                            debug!("Passing JOIN query on catalog tables to SQLite views");
+                            return None;
+                        }
+                    }
+                    
                     // Keep special handling for pg_type JOINs since they need custom logic
-                    if table_name.contains("pg_type") || table_name.contains("pg_catalog.pg_type") {
-                        // This is a pg_type JOIN query - handle it specially
-                        return Some(Self::handle_pg_type_join_query(select));
+                    if let TableFactor::Table { name, .. } = &select.from[0].relation {
+                        let table_name = name.to_string().to_lowercase();
+                        if table_name.contains("pg_type") || table_name.contains("pg_catalog.pg_type") {
+                            // This is a pg_type JOIN query - handle it specially
+                            return Some(Self::handle_pg_type_join_query(select));
+                        }
                     }
                 }
             }

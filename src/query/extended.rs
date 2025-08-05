@@ -628,12 +628,17 @@ impl ExtendedQueryHandler {
                                             schema_types.insert(col_name.clone(), type_string.to_string());
                                         }
                                     } else {
-                                        // Try to find source column if this is an alias
-                                        if let Some(source_col) = Self::extract_source_column_for_alias(&cleaned_query, col_name) {
-                                            if let Ok(Some(pg_type)) = db.get_schema_type(table, &source_col).await {
-                                                info!("Found schema type for alias '{}' -> source column '{}': {}", col_name, source_col, pg_type);
+                                        // Try to find source table and column if this is an alias
+                                        if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&cleaned_query, col_name) {
+                                            info!("Trying to resolve alias '{}' -> table '{}', column '{}'", col_name, source_table, source_col);
+                                            if let Ok(Some(pg_type)) = db.get_schema_type(&source_table, &source_col).await {
+                                                info!("Found schema type for alias '{}' -> source column '{}.{}': {}", col_name, source_table, source_col, pg_type);
                                                 schema_types.insert(col_name.clone(), pg_type);
+                                            } else {
+                                                info!("No schema type found for '{}.{}'", source_table, source_col);
                                             }
+                                        } else {
+                                            info!("Could not extract source table/column for alias '{}'", col_name);
                                         }
                                     }
                                 }
@@ -813,9 +818,9 @@ impl ExtendedQueryHandler {
         Ok(())
     }
     
-    /// Try to extract the source column for an alias in a simple SELECT
-    /// e.g., "SELECT ts AT TIME ZONE 'UTC' as ts_utc" -> source column is "ts"
-    fn extract_source_column_for_alias(query: &str, alias: &str) -> Option<String> {
+    /// Try to extract the source table and column for an alias in a simple SELECT
+    /// e.g., "SELECT test_users.id AS users_id" -> returns ("test_users", "id")
+    fn extract_source_table_column_for_alias(query: &str, alias: &str) -> Option<(String, String)> {
         // This is a simple heuristic for the common case
         // Look for "SELECT <expr> as <alias>" pattern
         let query_upper = query.to_uppercase();
@@ -827,13 +832,26 @@ impl ExtendedQueryHandler {
             // Work backwards to find the start of the expression
             let before_as = &query[..as_pos];
             
-            // For simple cases like "SELECT column_name AS alias"
+            // For simple cases like "SELECT table.column AS alias"
             // Find the last word before AS
             let words: Vec<&str> = before_as.split_whitespace().collect();
             if let Some(last_word) = words.last() {
-                // Check if it's a simple identifier (no operators, functions, etc.)
-                if last_word.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return Some(last_word.to_string());
+                // Check if it contains a dot (table.column)
+                if let Some(dot_pos) = last_word.rfind('.') {
+                    let table_part = &last_word[..dot_pos];
+                    let column_part = &last_word[dot_pos + 1..];
+                    
+                    // Validate both parts are simple identifiers
+                    if table_part.chars().all(|c| c.is_alphanumeric() || c == '_') &&
+                       column_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        return Some((table_part.to_string(), column_part.to_string()));
+                    }
+                }
+                // For simple column references without table prefix
+                else if last_word.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    // We'll need to guess the table from the FROM clause
+                    // For now, return None since we can't determine the table
+                    return None;
                 }
             }
         }

@@ -136,7 +136,26 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-08-04)
+### Recently Fixed (2025-08-05)
+- **Column Alias Type Inference**: Fixed incorrect PostgreSQL type OIDs for aliased columns
+  - `SELECT users.id AS users_id` now returns INT4 (23) instead of TEXT (25)
+  - Implemented `extract_source_table_column_for_alias()` to parse `table.column AS alias` patterns
+  - Fixed SQLAlchemy compatibility where psycopg3 tried to parse strings as integers
+  - Resolves "invalid literal for int() with base 10: 'Test User'" errors
+- **Multi-Row INSERT RETURNING**: Fixed row count mismatch for bulk insert operations
+  - SQLAlchemy multi-row INSERT with RETURNING now returns correct number of rows
+  - Uses rowid range queries instead of just `last_insert_rowid()` for multiple rows
+  - Fixes "Multi-row INSERT statement did not produce the correct number of INSERTed rows" error
+- **Date Function Translation**: Fixed malformed SQL in datetime function translation
+  - `func.date('now', '-30 days')` no longer creates invalid julianday syntax
+  - Skip translation for parameterized date functions to prevent nested cast issues
+  - Fixes "SQLite error: near 'AS': syntax error" in datetime queries
+- **Aggregate Type Detection**: Fixed unknown PostgreSQL type OID 25 for numeric aggregates
+  - AVG/SUM/COUNT on DECIMAL columns now return NUMERIC (1700) instead of TEXT (25)
+  - Added query context to `get_aggregate_return_type_with_query()` for better type detection
+  - Improved SQLAlchemy compatibility with aggregate functions on numeric columns
+
+### Previously Fixed (2025-08-04)
 - **Binary Protocol Support for psycopg3**: Implemented core binary format encoders
   - Added binary encoders for Numeric/Decimal, UUID, JSON/JSONB, Money types
   - PostgreSQL binary NUMERIC format with proper weight/scale/digit encoding
