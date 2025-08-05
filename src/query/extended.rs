@@ -1,7 +1,7 @@
 use crate::protocol::{BackendMessage, FieldDescription};
 use crate::session::{DbHandler, SessionState, PreparedStatement, Portal, GLOBAL_QUERY_CACHE};
 use crate::catalog::CatalogInterceptor;
-use crate::translator::{JsonTranslator, ReturningTranslator};
+use crate::translator::{JsonTranslator, ReturningTranslator, CastTranslator};
 use crate::types::{DecimalHandler, PgType};
 use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE, GLOBAL_PARAMETER_CACHE, CachedParameterInfo};
 use crate::validator::NumericValidator;
@@ -107,10 +107,19 @@ impl ExtendedQueryHandler {
             // For unnamed statements, check if we have cached info about this query
             // This is important for benchmarks that use parameterized queries
             if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
+                // Translate the query for cached statements too
+                // In per-session mode, we can't get a connection during parse,
+                // so we'll translate without connection (which handles most cases)
+                let translated_query = if CastTranslator::needs_translation(&query) {
+                    Some(CastTranslator::translate_query(&query, None))
+                } else {
+                    None
+                };
+                
                 // We already know about this query, create a fast prepared statement
                 let stmt = PreparedStatement {
                     query: query.clone(),
-                    translated_query: None, // Will be translated during execute if needed
+                    translated_query,
                     param_types: cached_info.param_types.clone(),
                     param_formats: vec![0; cached_info.param_types.len()],
                     field_descriptions: Vec::new(), // Will be populated during bind/execute
@@ -137,11 +146,54 @@ impl ExtendedQueryHandler {
         debug!("Parsing statement '{}': {}", name, cleaned_query);
         debug!("Provided param_types: {:?}", param_types);
         
+        // Extract cast type information BEFORE any query translation
+        let mut extracted_param_types = vec![0i32; ParameterParser::count_parameters(&cleaned_query)];
+        
         // Check for Python-style parameters and convert to PostgreSQL-style
         use crate::query::parameter_parser::ParameterParser;
         let python_params = ParameterParser::find_python_parameters(&cleaned_query);
         if !python_params.is_empty() {
             debug!("Found Python-style parameters: {:?}", python_params);
+            
+            // First, extract type information from Python-style parameter casts
+            for (index, param_name) in python_params.iter().enumerate() {
+                let param_pattern = format!("%({param_name})s::");
+                if let Some(cast_start) = cleaned_query.find(&param_pattern) {
+                    let type_start = cast_start + param_pattern.len();
+                    // Find the end of the type (space, comma, or parenthesis)
+                    let mut type_end = type_start;
+                    while type_end < cleaned_query.len() {
+                        let ch = cleaned_query.chars().nth(type_end).unwrap();
+                        if ch.is_whitespace() || ch == ',' || ch == ')' || ch == ';' {
+                            break;
+                        }
+                        type_end += 1;
+                    }
+                    
+                    if type_end > type_start {
+                        let type_name = &cleaned_query[type_start..type_end];
+                        let type_oid = match type_name.to_uppercase().as_str() {
+                            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp.to_oid(),
+                            "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz.to_oid(),
+                            "DATE" => PgType::Date.to_oid(),
+                            "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time.to_oid(),
+                            "TIMETZ" | "TIME WITH TIME ZONE" => PgType::Timetz.to_oid(),
+                            "INTERVAL" => PgType::Interval.to_oid(),
+                            "VARCHAR" | "TEXT" => PgType::Text.to_oid(),
+                            "INTEGER" | "INT4" => PgType::Int4.to_oid(),
+                            "BIGINT" | "INT8" => PgType::Int8.to_oid(),
+                            "SMALLINT" | "INT2" => PgType::Int2.to_oid(),
+                            "NUMERIC" | "DECIMAL" => PgType::Numeric.to_oid(),
+                            "BOOLEAN" => PgType::Bool.to_oid(),
+                            _ => 0, // Unknown type
+                        };
+                        if type_oid != 0 {
+                            extracted_param_types[index] = type_oid;
+                            debug!("Extracted type for parameter {}: {} (OID {})", index + 1, type_name, type_oid);
+                        }
+                    }
+                }
+            }
             
             // Convert %(name)s parameters to $1, $2, $3, etc.
             let mut param_counter = 1;
@@ -153,10 +205,50 @@ impl ExtendedQueryHandler {
             }
             
             debug!("Converted query: {}", cleaned_query);
+            debug!("Extracted parameter types: {:?}", extracted_param_types);
             
             // Store the parameter mapping in session for later use in bind
             let mut python_param_mapping = session.python_param_mapping.write().await;
             python_param_mapping.insert(name.clone(), python_params);
+        } else {
+            // Also extract types from PostgreSQL-style parameter casts ($1::TYPE)
+            for i in 1..=extracted_param_types.len() {
+                let cast_pattern = format!("${}::", i);
+                if let Some(cast_start) = cleaned_query.find(&cast_pattern) {
+                    let type_start = cast_start + cast_pattern.len();
+                    let mut type_end = type_start;
+                    while type_end < cleaned_query.len() {
+                        let ch = cleaned_query.chars().nth(type_end).unwrap();
+                        if ch.is_whitespace() || ch == ',' || ch == ')' || ch == ';' {
+                            break;
+                        }
+                        type_end += 1;
+                    }
+                    
+                    if type_end > type_start {
+                        let type_name = &cleaned_query[type_start..type_end];
+                        let type_oid = match type_name.to_uppercase().as_str() {
+                            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp.to_oid(),
+                            "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz.to_oid(),
+                            "DATE" => PgType::Date.to_oid(),
+                            "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time.to_oid(),
+                            "TIMETZ" | "TIME WITH TIME ZONE" => PgType::Timetz.to_oid(),
+                            "INTERVAL" => PgType::Interval.to_oid(),
+                            "VARCHAR" | "TEXT" => PgType::Text.to_oid(),
+                            "INTEGER" | "INT4" => PgType::Int4.to_oid(),
+                            "BIGINT" | "INT8" => PgType::Int8.to_oid(),
+                            "SMALLINT" | "INT2" => PgType::Int2.to_oid(),
+                            "NUMERIC" | "DECIMAL" => PgType::Numeric.to_oid(),
+                            "BOOLEAN" => PgType::Bool.to_oid(),
+                            _ => 0, // Unknown type
+                        };
+                        if type_oid != 0 {
+                            extracted_param_types[i - 1] = type_oid;
+                            debug!("Extracted type for parameter ${}: {} (OID {})", i, type_name, type_oid);
+                        }
+                    }
+                }
+            }
         }
         
         // Check if this is a SET command - handle it specially
@@ -201,7 +293,22 @@ impl ExtendedQueryHandler {
         
         // For INSERT and SELECT queries, we need to determine parameter types from the target table schema
         let mut actual_param_types = param_types.clone();
-        if param_types.is_empty() && cleaned_query.contains('$') {
+        
+        // Use extracted parameter types if we found any
+        if extracted_param_types.iter().any(|&t| t != 0) {
+            debug!("Using extracted parameter types: {:?}", extracted_param_types);
+            actual_param_types = extracted_param_types.clone();
+            
+            // Also cache the extracted parameter info for fast path access
+            GLOBAL_PARAMETER_CACHE.insert(query.clone(), CachedParameterInfo {
+                param_types: extracted_param_types.clone(),
+                original_types: extracted_param_types.clone(), // Same as param_types since we extracted them directly
+                table_name: None, // Will be populated later if needed
+                column_names: Vec::new(), // Will be populated later if needed
+                created_at: std::time::Instant::now(),
+            });
+            debug!("Cached extracted parameter types for fast path access");
+        } else if param_types.is_empty() && cleaned_query.contains('$') {
             // First check parameter cache
             if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
                 actual_param_types = cached_info.param_types;
@@ -326,6 +433,14 @@ impl ExtendedQueryHandler {
             translation_metadata.merge(metadata);
         }
         
+        // Translate catalog functions (remove pg_catalog prefix)
+        #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
+        {
+            use crate::translator::{CatalogFunctionTranslator, PgTableIsVisibleTranslator};
+            translated_for_analysis = CatalogFunctionTranslator::translate(&translated_for_analysis);
+            translated_for_analysis = PgTableIsVisibleTranslator::translate(&translated_for_analysis);
+        }
+        
         // Translate array operators with metadata
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         {
@@ -426,8 +541,10 @@ impl ExtendedQueryHandler {
                 let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
                 test_query = cast_regex.replace_all(&test_query, "").to_string();
                 
-                // Add LIMIT 1 to avoid processing too much data
-                test_query = format!("{test_query} LIMIT 1");
+                // Add LIMIT 1 to avoid processing too much data, but only if there's no existing LIMIT
+                if !test_query.to_uppercase().contains(" LIMIT ") {
+                    test_query = format!("{test_query} LIMIT 1");
+                }
                 let cached_conn = Self::get_or_cache_connection(session, db).await;
                 let test_response = db.query_with_session_cached(&test_query, &session.id, cached_conn.as_ref()).await;
                 
@@ -446,6 +563,28 @@ impl ExtendedQueryHandler {
                                 if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
                                     schema_types.insert(col_name.clone(), pg_type);
                                 } else {
+                                    // Parse the query to find the source column for this alias
+                                    // Look for pattern like "table.column AS alias" in the SELECT clause
+                                    let pattern = format!(r"(?i)(\w+)\.(\w+)\s+AS\s+{}", regex::escape(col_name));
+                                    debug!("Looking for alias pattern '{}' in query: {}", pattern, query);
+                                    if let Ok(re) = regex::Regex::new(&pattern) {
+                                        if let Some(captures) = re.captures(&query) {
+                                            if let Some(src_table) = captures.get(1) {
+                                                if let Some(src_col) = captures.get(2) {
+                                                    let src_table_name = src_table.as_str();
+                                                    let src_col_name = src_col.as_str();
+                                                    // Only use if it's the same table we identified
+                                                    if src_table_name == table {
+                                                        if let Ok(Some(pg_type)) = db.get_schema_type(table, src_col_name).await {
+                                                            info!("Found type for aliased column '{}' from query pattern '{}.{}' in table '{}': {}", col_name, src_table_name, src_col_name, table, pg_type);
+                                                            schema_types.insert(col_name.clone(), pg_type);
+                                                            continue;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                         // First check translation metadata
                                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                                         // For datetime expressions, check if we have a source column and prefer its type
@@ -854,7 +993,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        debug!("Executing portal '{}' with max_rows: {}", portal, max_rows);
+        eprintln!("🔍 DEBUG: Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
@@ -870,6 +1009,14 @@ impl ExtendedQueryHandler {
              portal_obj.statement_name.clone(),
              portal_obj.inferred_param_types.clone())
         };
+        
+        eprintln!("🔍 DEBUG: Portal data: original_query='{}', translated_query={:?}, bound_values.len()={}", 
+               query, translated_query, bound_values.len());
+        
+        // Use translated query if available, otherwise use original query
+        let effective_query = translated_query.as_ref().unwrap_or(&query);
+        eprintln!("🔍 DEBUG: Fast path check conditions: !bound_values.is_empty()={}, effective_query.contains('$')={}", 
+               !bound_values.is_empty(), effective_query.contains('$'));
         
         // Get parameter types from the prepared statement
         let param_types = if let Some(inferred) = inferred_param_types {
@@ -960,18 +1107,20 @@ impl ExtendedQueryHandler {
         }
         
         // Try optimized extended fast path first for parameterized queries
-        if !bound_values.is_empty() && query.contains('$') {
-            let query_type = super::extended_fast_path::QueryType::from_query(&query);
+        if !bound_values.is_empty() && effective_query.contains('$') {
+            let query_type = super::extended_fast_path::QueryType::from_query(effective_query);
+            eprintln!("🔍 DEBUG: Fast path check: query_type={:?}, bound_values={}, has_$={}", query_type, bound_values.len(), effective_query.contains('$'));
             
             // Early check: Skip fast path for SELECT with binary results
             if matches!(query_type, super::extended_fast_path::QueryType::Select) 
                 && !result_formats.is_empty() 
                 && result_formats[0] == 1 {
+                debug!("Skipping fast path: SELECT with binary results");
                 // Skip fast path entirely for binary SELECT results
             } else {
             
             // Get original types from cache if available
-            let original_types = if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
+            let original_types = if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(effective_query) {
                 cached_info.original_types
             } else {
                 param_types.clone()
@@ -988,7 +1137,7 @@ impl ExtendedQueryHandler {
                         db,
                         session,
                         &portal,
-                        &query,
+                        effective_query,
                         &bound_values,
                         &param_formats,
                         &result_formats,
@@ -996,9 +1145,15 @@ impl ExtendedQueryHandler {
                         &original_types,
                         query_type,
                     ).await {
-                        Ok(true) => return Ok(()), // Successfully executed via fast path
-                        Ok(false) => {}, // Fall back to normal path
+                        Ok(true) => {
+                            eprintln!("🔍 DEBUG: Fast path execution succeeded, returning");
+                            return Ok(());
+                        }, // Successfully executed via fast path
+                        Ok(false) => {
+                            eprintln!("🔍 DEBUG: Fast path returned false, falling back to normal path");
+                        }, // Fall back to normal path
                         Err(e) => {
+                            eprintln!("🔍 DEBUG: Extended fast path failed with error: {}, falling back to normal path", e);
                             warn!("Extended fast path failed with error: {}, falling back to normal path", e);
                             // Fall back to normal path on error
                         }
@@ -1032,6 +1187,7 @@ impl ExtendedQueryHandler {
 
         // Use translated query if available, otherwise use original
         let query_to_use = translated_query.as_ref().unwrap_or(&query);
+        eprintln!("🔍 DEBUG: Using normal path execution with query: {}", query_to_use);
         
         // Validate numeric constraints before parameter substitution
         let validation_error = if query_starts_with_ignore_case(query_to_use, "INSERT") {
@@ -1788,6 +1944,10 @@ impl ExtendedQueryHandler {
             let format = formats.get(i).copied().unwrap_or(0); // Default to text format
             let param_type = param_types.get(i).copied().unwrap_or(PgType::Text.to_oid()); // Default to text
             
+            info!("Processing parameter {}: format={}, type_oid={}, bytes_len={}", 
+                i + 1, format, param_type, 
+                value.as_ref().map(|v| v.len()).unwrap_or(0));
+            
             let replacement = match value {
                 None => "NULL".to_string(),
                 Some(bytes) => {
@@ -1805,10 +1965,15 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             t if t == PgType::Int4.to_oid() => {
-                                // int4
+                                // int4 - but sometimes PostgreSQL sends int2 with int4 type OID
                                 if bytes.len() == 4 {
                                     let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                                     info!("Decoded binary int32 parameter {}: {}", i + 1, value);
+                                    value.to_string()
+                                } else if bytes.len() == 2 {
+                                    // Actually int2 but with int4 type OID
+                                    let value = i16::from_be_bytes([bytes[0], bytes[1]]);
+                                    info!("Decoded binary int16 (as int4) parameter {}: {}", i + 1, value);
                                     value.to_string()
                                 } else {
                                     format!("X'{}'", hex::encode(bytes))
@@ -1870,8 +2035,67 @@ impl ExtendedQueryHandler {
                                     }
                                 }
                             }
+                            t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                                // timestamp/timestamptz - int8 microseconds since epoch
+                                if bytes.len() == 8 {
+                                    let micros = i64::from_be_bytes([
+                                        bytes[0], bytes[1], bytes[2], bytes[3],
+                                        bytes[4], bytes[5], bytes[6], bytes[7]
+                                    ]);
+                                    info!("Decoded binary timestamp parameter {}: {} microseconds", i + 1, micros);
+                                    micros.to_string()
+                                } else {
+                                    format!("X'{}'", hex::encode(bytes))
+                                }
+                            }
+                            t if t == PgType::Date.to_oid() => {
+                                // date - int4 days since epoch
+                                if bytes.len() == 4 {
+                                    let days = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                                    info!("Decoded binary date parameter {}: {} days", i + 1, days);
+                                    days.to_string()
+                                } else {
+                                    format!("X'{}'", hex::encode(bytes))
+                                }
+                            }
+                            t if t == PgType::Time.to_oid() || t == PgType::Timetz.to_oid() => {
+                                // time - int8 microseconds since midnight
+                                if bytes.len() == 8 {
+                                    let micros = i64::from_be_bytes([
+                                        bytes[0], bytes[1], bytes[2], bytes[3],
+                                        bytes[4], bytes[5], bytes[6], bytes[7]
+                                    ]);
+                                    info!("Decoded binary time parameter {}: {} microseconds", i + 1, micros);
+                                    micros.to_string()
+                                } else {
+                                    format!("X'{}'", hex::encode(bytes))
+                                }
+                            }
+                            0 => {
+                                // No type specified - try to infer from byte pattern
+                                if bytes.len() == 1 && (bytes[0] == 0 || bytes[0] == 1) {
+                                    // Single byte 0 or 1 - likely boolean
+                                    info!("Inferred boolean parameter {}: {}", i + 1, bytes[0]);
+                                    bytes[0].to_string()
+                                } else if bytes.len() == 2 {
+                                    // Two bytes - likely int2
+                                    let value = i16::from_be_bytes([bytes[0], bytes[1]]);
+                                    info!("Inferred int16 parameter {}: {}", i + 1, value);
+                                    value.to_string()
+                                } else if bytes.len() == 4 {
+                                    // Four bytes - likely int4
+                                    let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                                    info!("Inferred int32 parameter {}: {}", i + 1, value);
+                                    value.to_string()
+                                } else {
+                                    // Unknown pattern - use hex
+                                    info!("Unknown binary parameter type OID 0 for parameter {}, bytes: {}", i + 1, hex::encode(bytes));
+                                    format!("X'{}'", hex::encode(bytes))
+                                }
+                            }
                             _ => {
                                 // Other binary data - treat as blob
+                                info!("Unknown binary parameter type OID {} for parameter {}, bytes: {}", param_type, i + 1, hex::encode(bytes));
                                 format!("X'{}'", hex::encode(bytes))
                             }
                         }
@@ -1965,8 +2189,102 @@ impl ExtendedQueryHandler {
         
         // Remove PostgreSQL-style casts (::type) as SQLite doesn't support them
         // Be careful not to match IPv6 addresses like ::1
-        let cast_regex = regex::Regex::new(r"::[a-zA-Z]\w*").unwrap();
+        // Also handle multi-word types like ::TIMESTAMP WITHOUT TIME ZONE, ::DOUBLE PRECISION, etc.
+        let cast_regex = regex::Regex::new(r"::[a-zA-Z][a-zA-Z0-9_]*(?:\s+(?:WITHOUT|WITH)\s+TIME\s+ZONE|\s+PRECISION|\s+VARYING)?").unwrap();
         let result = cast_regex.replace_all(&result, "").to_string();
+        
+        // SQLite doesn't support VALUES with column aliases like "AS table_alias(col1, col2, ...)"
+        // Replace ") AS imp_sen(p0, p1, p2, p3, p4, p5, p6, p7, sen_counter)" with just ")"
+        let alias_regex = regex::Regex::new(r"\)\s+AS\s+\w+\s*\([^)]+\)").unwrap();
+        let result = alias_regex.replace_all(&result, ")").to_string();
+        
+        // Handle SQLAlchemy's VALUES pattern which uses p0, p1, etc. column references
+        // This pattern needs to be completely rewritten for SQLite
+        if result.contains("SELECT CAST(p0") && result.contains("FROM (VALUES") {
+            info!("Detected SQLAlchemy VALUES pattern, attempting to rewrite");
+            
+            // Find the positions of key parts
+            if let (Some(table_start), Some(values_start), Some(values_end)) = (
+                result.find("INSERT INTO "),
+                result.find("FROM (VALUES "),
+                result.rfind(")")
+            ) {
+                // Extract table and columns
+                let table_part = &result[table_start + 12..values_start];
+                if let Some(paren_pos) = table_part.find('(') {
+                    let table_name = table_part[..paren_pos].trim();
+                    let columns_end = table_part.find(')').unwrap_or(table_part.len());
+                    let columns = &table_part[paren_pos..=columns_end];
+                    
+                    // Extract VALUES content
+                    let values_content = &result[values_start + 13..values_end];
+                    
+                    // Extract RETURNING clause if present
+                    let returning_clause = if let Some(ret_pos) = result.find(" RETURNING ") {
+                        &result[ret_pos..]
+                    } else {
+                        ""
+                    };
+                    
+                    // Parse values rows - need to handle nested parentheses properly
+                    let mut all_values = Vec::new();
+                    let mut current_value = String::new();
+                    let mut paren_depth = 0;
+                    let mut in_row = false;
+                    
+                    for ch in values_content.chars() {
+                        match ch {
+                            '(' => {
+                                paren_depth += 1;
+                                if paren_depth == 1 {
+                                    in_row = true;
+                                    current_value.clear();
+                                } else {
+                                    current_value.push(ch);
+                                }
+                            }
+                            ')' => {
+                                paren_depth -= 1;
+                                if paren_depth == 0 && in_row {
+                                    // End of row - remove the trailing counter value
+                                    let values: Vec<&str> = current_value.split(", ").collect();
+                                    if values.len() > 1 {
+                                        // Skip the last value (sen_counter)
+                                        let actual_values = &values[..values.len() - 1];
+                                        all_values.push(format!("({})", actual_values.join(", ")));
+                                    }
+                                    in_row = false;
+                                } else {
+                                    current_value.push(ch);
+                                }
+                            }
+                            _ => {
+                                if in_row {
+                                    current_value.push(ch);
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Build the new query
+                    if !all_values.is_empty() {
+                        // Join all values and remove any remaining casts
+                        let values_str = all_values.join(", ");
+                        // Apply cast removal to the VALUES content
+                        let values_str = cast_regex.replace_all(&values_str, "").to_string();
+                        
+                        let new_query = format!("INSERT INTO {} {} VALUES {}{}",
+                            table_name,
+                            columns,
+                            values_str,
+                            returning_clause
+                        );
+                        info!("Rewrote SQLAlchemy VALUES pattern to: {}", new_query);
+                        return Ok(new_query);
+                    }
+                }
+            }
+        }
         
         Ok(result)
     }
@@ -2889,20 +3207,30 @@ impl ExtendedQueryHandler {
                 let mut schema_types = std::collections::HashMap::new();
                 if let Some(ref table) = table_name {
                     for col_name in &response.columns {
-                        // Try to look up the actual column name (without aliases)
-                        let lookup_col = if col_name.contains('_') {
-                            // For aggregate results like 'value_array', try the base column name
-                            if let Some(base) = col_name.split('_').next() {
-                                base.to_string()
-                            } else {
-                                col_name.clone()
-                            }
-                        } else {
-                            col_name.clone()
-                        };
-                        
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, &lookup_col).await {
+                        // Try direct lookup first
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
                             schema_types.insert(col_name.clone(), pg_type);
+                        } else {
+                            // Parse the query to find the source column for this alias
+                            // Look for pattern like "table.column AS alias" in the SELECT clause
+                            let pattern = format!(r"(?i)(\w+)\.(\w+)\s+AS\s+{}", regex::escape(col_name));
+                            if let Ok(re) = regex::Regex::new(&pattern) {
+                                if let Some(captures) = re.captures(query) {
+                                    if let Some(src_table) = captures.get(1) {
+                                        if let Some(src_col) = captures.get(2) {
+                                            let src_table_name = src_table.as_str();
+                                            let src_col_name = src_col.as_str();
+                                            // Only use if it's the same table we identified
+                                            if src_table_name == table {
+                                                if let Ok(Some(pg_type)) = db.get_schema_type(table, src_col_name).await {
+                                                    info!("Found type for aliased column '{}' from query pattern '{}.{}': {}", col_name, src_table_name, src_col_name, pg_type);
+                                                    schema_types.insert(col_name.clone(), pg_type);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -2948,7 +3276,7 @@ impl ExtendedQueryHandler {
                         
                         // Second priority: Check for aggregate functions
                         let col_lower = col_name.to_lowercase();
-                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(query)) {
                             info!("Column '{}' is aggregate function with type OID {}", col_name, oid);
                             return oid;
                         }
@@ -3047,32 +3375,12 @@ impl ExtendedQueryHandler {
                     .map(|(i, col_name)| {
                         // Check for aggregate functions first
                         let col_lower = col_name.to_lowercase();
-                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type(&col_lower, None, None) {
+                        
+                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&portal.query)) {
                             info!("Column '{}' is aggregate function with type OID {} (field_types)", col_name, oid);
                             return oid;
                         }
                         
-                        // Check if this column name suggests numeric arithmetic result
-                        // This handles cases like 'item_total', 'discounted_price', etc.
-                        if col_name.contains("total") || col_name.contains("price") || col_name.contains("amount") || col_name.contains("sum") {
-                            // Check if we have numeric data
-                            if !response.rows.is_empty() {
-                                if let Some(value) = response.rows[0].get(i) {
-                                    if let Some(bytes) = value {
-                                        if let Ok(s) = std::str::from_utf8(bytes) {
-                                            // If it parses as a decimal number, treat as NUMERIC
-                                            if s.contains('.') && s.parse::<f64>().is_ok() {
-                                                info!("Column '{}' appears to be numeric based on name and value '{}'", col_name, s);
-                                                return PgType::Numeric.to_oid();
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            // Even without data, assume these columns are numeric
-                            info!("Column '{}' assumed to be numeric based on name", col_name);
-                            return PgType::Numeric.to_oid();
-                        }
                         
                         // Try to get type from value
                         let type_oid = if !response.rows.is_empty() {
@@ -3280,10 +3588,45 @@ impl ExtendedQueryHandler {
             let cached_conn = Self::get_or_cache_connection(session, db).await;
             let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
             
-            // Get the last inserted rowid and query for RETURNING data
-            let returning_query = format!(
-                "SELECT {returning_clause} FROM {table_name} WHERE rowid = last_insert_rowid()"
-            );
+            debug!("INSERT executed, rows_affected: {}", response.rows_affected);
+            
+            // Get the last inserted rowid
+            let last_rowid_query = "SELECT last_insert_rowid()";
+            let cached_conn = Self::get_or_cache_connection(session, db).await;
+            let last_rowid_response = db.query_with_session_cached(last_rowid_query, &session.id, cached_conn.as_ref()).await?;
+            
+            let last_rowid: i64 = if !last_rowid_response.rows.is_empty() && !last_rowid_response.rows[0].is_empty() {
+                // Parse the rowid from the response
+                if let Some(data) = &last_rowid_response.rows[0][0] {
+                    match String::from_utf8(data.clone()) {
+                        Ok(s) => s.parse().unwrap_or(0),
+                        Err(_) => 0,
+                    }
+                } else {
+                    0
+                }
+            } else {
+                0
+            };
+            
+            // Query for RETURNING data for all inserted rows
+            // For multi-row inserts, we need to get all rows from (last_rowid - rows_affected + 1) to last_rowid
+            let returning_query = if response.rows_affected > 1 && last_rowid > 0 {
+                // Multi-row insert: get all inserted rows
+                let first_rowid = last_rowid - response.rows_affected as i64 + 1;
+                debug!("Multi-row INSERT RETURNING: fetching rows from rowid {} to {}", first_rowid, last_rowid);
+                format!(
+                    "SELECT {returning_clause} FROM {table_name} WHERE rowid >= {} AND rowid <= {} ORDER BY rowid",
+                    first_rowid, last_rowid
+                )
+            } else {
+                // Single row insert: just get the last rowid
+                debug!("Single-row INSERT RETURNING: fetching row with rowid {}", last_rowid);
+                format!(
+                    "SELECT {returning_clause} FROM {table_name} WHERE rowid = {}",
+                    last_rowid
+                )
+            };
             
             let cached_conn = Self::get_or_cache_connection(session, db).await;
             let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;

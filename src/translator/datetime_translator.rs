@@ -106,7 +106,15 @@ impl DateTimeTranslator {
         // Wrap SQLite date() function to convert to epoch days (INTEGER)
         result = DATE_FUNCTION_PATTERN.replace_all(&result, |caps: &regex::Captures| {
             let args = &caps[1];
-            format!("CAST(julianday({args}) - 2440587.5 AS INTEGER)")
+            // For parameterized queries, keep the date() function as-is
+            // The SQLite date() function will handle the parameters correctly
+            if args.contains('$') || args.contains("CAST") {
+                // Return the original match - don't translate parameterized date functions
+                caps[0].to_string()
+            } else {
+                // For literal values, wrap in julianday conversion
+                format!("CAST(julianday(date({args})) - 2440587.5 AS INTEGER)")
+            }
         }).to_string();
         
         // Wrap SQLite time() function to convert to microseconds since midnight (INTEGER)
