@@ -646,16 +646,17 @@ impl ExtendedQueryHandler {
                         }
                         
                         // Try to infer types from the first row if available
-                        let inferred_types = response.columns.iter()
-                            .enumerate()
-                            .map(|(i, col_name)| {
+                        // We need to handle this asynchronously for schema lookup
+                        let mut inferred_types = Vec::new();
+                        
+                        for (i, col_name) in response.columns.iter().enumerate() {
+                            let inferred_type = {
                                 // First priority: Check if this column has an explicit cast
                                 if let Some(cast_type) = cast_info.get(&i) {
-                                    return Self::cast_type_to_oid(cast_type);
+                                    Self::cast_type_to_oid(cast_type)
                                 }
-                                
                                 // For parameter columns (NULL from SELECT $1), try to match with parameters
-                                if col_name == "NULL" || col_name == "?column?" {
+                                else if col_name == "NULL" || col_name == "?column?" {
                                     // For queries like SELECT $1, $2, the columns correspond to parameters
                                     if is_simple_param_select {
                                         // Count which parameter this column represents
@@ -667,86 +668,166 @@ impl ExtendedQueryHandler {
                                             let param_type = actual_param_types[i];
                                             if param_type != 0 && param_type != PgType::Text.to_oid() {
                                                 info!("Using actual param type {} for column {}", param_type, i);
-                                                return param_type;
+                                                param_type
+                                            } else if !param_types.is_empty() && i < param_types.len() {
+                                                let param_type = param_types[i];
+                                                if param_type != 0 {
+                                                    info!("Using provided param type {} for column {}", param_type, i);
+                                                    param_type
+                                                } else {
+                                                    info!("No specific param type for column {}, defaulting to TEXT", i);
+                                                    PgType::Text.to_oid()
+                                                }
+                                            } else {
+                                                info!("No specific param type for column {}, defaulting to TEXT", i);
+                                                PgType::Text.to_oid()
                                             }
-                                        }
-                                        
-                                        // If we have param_types provided, use them
-                                        if !param_types.is_empty() && i < param_types.len() {
+                                        } else if !param_types.is_empty() && i < param_types.len() {
                                             let param_type = param_types[i];
                                             if param_type != 0 {
                                                 info!("Using provided param type {} for column {}", param_type, i);
-                                                return param_type;
+                                                param_type
+                                            } else {
+                                                info!("No specific param type for column {}, defaulting to TEXT", i);
+                                                PgType::Text.to_oid()
                                             }
+                                        } else {
+                                            info!("No specific param type for column {}, defaulting to TEXT", i);
+                                            PgType::Text.to_oid()
                                         }
-                                        
-                                        // Default to TEXT for now - will be handled during execution
-                                        info!("No specific param type for column {}, defaulting to TEXT", i);
-                                        return PgType::Text.to_oid();
+                                    } else {
+                                        // For other queries with NULL columns, default to TEXT
+                                        PgType::Text.to_oid()
                                     }
-                                    
-                                    // For other queries with NULL columns, default to TEXT
-                                    return PgType::Text.to_oid();
                                 }
-                                
                                 // Second priority: Check translation metadata for type hints
-                                if let Some(hint) = translation_metadata.get_hint(col_name) {
+                                else if let Some(hint) = translation_metadata.get_hint(col_name) {
                                     if let Some(suggested_type) = &hint.suggested_type {
                                         info!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
-                                        return suggested_type.to_oid();
+                                        suggested_type.to_oid()
+                                    } else {
+                                        info!("No type hint found in translation metadata for '{}'", col_name);
+                                        // Continue to next priority
+                                        0 // Will be handled below
                                     }
                                 } else {
                                     info!("No type hint found in translation metadata for '{}'", col_name);
+                                    0 // Will be handled below
                                 }
-                                
-                                // Third priority: Check schema table for stored type mappings
-                                if let Some(pg_type) = schema_types.get(col_name) {
-                                    // Use basic type OID mapping (enum checking would require async which isn't allowed in closure)
-                                    return crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                            };
+                            
+                            // If we haven't found a type yet, continue with other priorities
+                            if inferred_type != 0 {
+                                inferred_types.push(inferred_type);
+                                continue;
+                            }
+                            
+                            // Third priority: Check schema table for stored type mappings
+                            if let Some(pg_type) = schema_types.get(col_name) {
+                                // Use basic type OID mapping (enum checking would require async which isn't allowed in closure)
+                                let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                inferred_types.push(type_oid);
+                                continue;
+                            }
+                            
+                            // Third priority: Check for aggregate functions
+                            let col_lower = col_name.to_lowercase();
+                            if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&cleaned_query)) {
+                                info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
+                                inferred_types.push(oid);
+                                continue;
+                            }
+                            
+                            // Check if this looks like a numeric result column based on the translated query
+                            // For arithmetic operations that result in decimal functions, the cleaned_query
+                            // might contain patterns like "decimal_mul(...) AS col_name"
+                            if cleaned_query.contains("decimal_mul") || cleaned_query.contains("decimal_add") || 
+                               cleaned_query.contains("decimal_sub") || cleaned_query.contains("decimal_div") {
+                                // This query uses decimal arithmetic functions
+                                // Check if this column might be the result
+                                if col_name.contains("total") || col_name.contains("sum") || 
+                                   col_name.contains("price") || col_name.contains("amount") ||
+                                   col_name == "?column?" {
+                                    info!("Column '{}' appears to be result of decimal arithmetic", col_name);
+                                    inferred_types.push(PgType::Numeric.to_oid());
+                                    continue;
                                 }
-                                
-                                // Third priority: Check for aggregate functions
-                                let col_lower = col_name.to_lowercase();
-                                if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&cleaned_query)) {
-                                    info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
-                                    return oid;
+                            }
+                            
+                            // Fourth priority: For expressions, try to infer from SQLite's type affinity
+                            // SQLite will tell us the actual type of the expression result
+                            
+                            // Last resort: Try to infer from value if we have data
+                            if !response.rows.is_empty() {
+                                if let Some(value) = response.rows[0].get(i) {
+                                    let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
+                                    let inferred_type = crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref());
+                                    info!("Column '{}': inferring type from value '{}' -> type OID {}", col_name, value_str, inferred_type);
+                                    inferred_types.push(inferred_type);
+                                } else {
+                                    info!("Column '{}': NULL value, defaulting to text", col_name);
+                                    inferred_types.push(PgType::Text.to_oid()); // text for NULL
                                 }
+                            } else {
+                                // **THIS IS THE KEY FIX**: Instead of defaulting to TEXT, try schema lookup
+                                info!("Column '{}': no data rows, attempting schema-based type inference", col_name);
                                 
-                                // Check if this looks like a numeric result column based on the translated query
-                                // For arithmetic operations that result in decimal functions, the cleaned_query
-                                // might contain patterns like "decimal_mul(...) AS col_name"
-                                if cleaned_query.contains("decimal_mul") || cleaned_query.contains("decimal_add") || 
-                                   cleaned_query.contains("decimal_sub") || cleaned_query.contains("decimal_div") {
-                                    // This query uses decimal arithmetic functions
-                                    // Check if this column might be the result
-                                    if col_name.contains("total") || col_name.contains("sum") || 
-                                       col_name.contains("price") || col_name.contains("amount") ||
-                                       col_name == "?column?" {
-                                        info!("Column '{}' appears to be result of decimal arithmetic", col_name);
-                                        return PgType::Numeric.to_oid();
-                                    }
-                                }
-                                
-                                // Fourth priority: For expressions, try to infer from SQLite's type affinity
-                                // SQLite will tell us the actual type of the expression result
-                                
-                                // Last resort: Try to infer from value if we have data
-                                if !response.rows.is_empty() {
-                                    if let Some(value) = response.rows[0].get(i) {
-                                        let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
-                                        let inferred_type = crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref());
-                                        info!("Column '{}': inferring type from value '{}' -> type OID {}", col_name, value_str, inferred_type);
-                                        inferred_type
-                                    } else {
-                                        info!("Column '{}': NULL value, defaulting to text", col_name);
-                                        PgType::Text.to_oid() // text for NULL
+                                // Try to extract source table.column from the query
+                                if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&cleaned_query, col_name) {
+                                    info!("Resolved alias '{}' -> table '{}', column '{}'", col_name, source_table, source_col);
+                                    
+                                    // Use async schema lookup
+                                    match db.get_schema_type(&source_table, &source_col).await {
+                                        Ok(Some(pg_type_str)) => {
+                                            let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                            info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {})", 
+                                                  col_name, source_table, source_col, pg_type_str, type_oid);
+                                            inferred_types.push(type_oid);
+                                        }
+                                        Ok(None) => {
+                                            info!("Column '{}': no schema type found for '{}.{}', defaulting to text", 
+                                                  col_name, source_table, source_col);
+                                            inferred_types.push(PgType::Text.to_oid());
+                                        }
+                                        Err(e) => {
+                                            info!("Column '{}': schema lookup error for '{}.{}': {}, defaulting to text", 
+                                                  col_name, source_table, source_col, e);
+                                            inferred_types.push(PgType::Text.to_oid());
+                                        }
                                     }
                                 } else {
-                                    info!("Column '{}': no data rows, defaulting to text", col_name);
-                                    PgType::Text.to_oid() // text default when no data
+                                    // Could not extract source table.column, try to infer from query structure
+                                    info!("Column '{}': could not extract source table.column, analyzing query structure", col_name);
+                                    
+                                    // For simple SELECT queries, try to extract table from FROM clause and assume column exists
+                                    if let Some(table_name) = extract_table_name_from_select(&cleaned_query) {
+                                        info!("Column '{}': extracted table '{}' from FROM clause, assuming column exists", col_name, table_name);
+                                        
+                                        match db.get_schema_type(&table_name, col_name).await {
+                                            Ok(Some(pg_type_str)) => {
+                                                let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                                info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {})", 
+                                                      col_name, table_name, col_name, pg_type_str, type_oid);
+                                                inferred_types.push(type_oid);
+                                            }
+                                            Ok(None) => {
+                                                info!("Column '{}': no schema type found for '{}.{}', defaulting to text", 
+                                                      col_name, table_name, col_name);
+                                                inferred_types.push(PgType::Text.to_oid());
+                                            }
+                                            Err(e) => {
+                                                info!("Column '{}': schema lookup error for '{}.{}': {}, defaulting to text", 
+                                                      col_name, table_name, col_name, e);
+                                                inferred_types.push(PgType::Text.to_oid());
+                                            }
+                                        }
+                                    } else {
+                                        info!("Column '{}': could not extract table name from query, defaulting to text", col_name);
+                                        inferred_types.push(PgType::Text.to_oid());
+                                    }
                                 }
-                            })
-                            .collect::<Vec<_>>();
+                            }
+                        }
                         
                         let fields = response.columns.iter()
                             .enumerate()

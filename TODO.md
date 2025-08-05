@@ -837,13 +837,20 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Root Cause**: Cast translator ran before datetime translator, creating invalid `CAST(julianday(CAST(...) AS INTEGER)` syntax
   - [x] **Solution**: Modified datetime translator to skip translation for parameterized queries containing '$' or 'CAST'
   - [x] **Impact**: SQLAlchemy date functions now work correctly without SQL syntax errors
-- [x] **Column Alias Type Inference** - COMPLETED - Fixed wrong column types for aliased columns
+- [x] **Column Alias Type Inference** - COMPLETED (2025-08-05) - Fixed wrong column types for aliased columns
   - [x] **Bug Identified**: `SELECT users.id AS users_id, users.name AS users_name` returns users_id as TEXT(25) instead of INT4(23)
   - [x] **Root Cause**: Type inference defaulted to TEXT when no data rows available and didn't resolve aliases to source schema
   - [x] **Solution Implemented**: Added `extract_source_table_column_for_alias()` function to parse "table.column AS alias" patterns
   - [x] **Implementation**: Enhanced type inference to call `db.get_schema_type(table, column)` for resolved aliases
   - [x] **Testing**: Simple queries work correctly - `users_id` now returns INT4(23), `users_name` returns VARCHAR(1043)
-  - [ ] **Remaining Issue**: Multi-line SQLAlchemy queries still failing - pattern matching needs improvement for complex SELECT statements
+  - [x] **Multi-line Query Support**: Pattern matching works for complex SQLAlchemy SELECT statements
+- [x] **Schema-Based Type Inference for Empty Result Sets** - COMPLETED (2025-08-05) - Fixed TEXT defaulting issue
+  - [x] **Bug Identified**: All columns defaulted to TEXT (OID 25) when queries returned no data rows
+  - [x] **Root Cause**: Type inference fell back to TEXT instead of using schema information for empty results
+  - [x] **Solution Implemented**: Replaced synchronous `.map()` with async loop to enable schema lookups
+  - [x] **Two-Level Fallback**: First tries alias resolution, then extracts table from FROM clause for direct column lookup
+  - [x] **Schema Integration**: Uses `db.get_schema_type()` to fetch actual PostgreSQL types from __pgsqlite_schema
+  - [x] **Impact**: SQLAlchemy relationship loading and lazy queries now work with proper type information
 - [ ] **Transaction Resource Management** - Fix "cannot perform operation: another operation is in progress" errors
   - [ ] **Bug Analysis**: psycopg connection management issues in lazy loading scenarios
   - [ ] **Investigation Required**: Determine if this is connection pool exhaustion or connection state corruption

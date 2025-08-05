@@ -137,6 +137,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-08-05)
+- **Schema-Based Type Inference for Empty Result Sets**: Fixed columns defaulting to TEXT when no data rows
+  - All columns were incorrectly returning TEXT (OID 25) instead of proper PostgreSQL types
+  - Implemented async schema lookup when queries return no data rows
+  - Two-level fallback: alias resolution → table extraction from FROM clause
+  - Uses `db.get_schema_type()` to fetch actual types from __pgsqlite_schema
+  - Fixes SQLAlchemy lazy loading and relationship queries with proper type OIDs
 - **Column Alias Type Inference**: Fixed incorrect PostgreSQL type OIDs for aliased columns
   - `SELECT users.id AS users_id` now returns INT4 (23) instead of TEXT (25)
   - Implemented `extract_source_table_column_for_alias()` to parse `table.column AS alias` patterns
