@@ -821,7 +821,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **WAL Mode Benefits**: Each session can see committed data from other sessions properly
   - [x] **Test Execution**: All test suites stable with no migration conflicts
 
-### SQLAlchemy Compatibility Fixes - IN PROGRESS (2025-08-05)
+### SQLAlchemy Compatibility Fixes - MAJOR PROGRESS (2025-08-05)
 - [x] **AVG Aggregate Type Detection** - Fixed "Unknown PG numeric type: 25" errors for aggregate functions
   - [x] **Bug Identified**: AVG/MAX/MIN aggregate functions returned TEXT type OID (25) instead of NUMERIC (1700)
   - [x] **Root Cause**: Type inference didn't recognize aggregate function aliases like "avg_views" from query context
@@ -851,10 +851,18 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Two-Level Fallback**: First tries alias resolution, then extracts table from FROM clause for direct column lookup
   - [x] **Schema Integration**: Uses `db.get_schema_type()` to fetch actual PostgreSQL types from __pgsqlite_schema
   - [x] **Impact**: SQLAlchemy relationship loading and lazy queries now work with proper type information
+- [x] **DateTime Conversion for psycopg3 Text Mode** - COMPLETED (2025-08-05) - Fixed timestamp parsing errors
+  - [x] **Bug Identified**: psycopg3 in text mode received raw INTEGER microseconds like '1754404262713579' instead of formatted timestamps
+  - [x] **Root Cause**: DateTime conversion was only working for basic SELECT patterns, missing table-prefixed aliases and wildcard queries
+  - [x] **Table-Prefixed Aliases**: Fixed `SELECT table.created_at AS alias` patterns by updating SIMPLE_SELECT_REGEX to support table prefixes
+  - [x] **Wildcard Pattern Fix**: Implemented session-based schema lookup for `SELECT table.*` queries using proper session connections
+  - [x] **All Query Patterns Working**: `SELECT *`, `SELECT col`, `SELECT table.*`, and `SELECT table.col AS alias` now properly convert timestamps
+  - [x] **Session Connection Fix**: Replaced failing `get_schema_type()` with session-aware schema lookup to handle connection-per-session architecture
+  - [x] **Impact**: SQLAlchemy datetime queries now work correctly with psycopg3 text mode, preventing "timestamp too large" parsing errors
 - [ ] **Transaction Resource Management** - Fix "cannot perform operation: another operation is in progress" errors
   - [ ] **Bug Analysis**: psycopg connection management issues in lazy loading scenarios
   - [ ] **Investigation Required**: Determine if this is connection pool exhaustion or connection state corruption
-  - [ ] **Testing Status**: 5/8 SQLAlchemy tests passing, remaining failures due to type inference and transaction issues
+  - [ ] **Testing Status**: 4/8 SQLAlchemy tests passing, remaining failures due to complex INSERT statements and transaction management issues
 - [x] **Code Quality Improvements** - Adhered to CLAUDE.md principles
   - [x] **Removed Column Name-Based Type Inference**: Eliminated code that used column names like "price", "amount" to infer NUMERIC types
   - [x] **Query Context Parsing**: Used proper SQL parsing to extract source columns for aliases instead of name patterns

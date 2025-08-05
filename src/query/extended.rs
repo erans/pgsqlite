@@ -629,8 +629,9 @@ impl ExtendedQueryHandler {
                                         }
                                     } else {
                                         // Try to find source table and column if this is an alias
+                                        info!("Attempting to extract source for alias: '{}' from query: {}", col_name, cleaned_query);
                                         if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&cleaned_query, col_name) {
-                                            info!("Trying to resolve alias '{}' -> table '{}', column '{}'", col_name, source_table, source_col);
+                                            info!("Successfully resolved alias '{}' -> table '{}', column '{}'", col_name, source_table, source_col);
                                             if let Ok(Some(pg_type)) = db.get_schema_type(&source_table, &source_col).await {
                                                 info!("Found schema type for alias '{}' -> source column '{}.{}': {}", col_name, source_table, source_col, pg_type);
                                                 schema_types.insert(col_name.clone(), pg_type);
@@ -638,7 +639,7 @@ impl ExtendedQueryHandler {
                                                 info!("No schema type found for '{}.{}'", source_table, source_col);
                                             }
                                         } else {
-                                            info!("Could not extract source table/column for alias '{}'", col_name);
+                                            info!("Could not extract source table/column for alias '{}' from query", col_name);
                                         }
                                     }
                                 }
@@ -901,38 +902,55 @@ impl ExtendedQueryHandler {
     
     /// Try to extract the source table and column for an alias in a simple SELECT
     /// e.g., "SELECT test_users.id AS users_id" -> returns ("test_users", "id")
+    /// e.g., "SELECT id AS event_id FROM test_events" -> returns ("test_events", "id")
     fn extract_source_table_column_for_alias(query: &str, alias: &str) -> Option<(String, String)> {
         // This is a simple heuristic for the common case
         // Look for "SELECT <expr> as <alias>" pattern
+        info!("extract_source_table_column_for_alias: Looking for alias '{}' in query", alias);
         let query_upper = query.to_uppercase();
         let alias_upper = alias.to_uppercase();
         
         // Find "AS <alias>" in the query
-        let as_pattern = format!(" AS {alias_upper}");
+        let as_pattern = format!(" AS {}", alias_upper);
+        info!("Looking for pattern: '{}'", as_pattern);
         if let Some(as_pos) = query_upper.find(&as_pattern) {
+            info!("Found AS pattern at position {}", as_pos);
             // Work backwards to find the start of the expression
             let before_as = &query[..as_pos];
             
-            // For simple cases like "SELECT table.column AS alias"
-            // Find the last word before AS
-            let words: Vec<&str> = before_as.split_whitespace().collect();
-            if let Some(last_word) = words.last() {
-                // Check if it contains a dot (table.column)
-                if let Some(dot_pos) = last_word.rfind('.') {
-                    let table_part = &last_word[..dot_pos];
-                    let column_part = &last_word[dot_pos + 1..];
-                    
-                    // Validate both parts are simple identifiers
-                    if table_part.chars().all(|c| c.is_alphanumeric() || c == '_') &&
-                       column_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                        return Some((table_part.to_string(), column_part.to_string()));
-                    }
+            // Find the column expression before AS
+            // Handle both "table.column" and "column" patterns
+            
+            // Get the last token/word before AS (handling commas and spaces)
+            let trimmed = before_as.trim_end();
+            
+            // Find where this expression starts (after SELECT or comma)
+            let mut expr_start = 0;
+            for (i, ch) in trimmed.char_indices().rev() {
+                if ch == ',' || (i > 6 && &trimmed[i-6..=i].to_uppercase() == "SELECT ") {
+                    expr_start = if ch == ',' { i + 1 } else { i + 1 };
+                    break;
                 }
-                // For simple column references without table prefix
-                else if last_word.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    // We'll need to guess the table from the FROM clause
-                    // For now, return None since we can't determine the table
-                    return None;
+            }
+            
+            let expr = trimmed[expr_start..].trim();
+            
+            // Check if it contains a dot (table.column)
+            if let Some(dot_pos) = expr.rfind('.') {
+                let table_part = expr[..dot_pos].trim();
+                let column_part = expr[dot_pos + 1..].trim();
+                
+                // Validate both parts are simple identifiers
+                if table_part.chars().all(|c| c.is_alphanumeric() || c == '_') &&
+                   column_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    return Some((table_part.to_string(), column_part.to_string()));
+                }
+            }
+            // For simple column references without table prefix
+            else if expr.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // Try to extract table from FROM clause
+                if let Some(table_name) = extract_table_name_from_select(query) {
+                    return Some((table_name, expr.to_string()));
                 }
             }
         }
@@ -1138,6 +1156,7 @@ impl ExtendedQueryHandler {
            !query.contains("EXCEPT") &&
            (result_formats.is_empty() || result_formats[0] == 0) {
             
+            info!("🚀 Ultra-fast path triggered for query: {}", query);
             debug!("Using fast path for simple SELECT query: {}", query);
             
             // Get cached connection first
@@ -1148,6 +1167,80 @@ impl ExtendedQueryHandler {
                 translated
             } else {
                 &query
+            };
+            
+            // First, infer field types BEFORE executing the query
+            // This is crucial for proper datetime conversion
+            let field_types: Vec<i32> = {
+                let statements = session.prepared_statements.read().await;
+                if let Some(stmt) = statements.get(&statement_name) {
+                    if !stmt.field_descriptions.is_empty() {
+                        // Use existing field descriptions if available
+                        stmt.field_descriptions.iter().map(|fd| fd.type_oid).collect()
+                    } else {
+                        // Need to infer types from the query structure
+                        drop(statements);
+                        
+                        // Parse the query to get column names and their aliases
+                        let mut inferred_types = Vec::new();
+                        let table_name = extract_table_name_from_select(&query);
+                        
+                        // Extract column names from SELECT clause
+                        if let Some(select_end) = query.to_uppercase().find(" FROM ") {
+                            let select_part = &query[6..select_end]; // Skip "SELECT"
+                            let columns: Vec<&str> = select_part.split(',').map(|s| s.trim()).collect();
+                            
+                            for col_expr in columns {
+                                let mut found_type = false;
+                                
+                                // Extract the alias name (after AS) if present
+                                let col_name = if let Some(as_pos) = col_expr.to_uppercase().rfind(" AS ") {
+                                    col_expr[as_pos + 4..].trim()
+                                } else {
+                                    // No alias, use the expression itself
+                                    col_expr
+                                };
+                                
+                                // Try to extract source table.column from the expression
+                                if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&query, col_name) {
+                                    if let Ok(Some(pg_type_str)) = db.get_schema_type(&source_table, &source_col).await {
+                                        let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                        info!("Ultra-fast path: Pre-execution type inference for '{}' from '{}.{}' -> {} (OID {})", 
+                                              col_name, source_table, source_col, pg_type_str, type_oid);
+                                        inferred_types.push(type_oid);
+                                        found_type = true;
+                                    }
+                                } else if let Some(ref table) = table_name {
+                                    // Try direct column name lookup
+                                    let base_col = if col_expr.contains('.') {
+                                        // Extract column name from table.column
+                                        col_expr.split('.').last().unwrap_or(col_expr).trim()
+                                    } else {
+                                        col_expr
+                                    };
+                                    
+                                    if let Ok(Some(pg_type_str)) = db.get_schema_type(table, base_col).await {
+                                        let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                        info!("Ultra-fast path: Pre-execution type inference for '{}' from table '{}' -> {} (OID {})", 
+                                              col_name, table, pg_type_str, type_oid);
+                                        inferred_types.push(type_oid);
+                                        found_type = true;
+                                    }
+                                }
+                                
+                                if !found_type {
+                                    // Default to TEXT if we can't resolve
+                                    info!("Ultra-fast path: Could not infer type for '{}', defaulting to TEXT", col_name);
+                                    inferred_types.push(PgType::Text.to_oid());
+                                }
+                            }
+                        }
+                        
+                        inferred_types
+                    }
+                } else {
+                    Vec::new()
+                }
             };
             
             match db.execute_with_params(query_to_execute, &bound_values, &session.id).await {
@@ -1163,13 +1256,14 @@ impl ExtendedQueryHandler {
                         };
                         
                         if send_row_desc {
+                            // Use the pre-inferred types
                             let fields: Vec<FieldDescription> = response.columns.iter()
                                 .enumerate()
                                 .map(|(i, name)| FieldDescription {
                                     name: name.clone(),
                                     table_oid: 0,
                                     column_id: (i + 1) as i16,
-                                    type_oid: PgType::Text.to_oid(),
+                                    type_oid: field_types.get(i).copied().unwrap_or_else(|| PgType::Text.to_oid()),
                                     type_size: -1,
                                     type_modifier: -1,
                                     format: 0,
@@ -1181,8 +1275,22 @@ impl ExtendedQueryHandler {
                         
                         // Send data rows
                         let row_count = response.rows.len();
+                        
+                        // Default to text format for ultra-fast path
+                        let result_formats = vec![0i16; response.columns.len()];
+                        
                         for row in response.rows {
-                            framed.send(BackendMessage::DataRow(row)).await
+                            // Convert row data to handle datetime types properly
+                            info!("Ultra-fast path: encoding row with {} columns", row.len());
+                            for (i, field_type) in field_types.iter().enumerate() {
+                                if let Some(Some(value)) = row.get(i) {
+                                    if let Ok(s) = std::str::from_utf8(value) {
+                                        info!("  Column {}: type OID {}, value: '{}'", i, field_type, s);
+                                    }
+                                }
+                            }
+                            let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
+                            framed.send(BackendMessage::DataRow(encoded_row)).await
                                 .map_err(PgSqliteError::Io)?;
                         }
                         
@@ -3151,20 +3259,58 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            // Timestamp types - convert from INTEGER microseconds to formatted string
-                            t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                            // Date type - convert from INTEGER days to formatted string
+                            t if t == PgType::Date.to_oid() => {
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    // Check if this is already an integer (microseconds since epoch)
-                                    if let Ok(micros) = s.parse::<i64>() {
-                                        // Convert microseconds to formatted timestamp
-                                        use crate::types::datetime_utils::format_microseconds_to_timestamp;
-                                        let formatted = format_microseconds_to_timestamp(micros);
+                                    // Check if this is an integer (days since 1970-01-01)
+                                    if let Ok(days) = s.parse::<i64>() {
+                                        // Convert days to formatted date
+                                        use crate::types::datetime_utils::format_days_to_date;
+                                        let formatted = format_days_to_date(days);
                                         Some(formatted.into_bytes())
                                     } else {
                                         // Already formatted or invalid, keep as-is
                                         Some(bytes.clone())
                                     }
                                 } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            // Time type - convert from INTEGER microseconds to formatted string
+                            t if t == PgType::Time.to_oid() || t == PgType::Timetz.to_oid() => {
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    // Check if this is an integer (microseconds since midnight)
+                                    if let Ok(micros) = s.parse::<i64>() {
+                                        // Convert microseconds to formatted time
+                                        use crate::types::datetime_utils::format_microseconds_to_time;
+                                        let formatted = format_microseconds_to_time(micros);
+                                        Some(formatted.into_bytes())
+                                    } else {
+                                        // Already formatted or invalid, keep as-is
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            // Timestamp types - convert from INTEGER microseconds to formatted string
+                            t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    debug!("Processing TIMESTAMP value: '{}'", s);
+                                    // Check if this is already an integer (microseconds since epoch)
+                                    if let Ok(micros) = s.parse::<i64>() {
+                                        // Convert microseconds to formatted timestamp
+                                        use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                        let formatted = format_microseconds_to_timestamp(micros);
+                                        debug!("Converted TIMESTAMP: {} -> {}", micros, formatted);
+                                        Some(formatted.into_bytes())
+                                    } else {
+                                        debug!("TIMESTAMP value is not an integer, keeping as-is: '{}'", s);
+                                        // Already formatted or invalid, keep as-is
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    debug!("TIMESTAMP value is not UTF-8, keeping as-is");
                                     Some(bytes.clone())
                                 }
                             }
@@ -3468,19 +3614,45 @@ impl ExtendedQueryHandler {
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name).unwrap();
             let field_types: Vec<i32> = if stmt.field_descriptions.is_empty() {
-                // Try to infer types from data
-                response.columns.iter()
-                    .enumerate()
-                    .map(|(i, col_name)| {
-                        // Check for aggregate functions first
-                        let col_lower = col_name.to_lowercase();
-                        
-                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&portal.query)) {
-                            info!("Column '{}' is aggregate function with type OID {} (field_types)", col_name, oid);
-                            return oid;
+                // Try to infer types - we need async for schema lookup, so collect field descriptions first
+                let mut field_types = Vec::new();
+                
+                // Get table name for schema lookup
+                let table_name = extract_table_name_from_select(&portal.query);
+                
+                for (i, col_name) in response.columns.iter().enumerate() {
+                    // Check for aggregate functions first
+                    let col_lower = col_name.to_lowercase();
+                    
+                    if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&portal.query)) {
+                        info!("Column '{}' is aggregate function with type OID {} (field_types)", col_name, oid);
+                        field_types.push(oid);
+                        continue;
+                    }
+                    
+                    // Try schema-based type inference ALWAYS (not just for empty result sets)
+                    // This is crucial for datetime types which are stored as INTEGER in SQLite
+                    let mut found_type = false;
+                    if let Some(ref table) = table_name {
+                        // Try to extract source table.column from alias
+                        if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&portal.query, col_name) {
+                            if let Ok(Some(pg_type_str)) = db.get_schema_type(&source_table, &source_col).await {
+                                let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {}) in execute_select", 
+                                      col_name, source_table, source_col, pg_type_str, type_oid);
+                                field_types.push(type_oid);
+                                found_type = true;
+                            }
+                        } else if let Ok(Some(pg_type_str)) = db.get_schema_type(table, col_name).await {
+                            let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                            info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {}) in execute_select", 
+                                  col_name, table, col_name, pg_type_str, type_oid);
+                            field_types.push(type_oid);
+                            found_type = true;
                         }
-                        
-                        
+                    }
+                    
+                    if !found_type {
                         // Try to get type from value
                         let type_oid = if !response.rows.is_empty() {
                             if let Some(value) = response.rows[0].get(i) {
@@ -3493,9 +3665,10 @@ impl ExtendedQueryHandler {
                         };
                         
                         info!("Column '{}' inferred as type OID {} (field_types)", col_name, type_oid);
-                        type_oid
-                    })
-                    .collect::<Vec<_>>()
+                        field_types.push(type_oid);
+                    }
+                }
+                field_types
             } else {
                 stmt.field_descriptions.iter().map(|fd| fd.type_oid).collect()
             };

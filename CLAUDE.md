@@ -160,6 +160,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - AVG/SUM/COUNT on DECIMAL columns now return NUMERIC (1700) instead of TEXT (25)
   - Added query context to `get_aggregate_return_type_with_query()` for better type detection
   - Improved SQLAlchemy compatibility with aggregate functions on numeric columns
+- **DateTime Conversion for psycopg3 Text Mode**: Fixed timestamp parsing errors with comprehensive query pattern support
+  - psycopg3 text mode was receiving raw INTEGER microseconds like '1754404262713579' instead of formatted timestamps
+  - Fixed table-prefixed aliases (`SELECT table.created_at AS alias`) by updating SIMPLE_SELECT_REGEX pattern
+  - Fixed wildcard patterns (`SELECT table.*`) with session-based schema lookup for connection-per-session architecture
+  - All query patterns now work: `SELECT *`, `SELECT col`, `SELECT table.*`, `SELECT table.col AS alias`
+  - Prevents "timestamp too large (after year 10K)" errors in SQLAlchemy datetime queries
 
 ### Previously Fixed (2025-08-04)
 - **Binary Protocol Support for psycopg3**: Implemented core binary format encoders

@@ -249,7 +249,6 @@ impl QueryExecutor {
         }
         // Ultra-fast path: Skip all translation if query is simple enough
         if crate::query::simple_query_detector::is_ultra_simple_query(query) {
-            // debug!("Using ultra-fast path for query: {}", query);
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
@@ -397,7 +396,10 @@ impl QueryExecutor {
                                         else if let Some(dt_type) = datetime_columns.get(col_name)
                                             .or_else(|| {
                                                 // Check if this is an alias mapped to a real column
+                                                debug!("Checking datetime for '{}', mappings: {:?}, datetime_columns: {:?}", 
+                                                      col_name, column_mappings, datetime_columns);
                                                 if let Some(real_column) = column_mappings.get(col_name) {
+                                                    debug!("Found mapping '{}' -> '{}'", col_name, real_column);
                                                     datetime_columns.get(real_column)
                                                 } else {
                                                     None
@@ -773,6 +775,7 @@ impl QueryExecutor {
         debug!("Query type detected: {:?} for query: {}", query_type, query_to_execute);
         match query_type {
             QueryType::Select => {
+                // debug!("Detected SELECT, calling execute_select for query: {}", query_to_execute);
                 debug!("Calling execute_select for query: {}", query_to_execute);
                 Self::execute_select(framed, db, session, query_to_execute, &translation_metadata, query_router).await
             },
@@ -808,6 +811,7 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        // debug!("execute_select (non-ultra-simple) called with query: {}", query);
         // SQLAlchemy manages transactions explicitly - don't start implicit transactions
         // debug!("=== EXECUTE_SELECT CALLED with query: {}", query);
         
@@ -852,7 +856,17 @@ impl QueryExecutor {
         
         // Extract table name from query to look up schema
         let table_name = extract_table_name_from_select(query);
+        // debug!("Non-ultra execute_select: table_name={:?}", table_name);
         // debug!("Table name extraction result: {:?} for query: {}", table_name, query);
+        
+        // Extract column mappings for aliased columns (e.g., "column AS alias")
+        let column_mappings = if let Some(ref table) = table_name {
+            let mappings = extract_column_mappings_from_query(query, table);
+            // debug!("Non-ultra execute_select: column_mappings={:?}", mappings);
+            mappings
+        } else {
+            std::collections::HashMap::new()
+        };
         
         // For JOIN queries, extract all tables and build column mappings
         // Optimized: check for JOIN without converting entire query to uppercase
@@ -1102,11 +1116,142 @@ impl QueryExecutor {
             .map_err(PgSqliteError::Io)?;
         
         
+        // Build datetime column info for conversion
+        let mut datetime_columns = std::collections::HashMap::new();
+        let mut column_types_map = std::collections::HashMap::new();
+        
+        if let Some(ref table) = table_name {
+            // First check aliased columns using column mappings
+            for (col_idx, col_name) in response.columns.iter().enumerate() {
+                // Check if this is an aliased column
+                if let Some(source_column) = column_mappings.get(col_name) {
+                    // Look up the source column type
+                    match db.get_schema_type(table, source_column).await {
+                        Ok(Some(pg_type)) => {
+                            column_types_map.insert(col_idx, pg_type.clone());
+                            
+                            // Check if it's a datetime type
+                            match pg_type.to_uppercase().as_str() {
+                                "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
+                                "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                    datetime_columns.insert(col_name.clone(), pg_type);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {
+                        }
+                    }
+                } else {
+                    // Check if this is a wildcard pattern (table.*)
+                    // If the query contains "table.*" and we have no explicit mappings, 
+                    // treat each column as mapping to itself
+                    let wildcard_pattern = format!("{}.*", table);
+                    if query.contains(&wildcard_pattern) && column_mappings.is_empty() {
+                        // For wildcard queries, map each column to itself
+                        // Use session connection to look up schema information
+                        match db.with_session_connection(&session.id, |conn| {
+                            let mut stmt = conn.prepare(
+                                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+                            )?;
+                            
+                            use rusqlite::OptionalExtension;
+                            let result = stmt.query_row([table, col_name], |row| {
+                                row.get::<_, String>(0)
+                            }).optional()?;
+                            
+                            Ok::<Option<String>, rusqlite::Error>(result)
+                        }).await {
+                            Ok(Some(pg_type)) => {
+                                column_types_map.insert(col_idx, pg_type.clone());
+                                
+                                // Check if it's a datetime type
+                                match pg_type.to_uppercase().as_str() {
+                                    "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
+                                    "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                        datetime_columns.insert(col_name.clone(), pg_type);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        // Try direct lookup for non-aliased columns
+                        if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                            column_types_map.insert(col_idx, pg_type.clone());
+                            
+                            // Check if it's a datetime type
+                            match pg_type.to_uppercase().as_str() {
+                                "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
+                                "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                    datetime_columns.insert(col_name.clone(), pg_type);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        
         // Convert array data before sending rows
         debug!("Converting array data for {} rows", response.rows.len());
         debug!("About to convert array data for {} rows", response.rows.len());
-        let converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
+        let mut converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
         debug!("Completed array data conversion");
+        
+        // Convert datetime data if needed
+        if !datetime_columns.is_empty() {
+            // debug!("Converting datetime values for {} columns", datetime_columns.len());
+            for row in &mut converted_rows {
+                for (col_idx, col_name) in response.columns.iter().enumerate() {
+                    if let Some(pg_type) = datetime_columns.get(col_name) {
+                        if let Some(Some(value_bytes)) = row.get_mut(col_idx) {
+                            // Apply datetime conversion
+                            match pg_type.to_uppercase().as_str() {
+                                "DATE" => {
+                                    if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                        if let Ok(days) = value_str.parse::<i32>() {
+                                            use crate::types::datetime_utils::format_days_to_date_buf;
+                                            let mut buf = vec![0u8; 32];
+                                            let len = format_days_to_date_buf(days, &mut buf);
+                                            buf.truncate(len);
+                                            *value_bytes = buf;
+                                        }
+                                    }
+                                }
+                                "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
+                                    if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                        if let Ok(micros) = value_str.parse::<i64>() {
+                                            use crate::types::datetime_utils::format_microseconds_to_time_buf;
+                                            let mut buf = vec![0u8; 32];
+                                            let len = format_microseconds_to_time_buf(micros, &mut buf);
+                                            buf.truncate(len);
+                                            *value_bytes = buf;
+                                        }
+                                    }
+                                }
+                                "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                    if let Ok(value_str) = std::str::from_utf8(value_bytes) {
+                                        if let Ok(micros) = value_str.parse::<i64>() {
+                                            // debug!("Converting timestamp {} for column '{}'", micros, col_name);
+                                            use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                            let mut buf = vec![0u8; 32];
+                                            let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                                            buf.truncate(len);
+                                            *value_bytes = buf;
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // Store row count before potential move
         let row_count = converted_rows.len();
@@ -2122,6 +2267,8 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
     use once_cell::sync::Lazy;
     use regex::Regex;
     
+    // debug!("extract_table_name_from_select called with query: {}", query);
+    
     static FROM_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
         Regex::new(r"(?i)\bFROM\s+([^\s,;()]+)").unwrap()
     });
@@ -2134,12 +2281,14 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
             let table_name = table_name.trim_matches('"').trim_matches('\'');
             
             if !table_name.is_empty() {
+                // debug!("extract_table_name_from_select: extracted table='{}'", table_name);
                 debug!("extract_table_name_from_select: query='{}' -> table='{}'", query, table_name);
                 return Some(table_name.to_string());
             }
         }
     }
     
+    // debug!("extract_table_name_from_select: failed to extract table name");
     debug!("extract_table_name_from_select: query='{}' -> None", query);
     None
 }
@@ -2151,25 +2300,74 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
     
     let mut mappings = HashMap::new();
     
-    // Match patterns like "table.column_name AS alias"
-    let re = Regex::new(&format!(
+    debug!("extract_column_mappings_from_query: query='{}', table='{}'", query, table);
+    
+    // First, try to match patterns like "table.column_name AS alias"
+    let table_pattern = Regex::new(&format!(
         r"(?i)\b{}\.(\w+)\s+AS\s+(\w+)",
         regex::escape(table)
-    )).unwrap_or_else(|_| {
-        // Fallback pattern - just match any alias pattern
-        Regex::new(r"(?i)\b(\w+)\s+AS\s+(\w+)").unwrap()
-    });
+    ));
     
-    for captures in re.captures_iter(query) {
-        if let (Some(source_col), Some(alias)) = (captures.get(1), captures.get(2)) {
-            let source_column = source_col.as_str().to_string();
-            let alias_name = alias.as_str().to_string();
-            
-            debug!("Column mapping: {} -> {}", alias_name, source_column);
-            mappings.insert(alias_name, source_column);
+    if let Ok(re) = table_pattern {
+        debug!("Table pattern regex created: {:?}", re.as_str());
+        let matches_found = re.captures_iter(query).count();
+        debug!("Table pattern matches found: {}", matches_found);
+        
+        for captures in re.captures_iter(query) {
+            if let (Some(source_col), Some(alias)) = (captures.get(1), captures.get(2)) {
+                let source_column = source_col.as_str().to_string();
+                let alias_name = alias.as_str().to_string();
+                
+                debug!("Column mapping (with table prefix): {} -> {}.{}", alias_name, table, source_column);
+                mappings.insert(alias_name, source_column);
+            }
+        }
+    } else {
+        debug!("Failed to create table pattern regex");
+    }
+    
+    // Also match simple patterns like "column_name AS alias" (without table prefix)
+    // This is common in queries like "SELECT id AS event_id, created_at AS event_created_at FROM events"
+    // BUT we need to be careful not to match the table name in "table.column AS alias" patterns
+    let simple_pattern = Regex::new(r"(?i)(?:^|,|\s)(\w+)\s+AS\s+(\w+)");
+    
+    if let Ok(re) = simple_pattern {
+        for captures in re.captures_iter(query) {
+            if let (Some(source_col), Some(alias)) = (captures.get(1), captures.get(2)) {
+                let source_column = source_col.as_str().to_string();
+                let alias_name = alias.as_str().to_string();
+                
+                // Only add if we haven't already found this alias with a table prefix
+                // (table-prefixed mappings are more specific and should take precedence)
+                if !mappings.contains_key(&alias_name) {
+                    // Check if this is actually a table name (if the character before it is a dot)
+                    // We need to look at the full match to see if there's a dot before
+                    let _full_match = captures.get(0).unwrap().as_str();
+                    // Skip if this looks like it's part of a table.column pattern
+                    // (i.e., the source_column is actually the table name)
+                    if !query.contains(&format!("{}.{}", source_column, alias_name)) &&
+                       !query.contains(&format!("{}.", source_column)) {
+                        debug!("Column mapping (simple alias): {} -> {}", alias_name, source_column);
+                        mappings.insert(alias_name, source_column);
+                    }
+                }
+            }
         }
     }
     
+    // Handle wildcard patterns like "table.*" 
+    // For these, we need to map each actual column back to itself for datetime conversion
+    let wildcard_pattern = Regex::new(&format!(r"(?i)\b{}\.\*", regex::escape(table)));
+    if let Ok(re) = wildcard_pattern {
+        if re.is_match(query) {
+            debug!("Detected wildcard pattern for table: {}", table);
+            // For wildcard patterns, we'll let the caller handle the actual column mapping
+            // by checking if the query contains "table.*" and then looking at actual column names
+            // This is handled in the execute_select function
+        }
+    }
+    
+    debug!("Final column mappings: {:?}", mappings);
     mappings
 }
 
