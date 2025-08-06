@@ -2414,14 +2414,40 @@ impl ExtendedQueryHandler {
                                 }
                             }
                             t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
-                                // timestamp/timestamptz - int8 microseconds since epoch
+                                // timestamp/timestamptz - int8 microseconds since PostgreSQL epoch (2000-01-01)
                                 if bytes.len() == 8 {
-                                    let micros = i64::from_be_bytes([
+                                    let pg_micros = i64::from_be_bytes([
                                         bytes[0], bytes[1], bytes[2], bytes[3],
                                         bytes[4], bytes[5], bytes[6], bytes[7]
                                     ]);
-                                    info!("Decoded binary timestamp parameter {}: {} microseconds", i + 1, micros);
-                                    micros.to_string()
+                                    
+                                    // Convert PostgreSQL microseconds to Unix microseconds
+                                    const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
+                                    let unix_micros = pg_micros + PG_EPOCH_OFFSET;
+                                    
+                                    info!("Decoded binary timestamp parameter {}: {} PG microseconds = {} Unix microseconds", 
+                                          i + 1, pg_micros, unix_micros);
+                                    
+                                    // Check if this is a VALUES clause that will be rewritten
+                                    if query.contains("FROM (VALUES") && query.contains("SELECT CAST(p0") {
+                                        // SQLAlchemy VALUES pattern - convert to formatted timestamp string
+                                        // Convert microseconds to NaiveDateTime
+                                        let seconds = unix_micros / 1_000_000;
+                                        let nanos = ((unix_micros % 1_000_000) * 1000) as u32;
+                                        
+                                        if let Some(dt) = chrono::DateTime::from_timestamp(seconds, nanos).map(|dt| dt.naive_utc()) {
+                                            // Format as ISO timestamp string for VALUES clause
+                                            let formatted = dt.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
+                                            info!("VALUES clause detected - formatting timestamp as: {}", formatted);
+                                            format!("'{}'", formatted)
+                                        } else {
+                                            // Fallback to raw microseconds if conversion fails
+                                            unix_micros.to_string()
+                                        }
+                                    } else {
+                                        // Normal query - use raw microseconds
+                                        unix_micros.to_string()
+                                    }
                                 } else {
                                     format!("X'{}'", hex::encode(bytes))
                                 }
@@ -2510,12 +2536,19 @@ impl ExtendedQueryHandler {
                                         }
                                     }
                                     t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
-                                        // TIMESTAMP types - convert to Unix timestamp
-                                        match crate::types::ValueConverter::convert_timestamp_to_unix(&s) {
-                                            Ok(unix_timestamp) => unix_timestamp,
-                                            Err(e) => {
-                                                debug!("Invalid TIMESTAMP parameter: {}", e);
-                                                return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {e}")));
+                                        // TIMESTAMP types - check if this is a VALUES clause that will be rewritten
+                                        // If so, keep as formatted string to avoid double conversion
+                                        if query.contains("FROM (VALUES") && query.contains("SELECT CAST(p0") {
+                                            // SQLAlchemy VALUES pattern - keep as formatted string
+                                            format!("'{}'", s.replace('\'', "''"))
+                                        } else {
+                                            // Normal query - convert to Unix timestamp
+                                            match crate::types::ValueConverter::convert_timestamp_to_unix(&s) {
+                                                Ok(unix_timestamp) => unix_timestamp,
+                                                Err(e) => {
+                                                    debug!("Invalid TIMESTAMP parameter: {}", e);
+                                                    return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {e}")));
+                                                }
                                             }
                                         }
                                     }
