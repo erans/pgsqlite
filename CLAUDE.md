@@ -137,16 +137,22 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-08-06)
+- **Transaction Isolation Bug in Schema Lookup**: Fixed SQLAlchemy failing to see schema within same transaction
+  - Root cause: `get_schema_type()` used separate connection that couldn't see uncommitted schema changes
+  - Created `get_schema_type_with_session()` that uses the session's connection for proper isolation
+  - Updated 20+ calls across extended.rs and executor.rs to use session-aware lookup
+  - Fixes SQLAlchemy CREATE TABLE followed by INSERT seeing wrong types in same transaction
+  - Timestamps now properly formatted as strings instead of raw microseconds
+- **Ultra-fast Path Parameter Cast Support**: Fixed queries with parameter casts bypassing optimizations
+  - Queries like `SELECT * FROM table WHERE id = $1::INTEGER` now use ultra-fast path
+  - Modified condition to only exclude non-parameter casts (e.g., `column::TEXT`)
+  - Parameter casts (`$1::TYPE`) are common in psycopg3 and now properly optimized
+  - Ensures timestamp conversion and other optimizations work with cast parameters
 - **psycopg3 Binary Parameter Conversion**: Fixed parameterized queries returning 0 rows
   - Added conversion of PostgreSQL binary format parameters to text format for SQLite
   - Handles INT2, INT4, INT8, FLOAT4, FLOAT8, BOOL, and TIMESTAMP binary formats
   - Converts PostgreSQL timestamp format (microseconds since 2000-01-01) to Unix epoch
   - Fixes issue where psycopg3 sends parameters in binary format even in text mode
-- **Timestamp Field Type Detection**: Partial fix for timestamp conversion
-  - Updated `try_execute_fast_path_with_params` to pass field types to `send_select_response`
-  - `send_select_response` now converts timestamps from microseconds to formatted strings
-  - Simple queries work correctly, complex SQLAlchemy queries still affected
-  - Known issue: Column cast detection incorrectly applies WHERE clause casts to SELECT columns
 
 ### Previously Fixed (2025-08-05)
 - **Schema-Based Type Inference for Empty Result Sets**: Fixed columns defaulting to TEXT when no data rows

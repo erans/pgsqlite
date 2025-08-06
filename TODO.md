@@ -821,7 +821,19 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **WAL Mode Benefits**: Each session can see committed data from other sessions properly
   - [x] **Test Execution**: All test suites stable with no migration conflicts
 
-### SQLAlchemy Compatibility Fixes - MAJOR PROGRESS (2025-08-05)
+### SQLAlchemy Compatibility Fixes - MAJOR PROGRESS (2025-08-06)
+- [x] **Transaction Isolation Bug Fix** - Fixed schema visibility in same transaction
+  - [x] **Bug Identified**: get_schema_type() used separate connection that couldn't see uncommitted schema entries
+  - [x] **Root Cause**: Schema lookups in same transaction couldn't see tables created but not yet committed
+  - [x] **Solution**: Created get_schema_type_with_session() that uses session's connection
+  - [x] **Implementation**: Updated 20 call sites across extended.rs and executor.rs to use session-aware version
+  - [x] **Impact**: Timestamps now properly detected and formatted instead of returned as raw microseconds
+- [x] **Ultra-fast Path Parameter Cast Support** - Fixed timestamp conversion bypass
+  - [x] **Bug Identified**: Queries with parameter casts like `$1::INTEGER` bypassed ultra-fast path
+  - [x] **Root Cause**: Ultra-fast path excluded all queries containing "::" operator
+  - [x] **Solution**: Modified condition to allow parameter casts while excluding non-parameter casts
+  - [x] **Implementation**: Uses regex to differentiate `$1::TYPE` from other cast operations
+  - [x] **Impact**: SQLAlchemy queries with parameter casts now get proper timestamp conversion
 - [x] **AVG Aggregate Type Detection** - Fixed "Unknown PG numeric type: 25" errors for aggregate functions
   - [x] **Bug Identified**: AVG/MAX/MIN aggregate functions returned TEXT type OID (25) instead of NUMERIC (1700)
   - [x] **Root Cause**: Type inference didn't recognize aggregate function aliases like "avg_views" from query context
