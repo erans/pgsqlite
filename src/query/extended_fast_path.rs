@@ -29,16 +29,12 @@ impl ExtendedFastPath {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        eprintln!("🔍 DEBUG: ExtendedFastPath::execute_with_params called for query: {}", query);
-        eprintln!("🔍 DEBUG:   bound_values.len(): {}, param_types: {:?}, original_types: {:?}", bound_values.len(), param_types, original_types);
         // Convert parameters to rusqlite values with caching, using original types for proper conversion
         let rusqlite_params = match Self::convert_parameters_cached(query, bound_values, param_formats, param_types, original_types) {
             Ok(params) => {
-                eprintln!("🔍 DEBUG: Fast path parameter conversion succeeded, {} params", params.len());
                 params
             },
-            Err(e) => {
-                eprintln!("🔍 DEBUG: Fast path parameter conversion FAILED: {}, falling back to normal path", e);
+            Err(_) => {
                 // Parameter conversion failed, fall back to normal path
                 return Ok(false); // Fall back to normal path
             }
@@ -57,15 +53,12 @@ impl ExtendedFastPath {
                 }
                 match Self::execute_select_with_params(framed, db, session, portal_name, query, rusqlite_params, result_formats).await {
                     Ok(()) => {
-                        eprintln!("🔍 DEBUG: Fast path SELECT succeeded");
                         Ok(true)
                     },
                     Err(e) => {
                         if e.to_string().contains("FastPathFallback") {
-                            eprintln!("🔍 DEBUG: Fast path SELECT requesting fallback");
                             Ok(false) // Fall back to normal path
                         } else {
-                            eprintln!("🔍 DEBUG: Fast path SELECT failed: {}, falling back", e);
                             Ok(false) // Fall back to normal path
                         }
                     }
@@ -74,15 +67,12 @@ impl ExtendedFastPath {
             QueryType::Insert | QueryType::Update | QueryType::Delete => {
                 match Self::execute_dml_with_params(framed, db, session, query, rusqlite_params, query_type).await {
                     Ok(()) => {
-                        eprintln!("🔍 DEBUG: Fast path DML succeeded");
                         Ok(true)
                     },
                     Err(e) => {
                         if e.to_string().contains("FastPathFallback") {
-                            eprintln!("🔍 DEBUG: Fast path DML requesting fallback");
                             Ok(false) // Fall back to normal path
                         } else {
-                            eprintln!("🔍 DEBUG: Fast path DML failed: {}, falling back", e);
                             Ok(false) // Fall back to normal path
                         }
                     }
@@ -568,15 +558,12 @@ impl ExtendedFastPath {
         // Use DbHandler's fast path method which has access to the connection
         let response = match db.try_execute_fast_path_with_params(query, &params, &session.id).await {
             Ok(Some(resp)) => {
-                eprintln!("🔍 DEBUG: DbHandler fast path succeeded for SELECT");
                 resp
             },
             Ok(None) => {
-                eprintln!("🔍 DEBUG: DbHandler fast path returned None for SELECT (not implemented), falling back");
                 return Err(PgSqliteError::Protocol("FastPathFallback".to_string()));
             },
             Err(e) => {
-                eprintln!("🔍 DEBUG: DbHandler fast path errored for SELECT: {}", e);
                 return Err(e);
             },
         };
@@ -671,15 +658,12 @@ impl ExtendedFastPath {
         // Use DbHandler's fast path method
         let response = match db.try_execute_fast_path_with_params(query, &params, &session.id).await {
             Ok(Some(resp)) => {
-                eprintln!("🔍 DEBUG: DbHandler fast path succeeded");
                 resp
             },
             Ok(None) => {
-                eprintln!("🔍 DEBUG: DbHandler fast path returned None (not implemented), falling back");
                 return Err(PgSqliteError::Protocol("FastPathFallback".to_string()));
             },
             Err(e) => {
-                eprintln!("🔍 DEBUG: DbHandler fast path errored: {}", e);
                 return Err(e);
             },
         };

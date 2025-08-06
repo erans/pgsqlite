@@ -851,14 +851,19 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Two-Level Fallback**: First tries alias resolution, then extracts table from FROM clause for direct column lookup
   - [x] **Schema Integration**: Uses `db.get_schema_type()` to fetch actual PostgreSQL types from __pgsqlite_schema
   - [x] **Impact**: SQLAlchemy relationship loading and lazy queries now work with proper type information
-- [x] **DateTime Conversion for psycopg3 Text Mode** - COMPLETED (2025-08-05) - Fixed timestamp parsing errors
+- [ ] **DateTime Conversion for psycopg3 Text Mode** - PARTIAL FIX (2025-08-06) - Working on timestamp parsing errors
   - [x] **Bug Identified**: psycopg3 in text mode received raw INTEGER microseconds like '1754404262713579' instead of formatted timestamps
-  - [x] **Root Cause**: DateTime conversion was only working for basic SELECT patterns, missing table-prefixed aliases and wildcard queries
-  - [x] **Table-Prefixed Aliases**: Fixed `SELECT table.created_at AS alias` patterns by updating SIMPLE_SELECT_REGEX to support table prefixes
-  - [x] **Wildcard Pattern Fix**: Implemented session-based schema lookup for `SELECT table.*` queries using proper session connections
-  - [x] **All Query Patterns Working**: `SELECT *`, `SELECT col`, `SELECT table.*`, and `SELECT table.col AS alias` now properly convert timestamps
-  - [x] **Session Connection Fix**: Replaced failing `get_schema_type()` with session-aware schema lookup to handle connection-per-session architecture
-  - [x] **Impact**: SQLAlchemy datetime queries now work correctly with psycopg3 text mode, preventing "timestamp too large" parsing errors
+  - [x] **Binary Parameter Fix**: Added conversion of PostgreSQL binary format parameters to text format in ultra-fast path
+  - [x] **Field Type Detection**: Updated `try_execute_fast_path_with_params` to pass field descriptions to `send_select_response`
+  - [x] **Timestamp Conversion Logic**: `send_select_response` now converts microseconds to formatted timestamps when proper types provided
+  - [ ] **Column Cast Detection Bug**: `detect_column_casts` incorrectly applies WHERE clause casts to SELECT columns
+    - [ ] Column index 2 (`created_at`) gets INTEGER type from WHERE clause `CAST($1 AS INTEGER)`
+    - [ ] Need to fix detection to only process SELECT clause, not WHERE/JOIN/ORDER BY
+  - [ ] **Schema Type Resolution**: `test_model.created_at` not resolving to TIMESTAMP type from schema
+    - [ ] Alias extraction for dotted notation needs improvement
+    - [ ] Schema lookup failing for timestamp columns
+  - [x] **Working Cases**: Simple queries without complex aliases work correctly
+  - [ ] **Impact**: SQLAlchemy still fails with complex queries due to incorrect type detection
 - [ ] **Transaction Resource Management** - Fix "cannot perform operation: another operation is in progress" errors
   - [ ] **Bug Analysis**: psycopg connection management issues in lazy loading scenarios
   - [ ] **Investigation Required**: Determine if this is connection pool exhaustion or connection state corruption

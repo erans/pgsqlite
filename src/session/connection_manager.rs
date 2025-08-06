@@ -185,15 +185,34 @@ impl ConnectionManager {
             // Lock the individual connection
             let conn = conn_arc.lock();
             
-            // Force this connection to read the latest WAL data
-            match conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_row| Ok(())) {
+            // Force this connection to end its current read transaction and start a new one
+            // This is necessary in WAL mode for the connection to see committed changes
+            // from other connections
+            
+            // First, try to end any active read transaction by executing a dummy query
+            // and ensuring it's fully consumed
+            let _ = conn.query_row("SELECT 1", [], |_row| Ok(()));
+            
+            // Then force a new transaction context by doing a no-op write transaction
+            // This ensures the connection releases its old snapshot and gets a new one
+            match conn.execute_batch("BEGIN IMMEDIATE; ROLLBACK;") {
                 Ok(_) => {
-                    refresh_count += 1;
-                    debug!("Refreshed WAL for session {}", session_id);
+                    // Now do the WAL checkpoint with TRUNCATE mode to force WAL to be fully applied
+                    // and reset the WAL file, ensuring all connections see the latest data
+                    match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_row| Ok(())) {
+                        Ok(_) => {
+                            refresh_count += 1;
+                            debug!("Refreshed WAL and transaction context for session {}", session_id);
+                        }
+                        Err(e) => {
+                            error_count += 1;
+                            debug!("Failed to checkpoint WAL for session {}: {}", session_id, e);
+                        }
+                    }
                 }
                 Err(e) => {
                     error_count += 1;
-                    debug!("Failed to refresh WAL for session {}: {}", session_id, e);
+                    debug!("Failed to refresh transaction context for session {}: {}", session_id, e);
                 }
             }
         }

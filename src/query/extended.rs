@@ -1110,7 +1110,6 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        eprintln!("🔍 DEBUG: Executing portal '{}' with max_rows: {}", portal, max_rows);
         
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
@@ -1127,13 +1126,8 @@ impl ExtendedQueryHandler {
              portal_obj.inferred_param_types.clone())
         };
         
-        eprintln!("🔍 DEBUG: Portal data: original_query='{}', translated_query={:?}, bound_values.len()={}", 
-               query, translated_query, bound_values.len());
-        
         // Use translated query if available, otherwise use original query
         let effective_query = translated_query.as_ref().unwrap_or(&query);
-        eprintln!("🔍 DEBUG: Fast path check conditions: !bound_values.is_empty()={}, effective_query.contains('$')={}", 
-               !bound_values.is_empty(), effective_query.contains('$'));
         
         // Get parameter types from the prepared statement
         let param_types = if let Some(inferred) = inferred_param_types {
@@ -1243,7 +1237,110 @@ impl ExtendedQueryHandler {
                 }
             };
             
-            match db.execute_with_params(query_to_execute, &bound_values, &session.id).await {
+            // Convert binary parameters to text format for SQLite
+            // SQLite doesn't understand PostgreSQL binary format
+            let converted_values: Vec<Option<Vec<u8>>> = bound_values.iter()
+                .enumerate()
+                .map(|(i, value)| {
+                    match value {
+                        None => None,
+                        Some(bytes) => {
+                            let format = param_formats.get(i).copied().unwrap_or(0);
+                            let param_type = param_types.get(i).copied().unwrap_or(0);
+                            
+                            if format == 1 {
+                                // Binary format - need to convert to text for SQLite
+                                match param_type {
+                                    t if t == PgType::Int2.to_oid() => {
+                                        if bytes.len() == 2 {
+                                            let val = i16::from_be_bytes([bytes[0], bytes[1]]);
+                                            Some(val.to_string().into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    t if t == PgType::Int4.to_oid() => {
+                                        if bytes.len() == 4 {
+                                            let val = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                                            Some(val.to_string().into_bytes())
+                                        } else if bytes.len() == 2 {
+                                            // INT2 sent as INT4
+                                            let val = i16::from_be_bytes([bytes[0], bytes[1]]);
+                                            Some(val.to_string().into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    t if t == PgType::Int8.to_oid() => {
+                                        if bytes.len() == 8 {
+                                            let val = i64::from_be_bytes([
+                                                bytes[0], bytes[1], bytes[2], bytes[3],
+                                                bytes[4], bytes[5], bytes[6], bytes[7]
+                                            ]);
+                                            Some(val.to_string().into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    t if t == PgType::Float4.to_oid() => {
+                                        if bytes.len() == 4 {
+                                            let val = f32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                                            Some(val.to_string().into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    t if t == PgType::Float8.to_oid() => {
+                                        if bytes.len() == 8 {
+                                            let val = f64::from_be_bytes([
+                                                bytes[0], bytes[1], bytes[2], bytes[3],
+                                                bytes[4], bytes[5], bytes[6], bytes[7]
+                                            ]);
+                                            Some(val.to_string().into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    t if t == PgType::Bool.to_oid() => {
+                                        if bytes.len() == 1 {
+                                            let val = if bytes[0] == 0 { "f" } else { "t" };
+                                            Some(val.as_bytes().to_vec())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
+                                        // PostgreSQL sends timestamps as int64 microseconds since 2000-01-01
+                                        if bytes.len() == 8 {
+                                            let pg_microseconds = i64::from_be_bytes([
+                                                bytes[0], bytes[1], bytes[2], bytes[3],
+                                                bytes[4], bytes[5], bytes[6], bytes[7]
+                                            ]);
+                                            // Convert from PostgreSQL epoch (2000-01-01) to Unix epoch (1970-01-01)
+                                            // Difference is 946684800 seconds = 946684800000000 microseconds
+                                            let unix_microseconds = pg_microseconds + 946_684_800_000_000;
+                                            // Store as microseconds for SQLite
+                                            Some(unix_microseconds.to_string().into_bytes())
+                                        } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    _ => {
+                                        // For other types or if we can't convert, keep as-is
+                                        // This might fail, but at least integers will work
+                                        Some(bytes.clone())
+                                    }
+                                }
+                            } else {
+                                // Text format - pass through as-is
+                                Some(bytes.clone())
+                            }
+                        }
+                    }
+                })
+                .collect();
+            
+            match db.execute_with_params(query_to_execute, &converted_values, &session.id).await {
                 Ok(response) => {
                         // Send RowDescription if needed
                         let send_row_desc = {
@@ -1281,11 +1378,15 @@ impl ExtendedQueryHandler {
                         
                         for row in response.rows {
                             // Convert row data to handle datetime types properly
-                            info!("Ultra-fast path: encoding row with {} columns", row.len());
                             for (i, field_type) in field_types.iter().enumerate() {
                                 if let Some(Some(value)) = row.get(i) {
                                     if let Ok(s) = std::str::from_utf8(value) {
-                                        info!("  Column {}: type OID {}, value: '{}'", i, field_type, s);
+                                        // Check if this is a timestamp value that needs conversion
+                                        if *field_type == PgType::Timestamp.to_oid() || *field_type == PgType::Timestamptz.to_oid() {
+                                            info!("  Column {}: TIMESTAMP type OID {}, raw value: '{}'", i, field_type, s);
+                                        } else if *field_type == PgType::Text.to_oid() && s.parse::<i64>().is_ok() {
+                                            info!("  Column {}: TEXT type with numeric value: '{}'", i, s);
+                                        }
                                     }
                                 }
                             }
@@ -1316,7 +1417,6 @@ impl ExtendedQueryHandler {
         // Try optimized extended fast path first for parameterized queries
         if !bound_values.is_empty() && effective_query.contains('$') {
             let query_type = super::extended_fast_path::QueryType::from_query(effective_query);
-            eprintln!("🔍 DEBUG: Fast path check: query_type={:?}, bound_values={}, has_$={}", query_type, bound_values.len(), effective_query.contains('$'));
             
             // Early check: Skip fast path for SELECT with binary results
             if matches!(query_type, super::extended_fast_path::QueryType::Select) 
@@ -1353,14 +1453,11 @@ impl ExtendedQueryHandler {
                         query_type,
                     ).await {
                         Ok(true) => {
-                            eprintln!("🔍 DEBUG: Fast path execution succeeded, returning");
                             return Ok(());
                         }, // Successfully executed via fast path
                         Ok(false) => {
-                            eprintln!("🔍 DEBUG: Fast path returned false, falling back to normal path");
                         }, // Fall back to normal path
                         Err(e) => {
-                            eprintln!("🔍 DEBUG: Extended fast path failed with error: {}, falling back to normal path", e);
                             warn!("Extended fast path failed with error: {}, falling back to normal path", e);
                             // Fall back to normal path on error
                         }
@@ -1394,7 +1491,6 @@ impl ExtendedQueryHandler {
 
         // Use translated query if available, otherwise use original
         let query_to_use = translated_query.as_ref().unwrap_or(&query);
-        eprintln!("🔍 DEBUG: Using normal path execution with query: {}", query_to_use);
         
         // Validate numeric constraints before parameter substitution
         let validation_error = if query_starts_with_ignore_case(query_to_use, "INSERT") {
@@ -1930,11 +2026,25 @@ impl ExtendedQueryHandler {
             }
         }
         
-        // Get result formats from portal
-        let result_formats = {
+        // Get result formats and statement name from portal
+        let (result_formats, statement_name) = {
             let portals = session.portals.read().await;
             let portal_obj = portals.get(portal).unwrap();
-            portal_obj.result_formats.clone()
+            (portal_obj.result_formats.clone(), portal_obj.statement_name.clone())
+        };
+        
+        // Get field descriptions from prepared statement if available
+        let field_types: Option<Vec<i32>> = {
+            let statements = session.prepared_statements.read().await;
+            if let Some(stmt) = statements.get(&statement_name) {
+                if !stmt.field_descriptions.is_empty() {
+                    Some(stmt.field_descriptions.iter().map(|fd| fd.type_oid).collect())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         };
         
         // Try fast path execution first
@@ -1949,8 +2059,8 @@ impl ExtendedQueryHandler {
                 };
                 framed.send(BackendMessage::CommandComplete { tag }).await?;
             } else {
-                // SELECT operation - send full response
-                Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                // SELECT operation - send full response with field types
+                Self::send_select_response(framed, response, max_rows, &result_formats, field_types.as_deref()).await?;
             }
             return Ok(Some(Ok(())));
         }
@@ -1967,8 +2077,8 @@ impl ExtendedQueryHandler {
                 };
                 framed.send(BackendMessage::CommandComplete { tag }).await?;
             } else {
-                // SELECT operation
-                Self::send_select_response(framed, response, max_rows, &result_formats).await?;
+                // SELECT operation - send full response with field types
+                Self::send_select_response(framed, response, max_rows, &result_formats, field_types.as_deref()).await?;
             }
             return Ok(Some(Ok(())));
         }
@@ -2062,6 +2172,7 @@ impl ExtendedQueryHandler {
         response: crate::session::db_handler::DbResponse,
         _max_rows: i32,
         result_formats: &[i16],
+        field_types: Option<&[i32]>,  // Optional field types
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -2080,11 +2191,17 @@ impl ExtendedQueryHandler {
                 0 // Default to text if not enough formats
             };
             
+            // Use provided type or default to TEXT
+            let type_oid = field_types
+                .and_then(|types| types.get(i))
+                .copied()
+                .unwrap_or(25); // Default to TEXT
+            
             field_descriptions.push(FieldDescription {
                 name: column_name.clone(),
                 table_oid: 0,
                 column_id: (i + 1) as i16,
-                type_oid: 25, // TEXT for now - could be improved with type detection
+                type_oid,
                 type_size: -1,
                 type_modifier: -1,
                 format,
@@ -2092,49 +2209,47 @@ impl ExtendedQueryHandler {
         }
         framed.send(BackendMessage::RowDescription(field_descriptions)).await?;
         
-        // Send DataRows
-        for row in response.rows {
-            let mut values = Vec::new();
-            for (i, cell) in row.iter().enumerate() {
-                if let Some(bytes) = cell {
-                    let column_name = response.columns.get(i).map(|s| s.as_str()).unwrap_or("unknown");
-                    let column_lower = column_name.to_lowercase();
-                    debug!("Processing column '{}' (lowercase: '{}')", column_name, column_lower);
-                    // Check if this is a datetime function result that needs formatting
-                    if let Ok(s) = String::from_utf8(bytes.clone()) {
-                        debug!("Column '{}' value as string: '{}'", column_name, s);
-                        if let Ok(micros) = s.parse::<i64>() {
-                            debug!("Column '{}' parsed as i64: {}", column_name, micros);
-                            // Check if this looks like microseconds (large integer)
-                            if micros > 1_000_000_000_000 && 
-                               (column_lower.contains("now") || 
-                                column_lower.contains("current_timestamp") ||
-                                column_lower == "now" ||
-                                column_lower == "current_timestamp") {
-                                // This is likely a datetime function result, format it
-                                use crate::types::datetime_utils::format_microseconds_to_timestamp;
-                                let formatted = format_microseconds_to_timestamp(micros);
-                                debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
-                                values.push(Some(formatted.into_bytes()));
+        // If we have timestamp columns, we need to convert them
+        let needs_conversion = field_types
+            .map(|types| types.iter().any(|&t| t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid()))
+            .unwrap_or(false);
+        
+        if needs_conversion && field_types.is_some() {
+            let types = field_types.unwrap();
+            // Send DataRows with timestamp conversion
+            for row in response.rows {
+                let mut converted_row = Vec::new();
+                for (i, cell) in row.iter().enumerate() {
+                    let type_oid = types.get(i).copied().unwrap_or(25);
+                    if type_oid == PgType::Timestamp.to_oid() || type_oid == PgType::Timestamptz.to_oid() {
+                        if let Some(bytes) = cell {
+                            if let Ok(s) = std::str::from_utf8(bytes) {
+                                if let Ok(micros) = s.parse::<i64>() {
+                                    // Convert microseconds to formatted timestamp
+                                    use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                    let formatted = format_microseconds_to_timestamp(micros);
+                                    converted_row.push(Some(formatted.into_bytes()));
+                                } else {
+                                    // Already formatted or not a timestamp
+                                    converted_row.push(cell.clone());
+                                }
                             } else {
-                                debug!("Column '{}' not converted: micros={}, contains_now={}, contains_current_timestamp={}, eq_now={}, eq_current_timestamp={}", 
-                                       column_name, micros, column_lower.contains("now"), column_lower.contains("current_timestamp"), 
-                                       column_lower == "now", column_lower == "current_timestamp");
-                                values.push(cell.clone());
+                                converted_row.push(cell.clone());
                             }
                         } else {
-                            debug!("Column '{}' failed to parse as i64", column_name);
-                            values.push(cell.clone());
+                            converted_row.push(None);
                         }
                     } else {
-                        debug!("Column '{}' failed to parse as UTF-8", column_name);
-                        values.push(cell.clone());
+                        converted_row.push(cell.clone());
                     }
-                } else {
-                    values.push(cell.clone());
                 }
+                framed.send(BackendMessage::DataRow(converted_row)).await?;
             }
-            framed.send(BackendMessage::DataRow(values)).await?;
+        } else {
+            // No conversion needed
+            for row in response.rows {
+                framed.send(BackendMessage::DataRow(row)).await?;
+            }
         }
         
         // Send CommandComplete
@@ -2877,7 +2992,7 @@ impl ExtendedQueryHandler {
         result_formats: &[i16],
         field_types: &[i32],
     ) -> Result<Vec<Option<Vec<u8>>>, PgSqliteError> {
-        debug!("encode_row called with {} fields, result_formats: {:?}, field_types: {:?}", row.len(), result_formats, field_types);
+        eprintln!("🔧 encode_row called with {} fields, field_types: {:?}", row.len(), field_types);
         
         // Log the first few values for debugging
         for (i, value) in row.iter().take(3).enumerate() {
@@ -3296,38 +3411,44 @@ impl ExtendedQueryHandler {
                             // Timestamp types - convert from INTEGER microseconds to formatted string
                             t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    debug!("Processing TIMESTAMP value: '{}'", s);
+                                    eprintln!("🕐 TIMESTAMP conversion: Processing value: '{}'", s);
                                     // Check if this is already an integer (microseconds since epoch)
                                     if let Ok(micros) = s.parse::<i64>() {
                                         // Convert microseconds to formatted timestamp
                                         use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                         let formatted = format_microseconds_to_timestamp(micros);
-                                        debug!("Converted TIMESTAMP: {} -> {}", micros, formatted);
+                                        eprintln!("🕐 TIMESTAMP conversion: {} -> {}", micros, formatted);
                                         Some(formatted.into_bytes())
                                     } else {
-                                        debug!("TIMESTAMP value is not an integer, keeping as-is: '{}'", s);
+                                        eprintln!("🕐 TIMESTAMP value is not an integer, keeping as-is: '{}'", s);
                                         // Already formatted or invalid, keep as-is
                                         Some(bytes.clone())
                                     }
                                 } else {
-                                    debug!("TIMESTAMP value is not UTF-8, keeping as-is");
+                                    eprintln!("🕐 TIMESTAMP value is not UTF-8, keeping as-is");
                                     Some(bytes.clone())
                                 }
                             }
                             // NOTE: Array type handling removed for text format too
                             // Arrays are returned as JSON strings with TEXT type
                             t if t == PgType::Text.to_oid() => {
-                                // Check if this is a datetime function result (integer microseconds that should be formatted)
+                                // Enhanced datetime detection for TEXT columns
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    info!("TEXT column value: '{}'", s);
                                     if let Ok(micros) = s.parse::<i64>() {
-                                        // Check if this looks like microseconds (large integer)
-                                        if micros > 1_000_000_000_000 { // > year 2001 in microseconds
-                                            // This is likely a datetime function result, format it
+                                        info!("Parsed as i64: {}", micros);
+                                        // Check if this looks like microseconds since epoch
+                                        // Valid timestamp range: roughly 1970-2100 (0 to ~4.1 trillion microseconds)
+                                        // We check for values > 100 billion to avoid converting small integers
+                                        if micros > 100_000_000_000 && micros < 4_102_444_800_000_000 {
+                                            info!("Value {} is in timestamp range, converting...", micros);
+                                            // This is likely a datetime value stored as INTEGER microseconds, format it
                                             use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                             let formatted = format_microseconds_to_timestamp(micros);
-                                            debug!("Converting datetime function result {} to formatted timestamp: {}", micros, formatted);
+                                            info!("Converting presumed timestamp value {} to formatted timestamp: {}", micros, formatted);
                                             Some(formatted.into_bytes())
                                         } else {
+                                            info!("Value {} is not in timestamp range", micros);
                                             Some(bytes.clone())
                                         }
                                     } else {

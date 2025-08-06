@@ -136,7 +136,19 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-08-05)
+### Recently Fixed (2025-08-06)
+- **psycopg3 Binary Parameter Conversion**: Fixed parameterized queries returning 0 rows
+  - Added conversion of PostgreSQL binary format parameters to text format for SQLite
+  - Handles INT2, INT4, INT8, FLOAT4, FLOAT8, BOOL, and TIMESTAMP binary formats
+  - Converts PostgreSQL timestamp format (microseconds since 2000-01-01) to Unix epoch
+  - Fixes issue where psycopg3 sends parameters in binary format even in text mode
+- **Timestamp Field Type Detection**: Partial fix for timestamp conversion
+  - Updated `try_execute_fast_path_with_params` to pass field types to `send_select_response`
+  - `send_select_response` now converts timestamps from microseconds to formatted strings
+  - Simple queries work correctly, complex SQLAlchemy queries still affected
+  - Known issue: Column cast detection incorrectly applies WHERE clause casts to SELECT columns
+
+### Previously Fixed (2025-08-05)
 - **Schema-Based Type Inference for Empty Result Sets**: Fixed columns defaulting to TEXT when no data rows
   - All columns were incorrectly returning TEXT (OID 25) instead of proper PostgreSQL types
   - Implemented async schema lookup when queries return no data rows
