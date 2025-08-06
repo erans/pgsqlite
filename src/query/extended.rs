@@ -143,8 +143,7 @@ impl ExtendedQueryHandler {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
         
-        debug!("Parsing statement '{}': {}", name, cleaned_query);
-        debug!("Provided param_types: {:?}", param_types);
+        // Removed verbose debug logging for parsing
         
         // Extract cast type information BEFORE any query translation
         let mut extracted_param_types = vec![0i32; ParameterParser::count_parameters(&cleaned_query)];
@@ -153,7 +152,7 @@ impl ExtendedQueryHandler {
         use crate::query::parameter_parser::ParameterParser;
         let python_params = ParameterParser::find_python_parameters(&cleaned_query);
         if !python_params.is_empty() {
-            debug!("Found Python-style parameters: {:?}", python_params);
+            // Python-style parameters found
             
             // First, extract type information from Python-style parameter casts
             for (index, param_name) in python_params.iter().enumerate() {
@@ -189,7 +188,7 @@ impl ExtendedQueryHandler {
                         };
                         if type_oid != 0 {
                             extracted_param_types[index] = type_oid;
-                            debug!("Extracted type for parameter {}: {} (OID {})", index + 1, type_name, type_oid);
+                            // Extracted parameter type
                         }
                     }
                 }
@@ -204,8 +203,7 @@ impl ExtendedQueryHandler {
                 param_counter += 1;
             }
             
-            debug!("Converted query: {}", cleaned_query);
-            debug!("Extracted parameter types: {:?}", extracted_param_types);
+            // Query converted and types extracted
             
             // Store the parameter mapping in session for later use in bind
             let mut python_param_mapping = session.python_param_mapping.write().await;
@@ -244,7 +242,7 @@ impl ExtendedQueryHandler {
                         };
                         if type_oid != 0 {
                             extracted_param_types[i - 1] = type_oid;
-                            debug!("Extracted type for parameter ${}: {} (OID {})", i, type_name, type_oid);
+                            // Extracted parameter type
                         }
                     }
                 }
@@ -296,7 +294,7 @@ impl ExtendedQueryHandler {
         
         // Use extracted parameter types if we found any
         if extracted_param_types.iter().any(|&t| t != 0) {
-            debug!("Using extracted parameter types: {:?}", extracted_param_types);
+            // Using extracted parameter types
             actual_param_types = extracted_param_types.clone();
             
             // Also cache the extracted parameter info for fast path access
@@ -307,17 +305,17 @@ impl ExtendedQueryHandler {
                 column_names: Vec::new(), // Will be populated later if needed
                 created_at: std::time::Instant::now(),
             });
-            debug!("Cached extracted parameter types for fast path access");
+            // Cached parameter types
         } else if param_types.is_empty() && cleaned_query.contains('$') {
             // First check parameter cache
             if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
                 actual_param_types = cached_info.param_types;
-                info!("Using cached parameter types for query: {:?}", actual_param_types);
+                debug!("Using cached parameter types for query: {:?}", actual_param_types);
             } else {
                 // Check if we have this query cached in query cache
                 if let Some(cached) = GLOBAL_QUERY_CACHE.get(&query) {
                     actual_param_types = cached.param_types.clone();
-                    info!("Using cached parameter types from query cache: {:?}", actual_param_types);
+                    debug!("Using cached parameter types from query cache: {:?}", actual_param_types);
                     
                     // Also cache in parameter cache for faster access
                     GLOBAL_PARAMETER_CACHE.insert(query.clone(), CachedParameterInfo {
@@ -332,7 +330,7 @@ impl ExtendedQueryHandler {
                     let (analyzed_types, original_types_opt, table_name, column_names) = if query_starts_with_ignore_case(&query, "INSERT") {
                         match Self::analyze_insert_params(&query, db).await {
                             Ok((types, orig_types)) => {
-                                info!("Analyzed INSERT parameter types: {:?} (original: {:?})", types, orig_types);
+                                debug!("Analyzed INSERT parameter types: {:?} (original: {:?})", types, orig_types);
                                 
                                 // Extract table and columns for caching
                                 let (table, cols) = crate::types::QueryContextAnalyzer::get_insert_column_info(&query)
@@ -353,7 +351,7 @@ impl ExtendedQueryHandler {
                             let param_count = ParameterParser::count_parameters(&query);
                             vec![PgType::Text.to_oid(); param_count]
                         });
-                        info!("Analyzed SELECT parameter types: {:?}", types);
+                        debug!("Analyzed SELECT parameter types: {:?}", types);
                         
                         let table = extract_table_name_from_select(&query);
                         (types.clone(), Some(types), table, Vec::new())
@@ -445,14 +443,14 @@ impl ExtendedQueryHandler {
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         {
             use crate::translator::ArrayTranslator;
-            info!("Translating array operators for query: {}", translated_for_analysis);
+            // Translating array operators
             match ArrayTranslator::translate_with_metadata(&translated_for_analysis) {
             Ok((translated, metadata)) => {
                 if translated != translated_for_analysis {
-                    info!("Array translation changed query to: {}", translated);
+                    // Array translation applied
                     translated_for_analysis = translated;
                 }
-                info!("Array metadata has {} hints", metadata.column_mappings.len());
+                // Array metadata processed
                 translation_metadata.merge(metadata);
             }
                 Err(_) => {
@@ -468,15 +466,14 @@ impl ExtendedQueryHandler {
         match JsonEachTranslator::translate_with_metadata(&translated_for_analysis) {
             Ok((translated, metadata)) => {
                 if translated != translated_for_analysis {
-                    info!("JSON each translation changed query from: {}", translated_for_analysis);
-                    info!("JSON each translation changed query to: {}", translated);
+                    // JSON each translation applied
                     translated_for_analysis = translated;
                 }
-                debug!("JSON each metadata hints: {:?}", metadata);
+                // JSON each metadata processed
                 translation_metadata.merge(metadata);
             }
-            Err(e) => {
-                debug!("JSON each translation failed: {:?}", e);
+            Err(_) => {
+                // JSON each translation failed
                 // Continue with original query
             }
         }
@@ -488,11 +485,11 @@ impl ExtendedQueryHandler {
             use crate::translator::RowToJsonTranslator;
         let (translated, metadata) = RowToJsonTranslator::translate_row_to_json(&translated_for_analysis);
         if translated != translated_for_analysis {
-            info!("row_to_json translation changed query from: {}", translated_for_analysis);
-            info!("row_to_json translation changed query to: {}", translated);
+            // row_to_json translation applied
+            // Translation complete
             translated_for_analysis = translated;
         }
-        debug!("row_to_json metadata hints: {:?}", metadata);
+        // row_to_json metadata processed
         translation_metadata.merge(metadata);
         }
         
@@ -566,7 +563,7 @@ impl ExtendedQueryHandler {
                                     // Parse the query to find the source column for this alias
                                     // Look for pattern like "table.column AS alias" in the SELECT clause
                                     let pattern = format!(r"(?i)(\w+)\.(\w+)\s+AS\s+{}", regex::escape(col_name));
-                                    debug!("Looking for alias pattern '{}' in query: {}", pattern, query);
+                                    // Checking alias pattern
                                     if let Ok(re) = regex::Regex::new(&pattern) {
                                         if let Some(captures) = re.captures(&query) {
                                             if let Some(src_table) = captures.get(1) {
@@ -826,9 +823,8 @@ impl ExtendedQueryHandler {
                                                   col_name, source_table, source_col);
                                             inferred_types.push(PgType::Text.to_oid());
                                         }
-                                        Err(e) => {
-                                            info!("Column '{}': schema lookup error for '{}.{}': {}, defaulting to text", 
-                                                  col_name, source_table, source_col, e);
+                                        Err(_) => {
+                                            // Schema lookup error, defaulting to text
                                             inferred_types.push(PgType::Text.to_oid());
                                         }
                                     }
@@ -852,9 +848,8 @@ impl ExtendedQueryHandler {
                                                       col_name, table_name, col_name);
                                                 inferred_types.push(PgType::Text.to_oid());
                                             }
-                                            Err(e) => {
-                                                info!("Column '{}': schema lookup error for '{}.{}': {}, defaulting to text", 
-                                                      col_name, table_name, col_name, e);
+                                            Err(_) => {
+                                                // Schema lookup error, defaulting to text
                                                 inferred_types.push(PgType::Text.to_oid());
                                             }
                                         }
@@ -881,8 +876,8 @@ impl ExtendedQueryHandler {
                         info!("Parsed {} field descriptions from query with inferred types", fields.len());
                         fields
                     }
-                    Err(e) => {
-                        info!("Failed to get field descriptions: {} - will determine during execute", e);
+                    Err(_) => {
+                        // Failed to get field descriptions - will determine during execute
                         Vec::new()
                     }
                 }
@@ -1017,7 +1012,7 @@ impl ExtendedQueryHandler {
         };
         
         if !is_simple_query {
-            debug!("Binding portal '{}' to statement '{}' with {} values", portal, statement, values.len());
+            // Binding portal to statement
             
             // Check if this statement used Python-style parameters and reorder values if needed
             {
@@ -1039,8 +1034,7 @@ impl ExtendedQueryHandler {
         let stmt = statements.get(&statement)
             .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {statement}")))?;
             
-        debug!("Statement has param_types: {:?}", stmt.param_types);
-        debug!("Received param formats: {:?}", formats);
+        // Processing parameter types and formats
         
         // Check if we need to infer types (only when param types are empty or unknown)
         let needs_inference = stmt.param_types.is_empty() || 
@@ -1049,8 +1043,7 @@ impl ExtendedQueryHandler {
         let mut inferred_types = None;
         
         if needs_inference && !values.is_empty() {
-            debug!("Need to infer parameter types from values");
-            debug!("Statement param_types: {:?}", stmt.param_types);
+            // Inferring parameter types from values
             let mut types = Vec::new();
             
             for (i, val) in values.iter().enumerate() {
@@ -1203,7 +1196,7 @@ impl ExtendedQueryHandler {
            (result_formats.is_empty() || result_formats[0] == 0) {
             
             info!("🚀 Ultra-fast path triggered for query: {}", query);
-            debug!("Using fast path for simple SELECT query: {}", query);
+            // Using fast path for simple SELECT
             
             // Get cached connection first
             let _cached_conn = Self::get_or_cache_connection(session, db).await;
@@ -1474,7 +1467,7 @@ impl ExtendedQueryHandler {
             if matches!(query_type, super::extended_fast_path::QueryType::Select) 
                 && !result_formats.is_empty() 
                 && result_formats[0] == 1 {
-                debug!("Skipping fast path: SELECT with binary results");
+                // Skipping fast path: binary results
                 // Skip fast path entirely for binary SELECT results
             } else {
             
@@ -1509,8 +1502,8 @@ impl ExtendedQueryHandler {
                         }, // Successfully executed via fast path
                         Ok(false) => {
                         }, // Fall back to normal path
-                        Err(e) => {
-                            warn!("Extended fast path failed with error: {}, falling back to normal path", e);
+                        Err(_) => {
+                            // Extended fast path failed, falling back to normal path
                             // Fall back to normal path on error
                         }
                     }
@@ -1665,8 +1658,8 @@ impl ExtendedQueryHandler {
                     debug!("Query after JSON operator translation: {}", translated);
                     final_query = translated;
                 }
-                Err(e) => {
-                    debug!("JSON operator translation failed: {}", e);
+                Err(_) => {
+                    // JSON operator translation failed
                     // Continue with original query - some operators might not be supported yet
                 }
             }
@@ -2430,7 +2423,7 @@ impl ExtendedQueryHandler {
                                         format!("'{}'", s.replace('\'', "''"))
                                     }
                                     Err(e) => {
-                                        debug!("Failed to decode binary NUMERIC parameter: {}", e);
+                                        // Failed to decode binary NUMERIC parameter
                                         return Err(PgSqliteError::InvalidParameter(format!("Invalid binary NUMERIC: {e}")));
                                     }
                                 }
@@ -2566,7 +2559,7 @@ impl ExtendedQueryHandler {
                                                 format!("'{}'", s.replace('\'', "''"))
                                             }
                                             Err(e) => {
-                                                debug!("Invalid NUMERIC parameter: {}", e);
+                                                // Invalid NUMERIC parameter
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid NUMERIC value: {e}")));
                                             }
                                         }
@@ -2582,7 +2575,7 @@ impl ExtendedQueryHandler {
                                             match crate::types::ValueConverter::convert_timestamp_to_unix(&s) {
                                                 Ok(unix_timestamp) => unix_timestamp,
                                                 Err(e) => {
-                                                    debug!("Invalid TIMESTAMP parameter: {}", e);
+                                                    // Invalid TIMESTAMP parameter
                                                     return Err(PgSqliteError::InvalidParameter(format!("Invalid TIMESTAMP value: {e}")));
                                                 }
                                             }
@@ -2593,7 +2586,7 @@ impl ExtendedQueryHandler {
                                         match crate::types::ValueConverter::convert_date_to_unix(&s) {
                                             Ok(unix_timestamp) => unix_timestamp,
                                             Err(e) => {
-                                                debug!("Invalid DATE parameter: {}", e);
+                                                // Invalid DATE parameter
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid DATE value: {e}")));
                                             }
                                         }
@@ -2603,7 +2596,7 @@ impl ExtendedQueryHandler {
                                         match crate::types::ValueConverter::convert_time_to_seconds(&s) {
                                             Ok(seconds) => seconds,
                                             Err(e) => {
-                                                debug!("Invalid TIME parameter: {}", e);
+                                                // Invalid TIME parameter
                                                 return Err(PgSqliteError::InvalidParameter(format!("Invalid TIME value: {e}")));
                                             }
                                         }
@@ -4599,8 +4592,8 @@ impl ExtendedQueryHandler {
                                         Ok(_) => {
                                             info!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
                                         }
-                                        Err(e) => {
-                                            debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                        Err(_) => {
+                                            // Failed to store numeric constraint
                                         }
                                     }
                                 }

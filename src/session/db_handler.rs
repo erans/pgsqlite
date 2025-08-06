@@ -9,7 +9,7 @@ use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
 use crate::session::ConnectionManager;
 use crate::PgSqliteError;
-use tracing::{info, debug};
+use tracing::debug;
 
 /// Database response structure
 #[derive(Debug)]
@@ -40,7 +40,7 @@ impl DbHandler {
     pub fn new_with_config(db_path: &str, config: &Config) -> Result<Self, rusqlite::Error> {
         // For initial setup, we need to ensure database exists and run migrations
         if !db_path.contains(":memory:") && !std::path::Path::new(db_path).exists() {
-            info!("New database file detected, will run initial migrations...");
+            debug!("New database file detected, will run initial migrations...");
         }
         
         // Create a temporary connection for migrations
@@ -59,7 +59,7 @@ impl DbHandler {
             Arc::new(config.clone())
         ));
         
-        debug!("DbHandler initialized with per-session connection architecture");
+        // DbHandler initialized
         
         Ok(Self {
             connection_manager,
@@ -106,7 +106,7 @@ impl DbHandler {
     fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<(), rusqlite::Error> {
         // Skip all checks for in-memory databases
         if db_path.contains(":memory:") {
-            info!("Running initial migrations for in-memory database...");
+            debug!("Running initial migrations for in-memory database...");
             
             // Register functions before migrations
             crate::functions::register_all_functions(&conn)?;
@@ -115,7 +115,7 @@ impl DbHandler {
             match runner.run_pending_migrations() {
                 Ok(applied) => {
                     if !applied.is_empty() {
-                        debug!("Applied {} migrations to new database", applied.len());
+                        // Migrations applied
                     }
                 }
                 Err(e) => {
@@ -150,7 +150,7 @@ impl DbHandler {
                 }
                 Err(e) => {
                     // Don't fail on drift detection errors, just log them
-                    debug!("Failed to check schema drift: {e}");
+                    // Schema drift check failed
                 }
             }
         }
@@ -163,7 +163,7 @@ impl DbHandler {
         ).unwrap_or(0) == 0;
         
         if needs_migrations {
-            info!("Running initial migrations...");
+            debug!("Running initial migrations...");
             
             // Register functions before migrations
             crate::functions::register_all_functions(&conn)?;
@@ -172,7 +172,7 @@ impl DbHandler {
             match runner.run_pending_migrations() {
                 Ok(applied) => {
                     if !applied.is_empty() {
-                        debug!("Applied {} migrations to new database", applied.len());
+                        // Migrations applied
                     }
                 }
                 Err(e) => {
@@ -249,30 +249,30 @@ impl DbHandler {
             // parameters in text mode should be text-compatible
             let values: Vec<rusqlite::types::Value> = params.iter()
                 .enumerate()
-                .map(|(i, p)| match p {
+                .map(|(_i, p)| match p {
                     Some(data) => {
                         match String::from_utf8(data.clone()) {
                             Ok(s) => {
-                                debug!("Parameter {}: converted to text: '{}'", i, s);
+                                // Parameter converted to text
                                 rusqlite::types::Value::Text(s)
                             },
                             Err(e) => {
                                 // For psycopg3 in text mode, all parameters should be UTF-8 text
                                 // If UTF-8 conversion fails, try to recover by using lossy conversion
-                                debug!("Parameter {}: UTF-8 conversion failed ({}), trying lossy conversion", i, e);
+                                // UTF-8 conversion failed, trying lossy
                                 let lossy_string = String::from_utf8_lossy(data);
                                 if !lossy_string.is_empty() {
-                                    debug!("Parameter {}: lossy conversion successful: '{}'", i, lossy_string);
+                                    // Lossy conversion successful
                                     rusqlite::types::Value::Text(lossy_string.into_owned())
                                 } else {
-                                    debug!("Parameter {}: lossy conversion failed, storing as blob ({} bytes)", i, data.len());
+                                    // Storing as blob
                                     rusqlite::types::Value::Blob(data.clone())
                                 }
                             },
                         }
                     }
                     None => {
-                        debug!("Parameter {}: null", i);
+                        // Null parameter
                         rusqlite::types::Value::Null
                     },
                 })

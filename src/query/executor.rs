@@ -160,7 +160,7 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        info!("QueryExecutor::execute_query called with: {}", query);
+        // Executing query
         
         // Strip SQL comments first to avoid parsing issues
         let cleaned_query = crate::query::strip_sql_comments(query);
@@ -190,7 +190,7 @@ impl QueryExecutor {
             let error_msg = format!(
                 "Python-style parameters detected: {python_params:?}. pgsqlite requires parameter values to be substituted before execution. This usually means psycopg2 client-side substitution failed. Please ensure parameters are properly bound when executing the query."
             );
-            info!("⚠️  {}", error_msg);
+            debug!("⚠️  {}", error_msg);
             debug!("Query: {}", query_to_execute);
             return Err(PgSqliteError::Protocol(error_msg));
         }
@@ -251,7 +251,7 @@ impl QueryExecutor {
         }
         // Ultra-fast path: Skip all translation if query is simple enough
         let is_ultra_simple = crate::query::simple_query_detector::is_ultra_simple_query(query);
-        info!("Query '{}' is ultra-simple: {}", query, is_ultra_simple);
+        // Checking if query is ultra-simple
         if is_ultra_simple {
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
@@ -299,12 +299,12 @@ impl QueryExecutor {
                     
                     // Check for scalar subqueries that return timestamps
                     // Pattern: (SELECT MAX/MIN(timestamp_col) FROM table) as alias
-                    info!("Checking for scalar subqueries in columns: {:?}", response.columns);
+                    // Checking for scalar subqueries
                     for col_name in &response.columns {
                         // Check if this might be a scalar subquery result
                         if col_name.contains("max") || col_name.contains("min") || 
                            col_name.contains("MAX") || col_name.contains("MIN") {
-                            info!("Column '{}' might be a scalar subquery result", col_name);
+                            // Column might be scalar subquery
                             
                             // Look for the subquery pattern in the original query
                             // Pattern: (SELECT MAX(col) FROM table)
@@ -314,15 +314,15 @@ impl QueryExecutor {
                                     if let (Some(inner_col), Some(inner_table)) = (captures.get(1), captures.get(2)) {
                                         let inner_col_name = inner_col.as_str();
                                         let inner_table_name = inner_table.as_str();
-                                        info!("Found scalar subquery: MAX/MIN({}) FROM {}", inner_col_name, inner_table_name);
+                                        // Found scalar subquery
                                         
                                         // Check if the inner column is a timestamp
                                         if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, inner_table_name, inner_col_name).await {
-                                            info!("Inner column type: {}", pg_type);
+                                            // Inner column type found
                                             if pg_type.to_uppercase().contains("TIMESTAMP") || 
                                                pg_type.to_uppercase().contains("DATE") || 
                                                pg_type.to_uppercase().contains("TIME") {
-                                                info!("Adding '{}' as datetime column (type: {})", col_name, pg_type);
+                                                // Adding datetime column
                                                 datetime_columns.insert(col_name.clone(), pg_type);
                                             }
                                         }
@@ -395,8 +395,7 @@ impl QueryExecutor {
                         };
                     
                     // Send data rows with boolean, datetime, and enum conversion
-                    info!("Processing {} rows with columns: {:?}", response.rows.len(), response.columns);
-                    info!("datetime_columns: {:?}, boolean_columns: {:?}", datetime_columns, boolean_columns);
+                    // Processing rows with datetime/boolean conversion
                     for row in response.rows {
                         // Fast path - if no special columns, send row as-is
                         // DISABLED: We need to check all columns for potential timestamp values
@@ -438,10 +437,9 @@ impl QueryExecutor {
                                         else if let Some(dt_type) = datetime_columns.get(col_name)
                                             .or_else(|| {
                                                 // Check if this is an alias mapped to a real column
-                                                debug!("Checking datetime for '{}', mappings: {:?}, datetime_columns: {:?}", 
-                                                      col_name, column_mappings, datetime_columns);
+                                                // Checking datetime conversion
                                                 if let Some(real_column) = column_mappings.get(col_name) {
-                                                    debug!("Found mapping '{}' -> '{}'", col_name, real_column);
+                                                    // Found column mapping
                                                     datetime_columns.get(real_column)
                                                 } else {
                                                     None

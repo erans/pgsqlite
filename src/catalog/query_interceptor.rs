@@ -54,11 +54,11 @@ impl CatalogInterceptor {
             return None;
         }
         
-        info!("Intercepting catalog query: {}", query);
+        debug!("Intercepting catalog query: {}", query);
         
         // Special handling for LIMIT 0 queries used for metadata
         if query.contains("LIMIT 0") {
-            debug!("Skipping LIMIT 0 catalog query");
+            // Skipping LIMIT 0 catalog query
             return None;
         }
         
@@ -69,33 +69,33 @@ impl CatalogInterceptor {
         let query_to_parse = match RegexTranslator::translate_query(&schema_translated) {
             Ok(translated) => {
                 if translated != query {
-                    debug!("Translated regex operators in catalog query: {}", translated);
+                    // Translated regex operators
                 }
                 translated
             }
-            Err(e) => {
-                debug!("Failed to translate regex operators: {}", e);
+            Err(_) => {
+                // Failed to translate regex operators
                 query.to_string()
             }
         };
 
         // Parse the query (keep JSON path placeholders for now)
         let dialect = PostgreSqlDialect {};
-        debug!("About to parse query for system functions: {}", query_to_parse);
+        // Parsing query for system functions
         match Parser::parse_sql(&dialect, &query_to_parse) {
             Ok(mut statements) => {
                 if statements.len() == 1 {
                     if let Statement::Query(query_stmt) = &mut statements[0] {
                         // First check if query contains system functions that need processing
                         let contains_functions = Self::query_contains_system_functions(query_stmt);
-                        debug!("Query contains system functions: {}", contains_functions);
+                        // Query contains system functions
                         if contains_functions {
                             // Clone the query and process system functions
                             match Self::process_system_functions_in_query(query_stmt.clone(), db.clone()).await {
                                 Ok(processed_query) => {
                                     // Convert the processed query back to SQL and execute
                                     let mut processed_sql = processed_query.to_string();
-                                    debug!("Processed query with system functions: {}", processed_sql);
+                                    // Processed system functions
                                     
                                     // Also translate regex operators
                                     match RegexTranslator::translate_query(&processed_sql) {
@@ -103,8 +103,8 @@ impl CatalogInterceptor {
                                             processed_sql = translated;
                                             debug!("Translated regex operators: {}", processed_sql);
                                         }
-                                        Err(e) => {
-                                            debug!("Failed to translate regex operators: {}", e);
+                                        Err(_) => {
+                                            // Failed to translate regex operators
                                         }
                                     }
                                     
@@ -136,14 +136,14 @@ impl CatalogInterceptor {
                                                 }
                                             }
                                             Err(e) => {
-                                                debug!("Failed to re-parse processed query: {}", e);
+                                                // Failed to re-parse processed query
                                                 return Some(Err(PgSqliteError::Protocol(format!("Failed to parse processed query: {}", e))));
                                             }
                                         }
                                     }
                                 }
-                                Err(e) => {
-                                    debug!("Error processing system functions: {}", e);
+                                Err(_) => {
+                                    // Error processing system functions
                                     // Continue with normal catalog handling
                                 }
                             }
@@ -223,8 +223,8 @@ impl CatalogInterceptor {
                                             });
                                         }
                                     }
-                                    Err(e) => {
-                                        debug!("Error checking table existence: {}", e);
+                                    Err(_) => {
+                                        // Error checking table existence
                                     }
                                 }
                             }
@@ -309,8 +309,8 @@ impl CatalogInterceptor {
                         debug!("PgAttributeHandler returned {} rows", response.rows.len());
                         Some(response)
                     },
-                    Err(e) => {
-                        debug!("PgAttributeHandler error: {}", e);
+                    Err(_) => {
+                        // PgAttributeHandler error
                         None
                     },
                 };

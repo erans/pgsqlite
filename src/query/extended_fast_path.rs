@@ -6,7 +6,6 @@ use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use std::sync::Arc;
-use tracing::debug;
 
 /// Optimized parameter binding that avoids string substitution
 pub struct ExtendedFastPath;
@@ -86,7 +85,7 @@ impl ExtendedFastPath {
     fn infer_types_from_query(query: &str, param_count: usize) -> Vec<i32> {
         let mut inferred_types = vec![0; param_count];
         
-        debug!("Type inference: analyzing query '{}' for {} parameters", query, param_count);
+        // Type inference for parameters
         
         // Look for CAST($N AS TYPE) patterns
         for i in 1..=param_count {
@@ -111,7 +110,7 @@ impl ExtendedFastPath {
                     };
                     if type_oid != 0 {
                         inferred_types[i - 1] = type_oid;
-                        debug!("Inferred parameter ${} type as {} (OID {}) from CAST", i, type_name, type_oid);
+                        // Inferred parameter type from CAST
                     }
                 }
             }
@@ -128,15 +127,15 @@ impl ExtendedFastPath {
             
             for (func_pattern, type_oid) in datetime_functions {
                 let pattern = format!("{}{}", func_pattern, i);
-                debug!("Checking for pattern '{}' in query", pattern);
+                // Checking for datetime function pattern
                 if query.contains(&pattern) {
                     inferred_types[i - 1] = type_oid;
-                    debug!("Inferred parameter ${} type as datetime (OID {}) from function {}", i, type_oid, func_pattern);
+                    // Inferred datetime type from function
                 }
             }
         }
         
-        debug!("Type inference result: {:?}", inferred_types);
+        // Type inference complete
         inferred_types
     }
     
@@ -192,8 +191,7 @@ impl ExtendedFastPath {
         format: i16,
         param_type: i32,
     ) -> Result<rusqlite::types::Value, PgSqliteError> {
-        debug!("Converting parameter: {} bytes, format={} ({}), type_oid={}", 
-               bytes.len(), format, if format == 0 { "text" } else { "binary" }, param_type);
+        // Converting parameter value
         
         if format == 0 {
             // Text format
@@ -322,7 +320,7 @@ impl ExtendedFastPath {
                         2 => {
                             // INT2 -> INT4: sign extend from 16-bit to 32-bit
                             let val = i16::from_be_bytes([bytes[0], bytes[1]]) as i64;
-                            debug!("Converting 2-byte binary to INT4: {}", val);
+                            // Converting 2-byte to INT4
                             Ok(rusqlite::types::Value::Integer(val))
                         }
                         4 => {
@@ -353,13 +351,13 @@ impl ExtendedFastPath {
                         2 => {
                             // INT2 -> INT8: sign extend from 16-bit to 64-bit
                             let val = i16::from_be_bytes([bytes[0], bytes[1]]) as i64;
-                            debug!("Converting 2-byte binary to INT8: {}", val);
+                            // Converting 2-byte to INT8
                             Ok(rusqlite::types::Value::Integer(val))
                         }
                         4 => {
                             // INT4 -> INT8: sign extend from 32-bit to 64-bit
                             let val = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64;
-                            debug!("Converting 4-byte binary to INT8: {}", val);
+                            // Converting 4-byte to INT8
                             Ok(rusqlite::types::Value::Integer(val))
                         }
                         8 => {
@@ -511,32 +509,32 @@ impl ExtendedFastPath {
                         
                         // If it's a reasonable timestamp (between year 1970 and 2100), treat as timestamp
                         if seconds >= 0 && seconds < 4102444800 { // 2100-01-01
-                            debug!("Inferring 8-byte binary parameter as TIMESTAMP: {} microseconds since Unix epoch", unix_micros);
+                            // Inferring as TIMESTAMP
                             Ok(rusqlite::types::Value::Integer(unix_micros))
                         } else {
                             // Might be INT8 or something else, try parsing as INT8
-                            debug!("Inferring 8-byte binary parameter as INT8: {}", pg_micros);
+                            // Inferring as INT8
                             Ok(rusqlite::types::Value::Integer(pg_micros))
                         }
                     } else if bytes.len() == 4 {
                         // 4 bytes could be INT4 or FLOAT4, try INT4 first
                         let val = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64;
-                        debug!("Inferring 4-byte binary parameter as INT4: {}", val);
+                        // Inferring as INT4
                         Ok(rusqlite::types::Value::Integer(val))
                     } else if bytes.len() == 2 {
                         // 2 bytes is likely INT2
                         let val = i16::from_be_bytes([bytes[0], bytes[1]]) as i64;
-                        debug!("Inferring 2-byte binary parameter as INT2: {}", val);
+                        // Inferring as INT2
                         Ok(rusqlite::types::Value::Integer(val))
                     } else {
                         // Unknown size, store as BLOB
-                        debug!("Unknown binary parameter type (OID 0), {} bytes, storing as blob", bytes.len());
+                        // Unknown type, storing as blob
                         Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
                     }
                 }
                 _ => {
                     // Store as BLOB for unsupported binary types
-                    debug!("Unknown binary type OID {param_type}, storing as blob. Bytes: {} bytes", bytes.len());
+                    // Unknown binary type, storing as blob
                     Ok(rusqlite::types::Value::Blob(bytes.to_vec()))
                 }
             }
