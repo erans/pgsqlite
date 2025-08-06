@@ -1,0 +1,146 @@
+[2m2025-08-06T02:18:38.519042Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.13
+[2m2025-08-06T02:18:38.519086Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, will run initial migrations...
+[2m2025-08-06T02:18:38.523050Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Running initial migrations...
+[2m2025-08-06T02:18:38.524727Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-08-06T02:18:38.524951Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-08-06T02:18:38.524980Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-08-06T02:18:38.525348Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-08-06T02:18:38.525372Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-08-06T02:18:38.525828Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-08-06T02:18:38.525852Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-08-06T02:18:38.525943Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-08-06T02:18:38.525968Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-08-06T02:18:38.538468Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 12ms
+[2m2025-08-06T02:18:38.538505Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-08-06T02:18:38.538995Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-08-06T02:18:38.539022Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-08-06T02:18:38.539222Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-08-06T02:18:38.539245Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-08-06T02:18:38.539686Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-08-06T02:18:38.539710Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-08-06T02:18:38.540912Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 1ms
+[2m2025-08-06T02:18:38.540937Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 10: Add typcategory column to pg_type view for PostgreSQL compatibility
+[2m2025-08-06T02:18:38.541416Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 10 completed in 0ms
+[2m2025-08-06T02:18:38.541438Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 11: Replace oid_hash function with built-in SQLite functions in catalog views
+[2m2025-08-06T02:18:38.541811Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 11 completed in 0ms
+[2m2025-08-06T02:18:38.546054Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.15501
+[2m2025-08-06T02:18:38.546095Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 15501
+[2m2025-08-06T02:18:38.546101Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: test_binary_fix.db
+[2m2025-08-06T02:18:38.546104Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-08-06T02:18:38.547421Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000
+[2m2025-08-06T02:18:50.517948Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:39820
+[2m2025-08-06T02:18:50.518026Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:39820
+[2m2025-08-06T02:18:50.518067Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:39820 (SSL disabled)
+[2m2025-08-06T02:18:50.518095Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:39820: StartupMessage { protocol_version: 196608, parameters: {"database": "test", "options": "-c client_encoding=UTF8", "user": "postgres"} }
+[2m2025-08-06T02:18:50.519074Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session bab895c3-1ca0-4063-b652-0fac9366d6ff (total connections: 1)
+[2m2025-08-06T02:18:50.519151Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:39820
+[2m2025-08-06T02:18:50.529805Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: test_table
+[2m2025-08-06T02:18:50.532852Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: test_table
+[2m2025-08-06T02:18:50.535345Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:39830
+[2m2025-08-06T02:18:50.535373Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:39830
+[2m2025-08-06T02:18:50.535395Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:39830 (SSL disabled)
+[2m2025-08-06T02:18:50.535430Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:39830: StartupMessage { protocol_version: 196608, parameters: {"options": "-c client_encoding=UTF8", "user": "postgres", "database": "test"} }
+[2m2025-08-06T02:18:50.536112Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session 20649c46-a48b-45cd-9680-3a1e4bf11a9a (total connections: 2)
+[2m2025-08-06T02:18:50.536179Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:39830
+[2m2025-08-06T02:18:50.539864Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Parse from 127.0.0.1:39830: query=SELECT * FROM test_table WHERE id = $1, name=
+[2m2025-08-06T02:18:50.541412Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT * FROM test_table WHERE id = $1
+[2m2025-08-06T02:18:50.541431Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-06T02:18:50.543081Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Found 0 arithmetic type hints
+[2m2025-08-06T02:18:50.543092Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT * FROM test_table WHERE id = $1' for field descriptions
+[2m2025-08-06T02:18:50.543095Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT * FROM test_table WHERE id = $1
+[2m2025-08-06T02:18:50.543098Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-06T02:18:50.543114Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {}
+[2m2025-08-06T02:18:50.543362Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 2 columns: ["id", "name"]
+[2m2025-08-06T02:18:50.544499Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'id'
+[2m2025-08-06T02:18:50.544509Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'name'
+[2m2025-08-06T02:18:50.544512Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 2 field descriptions from query with inferred types
+[2m2025-08-06T02:18:50.544529Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [21]
+[2m2025-08-06T02:18:50.544550Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: 2 bytes, expected type OID 21, format 1 (binary)
+[2m2025-08-06T02:18:50.544555Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 00 01
+[2m2025-08-06T02:18:50.544574Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing portal '<unnamed>' (type byte: 50)
+[2m2025-08-06T02:18:50.544578Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: original fields: [FieldDescription { name: "id", table_oid: 0, column_id: 1, type_oid: 23, type_size: -1, type_modifier: -1, format: 0 }, FieldDescription { name: "name", table_oid: 0, column_id: 2, type_oid: 25, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-06T02:18:50.544583Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: sending updated fields: [FieldDescription { name: "id", table_oid: 0, column_id: 1, type_oid: 23, type_size: -1, type_modifier: -1, format: 0 }, FieldDescription { name: "name", table_oid: 0, column_id: 2, type_oid: 25, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-06T02:18:50.544593Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Execute from 127.0.0.1:39830: portal=, max_rows=0
+🔍 DEBUG: Executing portal '' with max_rows: 0
+🔍 DEBUG: Portal data: original_query='SELECT * FROM test_table WHERE id = $1', translated_query=Some("SELECT * FROM test_table WHERE id = $1"), bound_values.len()=1
+🔍 DEBUG: Fast path check conditions: !bound_values.is_empty()=true, effective_query.contains('$')=true
+[2m2025-08-06T02:18:50.544640Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m 🚀 Ultra-fast path triggered for query: SELECT * FROM test_table WHERE id = $1
+[2m2025-08-06T02:18:50.544687Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Ultra-fast path: encoding row with 2 columns
+[2m2025-08-06T02:18:50.544691Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Column 0: type OID 23, value: '1'
+[2m2025-08-06T02:18:50.544694Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Column 1: type OID 25, value: 'Test'
+[2m2025-08-06T02:18:50.544774Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:39820 requested termination
+[2m2025-08-06T02:18:50.544781Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Removed connection for session bab895c3-1ca0-4063-b652-0fac9366d6ff (remaining connections: 1)
+[2m2025-08-06T02:18:50.544784Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:39820 closed
+[2m2025-08-06T02:18:50.544828Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:39830 requested termination
+[2m2025-08-06T02:18:50.544897Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Removed connection for session 20649c46-a48b-45cd-9680-3a1e4bf11a9a (remaining connections: 0)
+[2m2025-08-06T02:18:50.544901Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:39830 closed
+[2m2025-08-06T02:19:13.419728Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m New TCP connection from 127.0.0.1:41030
+[2m2025-08-06T02:19:13.419777Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Handling TCP connection from 127.0.0.1:41030
+[2m2025-08-06T02:19:13.419817Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Rejected SSL request from 127.0.0.1:41030 (SSL disabled)
+[2m2025-08-06T02:19:13.419900Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received startup message from 127.0.0.1:41030: StartupMessage { protocol_version: 196608, parameters: {"database": "test", "user": "postgres", "options": "-c client_encoding=UTF8"} }
+[2m2025-08-06T02:19:13.420611Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Created new connection for session d77adbe7-8922-4934-a3e2-397bc68febc3 (total connections: 1)
+[2m2025-08-06T02:19:13.420716Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Sent authentication and ready response to 127.0.0.1:41030
+[2m2025-08-06T02:19:13.422565Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Populating constraints for table: users
+[2m2025-08-06T02:19:13.422732Z[0m [32m INFO[0m [2mpgsqlite::catalog::constraint_populator[0m[2m:[0m Successfully populated constraints for table: users
+[2m2025-08-06T02:19:13.422897Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Parse from 127.0.0.1:41030: query=INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3), name=
+[2m2025-08-06T02:19:13.423087Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)
+[2m2025-08-06T02:19:13.423102Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-06T02:19:13.423120Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)' for field descriptions
+[2m2025-08-06T02:19:13.423123Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)
+[2m2025-08-06T02:19:13.423126Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-06T02:19:13.423129Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [21, 0, 1114]
+[2m2025-08-06T02:19:13.423150Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: 2 bytes, expected type OID 21, format 1 (binary)
+[2m2025-08-06T02:19:13.423155Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 00 01
+[2m2025-08-06T02:19:13.423157Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 2: 9 bytes, expected type OID 0, format 0 (text)
+[2m2025-08-06T02:19:13.423161Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 54 65 73 74 20 55 73 65 72
+[2m2025-08-06T02:19:13.423164Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     As string: "Test User"
+[2m2025-08-06T02:19:13.423167Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 3: 8 bytes, expected type OID 1114, format 1 (binary)
+[2m2025-08-06T02:19:13.423170Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 00 02 de 9c 38 69 7e 40
+[2m2025-08-06T02:19:13.423185Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing portal '<unnamed>' (type byte: 50)
+[2m2025-08-06T02:19:13.423198Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Execute from 127.0.0.1:41030: portal=, max_rows=0
+🔍 DEBUG: Executing portal '' with max_rows: 0
+🔍 DEBUG: Portal data: original_query='INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)', translated_query=Some("INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)"), bound_values.len()=3
+🔍 DEBUG: Fast path check conditions: !bound_values.is_empty()=true, effective_query.contains('$')=true
+🔍 DEBUG: Fast path check: query_type=Insert, bound_values=3, has_$=true
+🔍 DEBUG: ExtendedFastPath::execute_with_params called for query: INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)
+🔍 DEBUG:   bound_values.len(): 3, param_types: [21, 0, 1114], original_types: [21, 0, 1114]
+🔍 DEBUG: Fast path parameter conversion succeeded, 3 params
+🔍 DEBUG: try_execute_fast_path_with_params called with query: INSERT INTO users (id, name, created_at) VALUES ($1, $2, $3)
+🔍 DEBUG: params: [Integer(1), Text("Test User"), Integer(1754397296123456)]
+🔍 DEBUG: WAL check: response=DbResponse { columns: [], rows: [], rows_affected: 1 }, query_type=Insert
+🔍 DEBUG: is_autocommit=true
+🔍 DEBUG: DML operation completed in autocommit mode, triggering WAL refresh for session d77adbe7-8922-4934-a3e2-397bc68febc3
+🔍 DEBUG: WAL refresh triggered successfully
+🔍 DEBUG: DbHandler fast path succeeded
+🔍 DEBUG: Fast path DML succeeded
+🔍 DEBUG: Fast path execution succeeded, returning
+[2m2025-08-06T02:19:13.423527Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Parse from 127.0.0.1:41030: query=SELECT id, name, created_at FROM users WHERE id = $1, name=
+[2m2025-08-06T02:19:13.423641Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Translating array operators for query: SELECT id, name, created_at FROM users WHERE id = $1
+[2m2025-08-06T02:19:13.423652Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Array metadata has 0 hints
+[2m2025-08-06T02:19:13.423704Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Analyzing query 'SELECT id, name, created_at FROM users WHERE id = $1' for field descriptions
+[2m2025-08-06T02:19:13.423708Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Original query: SELECT id, name, created_at FROM users WHERE id = $1
+[2m2025-08-06T02:19:13.423710Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Is simple param select: false
+[2m2025-08-06T02:19:13.423716Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Detected column casts: {}
+[2m2025-08-06T02:19:13.424010Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Test query returned 3 columns: ["id", "name", "created_at"]
+[2m2025-08-06T02:19:13.426118Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'id'
+[2m2025-08-06T02:19:13.426132Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'name'
+[2m2025-08-06T02:19:13.426136Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m No type hint found in translation metadata for 'created_at'
+[2m2025-08-06T02:19:13.426140Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Parsed 3 field descriptions from query with inferred types
+[2m2025-08-06T02:19:13.426153Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Final param_types for statement: [21]
+[2m2025-08-06T02:19:13.426182Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Param 1: 2 bytes, expected type OID 21, format 1 (binary)
+[2m2025-08-06T02:19:13.426187Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m     First bytes (hex): 00 01
+[2m2025-08-06T02:19:13.426205Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describing portal '<unnamed>' (type byte: 50)
+[2m2025-08-06T02:19:13.426210Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: original fields: [FieldDescription { name: "id", table_oid: 0, column_id: 1, type_oid: 23, type_size: -1, type_modifier: -1, format: 0 }, FieldDescription { name: "name", table_oid: 0, column_id: 2, type_oid: 25, type_size: -1, type_modifier: -1, format: 0 }, FieldDescription { name: "created_at", table_oid: 0, column_id: 3, type_oid: 1114, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-06T02:19:13.426218Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Describe portal: sending updated fields: [FieldDescription { name: "id", table_oid: 0, column_id: 1, type_oid: 23, type_size: -1, type_modifier: -1, format: 0 }, FieldDescription { name: "name", table_oid: 0, column_id: 2, type_oid: 25, type_size: -1, type_modifier: -1, format: 0 }, FieldDescription { name: "created_at", table_oid: 0, column_id: 3, type_oid: 1114, type_size: -1, type_modifier: -1, format: 0 }]
+[2m2025-08-06T02:19:13.426233Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Received Execute from 127.0.0.1:41030: portal=, max_rows=0
+🔍 DEBUG: Executing portal '' with max_rows: 0
+🔍 DEBUG: Portal data: original_query='SELECT id, name, created_at FROM users WHERE id = $1', translated_query=Some("SELECT id, name, created_at FROM users WHERE id = $1"), bound_values.len()=1
+🔍 DEBUG: Fast path check conditions: !bound_values.is_empty()=true, effective_query.contains('$')=true
+[2m2025-08-06T02:19:13.426285Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m 🚀 Ultra-fast path triggered for query: SELECT id, name, created_at FROM users WHERE id = $1
+[2m2025-08-06T02:19:13.426359Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m Ultra-fast path: encoding row with 3 columns
+[2m2025-08-06T02:19:13.426366Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Column 0: type OID 23, value: '1'
+[2m2025-08-06T02:19:13.426370Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Column 1: type OID 25, value: 'Test User'
+[2m2025-08-06T02:19:13.426374Z[0m [32m INFO[0m [2mpgsqlite::query::extended[0m[2m:[0m   Column 2: type OID 1114, value: '1754397296123456'
+[2m2025-08-06T02:19:13.426495Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Client 127.0.0.1:41030 requested termination
+[2m2025-08-06T02:19:13.426504Z[0m [32m INFO[0m [2mpgsqlite::session::connection_manager[0m[2m:[0m Removed connection for session d77adbe7-8922-4934-a3e2-397bc68febc3 (remaining connections: 0)
+[2m2025-08-06T02:19:13.426508Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Connection from 127.0.0.1:41030 closed

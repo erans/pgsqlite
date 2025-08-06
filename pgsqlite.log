@@ -1,0 +1,30 @@
+[2m2025-08-06T00:34:20.484594Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m pgsqlite v0.0.13
+[2m2025-08-06T00:34:20.484691Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m New database file detected, will run initial migrations...
+[2m2025-08-06T00:34:20.488636Z[0m [32m INFO[0m [2mpgsqlite::session::db_handler[0m[2m:[0m Running initial migrations...
+[2m2025-08-06T00:34:20.490590Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 1: Create initial pgsqlite system tables
+[2m2025-08-06T00:34:20.490997Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 1 completed in 0ms
+[2m2025-08-06T00:34:20.491051Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 2: Add PostgreSQL ENUM type support
+[2m2025-08-06T00:34:20.491665Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 2 completed in 0ms
+[2m2025-08-06T00:34:20.491715Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 3: Add datetime format and timezone metadata for PostgreSQL datetime types
+[2m2025-08-06T00:34:20.492479Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 3 completed in 0ms
+[2m2025-08-06T00:34:20.492527Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 4: Convert all datetime types to INTEGER storage using microseconds
+[2m2025-08-06T00:34:20.492722Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 4 completed in 0ms
+[2m2025-08-06T00:34:20.492768Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 5: Create PostgreSQL-compatible catalog tables and views for psql compatibility
+[2m2025-08-06T00:34:20.649207Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 5 completed in 156ms
+[2m2025-08-06T00:34:20.649282Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 6: Add support for VARCHAR/CHAR length constraints
+[2m2025-08-06T00:34:20.650211Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 6 completed in 0ms
+[2m2025-08-06T00:34:20.650262Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 7: Add support for NUMERIC/DECIMAL precision and scale constraints
+[2m2025-08-06T00:34:20.650629Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 7 completed in 0ms
+[2m2025-08-06T00:34:20.650679Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 8: Add support for PostgreSQL array types
+[2m2025-08-06T00:34:20.651607Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 8 completed in 0ms
+[2m2025-08-06T00:34:20.651663Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 9: Add PostgreSQL Full-Text Search support using FTS5
+[2m2025-08-06T00:34:20.654045Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 9 completed in 2ms
+[2m2025-08-06T00:34:20.654096Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 10: Add typcategory column to pg_type view for PostgreSQL compatibility
+[2m2025-08-06T00:34:20.655261Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 10 completed in 1ms
+[2m2025-08-06T00:34:20.655311Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Applying migration 11: Replace oid_hash function with built-in SQLite functions in catalog views
+[2m2025-08-06T00:34:20.656126Z[0m [32m INFO[0m [2mpgsqlite::migration::runner[0m[2m:[0m Migration 11 completed in 0ms
+[2m2025-08-06T00:34:20.660406Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Unix socket created at: /tmp/.s.PGSQL.15500
+[2m2025-08-06T00:34:20.660463Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m TCP server listening on port 15500
+[2m2025-08-06T00:34:20.660473Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m Using database: test_debug.db
+[2m2025-08-06T00:34:20.660478Z[0m [32m INFO[0m [2mpgsqlite[0m[2m:[0m SSL disabled - using unencrypted connections
+[2m2025-08-06T00:34:20.662726Z[0m [32m INFO[0m [2mpgsqlite::cache::status[0m[2m:[0m Query Cache Status - Total: 0, Hits: 0 (0.0%), Misses: 0, Evictions: 0, Size: 0/1000

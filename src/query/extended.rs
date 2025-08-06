@@ -348,7 +348,7 @@ impl ExtendedQueryHandler {
                             }
                         }
                     } else if query_starts_with_ignore_case(&query, "SELECT") {
-                        let types = Self::analyze_select_params(&query, db).await.unwrap_or_else(|_| {
+                        let types = Self::analyze_select_params(&query, db, session).await.unwrap_or_else(|_| {
                             // If we can't determine types, default to text
                             let param_count = ParameterParser::count_parameters(&query);
                             vec![PgType::Text.to_oid(); param_count]
@@ -560,7 +560,7 @@ impl ExtendedQueryHandler {
                             // For aliased columns, try to find the source column
                             for col_name in &response.columns {
                                 // First try direct lookup
-                                if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                                if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                                     schema_types.insert(col_name.clone(), pg_type);
                                 } else {
                                     // Parse the query to find the source column for this alias
@@ -575,7 +575,7 @@ impl ExtendedQueryHandler {
                                                     let src_col_name = src_col.as_str();
                                                     // Only use if it's the same table we identified
                                                     if src_table_name == table {
-                                                        if let Ok(Some(pg_type)) = db.get_schema_type(table, src_col_name).await {
+                                                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, src_col_name).await {
                                                             info!("Found type for aliased column '{}' from query pattern '{}.{}' in table '{}': {}", col_name, src_table_name, src_col_name, table, pg_type);
                                                             schema_types.insert(col_name.clone(), pg_type);
                                                             continue;
@@ -589,7 +589,7 @@ impl ExtendedQueryHandler {
                                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                                         // For datetime expressions, check if we have a source column and prefer its type
                                         if let Some(ref source_col) = hint.source_column {
-                                            if let Ok(Some(source_type)) = db.get_schema_type(table, source_col).await {
+                                            if let Ok(Some(source_type)) = db.get_schema_type_with_session(&session.id, table, source_col).await {
                                                 info!("Found source column type for datetime expression '{}' -> '{}': {}", col_name, source_col, source_type);
                                                 schema_types.insert(col_name.clone(), source_type);
                                             } else if let Some(suggested_type) = &hint.suggested_type {
@@ -632,7 +632,7 @@ impl ExtendedQueryHandler {
                                         info!("Attempting to extract source for alias: '{}' from query: {}", col_name, cleaned_query);
                                         if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&cleaned_query, col_name) {
                                             info!("Successfully resolved alias '{}' -> table '{}', column '{}'", col_name, source_table, source_col);
-                                            if let Ok(Some(pg_type)) = db.get_schema_type(&source_table, &source_col).await {
+                                            if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, &source_table, &source_col).await {
                                                 info!("Found schema type for alias '{}' -> source column '{}.{}': {}", col_name, source_table, source_col, pg_type);
                                                 schema_types.insert(col_name.clone(), pg_type);
                                             } else {
@@ -777,8 +777,8 @@ impl ExtendedQueryHandler {
                                 if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&cleaned_query, col_name) {
                                     info!("Resolved alias '{}' -> table '{}', column '{}'", col_name, source_table, source_col);
                                     
-                                    // Use async schema lookup
-                                    match db.get_schema_type(&source_table, &source_col).await {
+                                    // Use session-aware schema lookup to see uncommitted data
+                                    match db.get_schema_type_with_session(&session.id, &source_table, &source_col).await {
                                         Ok(Some(pg_type_str)) => {
                                             let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                                             info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {})", 
@@ -804,7 +804,7 @@ impl ExtendedQueryHandler {
                                     if let Some(table_name) = extract_table_name_from_select(&cleaned_query) {
                                         info!("Column '{}': extracted table '{}' from FROM clause, assuming column exists", col_name, table_name);
                                         
-                                        match db.get_schema_type(&table_name, col_name).await {
+                                        match db.get_schema_type_with_session(&session.id, &table_name, col_name).await {
                                             Ok(Some(pg_type_str)) => {
                                                 let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                                                 info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {})", 
@@ -1197,7 +1197,7 @@ impl ExtendedQueryHandler {
                                 
                                 // Try to extract source table.column from the expression
                                 if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&query, col_name) {
-                                    if let Ok(Some(pg_type_str)) = db.get_schema_type(&source_table, &source_col).await {
+                                    if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, &source_table, &source_col).await {
                                         let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                                         info!("Ultra-fast path: Pre-execution type inference for '{}' from '{}.{}' -> {} (OID {})", 
                                               col_name, source_table, source_col, pg_type_str, type_oid);
@@ -1213,7 +1213,7 @@ impl ExtendedQueryHandler {
                                         col_expr
                                     };
                                     
-                                    if let Ok(Some(pg_type_str)) = db.get_schema_type(table, base_col).await {
+                                    if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table, base_col).await {
                                         let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                                         info!("Ultra-fast path: Pre-execution type inference for '{}' from table '{}' -> {} (OID {})", 
                                               col_name, table, pg_type_str, type_oid);
@@ -3574,7 +3574,7 @@ impl ExtendedQueryHandler {
                 if let Some(ref table) = table_name {
                     for col_name in &response.columns {
                         // Try direct lookup first
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                             schema_types.insert(col_name.clone(), pg_type);
                         } else {
                             // Parse the query to find the source column for this alias
@@ -3588,7 +3588,7 @@ impl ExtendedQueryHandler {
                                             let src_col_name = src_col.as_str();
                                             // Only use if it's the same table we identified
                                             if src_table_name == table {
-                                                if let Ok(Some(pg_type)) = db.get_schema_type(table, src_col_name).await {
+                                                if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, src_col_name).await {
                                                     info!("Found type for aliased column '{}' from query pattern '{}.{}': {}", col_name, src_table_name, src_col_name, pg_type);
                                                     schema_types.insert(col_name.clone(), pg_type);
                                                 }
@@ -3757,14 +3757,14 @@ impl ExtendedQueryHandler {
                     if let Some(ref table) = table_name {
                         // Try to extract source table.column from alias
                         if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&portal.query, col_name) {
-                            if let Ok(Some(pg_type_str)) = db.get_schema_type(&source_table, &source_col).await {
+                            if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, &source_table, &source_col).await {
                                 let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                                 info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {}) in execute_select", 
                                       col_name, source_table, source_col, pg_type_str, type_oid);
                                 field_types.push(type_oid);
                                 found_type = true;
                             }
-                        } else if let Ok(Some(pg_type_str)) = db.get_schema_type(table, col_name).await {
+                        } else if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                             let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                             info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {}) in execute_select", 
                                   col_name, table, col_name, pg_type_str, type_oid);
@@ -4535,7 +4535,7 @@ impl ExtendedQueryHandler {
     }
 
     /// Analyze SELECT query to determine parameter types from WHERE clause
-    async fn analyze_select_params(query: &str, db: &Arc<DbHandler>) -> Result<Vec<i32>, PgSqliteError> {
+    async fn analyze_select_params(query: &str, db: &Arc<DbHandler>, session: &Arc<SessionState>) -> Result<Vec<i32>, PgSqliteError> {
         // First, check for explicit parameter casts like $1::int4
         let mut param_types = Vec::new();
         
@@ -4602,7 +4602,7 @@ impl ExtendedQueryHandler {
                         let column = column_match.as_str();
                         
                         // Look up the type for this column
-                        if let Ok(Some(pg_type)) = db.get_schema_type(&table_name, column).await {
+                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, &table_name, column).await {
                             let oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type);
                             param_types.push(oid);
                             info!("Found type for parameter {} from column {}: {} (OID {})", 
@@ -4655,20 +4655,45 @@ impl ExtendedQueryHandler {
     fn analyze_column_casts(query: &str) -> std::collections::HashMap<usize, String> {
         let mut cast_map = std::collections::HashMap::new();
         
+        debug!("analyze_column_casts: Processing query: {}", query);
+        
         // Find the SELECT clause - use case-insensitive search
         let select_pos = if let Some(pos) = find_keyword_position(query, "SELECT") {
             pos
         } else {
+            debug!("analyze_column_casts: No SELECT found, returning empty map");
             return cast_map; // No SELECT found
         };
         
         let after_select = &query[select_pos + 6..];
+        debug!("analyze_column_casts: after_select = {}", after_select);
         
         // Find the FROM clause to know where SELECT list ends
-        let from_pos = find_keyword_position(after_select, " FROM ")
-            .unwrap_or(after_select.len());
+        // Use a more robust approach that handles any whitespace
+        let from_pos = {
+            let query_upper = after_select.to_uppercase();
+            if let Some(pos) = query_upper.find("FROM") {
+                // Verify this is a word boundary, not part of another word
+                let before_ok = pos == 0 || query_upper.chars().nth(pos.saturating_sub(1))
+                    .map(|c| c.is_whitespace()).unwrap_or(true);
+                let after_ok = pos + 4 >= query_upper.len() || query_upper.chars().nth(pos + 4)
+                    .map(|c| c.is_whitespace()).unwrap_or(true);
+                
+                if before_ok && after_ok {
+                    debug!("analyze_column_casts: Found FROM at position {}", pos);
+                    pos
+                } else {
+                    debug!("analyze_column_casts: FROM found but not word boundary, using end");
+                    after_select.len()
+                }
+            } else {
+                debug!("analyze_column_casts: No FROM found, using end of query");
+                after_select.len()
+            }
+        };
         
         let select_list = &after_select[..from_pos];
+        debug!("analyze_column_casts: select_list = {}", select_list);
         
         // Split by commas (simple parsing - doesn't handle nested functions perfectly)
         let mut column_idx = 0;
@@ -4687,7 +4712,9 @@ impl ExtendedQueryHandler {
                 }
                 ',' if paren_depth == 0 => {
                     // Found a column separator
+                    debug!("analyze_column_casts: Processing expression {}: '{}'", column_idx, current_expr);
                     if let Some(cast_type) = Self::extract_cast_from_expression(&current_expr) {
+                        debug!("analyze_column_casts: Found cast: column {} -> {}", column_idx, cast_type);
                         cast_map.insert(column_idx, cast_type);
                     }
                     column_idx += 1;
@@ -4701,11 +4728,14 @@ impl ExtendedQueryHandler {
         
         // Don't forget the last expression
         if !current_expr.trim().is_empty() {
+            debug!("analyze_column_casts: Processing last expression: '{}'", current_expr);
             if let Some(cast_type) = Self::extract_cast_from_expression(&current_expr) {
+                debug!("analyze_column_casts: Found cast in last expression: column {} -> {}", column_idx, cast_type);
                 cast_map.insert(column_idx, cast_type);
             }
         }
         
+        debug!("analyze_column_casts: Returning cast_map: {:?}", cast_map);
         cast_map
     }
     

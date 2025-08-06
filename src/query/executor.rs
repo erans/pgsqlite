@@ -911,7 +911,7 @@ impl QueryExecutor {
                         debug!("Type inference: JOIN query column '{}' mapped to table '{}', actual column '{}'", 
                               col_name, table, actual_column);
                         
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, actual_column).await {
+                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, actual_column).await {
                             debug!("Type inference: Found schema type for '{}.{}' (via JOIN mapping) -> {}", table, actual_column, pg_type);
                             schema_types.insert(col_name.clone(), pg_type);
                         } else {
@@ -932,12 +932,12 @@ impl QueryExecutor {
                 // Fetch types for actual columns
                 for col_name in &response.columns {
                     // Try direct lookup first
-                    if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                    if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                         debug!("Type inference: Found schema type for '{}.{}' -> {}", table, col_name, pg_type);
                         schema_types.insert(col_name.clone(), pg_type);
                     } else if let Some(source_column) = column_mappings.get(col_name) {
                         // Try using the column mapping from SELECT clause
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, source_column).await {
+                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, source_column).await {
                             debug!("Type inference: Found schema type for '{}.{}' (via SELECT mapping {}) -> {}", table, source_column, col_name, pg_type);
                             schema_types.insert(col_name.clone(), pg_type);
                             continue;
@@ -981,7 +981,7 @@ impl QueryExecutor {
                                     (potential_table_single, potential_col_double.as_str()),
                                 ] {
                                     debug!("Type inference: Trying combination table='{}', col='{}'", try_table, try_col);
-                                    if let Ok(Some(pg_type)) = db.get_schema_type(try_table, try_col).await {
+                                    if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, try_table, try_col).await {
                                         debug!("Type inference: Found schema type for '{}.{}' (via pattern matching {}) -> {}", try_table, try_col, col_name, pg_type);
                                         schema_types.insert(col_name.clone(), pg_type);
                                         break;
@@ -991,7 +991,7 @@ impl QueryExecutor {
                         }
                         
                         if potential_column != col_name {
-                            if let Ok(Some(pg_type)) = db.get_schema_type(table, potential_column).await {
+                            if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, potential_column).await {
                                 debug!("Type inference: Found schema type for '{}.{}' (via alias {}) -> {}", table, potential_column, col_name, pg_type);
                                 schema_types.insert(col_name.clone(), pg_type);
                                 continue;
@@ -1010,7 +1010,7 @@ impl QueryExecutor {
                 for col_name in &response.columns {
                     if let Some(hint) = translation_metadata.get_hint(col_name) {
                         if let Some(ref source_col) = hint.source_column {
-                            if let Ok(Some(source_type)) = db.get_schema_type(table, source_col).await {
+                            if let Ok(Some(source_type)) = db.get_schema_type_with_session(&session.id, table, source_col).await {
                                 hint_source_types.insert(col_name.clone(), source_type);
                             }
                         }
@@ -1126,7 +1126,7 @@ impl QueryExecutor {
                 // Check if this is an aliased column
                 if let Some(source_column) = column_mappings.get(col_name) {
                     // Look up the source column type
-                    match db.get_schema_type(table, source_column).await {
+                    match db.get_schema_type_with_session(&session.id, table, source_column).await {
                         Ok(Some(pg_type)) => {
                             column_types_map.insert(col_idx, pg_type.clone());
                             
@@ -1178,7 +1178,7 @@ impl QueryExecutor {
                         }
                     } else {
                         // Try direct lookup for non-aliased columns
-                        if let Ok(Some(pg_type)) = db.get_schema_type(table, col_name).await {
+                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                             column_types_map.insert(col_idx, pg_type.clone());
                             
                             // Check if it's a datetime type
@@ -1502,7 +1502,7 @@ impl QueryExecutor {
             
             // Try to get type information from schema
             if let Some(ref table) = table_name {
-                if let Ok(Some(schema_type)) = db.get_schema_type(table, col_name).await {
+                if let Ok(Some(schema_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                     pg_type = Some(schema_type.clone());
                     type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&schema_type);
                 }

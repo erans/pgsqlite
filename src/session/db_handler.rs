@@ -726,6 +726,22 @@ impl DbHandler {
         // This ensures we can read committed schema metadata regardless of session isolation
         let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
         
+        debug!("get_schema_type: Looking for table='{}', column='{}'", table_name, column_name);
+        
+        // First, check what entries exist in the schema table
+        let mut all_stmt = conn.prepare("SELECT table_name, column_name, pg_type FROM __pgsqlite_schema LIMIT 10")?;
+        let mut rows = all_stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?;
+        
+        debug!("get_schema_type: Schema table contains:");
+        let mut found_entries = 0;
+        while let Ok(Some(row)) = rows.next().transpose() {
+            found_entries += 1;
+            debug!("  table='{}', column='{}', pg_type='{}'", row.0, row.1, row.2);
+        }
+        debug!("get_schema_type: Found {} total schema entries", found_entries);
+        
         let mut stmt = conn.prepare(
             "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
         )?;
@@ -735,7 +751,39 @@ impl DbHandler {
             row.get::<_, String>(0)
         }).optional()?;
         
+        debug!("get_schema_type: Query result for '{}','{}'= {:?}", table_name, column_name, result);
+        
         Ok(result)
+    }
+    
+    /// Get schema type for a column using the session connection to see uncommitted data
+    pub async fn get_schema_type_with_session(&self, session_id: &Uuid, table_name: &str, column_name: &str) -> Result<Option<String>, PgSqliteError> {
+        debug!("get_schema_type_with_session: Looking for table='{}', column='{}' in session {}", table_name, column_name, session_id);
+        
+        let result = self.with_session_connection(session_id, |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
+            )?;
+            
+            use rusqlite::OptionalExtension;
+            let result = stmt.query_row([table_name, column_name], |row| {
+                row.get::<_, String>(0)
+            }).optional()?;
+            
+            Ok(result)
+        }).await;
+        
+        match result {
+            Ok(schema_result) => {
+                debug!("get_schema_type_with_session: Query result for '{}','{}' in session {}= {:?}", 
+                       table_name, column_name, session_id, schema_result);
+                Ok(schema_result)
+            }
+            Err(e) => {
+                debug!("get_schema_type_with_session: Error querying schema for '{}','{}': {}", table_name, column_name, e);
+                Err(e)
+            }
+        }
     }
     
     /// Try fast path execution with parameters
