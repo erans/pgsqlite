@@ -11,7 +11,7 @@ async fn benchmark_portal_performance_direct() {
 
     // Setup temporary file database
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let db_path = format!("/tmp/benchmark_portal_direct_{}.db", timestamp);
+    let db_path = format!("/tmp/benchmark_portal_direct_{timestamp}.db");
     let db_handler = Arc::new(DbHandler::new(&db_path).expect("Failed to create database"));
     let session = Arc::new(SessionState::new("bench_user".to_string(), "bench_db".to_string()));
 

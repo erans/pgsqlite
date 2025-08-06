@@ -53,7 +53,7 @@ where
     let port = listener.local_addr().unwrap().port();
     
     let test_id = Uuid::new_v4().to_string().replace("-", "");
-    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path = format!("/tmp/pgsqlite_test_{test_id}.db");
     let db_path_clone = db_path.clone();
     
     let server_handle = tokio::spawn(async move {

@@ -18,11 +18,12 @@ static ARITHMETIC_EXPR_PATTERN: Lazy<Regex> = Lazy::new(|| {
     // Captures: (1) full expression, (2) alias
     // The expression part now matches any combination of:
     // - identifiers (column names)
-    // - numbers (integers or decimals)
+    // - numbers (integers or decimals)  
+    // - parameters ($1, $2, etc.)
     // - arithmetic operators (+, -, *, /)
     // - parentheses for grouping
     // - whitespace
-    Regex::new(r"(?i)([\w\.\s\+\-\*/\(\)]+[\+\-\*/][\w\.\s\+\-\*/\(\)]+)\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap()
+    Regex::new(r"(?i)([\w\.\s\+\-\*/\(\)$]+[\+\-\*/][\w\.\s\+\-\*/\(\)$]+)\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*)").unwrap()
 });
 
 static COLUMN_IN_EXPR_PATTERN: Lazy<Regex> = Lazy::new(|| {

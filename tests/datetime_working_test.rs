@@ -76,7 +76,7 @@ async fn test_datetime_functions_with_table() {
             }
         }
         Err(e) => {
-            eprintln!("ERROR: to_timestamp failed: {}", e);
+            eprintln!("ERROR: to_timestamp failed: {e}");
         }
     }
     
@@ -111,7 +111,7 @@ async fn test_datetime_functions_with_table() {
             }
         }
         Err(e) => {
-            eprintln!("ERROR: EXTRACT with to_timestamp failed: {}", e);
+            eprintln!("ERROR: EXTRACT with to_timestamp failed: {e}");
         }
     }
     
@@ -210,7 +210,7 @@ async fn test_interval_arithmetic_with_table() {
     let expected_hour_ago = test_timestamp_micros - 3600 * 1_000_000;
     
     assert_eq!(tomorrow, expected_tomorrow, 
-               "tomorrow: expected {}, got {}", expected_tomorrow, tomorrow);
+               "tomorrow: expected {expected_tomorrow}, got {tomorrow}");
     assert_eq!(hour_ago, expected_hour_ago,
-               "hour_ago: expected {}, got {}", expected_hour_ago, hour_ago);
+               "hour_ago: expected {expected_hour_ago}, got {hour_ago}");
 }

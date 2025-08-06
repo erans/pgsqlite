@@ -122,11 +122,12 @@ impl ColumnTypeHint {
         }
     }
     
-    /// Create a hint for arithmetic on float
+    /// Create a hint for arithmetic expressions
+    /// This will defer type resolution to inference time based on source column type
     pub fn arithmetic_on_float(source: String) -> Self {
         Self {
             source_column: Some(source),
-            suggested_type: Some(PgType::Float8), // float + int = float in PostgreSQL
+            suggested_type: None, // Will be resolved based on source column type
             datetime_subtype: None,
             is_expression: true,
             expression_type: Some(ExpressionType::ArithmeticOnFloat),

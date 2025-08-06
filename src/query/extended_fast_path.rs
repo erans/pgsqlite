@@ -90,8 +90,8 @@ impl ExtendedFastPath {
         
         // Look for CAST($N AS TYPE) patterns
         for i in 1..=param_count {
-            if let Some(cast_start) = query.find(&format!("CAST(${} AS ", i)) {
-                let type_start = cast_start + format!("CAST(${} AS ", i).len();
+            if let Some(cast_start) = query.find(&format!("CAST(${i} AS ")) {
+                let type_start = cast_start + format!("CAST(${i} AS ").len();
                 if let Some(type_end) = query[type_start..].find(')') {
                     let type_name = &query[type_start..type_start + type_end];
                     let type_oid = match type_name.to_uppercase().as_str() {

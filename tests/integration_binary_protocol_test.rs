@@ -134,7 +134,7 @@ async fn test_comprehensive_binary_protocol() {
     
     // Insert test data using prepared statements (which use binary protocol when beneficial)
     for (test_id, description, fields) in &test_cases {
-        println!("Testing: {}", description);
+        println!("Testing: {description}");
         
         // Build dynamic INSERT statement
         let columns: Vec<&str> = fields.iter().map(|(col, _)| *col).collect();
@@ -179,27 +179,26 @@ async fn test_comprehensive_binary_protocol() {
         let float8_val: f64 = row.get("float8_val");
         let text_val: String = row.get("text_val");
         
-        println!("  Row {}: bool={}, int4={}, float8={:.6}, text='{}'", 
-                 test_id, bool_val, int4_val, float8_val, text_val);
+        println!("  Row {test_id}: bool={bool_val}, int4={int4_val}, float8={float8_val:.6}, text='{text_val}'");
         
         // Verify advanced types work correctly
         let numeric_val: Decimal = row.get("numeric_val");
         let uuid_val: String = row.get("uuid_val");
         
-        println!("    Advanced: numeric={}, uuid={}", numeric_val, uuid_val);
+        println!("    Advanced: numeric={numeric_val}, uuid={uuid_val}");
         
         // Verify array types as text (since we store them as JSON)
         let int_array: String = row.get("int_array");
         let text_array: String = row.get("text_array");
         
-        println!("    Arrays: int_array={}, text_array={}", int_array, text_array);
+        println!("    Arrays: int_array={int_array}, text_array={text_array}");
         
         // Verify network types
         let cidr_val: String = row.get("cidr_val");
         let inet_val: String = row.get("inet_val");
         let mac_val: String = row.get("mac_val");
         
-        println!("    Network: cidr={}, inet={}, mac={}", cidr_val, inet_val, mac_val);
+        println!("    Network: cidr={cidr_val}, inet={inet_val}, mac={mac_val}");
     }
     
     // Test binary protocol with complex queries
@@ -221,7 +220,7 @@ async fn test_comprehensive_binary_protocol() {
     
     let total: i64 = agg_row.get("total");
     let max_bigint: i64 = agg_row.get("max_bigint");
-    println!("  Aggregation: total={}, max_bigint={}", total, max_bigint);
+    println!("  Aggregation: total={total}, max_bigint={max_bigint}");
     
     // Test NULL handling with binary protocol
     client.execute(
@@ -254,7 +253,7 @@ async fn test_comprehensive_binary_protocol() {
     let add_text: String = add_row.get("text_val");
     let add_numeric: Decimal = add_row.get("numeric_val");
     
-    println!("  ✅ Additional test with binary protocol: text='{}', numeric={}", add_text, add_numeric);
+    println!("  ✅ Additional test with binary protocol: text='{add_text}', numeric={add_numeric}");
     
     // Final verification
     let final_count = client.query_one(
@@ -263,7 +262,7 @@ async fn test_comprehensive_binary_protocol() {
     ).await.unwrap();
     
     let count: i64 = final_count.get(0);
-    println!("\n📊 Final database state: {} total rows", count);
+    println!("\n📊 Final database state: {count} total rows");
     
     server.abort();
     
@@ -286,18 +285,16 @@ async fn test_binary_numeric_precision() {
         &[]
     ).await.unwrap();
     
-    let test_cases = vec![
-        (Decimal::from_str("123.45").unwrap(), "123.45"),
+    let test_cases = [(Decimal::from_str("123.45").unwrap(), "123.45"),
         (Decimal::from_str("99999.99").unwrap(), "99999.99"),
         (Decimal::from_str("0.01").unwrap(), "0.01"),
         (Decimal::from_str("-999.99").unwrap(), "-999.99"),
-        (Decimal::from_str("12345678901234.12345678").unwrap(), "12345678901234.12345678"),
-    ];
+        (Decimal::from_str("12345678901234.12345678").unwrap(), "12345678901234.12345678")];
     
     for (i, (decimal_val, money_str)) in test_cases.iter().enumerate() {
         client.execute(
             "INSERT INTO numeric_precision_test (id, small_decimal, large_decimal, money_val) VALUES ($1, $2, $3, $4)",
-            &[&(i as i32 + 1), decimal_val, decimal_val, &format!("${}", money_str)]
+            &[&(i as i32 + 1), decimal_val, decimal_val, &format!("${money_str}")]
         ).await.unwrap();
     }
     

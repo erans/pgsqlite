@@ -105,8 +105,7 @@ impl BinaryEncoder {
     pub fn encode_money(amount_str: &str) -> Result<Vec<u8>, String> {
         // Parse the string, removing currency symbols and commas
         let clean_str = amount_str
-            .replace('$', "")
-            .replace(',', "")
+            .replace(['$', ','], "")
             .trim()
             .to_string();
         
@@ -172,7 +171,7 @@ impl BinaryEncoder {
         let bitmap_start = result.len();
         if has_nulls {
             // Create bitmap (1 bit per element, padded to byte boundary)
-            let bitmap_bytes = (elements.len() + 7) / 8;
+            let bitmap_bytes = elements.len().div_ceil(8);
             let mut bitmap = vec![0u8; bitmap_bytes];
             
             for (i, elem) in elements.iter().enumerate() {
@@ -188,7 +187,7 @@ impl BinaryEncoder {
         
         // Update dataoffset if we have nulls
         if has_nulls {
-            let dataoffset = (bitmap_start + ((elements.len() + 7) / 8)) as i32;
+            let dataoffset = (bitmap_start + elements.len().div_ceil(8)) as i32;
             result[4..8].copy_from_slice(&dataoffset.to_be_bytes());
         }
         
@@ -233,7 +232,7 @@ impl BinaryEncoder {
                         result.extend_from_slice(&bytes);
                     }
                     None => {
-                        return Err(format!("Cannot encode array element: {:?}", elem));
+                        return Err(format!("Cannot encode array element: {elem:?}"));
                     }
                 }
             }
@@ -301,7 +300,7 @@ impl BinaryEncoder {
         // Encode lower bound if not infinite
         if !lower_infinite {
             let lower_val: i32 = lower_str.parse()
-                .map_err(|_| format!("Invalid lower bound: {}", lower_str))?;
+                .map_err(|_| format!("Invalid lower bound: {lower_str}"))?;
             let lower_bytes = lower_val.to_be_bytes();
             result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&lower_bytes);
@@ -310,7 +309,7 @@ impl BinaryEncoder {
         // Encode upper bound if not infinite
         if !upper_infinite {
             let upper_val: i32 = upper_str.parse()
-                .map_err(|_| format!("Invalid upper bound: {}", upper_str))?;
+                .map_err(|_| format!("Invalid upper bound: {upper_str}"))?;
             let upper_bytes = upper_val.to_be_bytes();
             result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&upper_bytes);
@@ -372,7 +371,7 @@ impl BinaryEncoder {
         // Encode bounds
         if !lower_infinite {
             let lower_val: i64 = lower_str.parse()
-                .map_err(|_| format!("Invalid lower bound: {}", lower_str))?;
+                .map_err(|_| format!("Invalid lower bound: {lower_str}"))?;
             let lower_bytes = lower_val.to_be_bytes();
             result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&lower_bytes);
@@ -380,7 +379,7 @@ impl BinaryEncoder {
         
         if !upper_infinite {
             let upper_val: i64 = upper_str.parse()
-                .map_err(|_| format!("Invalid upper bound: {}", upper_str))?;
+                .map_err(|_| format!("Invalid upper bound: {upper_str}"))?;
             let upper_bytes = upper_val.to_be_bytes();
             result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&upper_bytes);
@@ -515,7 +514,7 @@ impl BinaryEncoder {
             let addr = &trimmed[..slash_pos];
             let prefix = &trimmed[slash_pos + 1..];
             let len = prefix.parse::<u8>()
-                .map_err(|_| format!("Invalid prefix length: {}", prefix))?;
+                .map_err(|_| format!("Invalid prefix length: {prefix}"))?;
             (addr, len)
         } else {
             return Err("CIDR must include prefix length".to_string());
@@ -562,7 +561,7 @@ impl BinaryEncoder {
             let addr = &trimmed[..slash_pos];
             let prefix = &trimmed[slash_pos + 1..];
             let len = prefix.parse::<u8>()
-                .map_err(|_| format!("Invalid prefix length: {}", prefix))?;
+                .map_err(|_| format!("Invalid prefix length: {prefix}"))?;
             (addr, len)
         } else if trimmed.contains(':') {
             // IPv6 without prefix - default to /128
@@ -623,7 +622,7 @@ impl BinaryEncoder {
         let mut result = Vec::with_capacity(6);
         for part in hex_parts {
             let byte = u8::from_str_radix(part, 16)
-                .map_err(|_| format!("Invalid MAC address component: {}", part))?;
+                .map_err(|_| format!("Invalid MAC address component: {part}"))?;
             result.push(byte);
         }
         
@@ -651,7 +650,7 @@ impl BinaryEncoder {
             // Insert FF:FE between 3rd and 4th bytes
             for (i, part) in hex_parts.iter().enumerate() {
                 let byte = u8::from_str_radix(part, 16)
-                    .map_err(|_| format!("Invalid MAC address component: {}", part))?;
+                    .map_err(|_| format!("Invalid MAC address component: {part}"))?;
                 result.push(byte);
                 
                 if i == 2 {
@@ -664,7 +663,7 @@ impl BinaryEncoder {
             // Already 8-byte format
             for part in hex_parts {
                 let byte = u8::from_str_radix(part, 16)
-                    .map_err(|_| format!("Invalid MAC address component: {}", part))?;
+                    .map_err(|_| format!("Invalid MAC address component: {part}"))?;
                 result.push(byte);
             }
         } else {
@@ -684,7 +683,7 @@ impl BinaryEncoder {
         let mut octets = [0u8; 4];
         for (i, part) in parts.iter().enumerate() {
             let octet = part.parse::<u8>()
-                .map_err(|_| format!("Invalid IPv4 octet: {}", part))?;
+                .map_err(|_| format!("Invalid IPv4 octet: {part}"))?;
             octets[i] = octet;
         }
         
@@ -720,7 +719,7 @@ impl BinaryEncoder {
                     continue;
                 }
                 let value = u16::from_str_radix(group, 16)
-                    .map_err(|_| format!("Invalid IPv6 group: {}", group))?;
+                    .map_err(|_| format!("Invalid IPv6 group: {group}"))?;
                 result[pos] = (value >> 8) as u8;
                 result[pos + 1] = (value & 0xFF) as u8;
                 pos += 2;
@@ -735,7 +734,7 @@ impl BinaryEncoder {
                     continue;
                 }
                 let value = u16::from_str_radix(group, 16)
-                    .map_err(|_| format!("Invalid IPv6 group: {}", group))?;
+                    .map_err(|_| format!("Invalid IPv6 group: {group}"))?;
                 right_groups.push(value);
             }
             
@@ -884,17 +883,11 @@ impl BinaryEncoder {
                     }
                     rusqlite::types::Value::Real(f) => {
                         // Convert float to decimal (may lose precision)
-                        match Decimal::from_f64_retain(*f) {
-                            Some(decimal) => Some(Self::encode_numeric(&decimal)),
-                            None => None,
-                        }
+                        Decimal::from_f64_retain(*f).map(|decimal| Self::encode_numeric(&decimal))
                     }
                     rusqlite::types::Value::Integer(i) => {
                         // Convert integer to decimal
-                        match Decimal::from_i64(*i) {
-                            Some(decimal) => Some(Self::encode_numeric(&decimal)),
-                            None => None,
-                        }
+                        Decimal::from_i64(*i).map(|decimal| Self::encode_numeric(&decimal))
                     }
                     _ => None,
                 }
@@ -903,10 +896,7 @@ impl BinaryEncoder {
                 // UUID - 16 bytes binary
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_uuid(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_uuid(s).ok()
                     }
                     _ => None,
                 }
@@ -929,10 +919,7 @@ impl BinaryEncoder {
                 // MONEY - 8-byte integer
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_money(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_money(s).ok()
                     }
                     _ => None,
                 }
@@ -942,10 +929,7 @@ impl BinaryEncoder {
                 // INT4 array
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_array(s, PgType::Int4.to_oid()) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_array(s, PgType::Int4.to_oid()).ok()
                     }
                     _ => None,
                 }
@@ -954,10 +938,7 @@ impl BinaryEncoder {
                 // INT8 array
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_array(s, PgType::Int8.to_oid()) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_array(s, PgType::Int8.to_oid()).ok()
                     }
                     _ => None,
                 }
@@ -966,10 +947,7 @@ impl BinaryEncoder {
                 // TEXT array
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_array(s, PgType::Text.to_oid()) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_array(s, PgType::Text.to_oid()).ok()
                     }
                     _ => None,
                 }
@@ -978,10 +956,7 @@ impl BinaryEncoder {
                 // FLOAT8 array
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_array(s, PgType::Float8.to_oid()) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_array(s, PgType::Float8.to_oid()).ok()
                     }
                     _ => None,
                 }
@@ -990,10 +965,7 @@ impl BinaryEncoder {
                 // BOOL array
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_array(s, PgType::Bool.to_oid()) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_array(s, PgType::Bool.to_oid()).ok()
                     }
                     _ => None,
                 }
@@ -1003,10 +975,7 @@ impl BinaryEncoder {
                 // INT4RANGE
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_int4range(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_int4range(s).ok()
                     }
                     _ => None,
                 }
@@ -1015,10 +984,7 @@ impl BinaryEncoder {
                 // INT8RANGE
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_int8range(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_int8range(s).ok()
                     }
                     _ => None,
                 }
@@ -1027,10 +993,7 @@ impl BinaryEncoder {
                 // NUMRANGE
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_numrange(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_numrange(s).ok()
                     }
                     _ => None,
                 }
@@ -1040,10 +1003,7 @@ impl BinaryEncoder {
                 // CIDR
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_cidr(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_cidr(s).ok()
                     }
                     _ => None,
                 }
@@ -1052,10 +1012,7 @@ impl BinaryEncoder {
                 // INET
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_inet(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_inet(s).ok()
                     }
                     _ => None,
                 }
@@ -1064,10 +1021,7 @@ impl BinaryEncoder {
                 // MACADDR
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_macaddr(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_macaddr(s).ok()
                     }
                     _ => None,
                 }
@@ -1076,10 +1030,7 @@ impl BinaryEncoder {
                 // MACADDR8
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        match Self::encode_macaddr8(s) {
-                            Ok(bytes) => Some(bytes),
-                            Err(_) => None,
-                        }
+                        Self::encode_macaddr8(s).ok()
                     }
                     _ => None,
                 }

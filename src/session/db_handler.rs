@@ -261,7 +261,7 @@ impl DbHandler {
                                 // If UTF-8 conversion fails, try to recover by using lossy conversion
                                 debug!("Parameter {}: UTF-8 conversion failed ({}), trying lossy conversion", i, e);
                                 let lossy_string = String::from_utf8_lossy(data);
-                                if lossy_string.len() > 0 {
+                                if !lossy_string.is_empty() {
                                     debug!("Parameter {}: lossy conversion successful: '{}'", i, lossy_string);
                                     rusqlite::types::Value::Text(lossy_string.into_owned())
                                 } else {
@@ -814,11 +814,7 @@ impl DbHandler {
                     let mut datetime_columns = std::collections::HashMap::new();
                     
                     // Try to extract table name from query for schema lookup
-                    let table_name = if let Some(captures) = regex::Regex::new(r"(?i)FROM\s+(\w+)").unwrap().captures(query) {
-                        Some(captures[1].to_string())
-                    } else {
-                        None
-                    };
+                    let table_name = regex::Regex::new(r"(?i)FROM\s+(\w+)").unwrap().captures(query).map(|captures| captures[1].to_string());
                     
                     
                     // Look up column types for datetime conversion
@@ -842,7 +838,7 @@ impl DbHandler {
                             )?;
                             
                             if let Ok(Some(pg_type)) = schema_stmt.query_row([table, base_column_name], |row| {
-                                Ok(row.get::<_, String>(0)?)
+                                row.get::<_, String>(0)
                             }).optional() {
                                 if pg_type == "TIMESTAMP" || pg_type == "TIMESTAMP WITHOUT TIME ZONE" {
                                     datetime_columns.insert(i, "timestamp");
@@ -913,18 +909,14 @@ impl DbHandler {
                         let mut datetime_columns = std::collections::HashMap::new();
                         
                         // Try to extract table name from query for schema lookup (INSERT/UPDATE/DELETE)
-                        let table_name = if let Some(captures) = regex::Regex::new(r"(?i)(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)").unwrap().captures(query) {
-                            Some(captures[1].to_string())
-                        } else {
-                            None
-                        };
+                        let table_name = regex::Regex::new(r"(?i)(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)").unwrap().captures(query).map(|captures| captures[1].to_string());
                         
                         // Look up column types for datetime conversion
                         if let Some(ref table) = table_name {
                             for (i, column_name) in column_names.iter().enumerate() {
                                 // Handle table-prefixed columns like "users.created_at" -> "created_at"
                                 let base_column_name = if column_name.contains('.') {
-                                    column_name.split('.').last().unwrap_or(column_name)
+                                    column_name.split('.').next_back().unwrap_or(column_name)
                                 } else {
                                     column_name
                                 };
@@ -935,7 +927,7 @@ impl DbHandler {
                                 )?;
                                 
                                 if let Ok(Some(pg_type)) = schema_stmt.query_row([table, base_column_name], |row| {
-                                    Ok(row.get::<_, String>(0)?)
+                                    row.get::<_, String>(0)
                                 }).optional() {
                                     if pg_type == "TIMESTAMP" || pg_type == "TIMESTAMP WITHOUT TIME ZONE" {
                                         datetime_columns.insert(i, "timestamp");

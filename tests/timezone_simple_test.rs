@@ -62,6 +62,5 @@ async fn test_simple_at_time_zone() {
     
     // When timezone is UTC, the value should be unchanged
     assert!((ts_utc - timestamp).abs() < 1.0, 
-            "UTC time should match original timestamp, got {} expected {}", 
-            ts_utc, timestamp);
+            "UTC time should match original timestamp, got {ts_utc} expected {timestamp}");
 }

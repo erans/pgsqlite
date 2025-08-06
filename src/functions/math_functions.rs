@@ -10,7 +10,7 @@ fn get_numeric_value(ctx: &Context<'_>, idx: usize) -> Result<f64> {
         rusqlite::types::ValueRef::Text(s) => {
             let text = std::str::from_utf8(s).map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
             text.trim().parse::<f64>()
-                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Failed to parse '{}' as number: {}", text, e).into()))
+                .map_err(|e| rusqlite::Error::UserFunctionError(format!("Failed to parse '{text}' as number: {e}").into()))
         }
         rusqlite::types::ValueRef::Null => {
             // For NULL input, we should propagate it (most SQL functions return NULL for NULL input)
@@ -27,7 +27,7 @@ fn get_numeric_value(ctx: &Context<'_>, idx: usize) -> Result<f64> {
                 let decimal_str = decimal.to_string();
                 f64::from_str(&decimal_str)
                     .map_err(|e| rusqlite::Error::UserFunctionError(
-                        format!("Failed to convert decimal to f64: {}", e).into()
+                        format!("Failed to convert decimal to f64: {e}").into()
                     ))
             } else {
                 // Try to parse blob as UTF-8 text as fallback
@@ -35,12 +35,15 @@ fn get_numeric_value(ctx: &Context<'_>, idx: usize) -> Result<f64> {
                     Ok(text) => {
                         text.trim().parse::<f64>()
                             .map_err(|e| rusqlite::Error::UserFunctionError(
-                                format!("Failed to parse blob as number: {}", e).into()
+                                format!("Failed to parse blob as number: {e}").into()
                             ))
                     }
-                    Err(_) => Err(rusqlite::Error::UserFunctionError(
-                        format!("Invalid blob size for numeric function: {} bytes", b.len()).into()
-                    ))
+                    Err(_) => {
+                        let len = b.len();
+                        Err(rusqlite::Error::UserFunctionError(
+                            format!("Invalid blob size for numeric function: {len} bytes").into()
+                        ))
+                    }
                 }
             }
         }

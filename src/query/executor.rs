@@ -274,7 +274,7 @@ impl QueryExecutor {
                         None
                     };
                     
-                    let (mut boolean_columns, mut datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
+                    let (boolean_columns, mut datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
                         let table = table_name.as_ref().unwrap();
                         let schema_info = get_table_schema_info(table, db, &session.id).await;
                         let mappings = extract_column_mappings_from_query(query, table);
@@ -1650,7 +1650,7 @@ impl QueryExecutor {
         }
         
         framed.send(BackendMessage::RowDescription(fields)).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         // Send data rows with proper type conversion
         let mut row_count = 0;
@@ -1723,7 +1723,7 @@ impl QueryExecutor {
             }
             
             framed.send(BackendMessage::DataRow(converted_row)).await
-                .map_err(|e| PgSqliteError::Io(e))?;
+                .map_err(PgSqliteError::Io)?;
             row_count += 1;
         }
         
@@ -1737,7 +1737,7 @@ impl QueryExecutor {
         };
         
         framed.send(BackendMessage::CommandComplete { tag }).await
-            .map_err(|e| PgSqliteError::Io(e))?;
+            .map_err(PgSqliteError::Io)?;
         
         Ok(())
     }

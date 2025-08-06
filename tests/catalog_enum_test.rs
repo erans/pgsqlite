@@ -47,7 +47,7 @@ async fn test_pg_attribute_enum_types() {
         let table: &str = row.get(0);
         let col: &str = row.get(1);
         let pg_type: &str = row.get(2);
-        eprintln!("  {}.{} -> {}", table, col, pg_type);
+        eprintln!("  {table}.{col} -> {pg_type}");
     }
     
     // Debug: Check __pgsqlite_enum_types
@@ -60,7 +60,7 @@ async fn test_pg_attribute_enum_types() {
     for row in &enum_info {
         let oid: i32 = row.get(0);
         let name: &str = row.get(1);
-        eprintln!("  {} -> {}", oid, name);
+        eprintln!("  {oid} -> {name}");
     }
     
     // Debug: Check what tables exist in pg_class

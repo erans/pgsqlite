@@ -10,13 +10,15 @@ pgsqlite is a PostgreSQL protocol adapter for SQLite databases, allowing Postgre
 cargo build              # Build project
 cargo test              # Run unit tests
 cargo check             # Check for errors/warnings
+cargo clippy            # Check for code quality issues
 ./tests/runner/run_ssl_tests.sh  # Run integration tests (from project root)
 ```
 
 **Pre-commit checklist**: Run ALL of these before committing:
 1. `cargo check` - No errors or warnings
-2. `cargo build` - Successful build
-3. `cargo test` - All tests pass
+2. `cargo clippy` - Review and fix warnings where reasonable
+3. `cargo build` - Successful build
+4. `cargo test` - All tests pass
 
 ### Development Workflow
 1. Check TODO.md for prioritized tasks

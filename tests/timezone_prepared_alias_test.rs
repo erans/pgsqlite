@@ -30,7 +30,7 @@ async fn test_prepared_at_time_zone_with_alias() {
     
     assert_eq!(rows.len(), 1, "Expected exactly one row");
     let utc_time: f64 = rows[0].get(0);
-    println!("Got UTC time: {}", utc_time);
+    println!("Got UTC time: {utc_time}");
     
     assert!((utc_time - timestamp).abs() < 1.0, "UTC time should match original timestamp, got {utc_time} expected {timestamp}");
     
@@ -43,7 +43,7 @@ async fn test_prepared_at_time_zone_with_alias() {
     
     assert_eq!(rows.len(), 1, "Expected exactly one row");
     let retrieved_time: f64 = rows[0].get(0);
-    println!("Got retrieved time: {}", retrieved_time);
+    println!("Got retrieved time: {retrieved_time}");
     
     assert!((retrieved_time - timestamp).abs() < 1.0, "Retrieved time should match original timestamp, got {retrieved_time} expected {timestamp}");
 }

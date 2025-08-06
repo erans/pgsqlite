@@ -77,61 +77,58 @@ impl<'a> ExpressionTypeResolver<'a> {
         let mut column_types = Vec::new();
         
         // Analyze the CTE query to determine column types
-        match &*cte.query.body {
-            SetExpr::Select(select) => {
-                // Build a temporary context for the CTE
-                let mut cte_context = QueryContext::default();
-                
-                // Process tables in the CTE
-                for table in &select.from {
-                    self.process_table_with_joins(&table.relation, &table.joins, &mut cte_context);
-                }
-                
-                // Analyze projection to get column types
-                for (idx, item) in select.projection.iter().enumerate() {
-                    match item {
-                        SelectItem::UnnamedExpr(expr) => {
-                            let expr_type = self.resolve_expr_type(expr, &cte_context);
-                            let col_name = if !cte.alias.columns.is_empty() {
-                                cte.alias.columns.get(idx).map(|c| c.name.value.clone()).unwrap_or_else(|| format!("column{idx}"))
-                            } else {
-                                // Try to extract name from expression
-                                self.extract_column_name(expr).unwrap_or_else(|| format!("column{idx}"))
-                            };
-                            column_types.push((col_name, expr_type));
-                        }
-                        SelectItem::ExprWithAlias { expr, alias } => {
-                            let expr_type = self.resolve_expr_type(expr, &cte_context);
-                            column_types.push((alias.value.clone(), expr_type));
-                        }
-                        SelectItem::Wildcard(_) => {
-                            // For wildcards, we need to get all columns from the referenced tables
-                            if let Some(table) = &cte_context.default_table {
-                                if let Ok(cols) = self.get_table_columns(table) {
-                                    column_types.extend(cols);
-                                }
-                            }
-                        }
-                        SelectItem::QualifiedWildcard(name, _) => {
-                            let table_name = match name {
-                                SelectItemQualifiedWildcardKind::ObjectName(obj_name) => {
-                                    obj_name.0.last().map(|p| match p {
-                                        ObjectNamePart::Identifier(i) => i.value.clone(),
-                                    }).unwrap_or_default()
-                                }
-                                SelectItemQualifiedWildcardKind::Expr(_) => String::new(),
-                            };
-                            let actual_table = cte_context.table_aliases.get(&table_name)
-                                .cloned()
-                                .unwrap_or(table_name);
-                            if let Ok(cols) = self.get_table_columns(&actual_table) {
+        if let SetExpr::Select(select) = &*cte.query.body {
+            // Build a temporary context for the CTE
+            let mut cte_context = QueryContext::default();
+            
+            // Process tables in the CTE
+            for table in &select.from {
+                self.process_table_with_joins(&table.relation, &table.joins, &mut cte_context);
+            }
+            
+            // Analyze projection to get column types
+            for (idx, item) in select.projection.iter().enumerate() {
+                match item {
+                    SelectItem::UnnamedExpr(expr) => {
+                        let expr_type = self.resolve_expr_type(expr, &cte_context);
+                        let col_name = if !cte.alias.columns.is_empty() {
+                            cte.alias.columns.get(idx).map(|c| c.name.value.clone()).unwrap_or_else(|| format!("column{idx}"))
+                        } else {
+                            // Try to extract name from expression
+                            self.extract_column_name(expr).unwrap_or_else(|| format!("column{idx}"))
+                        };
+                        column_types.push((col_name, expr_type));
+                    }
+                    SelectItem::ExprWithAlias { expr, alias } => {
+                        let expr_type = self.resolve_expr_type(expr, &cte_context);
+                        column_types.push((alias.value.clone(), expr_type));
+                    }
+                    SelectItem::Wildcard(_) => {
+                        // For wildcards, we need to get all columns from the referenced tables
+                        if let Some(table) = &cte_context.default_table {
+                            if let Ok(cols) = self.get_table_columns(table) {
                                 column_types.extend(cols);
                             }
                         }
                     }
+                    SelectItem::QualifiedWildcard(name, _) => {
+                        let table_name = match name {
+                            SelectItemQualifiedWildcardKind::ObjectName(obj_name) => {
+                                obj_name.0.last().map(|p| match p {
+                                    ObjectNamePart::Identifier(i) => i.value.clone(),
+                                }).unwrap_or_default()
+                            }
+                            SelectItemQualifiedWildcardKind::Expr(_) => String::new(),
+                        };
+                        let actual_table = cte_context.table_aliases.get(&table_name)
+                            .cloned()
+                            .unwrap_or(table_name);
+                        if let Ok(cols) = self.get_table_columns(&actual_table) {
+                            column_types.extend(cols);
+                        }
+                    }
                 }
             }
-            _ => {} // Handle other SetExpr variants if needed
         }
         
         context.cte_columns.insert(cte_name, column_types);

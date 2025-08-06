@@ -111,8 +111,8 @@ fn test_db_handler_fails_on_drift() {
     
     if let Err(e) = result {
         let error_msg = e.to_string();
-        eprintln!("Got error: {}", error_msg);
-        assert!(error_msg.contains("Schema drift detected"), "Expected 'Schema drift detected' in error: {}", error_msg);
+        eprintln!("Got error: {error_msg}");
+        assert!(error_msg.contains("Schema drift detected"), "Expected 'Schema drift detected' in error: {error_msg}");
         assert!(error_msg.contains("phone"));
     } else {
         panic!("Expected an error but got Ok");
@@ -218,7 +218,7 @@ fn test_db_handler_succeeds_without_drift() {
     // Open with DbHandler - should succeed
     let result = DbHandler::new(db_path.to_str().unwrap());
     if let Err(e) = &result {
-        eprintln!("Unexpected error: {}", e);
+        eprintln!("Unexpected error: {e}");
     }
     assert!(result.is_ok(), "Expected Ok but got error");
 }
@@ -322,8 +322,8 @@ fn test_drift_detection_with_type_mismatch() {
     
     if let Err(e) = result {
         let error_msg = e.to_string();
-        eprintln!("Got error: {}", error_msg);
-        assert!(error_msg.contains("Schema drift detected"), "Expected 'Schema drift detected' in error: {}", error_msg);
+        eprintln!("Got error: {error_msg}");
+        assert!(error_msg.contains("Schema drift detected"), "Expected 'Schema drift detected' in error: {error_msg}");
         assert!(error_msg.contains("Type mismatches"));
         assert!(error_msg.contains("count"));
     } else {

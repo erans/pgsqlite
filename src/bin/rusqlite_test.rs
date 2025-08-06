@@ -11,10 +11,10 @@ fn main() -> rusqlite::Result<()> {
     
     // Clean up any existing files
     let _ = fs::remove_file(db_path);
-    let _ = fs::remove_file(format!("{}-wal", db_path));
-    let _ = fs::remove_file(format!("{}-shm", db_path));
+    let _ = fs::remove_file(format!("{db_path}-wal"));
+    let _ = fs::remove_file(format!("{db_path}-shm"));
     
-    println!("Testing rusqlite visibility with database: {}", db_path);
+    println!("Testing rusqlite visibility with database: {db_path}");
     
     // Connection 1: Create, insert, update, commit (mimic Python test exactly)
     {
@@ -25,8 +25,8 @@ fn main() -> rusqlite::Result<()> {
         let conn1 = Connection::open_with_flags(db_path, flags)?;
         
         // Apply same pragmas as our working Python test (use pragma_update for settings)
-        conn1.pragma_update(None, "journal_mode", &"WAL")?;
-        conn1.pragma_update(None, "synchronous", &"NORMAL")?;
+        conn1.pragma_update(None, "journal_mode", "WAL")?;
+        conn1.pragma_update(None, "synchronous", "NORMAL")?;
         
         println!("✅ Connection 1: Applied pragmas");
         
@@ -59,7 +59,7 @@ fn main() -> rusqlite::Result<()> {
             |row| row.get(0)
         )?;
         
-        println!("✅ Connection 1 sees: '{}'", result);
+        println!("✅ Connection 1 sees: '{result}'");
         
         // Explicitly drop connection 1 (like Python test closes it)
         drop(conn1);
@@ -75,8 +75,8 @@ fn main() -> rusqlite::Result<()> {
         let conn2 = Connection::open_with_flags(db_path, flags)?;
         
         // Apply same pragmas
-        conn2.pragma_update(None, "journal_mode", &"WAL")?;
-        conn2.pragma_update(None, "synchronous", &"NORMAL")?;
+        conn2.pragma_update(None, "journal_mode", "WAL")?;
+        conn2.pragma_update(None, "synchronous", "NORMAL")?;
         
         println!("✅ Connection 2: Applied pragmas");
         
@@ -87,12 +87,12 @@ fn main() -> rusqlite::Result<()> {
             |row| row.get(0)
         )?;
         
-        println!("📍 Connection 2 sees: '{}'", result);
+        println!("📍 Connection 2 sees: '{result}'");
         
         if result == "Updated Name" {
             println!("✅ SUCCESS: rusqlite works correctly - new connection sees committed update");
         } else {
-            println!("❌ FAILURE: rusqlite has same issue - new connection sees: '{}'", result);
+            println!("❌ FAILURE: rusqlite has same issue - new connection sees: '{result}'");
         }
         
         drop(conn2);
@@ -100,8 +100,8 @@ fn main() -> rusqlite::Result<()> {
     
     // Cleanup
     let _ = fs::remove_file(db_path);
-    let _ = fs::remove_file(format!("{}-wal", db_path));
-    let _ = fs::remove_file(format!("{}-shm", db_path));
+    let _ = fs::remove_file(format!("{db_path}-wal"));
+    let _ = fs::remove_file(format!("{db_path}-shm"));
     
     Ok(())
 }

@@ -10,7 +10,7 @@ async fn test_protocol_overhead_breakdown() {
     
     // Use a temporary file instead of in-memory database
     let test_id = Uuid::new_v4().to_string().replace("-", "");
-    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path = format!("/tmp/pgsqlite_test_{test_id}.db");
     
     let db = std::sync::Arc::new(DbHandler::new(&db_path).expect("Failed to create database"));
     
@@ -120,9 +120,9 @@ async fn test_protocol_overhead_breakdown() {
     // Clean up database file
     drop(db);
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(format!("{}-journal", db_path));
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{db_path}-journal"));
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }
 
 #[tokio::test]
@@ -142,7 +142,7 @@ async fn test_connection_handling_overhead() {
     // Test mutex contention with concurrent access
     // Use a temporary file instead of in-memory database for shared access
     let test_id2 = Uuid::new_v4().to_string().replace("-", "");
-    let db_path2 = format!("/tmp/pgsqlite_test_concurrent_{}.db", test_id2);
+    let db_path2 = format!("/tmp/pgsqlite_test_concurrent_{test_id2}.db");
     let db = std::sync::Arc::new(DbHandler::new(&db_path2).expect("Failed to create database"));
     
     // Create session for single-threaded test
@@ -202,7 +202,7 @@ async fn test_connection_handling_overhead() {
     // Clean up database file
     drop(db);
     let _ = std::fs::remove_file(&db_path2);
-    let _ = std::fs::remove_file(format!("{}-journal", db_path2));
-    let _ = std::fs::remove_file(format!("{}-wal", db_path2));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path2));
+    let _ = std::fs::remove_file(format!("{db_path2}-journal"));
+    let _ = std::fs::remove_file(format!("{db_path2}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path2}-shm"));
 }

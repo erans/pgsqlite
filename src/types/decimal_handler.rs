@@ -28,8 +28,8 @@ impl DecimalHandler {
         
         // Get string representation to work with digits
         let s = decimal.to_string();
-        let (sign, digits_str) = if s.starts_with('-') {
-            (NUMERIC_NEG, &s[1..])
+        let (sign, digits_str) = if let Some(stripped) = s.strip_prefix('-') {
+            (NUMERIC_NEG, stripped)
         } else {
             (NUMERIC_POS, s.as_str())
         };

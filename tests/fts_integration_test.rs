@@ -24,7 +24,7 @@ async fn test_fts_create_table_integration() {
     // Verify the main table was created
     let check_result = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='articles'").await.unwrap();
     assert_eq!(check_result.rows.len(), 1);
-    assert_eq!(String::from_utf8_lossy(&check_result.rows[0][0].as_ref().unwrap()), "articles");
+    assert_eq!(String::from_utf8_lossy(check_result.rows[0][0].as_ref().unwrap()), "articles");
     
     // Note: Full FTS integration would require the executor integration 
     // which is currently commented out due to async issues
@@ -48,7 +48,7 @@ async fn test_fts_functions_registration() {
         &session_id
     ).await.unwrap();
     
-    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    let text = String::from_utf8_lossy(result.rows[0][0].as_ref().unwrap());
     // Should return JSON metadata
     assert!(text.contains("fts_ref"));
     assert!(text.contains("english"));
@@ -59,7 +59,7 @@ async fn test_fts_functions_registration() {
         &session_id
     ).await.unwrap();
     
-    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    let text = String::from_utf8_lossy(result.rows[0][0].as_ref().unwrap());
     // Should convert to FTS5 syntax
     assert_eq!(text, "hello AND world");
     
@@ -69,7 +69,7 @@ async fn test_fts_functions_registration() {
         &session_id
     ).await.unwrap();
     
-    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    let text = String::from_utf8_lossy(result.rows[0][0].as_ref().unwrap());
     assert_eq!(text, "hello AND world");
     
     // Test phraseto_tsquery function
@@ -78,7 +78,7 @@ async fn test_fts_functions_registration() {
         &session_id
     ).await.unwrap();
     
-    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    let text = String::from_utf8_lossy(result.rows[0][0].as_ref().unwrap());
     assert_eq!(text, "\"hello world\"");
     
     // Test ts_rank function
@@ -87,7 +87,7 @@ async fn test_fts_functions_registration() {
         &session_id
     ).await.unwrap();
     
-    let text = String::from_utf8_lossy(&result.rows[0][0].as_ref().unwrap());
+    let text = String::from_utf8_lossy(result.rows[0][0].as_ref().unwrap());
     // ts_rank returns a float, but we get it as text
     assert_eq!(text, "0.1");
     

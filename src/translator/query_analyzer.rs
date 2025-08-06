@@ -77,15 +77,14 @@ impl QueryAnalyzer {
         }
         
         // Check for datetime functions (not in INSERT)
-        if !flags.contains(TranslationFlags::INSERT_DATETIME) {
-            if query_lower.contains("date(") || query_lower.contains("time(") ||
-               query_lower.contains("timestamp") || query_lower.contains("interval") ||
-               query_lower.contains("now()") || query_lower.contains("current_date") ||
-               query_lower.contains("current_time") || query_lower.contains("extract(") ||
-               query_lower.contains("date_trunc(") || query_lower.contains("age(") ||
-               query_lower.contains("at time zone") {
-                flags |= TranslationFlags::DATETIME;
-            }
+        if !flags.contains(TranslationFlags::INSERT_DATETIME)
+            && (query_lower.contains("date(") || query_lower.contains("time(") ||
+                query_lower.contains("timestamp") || query_lower.contains("interval") ||
+                query_lower.contains("now()") || query_lower.contains("current_date") ||
+                query_lower.contains("current_time") || query_lower.contains("extract(") ||
+                query_lower.contains("date_trunc(") || query_lower.contains("age(") ||
+                query_lower.contains("at time zone")) {
+            flags |= TranslationFlags::DATETIME;
         }
         
         // Check for JSON operations

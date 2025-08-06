@@ -883,6 +883,20 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Removed Column Name-Based Type Inference**: Eliminated code that used column names like "price", "amount" to infer NUMERIC types
   - [x] **Query Context Parsing**: Used proper SQL parsing to extract source columns for aliases instead of name patterns
   - [x] **Type System Integrity**: Maintained strict adherence to schema-based type inference principles
+- [x] **Arithmetic Expression Type Inference** - COMPLETED (2025-08-06) - Fixed type inference for arithmetic expressions
+  - [x] **Bug Identified**: Arithmetic expressions like `products.price * $1 AS line_total` returned TEXT (OID 25) instead of proper numeric type
+  - [x] **Root Cause**: ArithmeticAnalyzer regex pattern didn't include `$` character for parameter detection
+  - [x] **Solution Implemented**: Updated regex from `[\w\.\s\+\-\*/\(\)]+` to `[\w\.\s\+\-\*/\(\)$]+` to capture parameter-based expressions
+  - [x] **Type Mapping Logic**: Implemented intelligent type resolution - NUMERIC columns return NUMERIC, INT columns return NUMERIC (for safety), FLOAT columns return FLOAT8
+  - [x] **Testing**: All 8 SQLAlchemy tests now pass with psycopg3-text driver - no more "Unknown PG numeric type: 25" errors
+- [x] **Cargo Clippy Warning Reduction** - COMPLETED (2025-08-06) - Improved code quality
+  - [x] **Initial State**: 142 clippy warnings across the codebase
+  - [x] **Fixed Issues**: Redundant closures, explicit auto-deref, manual Option::map, needless question marks, length comparisons, collapsible if statements
+  - [x] **Format String Improvements**: Converted to inline format arguments (e.g., `format!("text {var}")` instead of `format!("text {}", var)`)
+  - [x] **Iterator Optimizations**: Changed `.last()` to `.next_back()` for DoubleEndedIterator, used `.div_ceil()` method
+  - [x] **Type Complexity**: Added type alias for complex HashMap types to improve readability
+  - [x] **Final State**: 67 warnings remaining (53% reduction) - remaining issues require deeper refactoring
+  - [x] **Build Status**: cargo check, cargo build, and cargo test all pass successfully
 
 ## 📊 MEDIUM PRIORITY - Feature Completeness
 

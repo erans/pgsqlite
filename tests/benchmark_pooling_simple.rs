@@ -144,8 +144,7 @@ async fn test_read_write_mix() {
                 if is_writer {
                     let value = rand::random::<i32>() % 1000;
                     match db.execute(&format!(
-                        "UPDATE test_data SET value = {} WHERE id = 1",
-                        value
+                        "UPDATE test_data SET value = {value} WHERE id = 1"
                     )).await {
                         Ok(_) => count += 1,
                         Err(_) => {} // Ignore write errors

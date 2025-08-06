@@ -78,7 +78,7 @@ async fn test_catalog_with_joins() {
 async fn test_pg_class_queries() {
     // Create a test database handler with temporary file
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let db_path = format!("/tmp/catalog_test_pg_class_{}.db", timestamp);
+    let db_path = format!("/tmp/catalog_test_pg_class_{timestamp}.db");
     let db = Arc::new(DbHandler::new(&db_path).unwrap());
     
     // Create a session
@@ -119,15 +119,15 @@ async fn test_pg_class_queries() {
     
     // Cleanup
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }
 
 #[tokio::test]
 async fn test_pg_attribute_queries() {
     // Create a test database handler with temporary file
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-    let db_path = format!("/tmp/catalog_test_pg_attr_{}.db", timestamp);
+    let db_path = format!("/tmp/catalog_test_pg_attr_{timestamp}.db");
     let db = Arc::new(DbHandler::new(&db_path).unwrap());
     
     // Create a session
@@ -178,6 +178,6 @@ async fn test_pg_attribute_queries() {
     
     // Cleanup
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }

@@ -166,7 +166,7 @@ pub fn process_query<'a>(
 ) -> Result<Cow<'a, str>, rusqlite::Error> {
     // Quick length check
     let len = query.len();
-    if len < 10 || len > 10000 {
+    if !(10..=10000).contains(&len) {
         return process_complex_query(query, conn, schema_cache);
     }
     
@@ -266,10 +266,9 @@ fn has_any_special_pattern_fast(bytes: &[u8]) -> bool {
 #[inline(always)]
 fn has_insert_special_patterns(bytes: &[u8]) -> bool {
     // Check for datetime patterns (dates with - or times with :)
-    if memchr::memchr(b'\'', bytes).is_some() {
-        if memchr::memchr(b'-', bytes).is_some() || memchr::memchr(b':', bytes).is_some() {
-            return true;
-        }
+    if memchr::memchr(b'\'', bytes).is_some()
+        && (memchr::memchr(b'-', bytes).is_some() || memchr::memchr(b':', bytes).is_some()) {
+        return true;
     }
     
     // Check for array literals

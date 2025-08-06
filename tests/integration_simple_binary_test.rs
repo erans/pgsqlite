@@ -67,7 +67,7 @@ async fn test_basic_binary_protocol() {
     let json_val: String = row.get("json_val");
     
     assert_eq!(id, 1);
-    assert_eq!(bool_val, true);
+    assert!(bool_val);
     assert_eq!(int4_val, 12345);
     assert_eq!(int8_val, 9876543210);
     assert!((float8_val - 3.14159).abs() < 0.00001);
@@ -77,14 +77,14 @@ async fn test_basic_binary_protocol() {
     assert_eq!(json_val, r#"{"test": "binary", "value": 42}"#);
     
     println!("✅ Data integrity verified:");
-    println!("  Boolean: {}", bool_val);
-    println!("  Integer: {}", int4_val);
-    println!("  Bigint: {}", int8_val);
-    println!("  Float: {:.5}", float8_val);
-    println!("  Text: '{}'", text_val);
-    println!("  Bytea: {:?}", bytea_result);
-    println!("  Numeric: {}", numeric_result);
-    println!("  JSON: {}", json_val);
+    println!("  Boolean: {bool_val}");
+    println!("  Integer: {int4_val}");
+    println!("  Bigint: {int8_val}");
+    println!("  Float: {float8_val:.5}");
+    println!("  Text: '{text_val}'");
+    println!("  Bytea: {bytea_result:?}");
+    println!("  Numeric: {numeric_result}");
+    println!("  JSON: {json_val}");
     
     server.abort();
     println!("🎉 Basic binary protocol test completed successfully!");
@@ -132,9 +132,9 @@ async fn test_array_binary_protocol() {
     assert_eq!(bool_array, "[true, false, true]");
     
     println!("✅ Array binary protocol test:");
-    println!("  Int array: {}", int_array);
-    println!("  Text array: {}", text_array);
-    println!("  Bool array: {}", bool_array);
+    println!("  Int array: {int_array}");
+    println!("  Text array: {text_array}");
+    println!("  Bool array: {bool_array}");
     
     server.abort();
     println!("🎉 Array binary protocol test completed successfully!");
@@ -182,9 +182,9 @@ async fn test_network_binary_protocol() {
     assert_eq!(mac_val, "08:00:2b:01:02:03");
     
     println!("✅ Network binary protocol test:");
-    println!("  INET: {}", inet_val);
-    println!("  CIDR: {}", cidr_val);
-    println!("  MACADDR: {}", mac_val);
+    println!("  INET: {inet_val}");
+    println!("  CIDR: {cidr_val}");
+    println!("  MACADDR: {mac_val}");
     
     server.abort();
     println!("🎉 Network binary protocol test completed successfully!");
@@ -232,7 +232,7 @@ async fn test_null_binary_protocol() {
     
     println!("✅ NULL binary protocol test:");
     println!("  nullable_text: NULL (correctly handled)");
-    println!("  nullable_int: {}", nullable_int);
+    println!("  nullable_int: {nullable_int}");
     println!("  nullable_bool: NULL (correctly handled)");
     
     server.abort();

@@ -706,6 +706,42 @@ impl ExtendedQueryHandler {
                                     if let Some(suggested_type) = &hint.suggested_type {
                                         info!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
                                         suggested_type.to_oid()
+                                    } else if hint.is_expression {
+                                        // For arithmetic expressions without suggested type, infer from source column
+                                        if let Some(source_col) = &hint.source_column {
+                                            // Extract table.column if present, or use the table from context
+                                            let (source_table, source_column) = if source_col.contains('.') {
+                                                let parts: Vec<&str> = source_col.split('.').collect();
+                                                (parts[0], parts[1])
+                                            } else if let Some(ref table) = table_name {
+                                                (table.as_str(), source_col.as_str())
+                                            } else {
+                                                info!("Arithmetic expression '{}' has no table context and source column '{}' has no table prefix", col_name, source_col);
+                                                ("", source_col.as_str()) // Will likely fail, but try anyway
+                                            };
+                                            
+                                            if let Ok(Some(source_type_str)) = db.get_schema_type_with_session(&session.id, source_table, source_column).await {
+                                                // Convert type string to OID for comparison
+                                                let source_type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&source_type_str);
+                                                
+                                                // Determine arithmetic result type based on source column type
+                                                let arithmetic_result_type = match source_type_oid {
+                                                    1700 => PgType::Numeric, // NUMERIC arithmetic = NUMERIC
+                                                    23 | 21 | 20 => PgType::Numeric, // INTEGER arithmetic often = NUMERIC for safety
+                                                    700 | 701 => PgType::Float8, // FLOAT arithmetic = FLOAT
+                                                    _ => PgType::Float8, // Default to FLOAT8 for unknown types
+                                                };
+                                                info!("Resolved arithmetic expression '{}' from source '{}' (type {} -> OID {}) -> {:?}", 
+                                                      col_name, source_col, source_type_str, source_type_oid, arithmetic_result_type);
+                                                arithmetic_result_type.to_oid()
+                                            } else {
+                                                info!("Could not resolve source column type for arithmetic expression '{}'", col_name);
+                                                0 // Will be handled below
+                                            }
+                                        } else {
+                                            info!("Arithmetic expression '{}' has no source column", col_name);
+                                            0 // Will be handled below  
+                                        }
                                     } else {
                                         info!("No type hint found in translation metadata for '{}'", col_name);
                                         // Continue to next priority

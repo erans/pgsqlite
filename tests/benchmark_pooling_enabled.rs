@@ -74,7 +74,7 @@ async fn test_pooled_concurrent_reads() {
     for client_id in 0..num_clients {
         let handle = tokio::spawn(async move {
             let (client, connection) = tokio_postgres::connect(
-                &format!("host=localhost port={} dbname=test user=test", port),
+                &format!("host=localhost port={port} dbname=test user=test"),
                 NoTls,
             ).await.unwrap();
             
@@ -91,7 +91,7 @@ async fn test_pooled_concurrent_reads() {
             for i in 0..queries_per_client {
                 let id = (i % 100) + 1;
                 let rows = client
-                    .query(&format!("SELECT value, description FROM pooling_test WHERE id = {}", id), &[])
+                    .query(&format!("SELECT value, description FROM pooling_test WHERE id = {id}"), &[])
                     .await
                     .unwrap();
                 
@@ -131,7 +131,7 @@ async fn test_pooled_concurrent_reads() {
     // 1. Additional protocol optimizations that add some overhead
     // 2. CI/CD environment variability and resource constraints
     assert!(queries_per_second > 20.0, 
-        "Expected >20 queries/sec with pooling, got {:.1}", queries_per_second);
+        "Expected >20 queries/sec with pooling, got {queries_per_second:.1}");
     
     server_handle.abort();
     
@@ -211,7 +211,7 @@ async fn test_pooled_mixed_workload() {
     for reader_id in 0..num_readers {
         let handle = tokio::spawn(async move {
             let (client, connection) = tokio_postgres::connect(
-                &format!("host=localhost port={} dbname=test user=test", port),
+                &format!("host=localhost port={port} dbname=test user=test"),
                 NoTls,
             ).await.unwrap();
             
@@ -226,7 +226,7 @@ async fn test_pooled_mixed_workload() {
             for i in 0..operations_per_client {
                 let id = (i % 50) + 1;
                 let _rows = client
-                    .query(&format!("SELECT value FROM mixed_test WHERE id = {}", id), &[])
+                    .query(&format!("SELECT value FROM mixed_test WHERE id = {id}"), &[])
                     .await
                     .unwrap();
             }
@@ -242,7 +242,7 @@ async fn test_pooled_mixed_workload() {
     for writer_id in 0..num_writers {
         let handle = tokio::spawn(async move {
             let (client, connection) = tokio_postgres::connect(
-                &format!("host=localhost port={} dbname=test user=test", port),
+                &format!("host=localhost port={port} dbname=test user=test"),
                 NoTls,
             ).await.unwrap();
             
@@ -259,8 +259,7 @@ async fn test_pooled_mixed_workload() {
                 let new_value = (writer_id + 1) * 1000 + i;
                 client
                     .execute(
-                        &format!("UPDATE mixed_test SET value = {}, last_updated = {} WHERE id = {}", 
-                               new_value, i, id),
+                        &format!("UPDATE mixed_test SET value = {new_value}, last_updated = {i} WHERE id = {id}"),
                         &[]
                     )
                     .await
@@ -292,7 +291,7 @@ async fn test_pooled_mixed_workload() {
     // With pooling, mixed workload should still perform reasonably well
     // Note: Lowered threshold from 30 to 20 due to protocol optimizations and CI variability
     assert!(ops_per_second > 20.0, 
-        "Expected >20 ops/sec with pooling on mixed workload, got {:.1}", ops_per_second);
+        "Expected >20 ops/sec with pooling on mixed workload, got {ops_per_second:.1}");
     
     server_handle.abort();
     
@@ -330,8 +329,7 @@ async fn test_pooling_effectiveness() {
         
         for i in 1..=10 {
             db_handler.execute(&format!(
-                "INSERT INTO effectiveness_test (id, data) VALUES ({}, 'test_data_{}')",
-                i, i
+                "INSERT INTO effectiveness_test (id, data) VALUES ({i}, 'test_data_{i}')"
             )).await.unwrap();
         }
         
@@ -365,7 +363,7 @@ async fn test_pooling_effectiveness() {
     let start = Instant::now();
     
     let (client, connection) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=test", port),
+        &format!("host=localhost port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
@@ -378,7 +376,7 @@ async fn test_pooling_effectiveness() {
     for i in 0..queries_to_run {
         let id = (i % 10) + 1;
         let _rows = client
-            .query(&format!("SELECT data FROM effectiveness_test WHERE id = {}", id), &[])
+            .query(&format!("SELECT data FROM effectiveness_test WHERE id = {id}"), &[])
             .await
             .unwrap();
     }
@@ -395,7 +393,7 @@ async fn test_pooling_effectiveness() {
     let start = Instant::now();
     
     let (client2, connection2) = tokio_postgres::connect(
-        &format!("host=localhost port={} dbname=test user=test", port),
+        &format!("host=localhost port={port} dbname=test user=test"),
         NoTls,
     ).await.unwrap();
     
@@ -408,7 +406,7 @@ async fn test_pooling_effectiveness() {
     for i in 0..queries_to_run {
         let id = (i % 10) + 1;
         let _rows = client2
-            .query(&format!("SELECT data FROM effectiveness_test WHERE id = {}", id), &[])
+            .query(&format!("SELECT data FROM effectiveness_test WHERE id = {id}"), &[])
             .await
             .unwrap();
     }
@@ -420,7 +418,7 @@ async fn test_pooling_effectiveness() {
     
     // Calculate improvement
     let improvement = without_pooling_qps / with_pooling_qps;
-    println!("\n📊 Performance ratio: {:.2}x", improvement);
+    println!("\n📊 Performance ratio: {improvement:.2}x");
     
     // Note: We don't assert an improvement because the current pooling implementation
     // is not yet integrated into the main query execution pipeline

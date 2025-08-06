@@ -6,7 +6,7 @@ use uuid::Uuid;
 async fn test_multirow_insert_returning() {
     // Use a temporary file instead of in-memory database
     let test_id = Uuid::new_v4().to_string().replace("-", "");
-    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path = format!("/tmp/pgsqlite_test_{test_id}.db");
     let db_path_clone = db_path.clone();
     
     // Start test server
@@ -116,16 +116,16 @@ async fn test_multirow_insert_returning() {
 
     // Clean up
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(format!("{}-journal", db_path));
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{db_path}-journal"));
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }
 
 #[tokio::test]
 async fn test_sqlalchemy_style_insert_returning() {
     // Use a temporary file instead of in-memory database
     let test_id = Uuid::new_v4().to_string().replace("-", "");
-    let db_path = format!("/tmp/pgsqlite_test_{}.db", test_id);
+    let db_path = format!("/tmp/pgsqlite_test_{test_id}.db");
     let db_path_clone = db_path.clone();
     
     // Start test server
@@ -202,7 +202,7 @@ async fn test_sqlalchemy_style_insert_returning() {
 
     // Clean up
     let _ = std::fs::remove_file(&db_path);
-    let _ = std::fs::remove_file(format!("{}-journal", db_path));
-    let _ = std::fs::remove_file(format!("{}-wal", db_path));
-    let _ = std::fs::remove_file(format!("{}-shm", db_path));
+    let _ = std::fs::remove_file(format!("{db_path}-journal"));
+    let _ = std::fs::remove_file(format!("{db_path}-wal"));
+    let _ = std::fs::remove_file(format!("{db_path}-shm"));
 }
