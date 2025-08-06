@@ -137,6 +137,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-08-06)
+- **VALUES Clause Binary Timestamp Handling**: Fixed raw microsecond values in SQLAlchemy multi-row inserts
+  - SQLAlchemy VALUES clause pattern was inserting raw microseconds like '807813532548380'
+  - Binary timestamp parameters from psycopg3 now detected and converted to formatted strings
+  - Only applies to VALUES clause rewriting - normal queries still use raw microseconds for storage
+  - Converts PostgreSQL epoch (2000-01-01) to Unix epoch and formats as ISO timestamp string
+  - Fixes "timestamp too large (after year 10K)" errors in psycopg3 text mode
 - **Transaction Isolation Bug in Schema Lookup**: Fixed SQLAlchemy failing to see schema within same transaction
   - Root cause: `get_schema_type()` used separate connection that couldn't see uncommitted schema changes
   - Created `get_schema_type_with_session()` that uses the session's connection for proper isolation

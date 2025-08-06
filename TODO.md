@@ -863,23 +863,20 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Two-Level Fallback**: First tries alias resolution, then extracts table from FROM clause for direct column lookup
   - [x] **Schema Integration**: Uses `db.get_schema_type()` to fetch actual PostgreSQL types from __pgsqlite_schema
   - [x] **Impact**: SQLAlchemy relationship loading and lazy queries now work with proper type information
-- [ ] **DateTime Conversion for psycopg3 Text Mode** - PARTIAL FIX (2025-08-06) - Working on timestamp parsing errors
+- [x] **DateTime Conversion for psycopg3 Text Mode** - COMPLETED (2025-08-06) - Fixed timestamp handling
   - [x] **Bug Identified**: psycopg3 in text mode received raw INTEGER microseconds like '1754404262713579' instead of formatted timestamps
   - [x] **Binary Parameter Fix**: Added conversion of PostgreSQL binary format parameters to text format in ultra-fast path
   - [x] **Field Type Detection**: Updated `try_execute_fast_path_with_params` to pass field descriptions to `send_select_response`
   - [x] **Timestamp Conversion Logic**: `send_select_response` now converts microseconds to formatted timestamps when proper types provided
-  - [ ] **Column Cast Detection Bug**: `detect_column_casts` incorrectly applies WHERE clause casts to SELECT columns
-    - [ ] Column index 2 (`created_at`) gets INTEGER type from WHERE clause `CAST($1 AS INTEGER)`
-    - [ ] Need to fix detection to only process SELECT clause, not WHERE/JOIN/ORDER BY
-  - [ ] **Schema Type Resolution**: `test_model.created_at` not resolving to TIMESTAMP type from schema
-    - [ ] Alias extraction for dotted notation needs improvement
-    - [ ] Schema lookup failing for timestamp columns
-  - [x] **Working Cases**: Simple queries without complex aliases work correctly
-  - [ ] **Impact**: SQLAlchemy still fails with complex queries due to incorrect type detection
-- [ ] **Transaction Resource Management** - Fix "cannot perform operation: another operation is in progress" errors
-  - [ ] **Bug Analysis**: psycopg connection management issues in lazy loading scenarios
-  - [ ] **Investigation Required**: Determine if this is connection pool exhaustion or connection state corruption
-  - [ ] **Testing Status**: 4/8 SQLAlchemy tests passing, remaining failures due to complex INSERT statements and transaction management issues
+  - [x] **VALUES Clause Fix**: Binary timestamp parameters now converted to formatted strings for VALUES clause rewriting
+  - [x] **Working Cases**: Simple queries, scalar subqueries, and VALUES clauses now work correctly
+  - [x] **Impact**: Most timestamp-related SQLAlchemy tests now pass with psycopg3-text mode
+- [ ] **Aggregate Function Type Inference** - Fix "Unknown PG numeric type: 25" errors
+  - [ ] **Bug Identified**: Aggregate functions (SUM, AVG, COUNT) returning TEXT (OID 25) when numeric types expected
+  - [ ] **Root Cause**: psycopg3 expects numeric types for aggregates but receives TEXT from type inference
+  - [ ] **Testing Status**: 6/8 SQLAlchemy tests passing, 2 failing (Transaction Handling, Numeric Precision)
+  - [ ] **Required Fix**: Improve aggregate function return type detection for numeric columns
+  - [ ] **Impact**: Affects transaction tests with relationship loading and numeric precision tests
 - [x] **Code Quality Improvements** - Adhered to CLAUDE.md principles
   - [x] **Removed Column Name-Based Type Inference**: Eliminated code that used column names like "price", "amount" to infer NUMERIC types
   - [x] **Query Context Parsing**: Used proper SQL parsing to extract source columns for aliases instead of name patterns
@@ -2193,6 +2190,12 @@ Scalar subqueries and aggregate functions on timestamp columns were returning ra
 4. **Ultra-Fast Path Parameter Casts**: Allow `$1::TYPE` casts in ultra-fast path
    - Modified condition to exclude non-parameter casts but allow parameter casts
    - Enables timestamp conversion for parameterized queries with explicit casts
+
+5. **VALUES Clause Binary Timestamp Handling**: Fixed raw microsecond insertion
+   - Detected SQLAlchemy VALUES clause pattern that needs rewriting
+   - Convert PostgreSQL binary timestamps (microseconds since 2000-01-01) to Unix time
+   - Format timestamps as ISO strings for VALUES clause substitution instead of raw microseconds
+   - Normal queries still use raw microseconds for correct storage
 
 ### ✅ System Catalog Extended Protocol Support - COMPLETED (2025-07-05)
 
