@@ -1140,11 +1140,27 @@ impl ExtendedQueryHandler {
         };
         
         // Fast path for simple parameterized SELECT queries
+        // Allow :: cast operator if it's only for parameters (e.g., $1::INTEGER)
+        let has_non_param_cast = if query.contains("::") {
+            // Check if :: is only used with parameters ($1, $2, etc)
+            let param_cast_regex = regex::Regex::new(r"\$\d+::").unwrap();
+            let all_casts_regex = regex::Regex::new(r"::").unwrap();
+            
+            // Count total casts and parameter casts
+            let total_casts = all_casts_regex.find_iter(&query).count();
+            let param_casts = param_cast_regex.find_iter(&query).count();
+            
+            // If there are more casts than parameter casts, we have non-param casts
+            total_casts > param_casts
+        } else {
+            false
+        };
+        
         if query_starts_with_ignore_case(&query, "SELECT") && 
            !query.contains("JOIN") && 
            !query.contains("GROUP BY") && 
            !query.contains("HAVING") &&
-           !query.contains("::") &&
+           !has_non_param_cast &&  // Allow parameter casts like $1::INTEGER
            !query.contains("UNION") &&
            !query.contains("INTERSECT") &&
            !query.contains("EXCEPT") &&
