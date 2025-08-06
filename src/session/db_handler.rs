@@ -148,7 +148,7 @@ impl DbHandler {
                         ));
                     }
                 }
-                Err(e) => {
+                Err(_e) => {
                     // Don't fail on drift detection errors, just log them
                     // Schema drift check failed
                 }
@@ -256,7 +256,7 @@ impl DbHandler {
                                 // Parameter converted to text
                                 rusqlite::types::Value::Text(s)
                             },
-                            Err(e) => {
+                            Err(_e) => {
                                 // For psycopg3 in text mode, all parameters should be UTF-8 text
                                 // If UTF-8 conversion fails, try to recover by using lossy conversion
                                 // UTF-8 conversion failed, trying lossy
