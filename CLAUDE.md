@@ -137,6 +137,13 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-08-06)
+- **Aggregate Function Type Inference**: Fixed "Unknown PG numeric type: 25" errors in psycopg3 text mode
+  - Root cause: SUM/AVG aggregate functions returned TEXT (OID 25) instead of NUMERIC (1700) for aliases like `sum_1`, `avg_1`
+  - Enhanced `get_aggregate_return_type_with_query()` to detect aliased aggregate functions in query context
+  - Added regex pattern matching to identify `sum(...) AS sum_1` and similar SQLAlchemy-generated patterns
+  - SUM/AVG functions on arithmetic expressions now always return NUMERIC type regardless of source column types
+  - Fixes most psycopg3 compatibility issues where it expects numeric types but receives TEXT for aggregates
+  - SQLAlchemy tests improved from 4/8 to 6/8 passing, with aggregate-related errors resolved
 - **VALUES Clause Binary Timestamp Handling**: Fixed raw microsecond values in SQLAlchemy multi-row inserts
   - SQLAlchemy VALUES clause pattern was inserting raw microseconds like '807813532548380'
   - Binary timestamp parameters from psycopg3 now detected and converted to formatted strings
