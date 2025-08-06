@@ -160,6 +160,8 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        info!("QueryExecutor::execute_query called with: {}", query);
+        
         // Strip SQL comments first to avoid parsing issues
         let cleaned_query = crate::query::strip_sql_comments(query);
         let query_to_execute = cleaned_query.trim();
@@ -248,7 +250,9 @@ impl QueryExecutor {
             }
         }
         // Ultra-fast path: Skip all translation if query is simple enough
-        if crate::query::simple_query_detector::is_ultra_simple_query(query) {
+        let is_ultra_simple = crate::query::simple_query_detector::is_ultra_simple_query(query);
+        info!("Query '{}' is ultra-simple: {}", query, is_ultra_simple);
+        if is_ultra_simple {
             // Simple query routing without any processing
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
@@ -270,7 +274,7 @@ impl QueryExecutor {
                         None
                     };
                     
-                    let (boolean_columns, datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
+                    let (mut boolean_columns, mut datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
                         let table = table_name.as_ref().unwrap();
                         let schema_info = get_table_schema_info(table, db, &session.id).await;
                         let mappings = extract_column_mappings_from_query(query, table);
@@ -292,6 +296,41 @@ impl QueryExecutor {
                             std::collections::HashMap::new()
                         )
                     };
+                    
+                    // Check for scalar subqueries that return timestamps
+                    // Pattern: (SELECT MAX/MIN(timestamp_col) FROM table) as alias
+                    info!("Checking for scalar subqueries in columns: {:?}", response.columns);
+                    for col_name in &response.columns {
+                        // Check if this might be a scalar subquery result
+                        if col_name.contains("max") || col_name.contains("min") || 
+                           col_name.contains("MAX") || col_name.contains("MIN") {
+                            info!("Column '{}' might be a scalar subquery result", col_name);
+                            
+                            // Look for the subquery pattern in the original query
+                            // Pattern: (SELECT MAX(col) FROM table)
+                            let pattern = format!(r"(?i)\(\s*SELECT\s+(?:MAX|MIN)\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)\s+(?:AS\s+)?{}", regex::escape(col_name));
+                            if let Ok(re) = regex::Regex::new(&pattern) {
+                                if let Some(captures) = re.captures(query) {
+                                    if let (Some(inner_col), Some(inner_table)) = (captures.get(1), captures.get(2)) {
+                                        let inner_col_name = inner_col.as_str();
+                                        let inner_table_name = inner_table.as_str();
+                                        info!("Found scalar subquery: MAX/MIN({}) FROM {}", inner_col_name, inner_table_name);
+                                        
+                                        // Check if the inner column is a timestamp
+                                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, inner_table_name, inner_col_name).await {
+                                            info!("Inner column type: {}", pg_type);
+                                            if pg_type.to_uppercase().contains("TIMESTAMP") || 
+                                               pg_type.to_uppercase().contains("DATE") || 
+                                               pg_type.to_uppercase().contains("TIME") {
+                                                info!("Adding '{}' as datetime column (type: {})", col_name, pg_type);
+                                                datetime_columns.insert(col_name.clone(), pg_type);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     
                     let fields: Vec<FieldDescription> = response.columns.iter()
                         .enumerate()
@@ -356,13 +395,16 @@ impl QueryExecutor {
                         };
                     
                     // Send data rows with boolean, datetime, and enum conversion
+                    info!("Processing {} rows with columns: {:?}", response.rows.len(), response.columns);
+                    info!("datetime_columns: {:?}, boolean_columns: {:?}", datetime_columns, boolean_columns);
                     for row in response.rows {
                         // Fast path - if no special columns, send row as-is
-                        if boolean_columns.is_empty() && datetime_columns.is_empty() && enum_columns.is_empty() {
-                            framed.send(BackendMessage::DataRow(row)).await
-                                .map_err(PgSqliteError::Io)?;
-                            continue;
-                        }
+                        // DISABLED: We need to check all columns for potential timestamp values
+                        // if boolean_columns.is_empty() && datetime_columns.is_empty() && enum_columns.is_empty() {
+                        //     framed.send(BackendMessage::DataRow(row)).await
+                        //         .map_err(PgSqliteError::Io)?;
+                        //     continue;
+                        // }
                         
                         let converted_row: Vec<Option<Vec<u8>>> = row.into_iter()
                             .enumerate()
@@ -474,7 +516,34 @@ impl QueryExecutor {
                                                 Err(_) => Some(data), // Keep original data if not valid UTF-8
                                             }
                                         } else {
-                                            Some(data) // Keep original data for non-boolean/datetime/enum columns
+                                            // Check if this might be a timestamp in a TEXT column
+                                            // This handles scalar subqueries that return timestamps
+                                            if let Ok(s) = std::str::from_utf8(&data) {
+                                                // Debug logging for scalar subquery columns
+                                                if col_name.contains("max_created") || col_name.contains("MAX(") {
+                                                    info!("Checking column '{}' with value '{}'", col_name, s);
+                                                }
+                                                if let Ok(micros) = s.parse::<i64>() {
+                                                    // Check if this looks like microseconds since epoch
+                                                    // Valid timestamp range: roughly 1970-2100 (0 to ~4.1 trillion microseconds)
+                                                    // We check for values > 100 billion to avoid converting small integers
+                                                    if micros > 100_000_000_000 && micros < 4_102_444_800_000_000 {
+                                                        // This is likely a datetime value stored as INTEGER microseconds
+                                                        use crate::types::datetime_utils::format_microseconds_to_timestamp_buf;
+                                                        let mut buf = vec![0u8; 32];
+                                                        let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
+                                                        buf.truncate(len);
+                                                        info!("Converting TEXT column '{}' timestamp value {} to formatted", col_name, micros);
+                                                        Some(buf)
+                                                    } else {
+                                                        Some(data) // Not a timestamp range
+                                                    }
+                                                } else {
+                                                    Some(data) // Not an integer
+                                                }
+                                            } else {
+                                                Some(data) // Not valid UTF-8
+                                            }
                                         }
                                     } else {
                                         Some(data) // Keep original data if column index is out of bounds
@@ -1119,6 +1188,65 @@ impl QueryExecutor {
         // Build datetime column info for conversion
         let mut datetime_columns = std::collections::HashMap::new();
         let mut column_types_map = std::collections::HashMap::new();
+        
+        // Check for scalar subqueries that return timestamps (same logic as ultra-simple path)
+        info!("Non-ultra path: Checking for scalar subqueries in columns: {:?}", response.columns);
+        for col_name in &response.columns {
+            // Check if this might be a scalar subquery result
+            if col_name.contains("max") || col_name.contains("min") || 
+               col_name.contains("MAX") || col_name.contains("MIN") {
+                info!("Non-ultra path: Column '{}' might be a scalar subquery result", col_name);
+                
+                // Look for the subquery pattern in the original query
+                // Pattern: (SELECT MAX(col) FROM table)
+                let pattern = format!(r"(?i)\(\s*SELECT\s+(?:MAX|MIN)\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)\s+(?:AS\s+)?{}", regex::escape(col_name));
+                if let Ok(re) = regex::Regex::new(&pattern) {
+                    if let Some(captures) = re.captures(query) {
+                        if let (Some(inner_col), Some(inner_table)) = (captures.get(1), captures.get(2)) {
+                            let inner_col_name = inner_col.as_str();
+                            let inner_table_name = inner_table.as_str();
+                            info!("Non-ultra path: Found scalar subquery: MAX/MIN({}) FROM {}", inner_col_name, inner_table_name);
+                            
+                            // Check if the inner column is a timestamp
+                            if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, inner_table_name, inner_col_name).await {
+                                info!("Non-ultra path: Inner column type: {}", pg_type);
+                                if pg_type.to_uppercase().contains("TIMESTAMP") || 
+                                   pg_type.to_uppercase().contains("DATE") || 
+                                   pg_type.to_uppercase().contains("TIME") {
+                                    info!("Non-ultra path: Adding '{}' as datetime column (type: {})", col_name, pg_type);
+                                    datetime_columns.insert(col_name.clone(), pg_type);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Also check for direct MAX/MIN without subquery
+                // Pattern: MAX(created_at) or MIN(created_at)
+                let direct_pattern = format!(r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)");
+                if let Ok(re) = regex::Regex::new(&direct_pattern) {
+                    if let Some(captures) = re.captures(col_name) {
+                        if let Some(inner_col) = captures.get(1) {
+                            let inner_col_name = inner_col.as_str();
+                            info!("Non-ultra path: Found direct aggregate: {}", col_name);
+                            
+                            // Try all tables in the query to find the column
+                            if let Some(ref table) = table_name {
+                                if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, inner_col_name).await {
+                                    info!("Non-ultra path: Direct aggregate column type: {}", pg_type);
+                                    if pg_type.to_uppercase().contains("TIMESTAMP") || 
+                                       pg_type.to_uppercase().contains("DATE") || 
+                                       pg_type.to_uppercase().contains("TIME") {
+                                        info!("Non-ultra path: Adding '{}' as datetime column from direct aggregate (type: {})", col_name, pg_type);
+                                        datetime_columns.insert(col_name.clone(), pg_type);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         if let Some(ref table) = table_name {
             // First check aliased columns using column mappings

@@ -153,6 +153,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - Handles INT2, INT4, INT8, FLOAT4, FLOAT8, BOOL, and TIMESTAMP binary formats
   - Converts PostgreSQL timestamp format (microseconds since 2000-01-01) to Unix epoch
   - Fixes issue where psycopg3 sends parameters in binary format even in text mode
+- **Scalar Subquery and Direct Aggregate Timestamp Conversion**: Fixed raw microseconds in query results
+  - Scalar subqueries like `(SELECT MAX(created_at) FROM table) AS alias` were returning raw INTEGER microseconds
+  - Direct aggregates `MAX(created_at)`, `MIN(created_at)` also returned raw values instead of formatted timestamps
+  - Added pattern detection in simple query protocol for both scalar subqueries and direct aggregates
+  - Detection works in both ultra-simple and non-ultra-simple query paths
+  - All aggregate timestamp queries now return properly formatted timestamps in psycopg3 text mode
 
 ### Previously Fixed (2025-08-05)
 - **Schema-Based Type Inference for Empty Result Sets**: Fixed columns defaulting to TEXT when no data rows

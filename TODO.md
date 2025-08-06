@@ -2168,6 +2168,32 @@ psql \d command requires proper PostgreSQL catalog tables with JOIN support to f
 - Regex operators work correctly
 - Schema prefixes handled transparently
 
+### ✅ Timestamp Conversion for Scalar Subqueries - COMPLETED (2025-08-06)
+
+#### Background
+Scalar subqueries and aggregate functions on timestamp columns were returning raw INTEGER microseconds instead of formatted timestamp strings when using psycopg3 text mode.
+
+#### Issues Fixed
+1. **Transaction Isolation Bug**: Schema lookups used separate connections that couldn't see uncommitted schema entries
+   - Created `get_schema_type_with_session()` function that uses the session's connection
+   - Updated all `get_schema_type()` calls in extended.rs and executor.rs to use session-aware version
+   - Fixes SQLAlchemy ORM issues with CREATE TABLE followed by immediate queries
+
+2. **Scalar Subquery Timestamp Detection**: Added detection for timestamps in scalar subqueries
+   - Pattern detection for `(SELECT MAX/MIN(timestamp_col) FROM table) AS alias`
+   - Direct aggregate detection for `MAX(timestamp_col)`, `MIN(timestamp_col)`
+   - Added to both ultra-simple and non-ultra-simple query paths
+   - Timestamps now properly formatted in simple query protocol
+
+3. **DML RETURNING Timestamp Conversion**: Fixed INSERT/UPDATE/DELETE RETURNING clauses
+   - Replaced hardcoded type_oid 25 with actual schema type lookups
+   - Added helper functions: `build_returning_field_descriptions()` and `convert_returning_timestamps()`
+   - RETURNING clauses now properly detect and convert timestamp columns
+
+4. **Ultra-Fast Path Parameter Casts**: Allow `$1::TYPE` casts in ultra-fast path
+   - Modified condition to exclude non-parameter casts but allow parameter casts
+   - Enables timestamp conversion for parameterized queries with explicit casts
+
 ### ✅ System Catalog Extended Protocol Support - COMPLETED (2025-07-05)
 
 #### Background

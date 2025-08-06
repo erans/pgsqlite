@@ -187,6 +187,7 @@ pub async fn handle_test_connection_with_pool(
             debug!("Received message: {:?}", message);
             match message {
                 FrontendMessage::Query(sql) => {
+                    info!("Received Query (simple protocol): {}", sql);
                     // Execute the query with optional query routing
                     match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
                         Ok(()) => {

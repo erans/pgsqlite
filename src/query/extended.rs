@@ -2225,9 +2225,17 @@ impl ExtendedQueryHandler {
         }
         framed.send(BackendMessage::RowDescription(field_descriptions)).await?;
         
-        // If we have timestamp columns, we need to convert them
+        // Check if we need conversion for timestamps OR TEXT columns that might contain timestamps
         let needs_conversion = field_types
-            .map(|types| types.iter().any(|&t| t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid()))
+            .map(|types| {
+                let has_timestamp = types.iter().any(|&t| 
+                    t == PgType::Timestamp.to_oid() || 
+                    t == PgType::Timestamptz.to_oid() ||
+                    t == PgType::Text.to_oid()  // TEXT columns might contain timestamps
+                );
+                info!("send_select_response: field_types={:?}, needs_conversion={}", types, has_timestamp);
+                has_timestamp
+            })
             .unwrap_or(false);
         
         if needs_conversion && field_types.is_some() {
@@ -2237,6 +2245,8 @@ impl ExtendedQueryHandler {
                 let mut converted_row = Vec::new();
                 for (i, cell) in row.iter().enumerate() {
                     let type_oid = types.get(i).copied().unwrap_or(25);
+                    
+                    // Handle explicit timestamp columns
                     if type_oid == PgType::Timestamp.to_oid() || type_oid == PgType::Timestamptz.to_oid() {
                         if let Some(bytes) = cell {
                             if let Ok(s) = std::str::from_utf8(bytes) {
@@ -2247,6 +2257,36 @@ impl ExtendedQueryHandler {
                                     converted_row.push(Some(formatted.into_bytes()));
                                 } else {
                                     // Already formatted or not a timestamp
+                                    converted_row.push(cell.clone());
+                                }
+                            } else {
+                                converted_row.push(cell.clone());
+                            }
+                        } else {
+                            converted_row.push(None);
+                        }
+                    }
+                    // Handle TEXT columns that might contain timestamp microseconds
+                    else if type_oid == PgType::Text.to_oid() {
+                        if let Some(bytes) = cell {
+                            if let Ok(s) = std::str::from_utf8(bytes) {
+                                // Try to parse as integer microseconds
+                                if let Ok(micros) = s.parse::<i64>() {
+                                    // Check if this looks like microseconds since epoch
+                                    // Valid timestamp range: roughly 1970-2100 (0 to ~4.1 trillion microseconds)
+                                    // We check for values > 100 billion to avoid converting small integers
+                                    if micros > 100_000_000_000 && micros < 4_102_444_800_000_000 {
+                                        // This is likely a datetime value stored as INTEGER microseconds
+                                        use crate::types::datetime_utils::format_microseconds_to_timestamp;
+                                        let formatted = format_microseconds_to_timestamp(micros);
+                                        info!("Converting TEXT column timestamp value {} to formatted: {}", micros, formatted);
+                                        converted_row.push(Some(formatted.into_bytes()));
+                                    } else {
+                                        // Not a timestamp, keep as-is
+                                        converted_row.push(cell.clone());
+                                    }
+                                } else {
+                                    // Not an integer, keep as-is
                                     converted_row.push(cell.clone());
                                 }
                             } else {
@@ -3625,6 +3665,77 @@ impl ExtendedQueryHandler {
                 };
                 
                 // Try to infer field types from data
+                // First pass: identify columns that need async lookups
+                let mut async_lookups_needed = Vec::new();
+                for (i, col_name) in response.columns.iter().enumerate() {
+                    let col_lower = col_name.to_lowercase();
+                    if col_lower.contains("max(") || col_lower.contains("min(") || 
+                       col_lower.contains("sum(") || col_lower.contains("avg(") {
+                        async_lookups_needed.push((i, col_name.clone()));
+                    }
+                }
+                
+                // Perform async lookups for aggregate functions
+                let mut aggregate_types = std::collections::HashMap::new();
+                for (idx, col_name) in async_lookups_needed {
+                    // Extract the aggregate function and column
+                    let col_lower = col_name.to_lowercase();
+                    
+                    // Try to find the table from a scalar subquery
+                    let mut lookup_table = table_name.clone();
+                    
+                    // Look for scalar subquery pattern: (SELECT MAX(col) FROM table)
+                    if let Ok(re) = regex::Regex::new(r"\(\s*SELECT\s+MAX\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)") {
+                        if let Some(captures) = re.captures(query) {
+                            if let Some(table_match) = captures.get(2) {
+                                lookup_table = Some(table_match.as_str().to_string());
+                                if let Some(col_match) = captures.get(1) {
+                                    // We found the exact column and table
+                                    let col_name_inner = col_match.as_str();
+                                    if let Some(ref table) = lookup_table {
+                                        // Now we can look up the type with the session connection
+                                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name_inner).await {
+                                            let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type);
+                                            info!("Scalar subquery MAX({}) from table {} has type {} (OID {})", 
+                                                  col_name_inner, table, pg_type, type_oid);
+                                            aggregate_types.insert(idx, type_oid);
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Also check for MIN
+                    if let Ok(re) = regex::Regex::new(r"\(\s*SELECT\s+MIN\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)") {
+                        if let Some(captures) = re.captures(query) {
+                            if let Some(table_match) = captures.get(2) {
+                                lookup_table = Some(table_match.as_str().to_string());
+                                if let Some(col_match) = captures.get(1) {
+                                    let col_name_inner = col_match.as_str();
+                                    if let Some(ref table) = lookup_table {
+                                        if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name_inner).await {
+                                            let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type);
+                                            info!("Scalar subquery MIN({}) from table {} has type {} (OID {})", 
+                                                  col_name_inner, table, pg_type, type_oid);
+                                            aggregate_types.insert(idx, type_oid);
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Fallback to generic aggregate type detection
+                    if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(
+                        &col_lower, None, lookup_table.as_deref(), Some(query)
+                    ) {
+                        aggregate_types.insert(idx, oid);
+                    }
+                }
+                
                 let field_types = response.columns.iter()
                     .enumerate()
                     .map(|(i, col_name)| {
@@ -3656,9 +3767,17 @@ impl ExtendedQueryHandler {
                             return oid;
                         }
                         
-                        // Second priority: Check for aggregate functions
+                        // Second priority: Check for pre-computed aggregate functions
+                        if let Some(&type_oid) = aggregate_types.get(&i) {
+                            info!("Column '{}' has pre-computed aggregate type OID {}", col_name, type_oid);
+                            return type_oid;
+                        }
+                        
+                        // Fallback: Check for aggregate functions without async lookup
                         let col_lower = col_name.to_lowercase();
-                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(query)) {
+                        if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(
+                            &col_lower, None, table_name.as_deref(), Some(query)
+                        ) {
                             info!("Column '{}' is aggregate function with type OID {}", col_name, oid);
                             return oid;
                         }
@@ -3975,6 +4094,123 @@ impl ExtendedQueryHandler {
         Ok(())
     }
     
+    /// Helper function to build field descriptions for RETURNING clause with proper type detection
+    async fn build_returning_field_descriptions(
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
+        table_name: &str,
+        columns: &[String],
+        result_formats: &[i16],
+        returning_clause: &str,
+    ) -> Vec<FieldDescription> {
+        let mut fields = Vec::new();
+        
+        for (i, col_name) in columns.iter().enumerate() {
+            let format = if result_formats.is_empty() {
+                0 // Default to text if no formats specified
+            } else if result_formats.len() == 1 {
+                result_formats[0] // Single format applies to all columns
+            } else if i < result_formats.len() {
+                result_formats[i] // Use column-specific format
+            } else {
+                0 // Default to text if not enough formats
+            };
+            
+            // Try to get the actual type from schema
+            let type_oid = if returning_clause == "*" || col_name == &col_name.to_lowercase() {
+                // Direct column reference or wildcard - look up in schema
+                if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table_name, col_name).await {
+                    // Convert PostgreSQL type name to OID
+                    match pg_type_str.to_uppercase().as_str() {
+                        "BOOL" | "BOOLEAN" => 16,
+                        "INT2" | "SMALLINT" => 21,
+                        "INT4" | "INTEGER" | "INT" => 23,
+                        "INT8" | "BIGINT" => 20,
+                        "FLOAT4" | "REAL" => 700,
+                        "FLOAT8" | "DOUBLE PRECISION" => 701,
+                        "TEXT" => 25,
+                        "VARCHAR" | "CHARACTER VARYING" => 1043,
+                        "CHAR" | "CHARACTER" => 1042,
+                        "UUID" => 2950,
+                        "JSON" => 114,
+                        "JSONB" => 3802,
+                        "DATE" => 1082,
+                        "TIME" | "TIME WITHOUT TIME ZONE" => 1083,
+                        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => 1114,
+                        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => 1184,
+                        "TIMETZ" | "TIME WITH TIME ZONE" => 1266,
+                        "INTERVAL" => 1186,
+                        "NUMERIC" | "DECIMAL" => 1700,
+                        "BYTEA" => 17,
+                        "MONEY" => 790,
+                        _ => 25, // Default to TEXT for unknown types
+                    }
+                } else {
+                    25 // Default to TEXT if not found
+                }
+            } else {
+                // Could be an expression, default to TEXT
+                25
+            };
+            
+            fields.push(FieldDescription {
+                name: col_name.clone(),
+                table_oid: 0,
+                column_id: (i + 1) as i16,
+                type_oid,
+                type_size: -1,
+                type_modifier: -1,
+                format,
+            });
+        }
+        
+        fields
+    }
+
+    /// Helper function to convert timestamp columns in RETURNING results
+    async fn convert_returning_timestamps(
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
+        table_name: &str,
+        columns: &[String],
+        rows: Vec<Vec<Option<Vec<u8>>>>,
+    ) -> Result<Vec<Vec<Option<Vec<u8>>>>, PgSqliteError> {
+        // Get schema types for all columns
+        let mut is_timestamp = vec![false; columns.len()];
+        for (i, col_name) in columns.iter().enumerate() {
+            if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table_name, col_name).await {
+                is_timestamp[i] = matches!(pg_type.as_str(), "TIMESTAMP" | "TIMESTAMPTZ");
+            }
+        }
+        
+        // Convert timestamps in rows
+        let mut converted_rows = Vec::new();
+        for row in rows {
+            let mut converted_row = Vec::new();
+            for (i, cell) in row.iter().enumerate() {
+                if is_timestamp[i] {
+                    if let Some(data) = cell {
+                        if let Ok(value_str) = String::from_utf8(data.clone()) {
+                            // Check if it's a raw microseconds value
+                            if value_str.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                                if let Ok(micros) = value_str.parse::<i64>() {
+                                    // Convert microseconds to formatted timestamp
+                                    let formatted = crate::types::datetime_utils::format_microseconds_to_timestamp(micros);
+                                    converted_row.push(Some(formatted.into_bytes()));
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+                converted_row.push(cell.clone());
+            }
+            converted_rows.push(converted_row);
+        }
+        
+        Ok(converted_rows)
+    }
+
     async fn execute_dml_with_returning<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &Arc<DbHandler>,
@@ -4040,37 +4276,29 @@ impl ExtendedQueryHandler {
             let cached_conn = Self::get_or_cache_connection(session, db).await;
             let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;
             
-            // Send row description
-            let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                .enumerate()
-                .map(|(i, name)| {
-                    let format = if result_formats.is_empty() {
-                        0 // Default to text if no formats specified
-                    } else if result_formats.len() == 1 {
-                        result_formats[0] // Single format applies to all columns
-                    } else if i < result_formats.len() {
-                        result_formats[i] // Use column-specific format
-                    } else {
-                        0 // Default to text if not enough formats
-                    };
-                    
-                    FieldDescription {
-                        name: name.clone(),
-                        table_oid: 0,
-                        column_id: (i + 1) as i16,
-                        type_oid: 25, // Default to text
-                        type_size: -1,
-                        type_modifier: -1,
-                        format,
-                    }
-                })
-                .collect();
+            // Build field descriptions with proper type detection
+            let fields = Self::build_returning_field_descriptions(
+                db,
+                session,
+                &table_name,
+                &returning_response.columns,
+                result_formats,
+                &returning_clause,
+            ).await;
             
             framed.send(BackendMessage::RowDescription(fields)).await
                 .map_err(PgSqliteError::Io)?;
             
-            // Send data rows
-            for row in returning_response.rows {
+            // Convert timestamps and send data rows
+            let converted_rows = Self::convert_returning_timestamps(
+                db,
+                session,
+                &table_name,
+                &returning_response.columns,
+                returning_response.rows,
+            ).await?;
+            
+            for row in converted_rows {
                 framed.send(BackendMessage::DataRow(row)).await
                     .map_err(PgSqliteError::Io)?;
             }
@@ -4110,37 +4338,29 @@ impl ExtendedQueryHandler {
                 let cached_conn = Self::get_or_cache_connection(session, db).await;
                 let returning_response = db.query_with_session_cached(&returning_query, &session.id, cached_conn.as_ref()).await?;
                 
-                // Send row description
-                let fields: Vec<FieldDescription> = returning_response.columns.iter()
-                    .enumerate()
-                    .map(|(i, name)| {
-                        let format = if result_formats.is_empty() {
-                            0 // Default to text if no formats specified
-                        } else if result_formats.len() == 1 {
-                            result_formats[0] // Single format applies to all columns
-                        } else if i < result_formats.len() {
-                            result_formats[i] // Use column-specific format
-                        } else {
-                            0 // Default to text if not enough formats
-                        };
-                        
-                        FieldDescription {
-                            name: name.clone(),
-                            table_oid: 0,
-                            column_id: (i + 1) as i16,
-                            type_oid: 25,
-                            type_size: -1,
-                            type_modifier: -1,
-                            format,
-                        }
-                    })
-                    .collect();
+                // Build field descriptions with proper type detection
+                let fields = Self::build_returning_field_descriptions(
+                    db,
+                    session,
+                    &table_name,
+                    &returning_response.columns,
+                    result_formats,
+                    &returning_clause,
+                ).await;
                 
                 framed.send(BackendMessage::RowDescription(fields)).await
                     .map_err(PgSqliteError::Io)?;
                 
-                // Send data rows
-                for row in returning_response.rows {
+                // Convert timestamps and send data rows
+                let converted_rows = Self::convert_returning_timestamps(
+                    db,
+                    session,
+                    &table_name,
+                    &returning_response.columns,
+                    returning_response.rows,
+                ).await?;
+                
+                for row in converted_rows {
                     framed.send(BackendMessage::DataRow(row)).await
                         .map_err(PgSqliteError::Io)?;
                 }
@@ -4169,30 +4389,40 @@ impl ExtendedQueryHandler {
             let cached_conn = Self::get_or_cache_connection(session, db).await;
             let response = db.execute_with_session_cached(&base_query, &session.id, cached_conn.as_ref()).await?;
             
-            // Send row description
-            let fields: Vec<FieldDescription> = captured_rows.columns.iter()
+            // Build field descriptions with proper type detection (skip rowid column)
+            let columns_without_rowid: Vec<String> = captured_rows.columns.iter()
                 .skip(1) // Skip rowid column
-                .enumerate()
-                .map(|(i, name)| FieldDescription {
-                    name: name.clone(),
-                    table_oid: 0,
-                    column_id: (i + 1) as i16,
-                    type_oid: 25,
-                    type_size: -1,
-                    type_modifier: -1,
-                    format: 0,
-                })
+                .cloned()
                 .collect();
+            
+            let fields = Self::build_returning_field_descriptions(
+                db,
+                session,
+                &table_name,
+                &columns_without_rowid,
+                result_formats,
+                &returning_clause,
+            ).await;
             
             framed.send(BackendMessage::RowDescription(fields)).await
                 .map_err(PgSqliteError::Io)?;
             
-            // Send captured rows (skip rowid column)
-            for row in captured_rows.rows {
-                let data_row: Vec<Option<Vec<u8>>> = row.into_iter()
-                    .skip(1) // Skip rowid
-                    .collect();
-                framed.send(BackendMessage::DataRow(data_row)).await
+            // Convert timestamps in captured rows (skip rowid column)
+            let rows_without_rowid: Vec<Vec<Option<Vec<u8>>>> = captured_rows.rows.into_iter()
+                .map(|row| row.into_iter().skip(1).collect())
+                .collect();
+            
+            let converted_rows = Self::convert_returning_timestamps(
+                db,
+                session,
+                &table_name,
+                &columns_without_rowid,
+                rows_without_rowid,
+            ).await?;
+            
+            // Send converted rows
+            for row in converted_rows {
+                framed.send(BackendMessage::DataRow(row)).await
                     .map_err(PgSqliteError::Io)?;
             }
             
