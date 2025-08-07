@@ -233,6 +233,15 @@ impl PgType {
         )
     }
 
+    /// Check if this is a numeric type
+    pub fn is_numeric(&self) -> bool {
+        matches!(self,
+            PgType::Int2 | PgType::Int4 | PgType::Int8 |
+            PgType::Float4 | PgType::Float8 | PgType::Numeric |
+            PgType::Money
+        )
+    }
+
     /// Get the element type OID for array types
     pub fn element_type(&self) -> Option<PgType> {
         match self {

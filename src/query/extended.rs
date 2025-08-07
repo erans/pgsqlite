@@ -832,30 +832,55 @@ impl ExtendedQueryHandler {
                                     // Could not extract source table.column, try to infer from query structure
                                     info!("Column '{}': could not extract source table.column, analyzing query structure", col_name);
                                     
-                                    // For simple SELECT queries, try to extract table from FROM clause and assume column exists
-                                    if let Some(table_name) = extract_table_name_from_select(&cleaned_query) {
-                                        info!("Column '{}': extracted table '{}' from FROM clause, assuming column exists", col_name, table_name);
-                                        
-                                        match db.get_schema_type_with_session(&session.id, &table_name, col_name).await {
-                                            Ok(Some(pg_type_str)) => {
-                                                let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
-                                                info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {})", 
-                                                      col_name, table_name, col_name, pg_type_str, type_oid);
-                                                inferred_types.push(type_oid);
-                                            }
-                                            Ok(None) => {
-                                                info!("Column '{}': no schema type found for '{}.{}', defaulting to text", 
-                                                      col_name, table_name, col_name);
-                                                inferred_types.push(PgType::Text.to_oid());
-                                            }
-                                            Err(_) => {
-                                                // Schema lookup error, defaulting to text
-                                                inferred_types.push(PgType::Text.to_oid());
+                                    // First, try to handle table_column pattern like "orders_total_amount"
+                                    let mut type_found = false;
+                                    if col_name.contains('_') {
+                                        if let Some(underscore_pos) = col_name.find('_') {
+                                            let potential_table = &col_name[..underscore_pos];
+                                            let potential_column = &col_name[underscore_pos + 1..];
+                                            
+                                            // Try to look up the type from schema
+                                            match db.get_schema_type_with_session(&session.id, potential_table, potential_column).await {
+                                                Ok(Some(pg_type_str)) => {
+                                                    let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                                    info!("Column '{}': resolved type from table_column pattern '{}_{}'-> {} (OID {})", 
+                                                          col_name, potential_table, potential_column, pg_type_str, type_oid);
+                                                    inferred_types.push(type_oid);
+                                                    type_found = true;
+                                                }
+                                                _ => {
+                                                    // Pattern didn't match a real table.column
+                                                }
                                             }
                                         }
-                                    } else {
-                                        info!("Column '{}': could not extract table name from query, defaulting to text", col_name);
-                                        inferred_types.push(PgType::Text.to_oid());
+                                    }
+                                    
+                                    if !type_found {
+                                        // For simple SELECT queries, try to extract table from FROM clause and assume column exists
+                                        if let Some(table_name) = extract_table_name_from_select(&cleaned_query) {
+                                            info!("Column '{}': extracted table '{}' from FROM clause, assuming column exists", col_name, table_name);
+                                            
+                                            match db.get_schema_type_with_session(&session.id, &table_name, col_name).await {
+                                                Ok(Some(pg_type_str)) => {
+                                                    let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                                    info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {})", 
+                                                          col_name, table_name, col_name, pg_type_str, type_oid);
+                                                    inferred_types.push(type_oid);
+                                                }
+                                                Ok(None) => {
+                                                    info!("Column '{}': no schema type found for '{}.{}', defaulting to text", 
+                                                          col_name, table_name, col_name);
+                                                    inferred_types.push(PgType::Text.to_oid());
+                                                }
+                                                Err(_) => {
+                                                    // Schema lookup error, defaulting to text
+                                                    inferred_types.push(PgType::Text.to_oid());
+                                                }
+                                            }
+                                        } else {
+                                            info!("Column '{}': could not extract table name from query, defaulting to text", col_name);
+                                            inferred_types.push(PgType::Text.to_oid());
+                                        }
                                     }
                                 }
                             }
@@ -873,6 +898,20 @@ impl ExtendedQueryHandler {
                                 format: 0,
                             })
                             .collect::<Vec<_>>();
+                        
+                        // Special logging for orders queries
+                        if cleaned_query.contains("orders") {
+                            info!("PARSE: Orders query detected!");
+                            info!("PARSE: Query: {}", cleaned_query);
+                            info!("PARSE: Field descriptions created:");
+                            for field in &fields {
+                                info!("PARSE:   {} -> type OID {}", field.name, field.type_oid);
+                                if field.name.contains("total_amount") && field.type_oid == 25 {
+                                    info!("PARSE:   ^^^ BUG: total_amount has TEXT type!");
+                                }
+                            }
+                        }
+                        
                         info!("Parsed {} field descriptions from query with inferred types", fields.len());
                         fields
                     }
@@ -1048,10 +1087,22 @@ impl ExtendedQueryHandler {
             }
         }
         
-        // Get the prepared statement
+        // Get the prepared statement (handle unnamed statements specially)
         let statements = session.prepared_statements.read().await;
-        let stmt = statements.get(&statement)
-            .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {statement}")))?;
+        
+        // For unnamed statements, try both empty string and the actual value
+        let stmt = if statement.is_empty() {
+            // Try empty string key first for unnamed statements
+            statements.get("")
+                .or_else(|| statements.get(&statement))
+        } else {
+            statements.get(&statement)
+        }
+        .ok_or_else(|| {
+            info!("Statement lookup failed for '{}', available statements: {:?}", 
+                  statement, statements.keys().collect::<Vec<_>>());
+            PgSqliteError::Protocol(format!("Unknown statement: {statement}"))
+        })?;
             
         // Processing parameter types and formats
         
@@ -1174,6 +1225,37 @@ impl ExtendedQueryHandler {
              portal_obj.inferred_param_types.clone())
         };
         
+        // Special logging for orders queries
+        if query.contains("orders") && query.contains("customer_id") {
+            info!("EXECUTE: Orders query detected!");
+            info!("EXECUTE: Query: {}", query);
+            info!("EXECUTE: Statement name: {}", statement_name);
+            
+            // Check what field_descriptions are stored for this statement
+            let statements = session.prepared_statements.read().await;
+            
+            // For unnamed statements, try both empty string and the actual value
+            let stmt_opt = if statement_name.is_empty() {
+                statements.get("")
+                    .or_else(|| statements.get(&statement_name))
+            } else {
+                statements.get(&statement_name)
+            };
+            
+            if let Some(stmt) = stmt_opt {
+                info!("EXECUTE: Statement has {} field_descriptions", stmt.field_descriptions.len());
+                for fd in &stmt.field_descriptions {
+                    info!("EXECUTE:   {} -> type OID {}", fd.name, fd.type_oid);
+                    if fd.name.contains("total_amount") && fd.type_oid == 25 {
+                        info!("EXECUTE:   ^^^ BUG DETECTED: total_amount has TEXT type!");
+                    }
+                }
+            } else {
+                info!("EXECUTE: Statement not found! Available keys: {:?}", 
+                      statements.keys().collect::<Vec<_>>());
+            }
+        }
+        
         // Use translated query if available, otherwise use original query
         let effective_query = translated_query.as_ref().unwrap_or(&query);
         
@@ -1183,7 +1265,15 @@ impl ExtendedQueryHandler {
             inferred
         } else {
             let statements = session.prepared_statements.read().await;
-            let stmt = statements.get(&statement_name).unwrap();
+            // Handle unnamed statements properly
+            let stmt = if statement_name.is_empty() {
+                statements.get("")
+                    .or_else(|| statements.get(&statement_name))
+                    .expect("Statement should exist")
+            } else {
+                statements.get(&statement_name)
+                    .expect("Statement should exist")
+            };
             stmt.param_types.clone()
         };
         
@@ -1242,13 +1332,22 @@ impl ExtendedQueryHandler {
                         // Parse the query to get column names and their aliases
                         let mut inferred_types = Vec::new();
                         let table_name = extract_table_name_from_select(&query);
+                        info!("Ultra-fast path: Inferring types for query: {}", query);
+                        info!("Ultra-fast path: Extracted table name: {:?}", table_name);
                         
                         // Extract column names from SELECT clause
-                        if let Some(select_end) = query.to_uppercase().find(" FROM ") {
+                        // Handle both " FROM " and "\nFROM " (queries might have newlines)
+                        let query_upper = query.to_uppercase();
+                        let select_end = query_upper.find(" FROM ")
+                            .or_else(|| query_upper.find("\nFROM "));
+                        
+                        if let Some(select_end) = select_end {
                             let select_part = &query[6..select_end]; // Skip "SELECT"
                             let columns: Vec<&str> = select_part.split(',').map(|s| s.trim()).collect();
                             
+                            info!("Ultra-fast path: Parsing {} columns from SELECT clause", columns.len());
                             for col_expr in columns {
+                                info!("Ultra-fast path: Processing column expression: '{}'", col_expr);
                                 let mut found_type = false;
                                 
                                 // Extract the alias name (after AS) if present
@@ -1268,16 +1367,23 @@ impl ExtendedQueryHandler {
                                         inferred_types.push(type_oid);
                                         found_type = true;
                                     }
+                                } else if col_expr.contains('.') {
+                                    // Handle table.column format directly
+                                    let parts: Vec<&str> = col_expr.split('.').collect();
+                                    if parts.len() == 2 {
+                                        let table_part = parts[0].trim();
+                                        let column_part = parts[1].trim();
+                                        if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table_part, column_part).await {
+                                            let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                            info!("Ultra-fast path: Pre-execution type inference for '{}' from '{}.{}' -> {} (OID {})", 
+                                                  col_name, table_part, column_part, pg_type_str, type_oid);
+                                            inferred_types.push(type_oid);
+                                            found_type = true;
+                                        }
+                                    }
                                 } else if let Some(ref table) = table_name {
-                                    // Try direct column name lookup
-                                    let base_col = if col_expr.contains('.') {
-                                        // Extract column name from table.column
-                                        col_expr.split('.').last().unwrap_or(col_expr).trim()
-                                    } else {
-                                        col_expr
-                                    };
-                                    
-                                    if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table, base_col).await {
+                                    // Try direct column name lookup in the main table
+                                    if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table, col_expr).await {
                                         let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
                                         info!("Ultra-fast path: Pre-execution type inference for '{}' from table '{}' -> {} (OID {})", 
                                               col_name, table, pg_type_str, type_oid);
@@ -1292,8 +1398,11 @@ impl ExtendedQueryHandler {
                                     inferred_types.push(PgType::Text.to_oid());
                                 }
                             }
+                        } else {
+                            info!("Ultra-fast path: Could not find FROM clause in query, cannot parse columns");
                         }
                         
+                        info!("Ultra-fast path: Inferred {} types", inferred_types.len());
                         inferred_types
                     }
                 } else {
@@ -1386,6 +1495,26 @@ impl ExtendedQueryHandler {
                                             // Store as microseconds for SQLite
                                             Some(unix_microseconds.to_string().into_bytes())
                                         } else {
+                                            Some(bytes.clone())
+                                        }
+                                    }
+                                    0 => {
+                                        // Unknown type - try to infer from length
+                                        // psycopg3 sends numeric values as 8-byte floats when type is unknown
+                                        if bytes.len() == 8 {
+                                            // Try interpreting as float64 (common for numeric values from psycopg3)
+                                            let val = f64::from_be_bytes([
+                                                bytes[0], bytes[1], bytes[2], bytes[3],
+                                                bytes[4], bytes[5], bytes[6], bytes[7]
+                                            ]);
+                                            Some(val.to_string().into_bytes())
+                                        } else if bytes.len() == 4 {
+                                            // Could be int32 or float32
+                                            // Try int32 first (more common)
+                                            let val = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                                            Some(val.to_string().into_bytes())
+                                        } else {
+                                            // Keep as-is if we can't determine type
                                             Some(bytes.clone())
                                         }
                                     }
@@ -2538,6 +2667,15 @@ impl ExtendedQueryHandler {
                                     // Four bytes - likely int4
                                     let value = i32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
                                     info!("Inferred int32 parameter {}: {}", i + 1, value);
+                                    value.to_string()
+                                } else if bytes.len() == 8 {
+                                    // Eight bytes - could be int8 or float8
+                                    // psycopg3 sends NUMERIC values as float8 when type is unknown
+                                    let value = f64::from_be_bytes([
+                                        bytes[0], bytes[1], bytes[2], bytes[3],
+                                        bytes[4], bytes[5], bytes[6], bytes[7]
+                                    ]);
+                                    info!("Inferred float64 parameter {} (unknown type): {}", i + 1, value);
                                     value.to_string()
                                 } else {
                                     // Unknown pattern - use hex
@@ -3979,6 +4117,25 @@ impl ExtendedQueryHandler {
                                       col_name, source_table, source_col, pg_type_str, type_oid);
                                 field_types.push(type_oid);
                                 found_type = true;
+                            }
+                        } else if col_name.contains('.') {
+                            // Handle columns with table prefix like "users.id"
+                            let parts: Vec<&str> = col_name.split('.').collect();
+                            if parts.len() == 2 {
+                                let table_part = parts[0];
+                                let column_part = parts[1];
+                                info!("Column '{}': Attempting to resolve type from '{}.{}'", col_name, table_part, column_part);
+                                if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table_part, column_part).await {
+                                    let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                    info!("Column '{}': resolved type from schema '{}.{}' -> {} (OID {}) in execute_select", 
+                                          col_name, table_part, column_part, pg_type_str, type_oid);
+                                    field_types.push(type_oid);
+                                    found_type = true;
+                                } else {
+                                    info!("Column '{}': Could not find type for '{}.{}'", col_name, table_part, column_part);
+                                }
+                            } else {
+                                info!("Column '{}': Contains dot but not in expected format", col_name);
                             }
                         } else if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
                             let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);

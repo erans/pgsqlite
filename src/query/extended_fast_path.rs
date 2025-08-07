@@ -582,10 +582,40 @@ impl ExtendedFastPath {
             let portal = portals.get(portal_name).unwrap();
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name).unwrap();
-            stmt.field_descriptions.is_empty() && !response.columns.is_empty()
+            
+            // Check if field descriptions are empty OR suspiciously all TEXT for non-parameter columns
+            let is_empty = stmt.field_descriptions.is_empty();
+            let looks_suspicious = if !is_empty && !stmt.field_descriptions.is_empty() {
+                // Check if all non-parameter columns are TEXT (OID 25)
+                let non_param_types: Vec<_> = stmt.field_descriptions.iter()
+                    .filter(|fd| !fd.name.starts_with('$') && fd.name != "?column?" && fd.name != "NULL")
+                    .map(|fd| fd.type_oid)
+                    .collect();
+                
+                // If we have non-parameter columns and they're ALL TEXT, that's suspicious
+                !non_param_types.is_empty() && non_param_types.iter().all(|&oid| oid == 25)
+            } else {
+                false
+            };
+            
+            if looks_suspicious {
+                if query.contains("orders") && query.contains("customer_id") {
+                    info!("Fast path: SUSPICIOUS field descriptions detected for orders query!");
+                    info!("Fast path: Field descriptions: {:?}", stmt.field_descriptions);
+                }
+                debug!("Fast path: Existing field descriptions look suspicious (all TEXT), will override");
+            }
+            
+            (is_empty || looks_suspicious) && !response.columns.is_empty()
         };
         
         if send_row_desc {
+            // Special logging for the problematic query
+            if query.contains("orders") && query.contains("customer_id") {
+                info!("Fast path: ORDERS QUERY DETECTED - sending RowDescription");
+                info!("Fast path: Query: {}", query);
+                info!("Fast path: Columns: {:?}", response.columns);
+            }
             debug!("Fast path: Need to send RowDescription for {} columns", response.columns.len());
             debug!("Fast path: Query: {}", query);
             debug!("Fast path: Columns: {:?}", response.columns);
@@ -676,6 +706,14 @@ impl ExtendedFastPath {
                         *result_formats.get(i).unwrap_or(&0)
                     },
                 });
+            }
+            
+            // Log the types we're sending for orders queries
+            if query.contains("orders") && query.contains("customer_id") {
+                info!("Fast path: Sending field descriptions for orders query:");
+                for field in &fields {
+                    info!("  {} -> type OID {}", field.name, field.type_oid);
+                }
             }
             
             framed.send(BackendMessage::RowDescription(fields)).await

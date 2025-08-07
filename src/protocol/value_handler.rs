@@ -129,9 +129,20 @@ impl ValueHandler {
         if text_data.is_empty() {
             return Ok(Some(MappedValue::Memory(Vec::new())));
         }
-        
+
+        let pg_type = PgType::from_oid(pg_type_oid);
+
+        // If the target is a numeric type, try to parse and re-serialize
+        if !binary_format && pg_type.is_some() && pg_type.unwrap().is_numeric() {
+            if let Ok(val) = text_data.parse::<i64>() {
+                return self.handle_integer_value(val, pg_type_oid, binary_format);
+            } else if let Ok(val) = text_data.parse::<f64>() {
+                return self.handle_real_value(val, pg_type_oid, binary_format);
+            }
+        }
+
         // Check if this is an array type and needs JSON to array conversion
-        let pg_data = if PgType::from_oid(pg_type_oid).is_some_and(|t| t.is_array()) {
+        let pg_data = if pg_type.is_some() && pg_type.unwrap().is_array() {
             // Convert JSON array to PostgreSQL array format for text protocol
             if !binary_format {
                 self.convert_json_to_pg_array(text_data)?
@@ -142,7 +153,7 @@ impl ValueHandler {
         } else {
             text_data.as_bytes().to_vec()
         };
-        
+
         // Check if this should use memory mapping
         if self.config.enable_mmap && pg_data.len() >= self.config.large_value_threshold {
             debug!("Using memory mapping for large text value: {} bytes", pg_data.len());
