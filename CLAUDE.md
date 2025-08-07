@@ -273,7 +273,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## SQLAlchemy Compatibility
 
-**Full SQLAlchemy ORM support** with transaction persistence and datetime handling:
+**SQLAlchemy ORM support** with 7/8 tests passing (transaction cascade delete issue remaining):
 
 ```python
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
@@ -302,15 +302,20 @@ PGSQLITE_JOURNAL_MODE=WAL pgsqlite --database mydb.db    # Better performance
 PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db  # More conservative
 ```
 
-**psycopg3 Binary Protocol Support**:
+**PostgreSQL Driver Support**:
 ```bash
 # Test with different PostgreSQL drivers
-./tests/python/run_sqlalchemy_tests.sh                    # Default psycopg2
-./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-text
-./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-binary
+./tests/python/run_sqlalchemy_tests.sh                    # Default psycopg2 (8/8 tests pass)
+./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-text   # 7/8 tests pass
+./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-binary # Binary protocol support
 
-# psycopg3 automatically uses binary format when beneficial
-# Binary format provides better performance for:
+# psycopg3-text status:
+# ✅ Connection, Table Creation, Data Insertion
+# ✅ Basic CRUD, Relationships & Joins, Advanced Queries  
+# ✅ Numeric Precision with proper type inference
+# ❌ Transaction test fails during cascade delete (psycopg3 numeric type issue)
+
+# psycopg3 binary format provides better performance for:
 # - Large binary data (BYTEA)
 # - Numeric/Decimal values
 # - UUID, JSON/JSONB data

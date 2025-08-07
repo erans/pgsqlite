@@ -77,6 +77,17 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [ ] Bit/Varbit types - Bit string encoding
   - [ ] Full-text search types (tsvector, tsquery) - Custom binary formats
 
+### SQLAlchemy psycopg3-text Compatibility - IN PROGRESS (2025-08-07)
+- [x] **Column Alias Type Inference** - Fixed extract_source_table_column_for_alias parsing
+  - [x] Fixed character indexing logic with potential out-of-bounds errors
+  - [x] Implemented safer string methods (rfind for commas, proper SELECT detection)
+  - [x] SQLAlchemy lazy loading queries now return correct type OIDs
+- [ ] **Transaction Test Cascade Delete Issue** - 1 remaining test failure
+  - [ ] psycopg3 receives "Unknown PG numeric type: 25" during cascade delete
+  - [ ] Issue occurs when lazy loading orders during User deletion
+  - [ ] 7/8 SQLAlchemy tests passing with psycopg3-text driver
+  - [ ] Need to investigate why specific Order model fields return TEXT instead of proper types
+
 ### Connection-Per-Session Architecture - COMPLETED (2025-07-29)
 - [x] **Implement True Connection Isolation** - Match PostgreSQL behavior
   - [x] Each client session gets its own SQLite connection
@@ -888,7 +899,7 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Root Cause**: ArithmeticAnalyzer regex pattern didn't include `$` character for parameter detection
   - [x] **Solution Implemented**: Updated regex from `[\w\.\s\+\-\*/\(\)]+` to `[\w\.\s\+\-\*/\(\)$]+` to capture parameter-based expressions
   - [x] **Type Mapping Logic**: Implemented intelligent type resolution - NUMERIC columns return NUMERIC, INT columns return NUMERIC (for safety), FLOAT columns return FLOAT8
-  - [x] **Testing**: All 8 SQLAlchemy tests now pass with psycopg3-text driver - no more "Unknown PG numeric type: 25" errors
+  - [x] **Testing**: 7/8 SQLAlchemy tests pass with psycopg3-text driver (Transaction test still has cascade delete issue)
 - [x] **Column Alias Parsing Robustness** - COMPLETED (2025-08-06) - Fixed extract_source_table_column_for_alias function
   - [x] **Bug Identified**: Function failed to parse complex column aliases like `orders.id AS orders_id` in lazy loading queries
   - [x] **Root Cause**: Flawed character indexing logic with potential out-of-bounds errors and incorrect expression boundary detection
