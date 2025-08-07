@@ -211,7 +211,7 @@ impl ExtendedQueryHandler {
         } else {
             // Also extract types from PostgreSQL-style parameter casts ($1::TYPE)
             for i in 1..=extracted_param_types.len() {
-                let cast_pattern = format!("${}::", i);
+                let cast_pattern = format!("${i}::");
                 if let Some(cast_start) = cleaned_query.find(&cast_pattern) {
                     let type_start = cast_start + cast_pattern.len();
                     let mut type_end = type_start;
@@ -981,7 +981,7 @@ impl ExtendedQueryHandler {
         let alias_upper = alias.to_uppercase();
         
         // Find "AS <alias>" in the query
-        let as_pattern = format!(" AS {}", alias_upper);
+        let as_pattern = format!(" AS {alias_upper}");
         info!("Looking for pattern: '{}'", as_pattern);
         if let Some(as_pos) = query_upper.find(&as_pattern) {
             info!("Found AS pattern at position {}", as_pos);
@@ -1589,7 +1589,7 @@ impl ExtendedQueryHandler {
                         }
                         
                         framed.send(BackendMessage::CommandComplete { 
-                            tag: format!("SELECT {}", row_count) 
+                            tag: format!("SELECT {row_count}") 
                         }).await.map_err(PgSqliteError::Io)?;
                         
                         // Portal management for suspended queries
@@ -2616,7 +2616,7 @@ impl ExtendedQueryHandler {
                                             // Format as ISO timestamp string for VALUES clause
                                             let formatted = dt.format("%Y-%m-%d %H:%M:%S%.6f").to_string();
                                             info!("VALUES clause detected - formatting timestamp as: {}", formatted);
-                                            format!("'{}'", formatted)
+                                            format!("'{formatted}'")
                                         } else {
                                             // Fallback to raw microseconds if conversion fails
                                             unix_micros.to_string()
@@ -2870,12 +2870,7 @@ impl ExtendedQueryHandler {
                         // Apply cast removal to the VALUES content
                         let values_str = cast_regex.replace_all(&values_str, "").to_string();
                         
-                        let new_query = format!("INSERT INTO {} {} VALUES {}{}",
-                            table_name,
-                            columns,
-                            values_str,
-                            returning_clause
-                        );
+                        let new_query = format!("INSERT INTO {table_name} {columns} VALUES {values_str}{returning_clause}");
                         info!("Rewrote SQLAlchemy VALUES pattern to: {}", new_query);
                         return Ok(new_query);
                     }

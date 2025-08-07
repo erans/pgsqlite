@@ -933,9 +933,8 @@ impl QueryExecutor {
         
         // Extract column mappings for aliased columns (e.g., "column AS alias")
         let column_mappings = if let Some(ref table) = table_name {
-            let mappings = extract_column_mappings_from_query(query, table);
             // debug!("Non-ultra execute_select: column_mappings={:?}", mappings);
-            mappings
+            extract_column_mappings_from_query(query, table)
         } else {
             std::collections::HashMap::new()
         };
@@ -1226,8 +1225,8 @@ impl QueryExecutor {
                 
                 // Also check for direct MAX/MIN without subquery
                 // Pattern: MAX(created_at) or MIN(created_at)
-                let direct_pattern = format!(r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)");
-                if let Ok(re) = regex::Regex::new(&direct_pattern) {
+                let direct_pattern = r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)";
+                if let Ok(re) = regex::Regex::new(direct_pattern) {
                     if let Some(captures) = re.captures(col_name) {
                         if let Some(inner_col) = captures.get(1) {
                             let inner_col_name = inner_col.as_str();
@@ -1257,31 +1256,27 @@ impl QueryExecutor {
                 // Check if this is an aliased column
                 if let Some(source_column) = column_mappings.get(col_name) {
                     // Look up the source column type
-                    match db.get_schema_type_with_session(&session.id, table, source_column).await {
-                        Ok(Some(pg_type)) => {
-                            column_types_map.insert(col_idx, pg_type.clone());
-                            
-                            // Check if it's a datetime type
-                            match pg_type.to_uppercase().as_str() {
-                                "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
-                                "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
-                                    datetime_columns.insert(col_name.clone(), pg_type);
-                                }
-                                _ => {}
+                    if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, source_column).await {
+                        column_types_map.insert(col_idx, pg_type.clone());
+                        
+                        // Check if it's a datetime type
+                        match pg_type.to_uppercase().as_str() {
+                            "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
+                            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                datetime_columns.insert(col_name.clone(), pg_type);
                             }
-                        }
-                        _ => {
+                            _ => {}
                         }
                     }
                 } else {
                     // Check if this is a wildcard pattern (table.*)
                     // If the query contains "table.*" and we have no explicit mappings, 
                     // treat each column as mapping to itself
-                    let wildcard_pattern = format!("{}.*", table);
+                    let wildcard_pattern = format!("{table}.*");
                     if query.contains(&wildcard_pattern) && column_mappings.is_empty() {
                         // For wildcard queries, map each column to itself
                         // Use session connection to look up schema information
-                        match db.with_session_connection(&session.id, |conn| {
+                        if let Ok(Some(pg_type)) = db.with_session_connection(&session.id, |conn| {
                             let mut stmt = conn.prepare(
                                 "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ?1 AND column_name = ?2"
                             )?;
@@ -1293,19 +1288,16 @@ impl QueryExecutor {
                             
                             Ok::<Option<String>, rusqlite::Error>(result)
                         }).await {
-                            Ok(Some(pg_type)) => {
-                                column_types_map.insert(col_idx, pg_type.clone());
-                                
-                                // Check if it's a datetime type
-                                match pg_type.to_uppercase().as_str() {
-                                    "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
-                                    "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
-                                        datetime_columns.insert(col_name.clone(), pg_type);
-                                    }
-                                    _ => {}
+                            column_types_map.insert(col_idx, pg_type.clone());
+                            
+                            // Check if it's a datetime type
+                            match pg_type.to_uppercase().as_str() {
+                                "DATE" | "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" |
+                                "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" | "TIMESTAMP WITH TIME ZONE" | "TIMESTAMPTZ" => {
+                                    datetime_columns.insert(col_name.clone(), pg_type);
                                 }
+                                _ => {}
                             }
-                            _ => {}
                         }
                     } else {
                         // Try direct lookup for non-aliased columns
@@ -1835,7 +1827,7 @@ impl QueryExecutor {
                 EnumTriggers::clean_enum_usage_for_table(conn, &table_name)
                     .map_err(|e| rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Failed to clean enum usage for table {}: {}", table_name, e))
+                        Some(format!("Failed to clean enum usage for table {table_name}: {e}"))
                     ))
             }).await?;
             debug!("Cleaned up enum usage records for dropped table: {}", table_name);
@@ -2470,16 +2462,16 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
                 
                 // Only add if we haven't already found this alias with a table prefix
                 // (table-prefixed mappings are more specific and should take precedence)
-                if !mappings.contains_key(&alias_name) {
+                if let std::collections::hash_map::Entry::Vacant(e) = mappings.entry(alias_name.clone()) {
                     // Check if this is actually a table name (if the character before it is a dot)
                     // We need to look at the full match to see if there's a dot before
                     let _full_match = captures.get(0).unwrap().as_str();
                     // Skip if this looks like it's part of a table.column pattern
                     // (i.e., the source_column is actually the table name)
-                    if !query.contains(&format!("{}.{}", source_column, alias_name)) &&
-                       !query.contains(&format!("{}.", source_column)) {
+                    if !query.contains(&format!("{source_column}.{alias_name}")) &&
+                       !query.contains(&format!("{source_column}.")) {
                         debug!("Column mapping (simple alias): {} -> {}", alias_name, source_column);
-                        mappings.insert(alias_name, source_column);
+                        e.insert(source_column);
                     }
                 }
             }

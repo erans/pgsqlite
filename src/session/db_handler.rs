@@ -248,8 +248,7 @@ impl DbHandler {
             // For now, be more aggressive about converting to text since most PostgreSQL
             // parameters in text mode should be text-compatible
             let values: Vec<rusqlite::types::Value> = params.iter()
-                .enumerate()
-                .map(|(_i, p)| match p {
+                .map(|p| match p {
                     Some(data) => {
                         match String::from_utf8(data.clone()) {
                             Ok(s) => {

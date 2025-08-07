@@ -266,7 +266,7 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
             let normalized_text = if text.len() >= 3 {
                 let suffix = &text[text.len()-3..];
                 if (suffix.starts_with('+') || suffix.starts_with('-')) && suffix[1..].chars().all(|c| c.is_numeric()) {
-                    format!("{}:00", text)
+                    format!("{text}:00")
                 } else {
                     text.clone()
                 }

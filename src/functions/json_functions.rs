@@ -1454,8 +1454,8 @@ fn extract_json_path(json: &JsonValue, path: &str) -> Option<JsonValue> {
     }
     
     // Handle paths starting with '$.'
-    let path = if path.starts_with("$.") {
-        &path[2..]
+    let path = if let Some(stripped) = path.strip_prefix("$.") {
+        stripped
     } else if path.starts_with("$[") {
         &path[1..]
     } else {

@@ -137,7 +137,7 @@ impl CatalogInterceptor {
                                             }
                                             Err(e) => {
                                                 // Failed to re-parse processed query
-                                                return Some(Err(PgSqliteError::Protocol(format!("Failed to parse processed query: {}", e))));
+                                                return Some(Err(PgSqliteError::Protocol(format!("Failed to parse processed query: {e}"))));
                                             }
                                         }
                                     }
@@ -200,8 +200,7 @@ impl CatalogInterceptor {
                                 
                                 // Check if the table exists in SQLite
                                 let check_query = format!(
-                                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{}' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'",
-                                    table_name_str
+                                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = '{table_name_str}' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'"
                                 );
                                 
                                 match db.query(&check_query).await {
@@ -568,7 +567,7 @@ impl CatalogInterceptor {
             } else {
                 db.get_mut_connection()
                     .and_then(|conn| crate::metadata::EnumMetadata::get_all_enum_types(&conn))
-                    .map_err(|e| PgSqliteError::Sqlite(e))
+                    .map_err(PgSqliteError::Sqlite)
             };
             
             if let Ok(enum_types) = enum_types_result {
@@ -1124,7 +1123,7 @@ impl CatalogInterceptor {
         // Build rows
         let mut rows = Vec::new();
         for table_row in &tables_response.rows {
-            if let Some(Some(table_name_bytes)) = table_row.get(0) {
+            if let Some(Some(table_name_bytes)) = table_row.first() {
                 let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
                 
                 // Create full row with all columns

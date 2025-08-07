@@ -582,8 +582,7 @@ impl CastTranslator {
             } else {
                 // Create an expression that will fail when evaluated
                 format!(
-                    "(SELECT CASE WHEN 1=1 THEN CAST(NULL AS INTEGER) NOT NULL ELSE {} END)",
-                    expr
+                    "(SELECT CASE WHEN 1=1 THEN CAST(NULL AS INTEGER) NOT NULL ELSE {expr} END)"
                 )
             }
         } else {
