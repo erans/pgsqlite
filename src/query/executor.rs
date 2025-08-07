@@ -576,20 +576,25 @@ impl QueryExecutor {
         let translation_flags = crate::translator::QueryAnalyzer::analyze(query);
         debug!("Query analysis flags: {:?}", translation_flags);
         
-        // Translate PostgreSQL cast syntax if present
+        // Translate PostgreSQL cast syntax if present and collect metadata
+        let mut translation_metadata = crate::translator::TranslationMetadata::new();
         let mut translated_query = if translation_flags.contains(crate::translator::TranslationFlags::CAST) {
             if crate::profiling::is_profiling_enabled() {
                 crate::time_cast_translation!({
                     use crate::translator::CastTranslator;
-                    db.with_session_connection(&session.id, |conn| {
-                        Ok(CastTranslator::translate_query(query, Some(conn)))
-                    }).await?
+                    let (translated, metadata) = db.with_session_connection(&session.id, |conn| {
+                        Ok(CastTranslator::translate_with_metadata(query, Some(conn)))
+                    }).await?;
+                    translation_metadata.merge(metadata);
+                    translated
                 })
             } else {
                 use crate::translator::CastTranslator;
-                db.with_session_connection(&session.id, |conn| {
-                    Ok(CastTranslator::translate_query(query, Some(conn)))
-                }).await?
+                let (translated, metadata) = db.with_session_connection(&session.id, |conn| {
+                    Ok(CastTranslator::translate_with_metadata(query, Some(conn)))
+                }).await?;
+                translation_metadata.merge(metadata);
+                translated
             }
         } else {
             query.to_string()
@@ -686,7 +691,7 @@ impl QueryExecutor {
         }
         
         // Translate PostgreSQL datetime functions if present and capture metadata
-        let mut translation_metadata = crate::translator::TranslationMetadata::new();
+        // translation_metadata already initialized above with cast metadata
         if translation_flags.contains(crate::translator::TranslationFlags::DATETIME) {
             if crate::profiling::is_profiling_enabled() {
                 crate::time_datetime_translation!({

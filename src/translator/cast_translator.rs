@@ -1,6 +1,21 @@
 use crate::metadata::EnumMetadata;
 use rusqlite::Connection;
-use super::SimdCastSearch;
+use super::{SimdCastSearch, TranslationMetadata, ColumnTypeHint, ExpressionType};
+use crate::types::PgType;
+use regex::Regex;
+use once_cell::sync::Lazy;
+
+// Regex to extract column names and aliases from SELECT clause with casts
+static SELECT_CAST_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    // Match cast expressions with or without AS alias in SELECT clause
+    // Captures: expression::type [AS alias] or CAST(expression AS type) [AS alias]
+    // Group 1: expr in :: syntax
+    // Group 2: type in :: syntax
+    // Group 3: expr in CAST syntax
+    // Group 4: type in CAST syntax
+    // Group 5: optional alias
+    Regex::new(r"(?i)(?:([^,\s]+)::\s*([a-zA-Z0-9_]+(?:\([0-9,]+\))?)|CAST\s*\(\s*([^)]+)\s+AS\s+([a-zA-Z0-9_]+(?:\([0-9,]+\))?)\s*\))(?:\s+AS\s+([a-zA-Z_][a-zA-Z0-9_]*))?").unwrap()
+});
 
 /// Translates PostgreSQL cast syntax to SQLite-compatible syntax
 pub struct CastTranslator;
@@ -27,6 +42,107 @@ impl CastTranslator {
             eprintln!("  Result: {result}");
         }
         result
+    }
+    
+    /// Translate a query and return both the translated query and metadata about cast types
+    pub fn translate_with_metadata(query: &str, conn: Option<&Connection>) -> (String, TranslationMetadata) {
+        let translated = Self::translate_query_with_depth(query, conn, 0);
+        let metadata = Self::extract_cast_metadata(query);
+        (translated, metadata)
+    }
+    
+    /// Extract metadata about cast expressions in the query
+    fn extract_cast_metadata(query: &str) -> TranslationMetadata {
+        let mut metadata = TranslationMetadata::new();
+        
+        // Look for cast expressions in SELECT clause
+        for caps in SELECT_CAST_PATTERN.captures_iter(query) {
+            let (expr, type_name, column_name) = if caps.get(1).is_some() {
+                // :: syntax: expr::type [AS alias]
+                let expr = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let type_name = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                let alias = caps.get(5).map(|m| m.as_str());
+                
+                // Use alias if present, otherwise use the full expression
+                let col_name = if let Some(a) = alias {
+                    a.to_string()
+                } else {
+                    // For expressions without alias, use a simplified version
+                    // Remove whitespace and use just the base expression
+                    expr.trim().to_string()
+                };
+                
+                (expr, type_name, col_name)
+            } else if caps.get(3).is_some() {
+                // CAST syntax: CAST(expr AS type) [AS alias]
+                let expr = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+                let type_name = caps.get(4).map(|m| m.as_str()).unwrap_or("");
+                let alias = caps.get(5).map(|m| m.as_str());
+                
+                // Use alias if present, otherwise use the expression
+                let col_name = if let Some(a) = alias {
+                    a.to_string()
+                } else {
+                    // For CAST without alias, use the inner expression
+                    expr.trim().to_string()
+                };
+                
+                (expr, type_name, col_name)
+            } else {
+                continue;
+            };
+            
+            // Map PostgreSQL type names to PgType
+            let pg_type = Self::pg_type_from_name(type_name);
+            
+            if !column_name.is_empty() {
+                tracing::debug!("Cast metadata: {} cast to {} -> column '{}', mapped to PgType {:?}", 
+                    expr, type_name, column_name, pg_type);
+                
+                // Create a type hint for this cast expression
+                let hint = ColumnTypeHint {
+                    source_column: Some(expr.to_string()),
+                    suggested_type: Some(pg_type),
+                    datetime_subtype: None,
+                    is_expression: true,
+                    expression_type: Some(ExpressionType::TypeCast),
+                };
+                
+                metadata.add_hint(column_name, hint);
+            }
+        }
+        
+        metadata
+    }
+    
+    /// Map PostgreSQL type names to PgType enum
+    fn pg_type_from_name(type_name: &str) -> PgType {
+        let upper = type_name.to_uppercase();
+        let base_type = upper.split('(').next().unwrap_or(&upper);
+        
+        match base_type {
+            "BOOL" | "BOOLEAN" => PgType::Bool,
+            "INT2" | "SMALLINT" => PgType::Int2,
+            "INT4" | "INTEGER" | "INT" => PgType::Int4,
+            "INT8" | "BIGINT" => PgType::Int8,
+            "FLOAT4" | "REAL" => PgType::Float4,
+            "FLOAT8" | "DOUBLE PRECISION" | "FLOAT" => PgType::Float8,
+            "NUMERIC" | "DECIMAL" => PgType::Numeric,
+            "TEXT" => PgType::Text,
+            "VARCHAR" | "CHARACTER VARYING" => PgType::Varchar,
+            "CHAR" | "CHARACTER" => PgType::Char,
+            "DATE" => PgType::Date,
+            "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time,
+            "TIMETZ" | "TIME WITH TIME ZONE" => PgType::Timetz,
+            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp,
+            "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz,
+            "INTERVAL" => PgType::Interval,
+            "UUID" => PgType::Uuid,
+            "JSON" => PgType::Json,
+            "JSONB" => PgType::Jsonb,
+            "BYTEA" => PgType::Bytea,
+            _ => PgType::Text, // Default to text for unknown types
+        }
     }
     
     /// Internal translation method with recursion depth tracking

@@ -954,26 +954,40 @@ impl ExtendedQueryHandler {
             
             // Get the last token/word before AS (handling commas and spaces)
             let trimmed = before_as.trim_end();
+            info!("Text before AS (trimmed): '{}'", trimmed);
             
             // Find where this expression starts (after SELECT or comma)
             let mut expr_start = 0;
-            for (i, ch) in trimmed.char_indices().rev() {
-                if ch == ',' || (i > 6 && &trimmed[i-6..=i].to_uppercase() == "SELECT ") {
-                    expr_start = if ch == ',' { i + 1 } else { i + 1 };
-                    break;
-                }
+            let select_upper = "SELECT ";
+            
+            // Look for the last comma or SELECT keyword
+            if let Some(comma_pos) = trimmed.rfind(',') {
+                expr_start = comma_pos + 1;
+                info!("Found comma at position {}, expr_start = {}", comma_pos, expr_start);
+            } else if let Some(select_pos) = query_upper.find(select_upper) {
+                expr_start = select_pos + select_upper.len();
+                info!("Found SELECT at position {}, expr_start = {}", select_pos, expr_start);
+            }
+            
+            // Make sure expr_start is within bounds
+            if expr_start >= trimmed.len() {
+                info!("expr_start {} >= trimmed.len() {}, using 0", expr_start, trimmed.len());
+                expr_start = 0;
             }
             
             let expr = trimmed[expr_start..].trim();
+            info!("Extracted expression: '{}'", expr);
             
             // Check if it contains a dot (table.column)
             if let Some(dot_pos) = expr.rfind('.') {
                 let table_part = expr[..dot_pos].trim();
                 let column_part = expr[dot_pos + 1..].trim();
+                info!("Found table.column pattern: '{}' . '{}'", table_part, column_part);
                 
                 // Validate both parts are simple identifiers
                 if table_part.chars().all(|c| c.is_alphanumeric() || c == '_') &&
                    column_part.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    info!("Successfully parsed alias '{}' -> table '{}', column '{}'", alias, table_part, column_part);
                     return Some((table_part.to_string(), column_part.to_string()));
                 }
             }
@@ -981,9 +995,14 @@ impl ExtendedQueryHandler {
             else if expr.chars().all(|c| c.is_alphanumeric() || c == '_') {
                 // Try to extract table from FROM clause
                 if let Some(table_name) = extract_table_name_from_select(query) {
+                    info!("Successfully parsed alias '{}' -> table '{}' (from FROM clause), column '{}'", alias, table_name, expr);
                     return Some((table_name, expr.to_string()));
                 }
             }
+            
+            info!("Failed to parse expression '{}' - not a valid table.column or simple column", expr);
+        } else {
+            info!("AS pattern not found for alias '{}'", alias);
         }
         
         None

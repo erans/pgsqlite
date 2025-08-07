@@ -205,6 +205,11 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - Fixed wildcard patterns (`SELECT table.*`) with session-based schema lookup for connection-per-session architecture
   - All query patterns now work: `SELECT *`, `SELECT col`, `SELECT table.*`, `SELECT table.col AS alias`
   - Prevents "timestamp too large (after year 10K)" errors in SQLAlchemy datetime queries
+- **Column Alias Parsing Robustness**: Fixed extract_source_table_column_for_alias function parsing failures
+  - Function was failing to parse `orders.id AS orders_id` patterns in SQLAlchemy lazy loading queries
+  - Root cause: Character indexing logic had potential out-of-bounds errors and incorrect expression boundary detection
+  - Fixed by rewriting parsing logic using safer string methods (`rfind` for commas, proper SELECT keyword detection)
+  - SQLAlchemy lazy loading now correctly returns INT4 (OID 23) instead of TEXT (OID 25) for integer columns
 
 ### Previously Fixed (2025-08-04)
 - **Binary Protocol Support for psycopg3**: Implemented core binary format encoders

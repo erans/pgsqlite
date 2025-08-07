@@ -889,6 +889,12 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] **Solution Implemented**: Updated regex from `[\w\.\s\+\-\*/\(\)]+` to `[\w\.\s\+\-\*/\(\)$]+` to capture parameter-based expressions
   - [x] **Type Mapping Logic**: Implemented intelligent type resolution - NUMERIC columns return NUMERIC, INT columns return NUMERIC (for safety), FLOAT columns return FLOAT8
   - [x] **Testing**: All 8 SQLAlchemy tests now pass with psycopg3-text driver - no more "Unknown PG numeric type: 25" errors
+- [x] **Column Alias Parsing Robustness** - COMPLETED (2025-08-06) - Fixed extract_source_table_column_for_alias function
+  - [x] **Bug Identified**: Function failed to parse complex column aliases like `orders.id AS orders_id` in lazy loading queries
+  - [x] **Root Cause**: Flawed character indexing logic with potential out-of-bounds errors and incorrect expression boundary detection
+  - [x] **Solution Implemented**: Rewrote parsing logic using safer string methods (`rfind` for commas, proper SELECT keyword detection)
+  - [x] **Fixed Logic**: Replaced character-based indexing with robust string searching to find expression start boundaries
+  - [x] **Impact**: SQLAlchemy lazy loading queries now correctly parse column aliases and return proper type OIDs (INT4=23 instead of TEXT=25)
 - [x] **Cargo Clippy Warning Reduction** - COMPLETED (2025-08-06) - Improved code quality
   - [x] **Initial State**: 142 clippy warnings across the codebase
   - [x] **Fixed Issues**: Redundant closures, explicit auto-deref, manual Option::map, needless question marks, length comparisons, collapsible if statements
