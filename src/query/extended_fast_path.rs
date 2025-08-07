@@ -6,11 +6,21 @@ use crate::PgSqliteError;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use std::sync::Arc;
+use tracing::{info, debug};
 
 /// Optimized parameter binding that avoids string substitution
 pub struct ExtendedFastPath;
 
 impl ExtendedFastPath {
+    /// Extract table name from a SELECT query
+    fn extract_table_from_query(query: &str) -> Option<String> {
+        // Simple regex to extract table name from FROM clause
+        let from_regex = regex::Regex::new(r"(?i)FROM\s+(\w+)").ok()?;
+        from_regex.captures(query)
+            .and_then(|caps| caps.get(1))
+            .map(|m| m.as_str().to_string())
+    }
+    
     /// Execute a parameterized query using prepared statements directly
     pub async fn execute_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
@@ -576,6 +586,10 @@ impl ExtendedFastPath {
         };
         
         if send_row_desc {
+            debug!("Fast path: Need to send RowDescription for {} columns", response.columns.len());
+            debug!("Fast path: Query: {}", query);
+            debug!("Fast path: Columns: {:?}", response.columns);
+            
             // Build field descriptions based on the response columns and inferred types
             let portal_inferred_types = {
                 let portals = session.portals.read().await;
@@ -583,42 +597,86 @@ impl ExtendedFastPath {
                 portal.inferred_param_types.clone()
             };
             
-            let fields: Vec<crate::protocol::FieldDescription> = response.columns.iter()
-                .enumerate()
-                .map(|(i, col_name)| {
-                    // For parameter columns, use inferred type
-                    let type_oid = if col_name.starts_with('$') || col_name == "?column?" || col_name == "NULL" {
-                        if let Some(ref inferred_types) = portal_inferred_types {
-                            let param_idx = if col_name.starts_with('$') {
-                                col_name[1..].parse::<usize>().ok().map(|n| n - 1).unwrap_or(i)
-                            } else {
-                                i
-                            };
-                            *inferred_types.get(param_idx).unwrap_or(&PgType::Text.to_oid())
+            // Build field descriptions with proper type inference from schema
+            let mut fields: Vec<crate::protocol::FieldDescription> = Vec::new();
+            
+            for (i, col_name) in response.columns.iter().enumerate() {
+                // For parameter columns, use inferred type
+                let type_oid = if col_name.starts_with('$') || col_name == "?column?" || col_name == "NULL" {
+                    if let Some(ref inferred_types) = portal_inferred_types {
+                        let param_idx = if col_name.starts_with('$') {
+                            col_name[1..].parse::<usize>().ok().map(|n| n - 1).unwrap_or(i)
                         } else {
-                            PgType::Text.to_oid()
-                        }
+                            i
+                        };
+                        *inferred_types.get(param_idx).unwrap_or(&PgType::Text.to_oid())
                     } else {
-                        PgType::Text.to_oid() // Default for other columns
-                    };
-                    
-                    crate::protocol::FieldDescription {
-                        name: col_name.clone(),
-                        table_oid: 0,
-                        column_id: (i + 1) as i16,
-                        type_oid,
-                        type_size: -1,
-                        type_modifier: -1,
-                        format: if result_formats.is_empty() {
-                            0
-                        } else if result_formats.len() == 1 {
-                            result_formats[0]
-                        } else {
-                            *result_formats.get(i).unwrap_or(&0)
-                        },
+                        PgType::Text.to_oid()
                     }
-                })
-                .collect();
+                } else {
+                    // Try to infer type from column name and schema
+                    // Handle aliased columns like "orders_total_amount" -> table="orders", column="total_amount"
+                    let mut inferred_type = PgType::Text.to_oid();
+                    
+                    // Try to parse table_column pattern
+                    if col_name.contains('_') {
+                        // Split on first underscore to get potential table name
+                        if let Some(underscore_pos) = col_name.find('_') {
+                            let potential_table = &col_name[..underscore_pos];
+                            let potential_column = &col_name[underscore_pos + 1..];
+                            
+                            // Try to look up the type from schema
+                            if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, potential_table, potential_column).await {
+                                let new_type = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                debug!("Fast path: Inferred type for '{}' from schema ({}_{}) -> {} (OID {})", 
+                                      col_name, potential_table, potential_column, pg_type_str, new_type);
+                                inferred_type = new_type;
+                            } else {
+                                debug!("Fast path: No schema type found for {}.{}", potential_table, potential_column);
+                            }
+                        }
+                    }
+                    
+                    // If we still don't have a type, try direct column lookup in case it's not aliased
+                    if inferred_type == PgType::Text.to_oid() {
+                        // Extract table name from query if possible
+                        if let Some(table_name) = Self::extract_table_from_query(query) {
+                            if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, &table_name, col_name).await {
+                                let new_type = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type_str);
+                                debug!("Fast path: Inferred type for '{}' from table '{}' -> {} (OID {})", 
+                                      col_name, table_name, pg_type_str, new_type);
+                                inferred_type = new_type;
+                            } else {
+                                debug!("Fast path: No type found for column '{}' in table '{}'", col_name, table_name);
+                            }
+                        } else {
+                            debug!("Fast path: Could not extract table name from query");
+                        }
+                    }
+                    
+                    if inferred_type == PgType::Text.to_oid() {
+                        debug!("Fast path: No type found for '{}', defaulting to TEXT", col_name);
+                    }
+                    
+                    inferred_type
+                };
+                
+                fields.push(crate::protocol::FieldDescription {
+                    name: col_name.clone(),
+                    table_oid: 0,
+                    column_id: (i + 1) as i16,
+                    type_oid,
+                    type_size: -1,
+                    type_modifier: -1,
+                    format: if result_formats.is_empty() {
+                        0
+                    } else if result_formats.len() == 1 {
+                        result_formats[0]
+                    } else {
+                        *result_formats.get(i).unwrap_or(&0)
+                    },
+                });
+            }
             
             framed.send(BackendMessage::RowDescription(fields)).await
                 .map_err(PgSqliteError::Io)?;
