@@ -3269,7 +3269,6 @@ impl ExtendedQueryHandler {
         result_formats: &[i16],
         field_types: &[i32],
     ) -> Result<Vec<Option<Vec<u8>>>, PgSqliteError> {
-        eprintln!("🔧 encode_row called with {} fields, field_types: {:?}", row.len(), field_types);
         
         // Log the first few values for debugging
         for (i, value) in row.iter().take(3).enumerate() {
