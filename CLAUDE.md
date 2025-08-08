@@ -138,7 +138,14 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-08-06)
+### Recently Fixed (2025-08-08)
+- **SQLAlchemy Full Compatibility Achieved**: All tests passing for both psycopg2 and psycopg3-text drivers
+  - Fixed json_object_agg type inference - now correctly returns TEXT type instead of JSON type
+  - Updated integration tests to reflect current binary protocol capabilities
+  - Migration tests updated to expect v11 "fix_catalog_views" migration
+  - All 8 SQLAlchemy ORM test scenarios now passing including transaction cascade deletes
+
+### Previously Fixed (2025-08-06)
 - **Aggregate Function Type Inference**: Fixed "Unknown PG numeric type: 25" errors in psycopg3 text mode
   - Root cause: SUM/AVG aggregate functions returned TEXT (OID 25) instead of NUMERIC (1700) for aliases like `sum_1`, `avg_1`
   - Enhanced `get_aggregate_return_type_with_query()` to detect aliased aggregate functions in query context
@@ -273,7 +280,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## SQLAlchemy Compatibility
 
-**SQLAlchemy ORM support** with 7/8 tests passing (transaction cascade delete issue remaining):
+**Full SQLAlchemy ORM support** with all tests passing for both psycopg2 and psycopg3-text drivers:
 
 ```python
 from sqlalchemy import create_engine, Column, Integer, String, DateTime
@@ -306,14 +313,14 @@ PGSQLITE_JOURNAL_MODE=DELETE pgsqlite --database mydb.db  # More conservative
 ```bash
 # Test with different PostgreSQL drivers
 ./tests/python/run_sqlalchemy_tests.sh                    # Default psycopg2 (8/8 tests pass)
-./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-text   # 7/8 tests pass
+./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-text   # 8/8 tests pass
 ./tests/python/run_sqlalchemy_tests.sh --driver psycopg3-binary # Binary protocol support
 
 # psycopg3-text status:
 # ✅ Connection, Table Creation, Data Insertion
 # ✅ Basic CRUD, Relationships & Joins, Advanced Queries  
 # ✅ Numeric Precision with proper type inference
-# ❌ Transaction test fails during cascade delete (psycopg3 numeric type issue)
+# ✅ Transaction handling with cascade deletes - ALL TESTS PASSING
 
 # psycopg3 binary format provides better performance for:
 # - Large binary data (BYTEA)
