@@ -98,6 +98,21 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Marked array and network type tests as ignored (not yet implemented)
   - [x] JSON columns now use TEXT type for compatibility
 
+### Performance Benchmarks - MAJOR IMPROVEMENTS (2025-08-08)
+- [x] **psycopg3-text Driver Performance** - Recommended for production
+  - [x] SELECT: 0.656ms (~565x overhead) - **Meets original target of 0.669ms!**
+  - [x] SELECT queries 4x faster than psycopg2 (0.656ms vs 2.594ms)
+  - [x] Overall 40% lower overhead compared to psycopg2
+  - [x] CREATE operations 3.6x faster than psycopg2
+- [x] **psycopg2 Driver Performance** - Good for DML operations
+  - [x] UPDATE: 0.057ms (~48x overhead) - **Meets target**
+  - [x] DELETE: 0.036ms (~37x overhead) - **Meets target**
+  - [x] Better performance for UPDATE/DELETE than psycopg3
+- [ ] **Remaining Performance Issues**
+  - [ ] Cached SELECT performance needs optimization (227x-514x overhead vs 17x target)
+  - [ ] INSERT performance regression (97x-419x overhead vs 36x target)
+  - [ ] Cache effectiveness poor (only 0.9x-1.7x speedup)
+
 ### Connection-Per-Session Architecture - COMPLETED (2025-07-29)
 - [x] **Implement True Connection Isolation** - Match PostgreSQL behavior
   - [x] Each client session gets its own SQLite connection

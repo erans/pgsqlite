@@ -8,6 +8,7 @@ package-mode = false
 [tool.poetry.dependencies]
 python = "^3.12"
 psycopg2-binary = "^2.9"
+psycopg = "^3.1"
 tabulate = "^0.9"
 colorama = "^0.4"
 
