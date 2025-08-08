@@ -776,7 +776,7 @@ impl ExtendedQueryHandler {
                             if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&cleaned_query)) {
                                 info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
                                 inferred_types.push(oid);
-                                continue;
+                                continue;  // Important: continue here to prevent value-based inference from overriding
                             }
                             
                             // Check if this looks like a numeric result column based on the translated query

@@ -311,13 +311,14 @@ impl SchemaTypeMapper {
             if let Some(q) = query {
                 // Look for patterns like "sum(...) AS function_name" or "avg(...) AS function_name"
                 // This handles both simple aggregates and aggregate expressions
-                let pattern = format!(r"(?i)(\w+)\s*\([^)]+\)\s+(?:AS\s+)?{}\b", regex::escape(function_name));
+                let pattern = format!(r"(?i)([\w_]+)\s*\([^)]+\)\s+(?:AS\s+)?{}\b", regex::escape(function_name));
                 if let Ok(re) = regex::Regex::new(&pattern) {
                     if let Some(captures) = re.captures(q) {
                         let actual_function = captures[1].to_uppercase();
                         // Check if this is an aggregate function
                         if matches!(actual_function.as_str(), "SUM" | "AVG" | "MAX" | "MIN" | "COUNT" | 
-                                   "ARRAY_AGG" | "JSON_AGG" | "JSONB_AGG" | "STRING_AGG") {
+                                   "ARRAY_AGG" | "JSON_AGG" | "JSONB_AGG" | "STRING_AGG" |
+                                   "JSON_OBJECT_AGG" | "JSONB_OBJECT_AGG") {
                             // For SUM/AVG on arithmetic expressions, always return NUMERIC
                             if actual_function == "SUM" || actual_function == "AVG" {
                                 return Some(PgType::Numeric.to_oid());
