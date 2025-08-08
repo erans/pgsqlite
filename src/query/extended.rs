@@ -512,7 +512,9 @@ impl ExtendedQueryHandler {
         let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
-            if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") {
+            if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") || 
+               cleaned_query.contains("pg_class") || cleaned_query.contains("pg_attribute") ||
+               cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") {
                 info!("Skipping field description for catalog query");
                 Vec::new()
             } else {
