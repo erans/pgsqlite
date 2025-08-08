@@ -53,12 +53,10 @@ async fn test_batch_delete_single_column() -> Result<(), Box<dyn std::error::Err
 
 #[tokio::test]
 async fn test_batch_delete_multi_column() -> Result<(), Box<dyn std::error::Error>> {
-    let db_handler = {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let db_path = format!("/tmp/test_batch_delete_{timestamp}.db");
-        Arc::new(DbHandler::new(&db_path)?)
-    };
+    // Use tempfile to ensure unique database file
+    let temp_dir = tempfile::tempdir()?;
+    let db_path = temp_dir.path().join("test_batch_delete_multi_column.db");
+    let db_handler = Arc::new(DbHandler::new(db_path.to_str().unwrap())?);
     
     // Create test table
     db_handler.execute("CREATE TABLE batch_delete_products (id INTEGER PRIMARY KEY, category TEXT, status TEXT)").await?;
