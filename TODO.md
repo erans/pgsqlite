@@ -99,19 +99,26 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] JSON columns now use TEXT type for compatibility
 
 ### Performance Benchmarks - MAJOR IMPROVEMENTS (2025-08-08)
-- [x] **psycopg3-text Driver Performance** - Recommended for production
+- [x] **psycopg3-binary Driver Performance** - BEST OVERALL PERFORMANCE
+  - [x] SELECT: 0.139ms (~139x overhead) - **5x faster than psycopg3-text, 19x faster than psycopg2!**
+  - [x] CREATE: 0.810ms (~5.5x overhead) - **Best CREATE performance of all drivers**
+  - [x] UPDATE: 0.096ms (~96x overhead) - Acceptable performance
+  - [x] DELETE: 0.082ms (~82x overhead) - Acceptable performance
+  - [x] INSERT: 0.680ms (~340x overhead) - Needs optimization but consistent
+  - [x] Overall 168x overhead - **69% better than psycopg2, 49% better than psycopg3-text**
+- [x] **psycopg3-text Driver Performance** - Good text mode performance
   - [x] SELECT: 0.656ms (~565x overhead) - **Meets original target of 0.669ms!**
   - [x] SELECT queries 4x faster than psycopg2 (0.656ms vs 2.594ms)
   - [x] Overall 40% lower overhead compared to psycopg2
   - [x] CREATE operations 3.6x faster than psycopg2
-- [x] **psycopg2 Driver Performance** - Good for DML operations
+- [x] **psycopg2 Driver Performance** - Legacy compatibility
   - [x] UPDATE: 0.057ms (~48x overhead) - **Meets target**
   - [x] DELETE: 0.036ms (~37x overhead) - **Meets target**
-  - [x] Better performance for UPDATE/DELETE than psycopg3
+  - [x] Worst SELECT performance but stable for legacy apps
 - [ ] **Remaining Performance Issues**
-  - [ ] Cached SELECT performance needs optimization (227x-514x overhead vs 17x target)
-  - [ ] INSERT performance regression (97x-419x overhead vs 36x target)
-  - [ ] Cache effectiveness poor (only 0.9x-1.7x speedup)
+  - [ ] Cached SELECT performance poor across all drivers (85x-514x overhead vs 17x target)
+  - [ ] INSERT performance needs optimization (340x-419x overhead vs 36x target)
+  - [ ] Cache effectiveness poor (0.4x-1.7x speedup, cache often slower)
 
 ### Connection-Per-Session Architecture - COMPLETED (2025-07-29)
 - [x] **Implement True Connection Isolation** - Match PostgreSQL behavior

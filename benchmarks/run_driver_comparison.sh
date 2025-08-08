@@ -15,11 +15,11 @@ echo "======================================="
 cd "$(dirname "$0")/.."
 
 # Step 1: Build pgsqlite in release mode
-echo -e "\n${GREEN}[1/5] Building pgsqlite in release mode...${NC}"
+echo -e "\n${GREEN}[1/6] Building pgsqlite in release mode...${NC}"
 cargo build --release
 
 # Step 2: Set up Python environment
-echo -e "\n${GREEN}[2/5] Setting up Python environment...${NC}"
+echo -e "\n${GREEN}[2/6] Setting up Python environment...${NC}"
 cd benchmarks
 
 # Check if Poetry is installed
@@ -33,7 +33,7 @@ fi
 poetry install
 
 # Step 3: Start pgsqlite server
-echo -e "\n${GREEN}[3/5] Starting pgsqlite server...${NC}"
+echo -e "\n${GREEN}[3/6] Starting pgsqlite server...${NC}"
 cd ..
 
 # Find a free port
@@ -75,15 +75,20 @@ fi
 echo -e "${GREEN}pgsqlite server started with PID: $PGSQLITE_PID on port $PGSQLITE_PORT${NC}"
 
 # Step 4: Run benchmarks with psycopg2
-echo -e "\n${GREEN}[4/5] Running benchmarks with psycopg2...${NC}"
+echo -e "\n${GREEN}[4/6] Running benchmarks with psycopg2...${NC}"
 cd benchmarks
 echo ""
 poetry run python benchmark_drivers.py --port $PGSQLITE_PORT --socket-dir $SOCKET_DIR --driver psycopg2
 
 # Step 5: Run benchmarks with psycopg3-text
-echo -e "\n${GREEN}[5/5] Running benchmarks with psycopg3-text...${NC}"
+echo -e "\n${GREEN}[5/6] Running benchmarks with psycopg3-text...${NC}"
 echo ""
 poetry run python benchmark_drivers.py --port $PGSQLITE_PORT --socket-dir $SOCKET_DIR --driver psycopg3-text
+
+# Step 6: Run benchmarks with psycopg3-binary
+echo -e "\n${GREEN}[6/6] Running benchmarks with psycopg3-binary...${NC}"
+echo ""
+poetry run python benchmark_drivers.py --port $PGSQLITE_PORT --socket-dir $SOCKET_DIR --driver psycopg3-binary
 
 # Cleanup
 echo -e "\n${YELLOW}Cleaning up...${NC}"
@@ -94,4 +99,4 @@ wait $PGSQLITE_PID 2>/dev/null || true
 rm -f $SOCKET_DIR/.s.PGSQL.$PGSQLITE_PORT
 
 echo -e "\n${GREEN}Driver comparison complete!${NC}"
-echo -e "${BLUE}The results above show the performance comparison between psycopg2 and psycopg3-text drivers${NC}"
+echo -e "${BLUE}The results above show the performance comparison between psycopg2, psycopg3-text, and psycopg3-binary drivers${NC}"

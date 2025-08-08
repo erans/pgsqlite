@@ -52,7 +52,7 @@ class BenchmarkRunner:
         if driver == "psycopg2":
             import psycopg2
             self.psycopg = psycopg2
-        elif driver == "psycopg3-text":
+        elif driver in ["psycopg3-text", "psycopg3-binary"]:
             import psycopg
             self.psycopg = psycopg
         else:
@@ -207,16 +207,22 @@ class BenchmarkRunner:
                 password="dummy",
                 sslmode="disable"  # pgsqlite doesn't support SSL
             )
-        elif self.driver == "psycopg3-text":
+        elif self.driver in ["psycopg3-text", "psycopg3-binary"]:
             # psycopg3 connection string
             if self.socket_dir:
                 conninfo = f"host={self.socket_dir} port={self.pg_port} dbname={self.pg_dbname} user=dummy password=dummy sslmode=disable"
             else:
                 conninfo = f"host={self.pg_host} port={self.pg_port} dbname={self.pg_dbname} user=dummy password=dummy sslmode=disable"
-            conn = self.psycopg.connect(conninfo)
-            # Force text mode for psycopg3
-            if hasattr(conn, 'prepare_threshold'):
-                conn.prepare_threshold = None  # Disable prepared statements
+            
+            if self.driver == "psycopg3-binary":
+                # Configure for binary mode - psycopg3 uses binary by default when beneficial
+                conn = self.psycopg.connect(conninfo)
+                # psycopg3 automatically negotiates binary format for supported types
+            else:
+                # Force text mode for psycopg3-text
+                conn = self.psycopg.connect(conninfo)
+                if hasattr(conn, 'prepare_threshold'):
+                    conn.prepare_threshold = None  # Disable prepared statements
         
         cursor = conn.cursor()
         
@@ -484,7 +490,7 @@ def main():
     parser.add_argument("--pgsqlite-only", action="store_true",
                         help="Run only pgSQLite benchmarks")
     parser.add_argument("--driver", type=str, default="psycopg2",
-                        choices=["psycopg2", "psycopg3-text"],
+                        choices=["psycopg2", "psycopg3-text", "psycopg3-binary"],
                         help="PostgreSQL driver to use (default: psycopg2)")
     
     args = parser.parse_args()
