@@ -501,7 +501,7 @@ impl ExtendedQueryHandler {
         if crate::translator::ArithmeticAnalyzer::needs_analysis(&translated_for_analysis) {
             let arithmetic_metadata = crate::translator::ArithmeticAnalyzer::analyze_query(&translated_for_analysis);
             translation_metadata.merge(arithmetic_metadata);
-            info!("Found {} arithmetic type hints", translation_metadata.column_mappings.len());
+            debug!("Found {} arithmetic type hints", translation_metadata.column_mappings.len());
         }
         
         // For now, we'll just analyze the query to get field descriptions
@@ -702,11 +702,16 @@ impl ExtendedQueryHandler {
                                 }
                                 // Second priority: Check translation metadata for type hints
                                 else if let Some(hint) = translation_metadata.get_hint(col_name) {
-                                    if let Some(suggested_type) = &hint.suggested_type {
-                                        info!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
+                                    // FIRST: Check for arithmetic expressions on float columns
+                                    if hint.expression_type == Some(crate::translator::ExpressionType::ArithmeticOnFloat) {
+                                        debug!("Arithmetic expression '{}' detected with ArithmeticOnFloat hint, returning FLOAT8", col_name);
+                                        // For arithmetic on REAL/FLOAT columns, always return FLOAT8
+                                        PgType::Float8.to_oid()
+                                    } else if let Some(suggested_type) = &hint.suggested_type {
+                                        debug!("Using type hint from translation metadata for '{}': {:?}", col_name, suggested_type);
                                         suggested_type.to_oid()
                                     } else if hint.is_expression {
-                                        // For arithmetic expressions without suggested type, infer from source column
+                                        // For other arithmetic expressions without suggested type, infer from source column
                                         if let Some(source_col) = &hint.source_column {
                                             // Extract table.column if present, or use the table from context
                                             let (source_table, source_column) = if source_col.contains('.') {
