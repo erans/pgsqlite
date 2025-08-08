@@ -379,6 +379,9 @@ impl DbHandler {
             // For file databases, create a temporary connection
             let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
             
+            // Register functions on the temporary connection
+            crate::functions::register_all_functions(&conn)?;
+            
             // Process query with fast path optimization
             let processed_query = process_query(query, &conn, &self.schema_cache)?;
             
@@ -599,6 +602,9 @@ impl DbHandler {
             Ok(result)
         } else {
             let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+            
+            // Register functions on the temporary connection
+            crate::functions::register_all_functions(&conn)?;
             
             // Process query with fast path optimization
             let processed_query = process_query(query, &conn, &self.schema_cache)?;
