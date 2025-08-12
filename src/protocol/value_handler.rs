@@ -184,11 +184,10 @@ impl ValueHandler {
         }
         
         // Try to use small value optimization for text format
-        if !binary_format {
-            if let Some(small) = crate::protocol::SmallValue::from_integer(int_val) {
+        if !binary_format
+            && let Some(small) = crate::protocol::SmallValue::from_integer(int_val) {
                 return Ok(Some(MappedValue::Small(small)));
             }
-        }
         
         let pg_data = if binary_format {
             self.convert_integer_binary(int_val, pg_type_oid)
@@ -207,11 +206,10 @@ impl ValueHandler {
         binary_format: bool,
     ) -> io::Result<Option<MappedValue>> {
         // Try to use small value optimization for text format
-        if !binary_format {
-            if let Some(small) = crate::protocol::SmallValue::from_float(real_val) {
+        if !binary_format
+            && let Some(small) = crate::protocol::SmallValue::from_float(real_val) {
                 return Ok(Some(MappedValue::Small(small)));
             }
-        }
         
         let pg_data = if binary_format {
             self.convert_real_binary(real_val, pg_type_oid)

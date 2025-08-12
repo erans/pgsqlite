@@ -39,23 +39,20 @@ impl MemoryMonitorConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
         
-        if let Ok(val) = std::env::var("PGSQLITE_MEMORY_THRESHOLD") {
-            if let Ok(threshold) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_MEMORY_THRESHOLD")
+            && let Ok(threshold) = val.parse::<usize>() {
                 config.memory_threshold = threshold;
             }
-        }
         
-        if let Ok(val) = std::env::var("PGSQLITE_HIGH_MEMORY_THRESHOLD") {
-            if let Ok(threshold) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_HIGH_MEMORY_THRESHOLD")
+            && let Ok(threshold) = val.parse::<usize>() {
                 config.high_memory_threshold = threshold;
             }
-        }
         
-        if let Ok(val) = std::env::var("PGSQLITE_MEMORY_CHECK_INTERVAL") {
-            if let Ok(secs) = val.parse::<u64>() {
+        if let Ok(val) = std::env::var("PGSQLITE_MEMORY_CHECK_INTERVAL")
+            && let Ok(secs) = val.parse::<u64>() {
                 config.check_interval = Duration::from_secs(secs);
             }
-        }
         
         config
     }

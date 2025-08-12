@@ -275,12 +275,11 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
             };
             
             // Try parsing the normalized text as RFC3339
-            if normalized_text != text {
-                if let Ok(dt) = DateTime::parse_from_rfc3339(&normalized_text) {
+            if normalized_text != text
+                && let Ok(dt) = DateTime::parse_from_rfc3339(&normalized_text) {
                     let micros = dt.timestamp() * 1_000_000 + (dt.timestamp_subsec_micros() as i64);
                     return Ok(micros);
                 }
-            }
             
             // Try custom format for PostgreSQL timestamps with timezone
             let formats_with_tz = [

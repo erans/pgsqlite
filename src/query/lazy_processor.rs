@@ -118,11 +118,10 @@ impl<'a> LazyQueryProcessor<'a> {
         }
         
         // For INSERT queries, check if table has decimal columns
-        if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert) {
-            if let Some(table_name) = extract_insert_table_name(self.original_query) {
+        if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert)
+            && let Some(table_name) = extract_insert_table_name(self.original_query) {
                 return schema_cache.has_decimal_columns(&table_name);
             }
-        }
         
         // For SELECT queries, always assume decimal rewrite might be needed
         // This is conservative but safe
@@ -151,11 +150,10 @@ impl<'a> LazyQueryProcessor<'a> {
            !self.needs_pg_table_is_visible_translation {
             // Check if this is an INSERT that might need decimal rewrite
             if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert) {
-                if let Some(table_name) = extract_insert_table_name(self.original_query) {
-                    if !_schema_cache.has_decimal_columns(&table_name) {
+                if let Some(table_name) = extract_insert_table_name(self.original_query)
+                    && !_schema_cache.has_decimal_columns(&table_name) {
                         return Ok(self.original_query);
                     }
-                }
             } else if !matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Select) {
                 // Not a SELECT or INSERT that needs decimal handling
                 return Ok(self.original_query);

@@ -47,11 +47,10 @@ impl SchemaCache {
     pub fn get(&self, table_name: &str) -> Option<TableSchema> {
         let cache = self.cache.read().unwrap();
         
-        if let Some(entry) = cache.get(table_name) {
-            if entry.cached_at.elapsed() < self.ttl {
+        if let Some(entry) = cache.get(table_name)
+            && entry.cached_at.elapsed() < self.ttl {
                 return Some(entry.schema.clone());
             }
-        }
         
         None
     }
@@ -181,8 +180,8 @@ impl SchemaCache {
 
         // Bulk query for all PostgreSQL types for this table
         let mut pg_metadata = HashMap::new();
-        if let Ok(mut stmt) = conn.prepare("SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1") {
-            if let Ok(rows) = stmt.query_map([table_name], |row| {
+        if let Ok(mut stmt) = conn.prepare("SELECT column_name, pg_type FROM __pgsqlite_schema WHERE table_name = ?1")
+            && let Ok(rows) = stmt.query_map([table_name], |row| {
                 let col_name: String = row.get(0)?;
                 let pg_type: String = row.get(1)?;
                 Ok((col_name, pg_type))
@@ -191,7 +190,6 @@ impl SchemaCache {
                     pg_metadata.insert(row.0, row.1);
                 }
             }
-        }
 
         // Build column data
         for (col_name, sqlite_type) in sqlite_columns {
@@ -285,11 +283,10 @@ impl SchemaCache {
         if let Ok(table_names) = extract_table_names_simple(query) {
             for table_name in table_names {
                 // Try to load if not already in cache
-                if self.get(&table_name).is_none() {
-                    if let Ok(schema) = self.load_table_schema_direct(conn, &table_name) {
+                if self.get(&table_name).is_none()
+                    && let Ok(schema) = self.load_table_schema_direct(conn, &table_name) {
                         self.insert(table_name.clone(), schema);
                     }
-                }
             }
         }
     }

@@ -46,11 +46,10 @@ impl EnumCache {
         // Check cache first
         {
             let cache = self.types_by_name.read().unwrap();
-            if let Some(entry) = cache.get(type_name) {
-                if entry.timestamp.elapsed() < self.ttl {
+            if let Some(entry) = cache.get(type_name)
+                && entry.timestamp.elapsed() < self.ttl {
                     return Ok(Some(entry.data.clone()));
                 }
-            }
         }
         
         // Load from database
@@ -78,11 +77,10 @@ impl EnumCache {
         // Check cache first
         {
             let cache = self.types_by_oid.read().unwrap();
-            if let Some(entry) = cache.get(&type_oid) {
-                if entry.timestamp.elapsed() < self.ttl {
+            if let Some(entry) = cache.get(&type_oid)
+                && entry.timestamp.elapsed() < self.ttl {
                     return Ok(Some(entry.data.clone()));
                 }
-            }
         }
         
         // Load from database
@@ -110,11 +108,10 @@ impl EnumCache {
         // Check cache first
         {
             let cache = self.values_by_type.read().unwrap();
-            if let Some(entry) = cache.get(&type_oid) {
-                if entry.timestamp.elapsed() < self.ttl {
+            if let Some(entry) = cache.get(&type_oid)
+                && entry.timestamp.elapsed() < self.ttl {
                     return Ok(entry.data.clone());
                 }
-            }
         }
         
         // Load from database

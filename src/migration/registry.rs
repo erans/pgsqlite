@@ -745,9 +745,9 @@ fn get_column_number(create_sql: &str, target_column: &str) -> Option<i16> {
     use regex::Regex;
     
     // Extract the column definitions from CREATE TABLE
-    if let Ok(table_regex) = Regex::new(r"(?i)CREATE\s+TABLE\s+[^(]+\(\s*(.+)\s*\)") {
-        if let Some(cap) = table_regex.captures(create_sql) {
-            if let Some(columns_part) = cap.get(1) {
+    if let Ok(table_regex) = Regex::new(r"(?i)CREATE\s+TABLE\s+[^(]+\(\s*(.+)\s*\)")
+        && let Some(cap) = table_regex.captures(create_sql)
+            && let Some(columns_part) = cap.get(1) {
                 // Split by comma and look for our target column
                 let columns_str = columns_part.as_str();
                 let mut column_count = 0i16;
@@ -788,8 +788,6 @@ fn get_column_number(create_sql: &str, target_column: &str) -> Option<i16> {
                     }
                 }
             }
-        }
-    }
     
     None
 }

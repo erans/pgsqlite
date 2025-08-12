@@ -126,8 +126,17 @@ start_pgsqlite() {
     # Start pgsqlite in background WITHOUT pooling for proper SQLAlchemy transaction isolation
     # SQLAlchemy expects connection-per-session behavior for transaction persistence
     # Use WAL mode with synchronous=FULL for better durability
+    # For psycopg3-binary, ensure binary protocol support is enabled
     cd "$PROJECT_ROOT"
-    PGSQLITE_JOURNAL_MODE=WAL PGSQLITE_SYNCHRONOUS=FULL ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
+    
+    # Set environment based on driver
+    if [[ "$DRIVER" == "psycopg3-binary" ]]; then
+        log_info "Enabling binary protocol support for psycopg3-binary driver"
+        # pgsqlite already supports binary protocol, just need to ensure it's available
+        PGSQLITE_JOURNAL_MODE=WAL PGSQLITE_SYNCHRONOUS=FULL RUST_LOG=warn ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
+    else
+        PGSQLITE_JOURNAL_MODE=WAL PGSQLITE_SYNCHRONOUS=FULL ./target/release/pgsqlite --database "$TEST_DB" --port $PORT > "$SCRIPT_DIR/pgsqlite.log" 2>&1 &
+    fi
     PGSQLITE_PID=$!
     
     # Wait for server to start

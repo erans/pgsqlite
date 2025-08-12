@@ -14,8 +14,8 @@ use tracing::debug;
 
 /// Process a query, using fast path when possible
 #[inline(always)]
-pub fn process_query<'a>(
-    query: &'a str,
+pub fn process_query(
+    query: &str,
     conn: &Connection,
     schema_cache: &SchemaCache,
 ) -> Result<String, rusqlite::Error> {

@@ -97,8 +97,8 @@ impl EnumValidator {
                     let value_part = assignment[eq_pos + 1..].trim();
                     
                     // Check if column is ENUM type
-                    if let Ok(Some(pg_type)) = Self::get_column_type(conn, table_name, column) {
-                        if let Ok(Some(enum_type)) = EnumMetadata::get_enum_type(conn, &pg_type) {
+                    if let Ok(Some(pg_type)) = Self::get_column_type(conn, table_name, column)
+                        && let Ok(Some(enum_type)) = EnumMetadata::get_enum_type(conn, &pg_type) {
                             // Extract value (handle quoted strings)
                             let value = value_part.trim_matches('\'').trim_matches('"');
                             
@@ -114,7 +114,6 @@ impl EnumValidator {
                                 ));
                             }
                         }
-                    }
                 }
             }
         }

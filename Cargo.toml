@@ -10,55 +10,55 @@ unified_processor = []
 
 [dependencies]
 # Async runtime
-tokio = { version = "1.45", features = ["full"] }
+tokio = { version = "1.46", features = ["full"] }
 tokio-util = { version = "0.7.15", features = ["codec"] }
 
 # PostgreSQL protocol
-bytes = "1.9"
+bytes = "1.9.0"
 postgres-protocol = "0.6.8"
 
 # SQLite
-rusqlite = { version = "0.36", features = ["bundled", "uuid", "serde_json", "functions", "collation", "vtab", "column_decltype"] }
+rusqlite = { version = "0.36.0", features = ["bundled", "uuid", "serde_json", "functions", "collation", "vtab", "column_decltype"] }
 
 # SQL parsing
-sqlparser = "0.57"
+sqlparser = "0.57.0"
 
 # Types
-uuid = { version = "1.11", features = ["v4", "serde"] }
+uuid = { version = "1.11.0", features = ["v4", "serde"] }
 serde = { version = "1.0.217", features = ["derive"] }
 serde_json = "1.0.134"
 chrono = "0.4.39"
-rust_decimal = { version = "1.35", features = ["serde", "db-postgres"] }
-once_cell = "1.20"
+rust_decimal = { version = "1.35.0", features = ["serde", "db-postgres"] }
+once_cell = "1.20.0"
 
 # PostgreSQL client (for testing)
 tokio-postgres = { version = "0.7.12", features = ["with-chrono-0_4"] }
-env_logger = "0.11"
+env_logger = "0.11.5"
 
 # Utilities
-thiserror = "2.0"
-anyhow = "1.0"
+thiserror = "2.0.9"
+anyhow = "1.0.98"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 async-trait = "0.1"
 rand = "0.9"
 futures = "0.3"
 hex = "0.4"
-regex = "1.11"
+regex = "1.11.1"
 byteorder = "1.5"
 parking_lot = "0.12"
-memchr = "2.7"
+memchr = "2.7.5"
 itoa = "1.0"
-bitflags = "2.6"
-lru = "0.12"
+bitflags = "2.6.0"
+lru = "0.16.0"
 
 # Memory mapping for zero-copy operations
 memmap2 = "0.9"
-tempfile = "3.8"
+tempfile = "3.14.0"
 
 # Configuration
 config = "0.15"
-clap = { version = "4.5", features = ["derive", "env"] }
+clap = { version = "4.5.25", features = ["derive", "env"] }
 lazy_static = "1.5"
 
 # Cryptography for migration checksums
@@ -68,10 +68,10 @@ sha2 = "0.10"
 prometheus = "0.14"
 
 # TLS/SSL support
-tokio-rustls = "0.26"
-rustls = "0.23"
-rustls-pemfile = "2.0"
-rcgen = "0.13"
+tokio-rustls = "0.26.0"
+rustls = "0.23.19"
+rustls-pemfile = "2.2"
+rcgen = "0.13.0"
 
 [dev-dependencies]
 criterion = "0.6"

@@ -41,19 +41,17 @@ pub fn extract_table_for_column(query: &str, column_name: &str) -> Option<String
     
     // Look for explicit table.column pattern in the query
     let pattern = format!(r"(?i)(\w+)\.{}\b", regex::escape(column_name));
-    if let Ok(re) = Regex::new(&pattern) {
-        if let Some(caps) = re.captures(query) {
+    if let Ok(re) = Regex::new(&pattern)
+        && let Some(caps) = re.captures(query) {
             return Some(caps[1].to_string());
         }
-    }
     
     // If not found, check aliases
     let alias_pattern = format!(r"(?i)(\w+)\.(\w+)\s+AS\s+{}\b", regex::escape(column_name));
-    if let Ok(re) = Regex::new(&alias_pattern) {
-        if let Some(caps) = re.captures(query) {
+    if let Ok(re) = Regex::new(&alias_pattern)
+        && let Some(caps) = re.captures(query) {
             return Some(caps[1].to_string());
         }
-    }
     
     None
 }

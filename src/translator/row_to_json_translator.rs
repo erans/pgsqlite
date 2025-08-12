@@ -52,8 +52,8 @@ impl RowToJsonTranslator {
         // We'll use a two-step approach since backreferences may not work as expected
         let pattern = r"(?i)row_to_json\s*\(\s*(\w+)\s*\)\s+FROM\s+\(\s*(.+?)\s*\)\s+(\w+)";
         
-        if let Ok(re) = Regex::new(pattern) {
-            if let Some(captures) = re.captures(query) {
+        if let Ok(re) = Regex::new(pattern)
+            && let Some(captures) = re.captures(query) {
                 let alias1 = captures.get(1).map(|m| m.as_str()).unwrap_or("t");
                 let subquery = captures.get(2).map(|m| m.as_str()).unwrap_or("");
                 let alias2 = captures.get(3).map(|m| m.as_str()).unwrap_or("t");
@@ -93,7 +93,6 @@ impl RowToJsonTranslator {
                     return Some(result);
                 }
             }
-        }
         
         None
     }

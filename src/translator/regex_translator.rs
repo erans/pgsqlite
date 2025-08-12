@@ -156,8 +156,8 @@ impl RegexTranslator {
             }
             // Handle OPERATOR(pg_catalog.~) syntax
             Expr::Function(func) if func.name.to_string().contains("OPERATOR") => {
-                if let sqlparser::ast::FunctionArguments::List(arg_list) = &func.args {
-                    if arg_list.args.len() >= 2 {
+                if let sqlparser::ast::FunctionArguments::List(arg_list) = &func.args
+                    && arg_list.args.len() >= 2 {
                         // Check if this is a regex operator
                         let func_str = func.name.to_string();
                         if func_str.contains("~") && !func_str.contains("!~") {
@@ -167,7 +167,6 @@ impl RegexTranslator {
                             *expr = Self::create_regexp_function(text, pattern, false);
                         }
                     }
-                }
             }
             // Recursively process nested expressions
             Expr::Nested(nested) => Self::translate_expression(nested)?,

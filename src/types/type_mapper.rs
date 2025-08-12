@@ -516,8 +516,8 @@ impl TypeMapper {
         let normalized = pg_type.to_uppercase();
         
         // Handle parametric types
-        if normalized.contains('(') {
-            if let Some(base) = normalized.split('(').next() {
+        if normalized.contains('(')
+            && let Some(base) = normalized.split('(').next() {
                 let base_trimmed = base.trim();
                 // Check if this is a known parametric type
                 match base_trimmed {
@@ -528,7 +528,6 @@ impl TypeMapper {
                     _ => {}
                 }
             }
-        }
         
         // Handle multi-word types
         if normalized.starts_with("DOUBLE PRECISION") {
@@ -620,13 +619,11 @@ impl TypeMapper {
         }
         
         // Check if it looks like a network address (CIDR/INET)
-        if value.contains('/') && value.split('/').count() == 2 {
-            if let Some(ip_part) = value.split('/').next() {
-                if Self::is_ip_address(ip_part) {
+        if value.contains('/') && value.split('/').count() == 2
+            && let Some(ip_part) = value.split('/').next()
+                && Self::is_ip_address(ip_part) {
                     return PgType::Cidr;
                 }
-            }
-        }
         if Self::is_ip_address(value) {
             return PgType::Inet;
         }

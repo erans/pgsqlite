@@ -52,8 +52,8 @@ impl LazySchemaLoader {
         // Check cache first
         {
             let cache = self.cache.read().unwrap();
-            if let Some(cached) = cache.get(table_name) {
-                if cached.loaded_at.elapsed() < self.ttl {
+            if let Some(cached) = cache.get(table_name)
+                && cached.loaded_at.elapsed() < self.ttl {
                     // Update access statistics
                     let schema_clone = cached.schema.clone();
                     drop(cache);
@@ -62,7 +62,6 @@ impl LazySchemaLoader {
                     debug!("Schema cache hit for table: {}", table_name);
                     return Ok(Some(schema_clone));
                 }
-            }
         }
 
         // Cache miss - need to load
@@ -185,11 +184,10 @@ impl LazySchemaLoader {
             std::thread::sleep(Duration::from_millis(10));
             
             let cache = self.cache.read().unwrap();
-            if let Some(cached) = cache.get(table_name) {
-                if cached.loaded_at.elapsed() < self.ttl {
+            if let Some(cached) = cache.get(table_name)
+                && cached.loaded_at.elapsed() < self.ttl {
                     return Ok(Some(cached.schema.clone()));
                 }
-            }
             
             let loading = self.loading_tables.read().unwrap();
             if !loading.contains(table_name) {
@@ -218,12 +216,11 @@ impl LazySchemaLoader {
         {
             let cache = self.cache.read().unwrap();
             for table_name in table_names {
-                if let Some(cached) = cache.get(table_name) {
-                    if cached.loaded_at.elapsed() < self.ttl {
+                if let Some(cached) = cache.get(table_name)
+                    && cached.loaded_at.elapsed() < self.ttl {
                         self.stats.write().unwrap().preload_hits += 1;
                         continue; // Already cached
                     }
-                }
                 tables_to_load.push(table_name.clone());
             }
         }

@@ -298,8 +298,8 @@ impl<'a> DecimalQueryRewriter<'a> {
         let mut cte_context = outer_context.clone();
         
         // If this is a recursive CTE, analyze the first (non-recursive) part to determine column types
-        if let SetExpr::SetOperation { left, .. } = &*cte.query.body {
-            if let SetExpr::Select(base_select) = &**left {
+        if let SetExpr::SetOperation { left, .. } = &*cte.query.body
+            && let SetExpr::Select(base_select) = &**left {
                 // Build context for the base query
                 let mut base_context = QueryContext::default();
                 for table in &base_select.from {
@@ -330,7 +330,6 @@ impl<'a> DecimalQueryRewriter<'a> {
                 // Add the CTE's own columns to the context so the recursive part can reference them
                 cte_context.cte_columns.insert(cte.alias.name.value.clone(), cte_column_types.clone());
             }
-        }
         
         self.rewrite_query_with_context(&mut cte.query, Some(&cte_context))
     }
@@ -532,13 +531,11 @@ impl<'a> DecimalQueryRewriter<'a> {
                 let mut has_implicit_cast = false;
                 
                 // Check arguments for decimal involvement
-                if let FunctionArguments::List(list) = &func.args {
-                    if !list.args.is_empty() {
-                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(arg_expr)) = &list.args[0] {
+                if let FunctionArguments::List(list) = &func.args
+                    && !list.args.is_empty()
+                        && let FunctionArg::Unnamed(FunctionArgExpr::Expr(arg_expr)) = &list.args[0] {
                             has_decimal_arg = self.resolver.involves_decimal(arg_expr, context);
                         }
-                    }
-                }
                 
                 // Check if this is a float-returning math function
                 let is_float_returning = self.is_float_returning_math_function(&func.name);
@@ -783,11 +780,10 @@ impl<'a> DecimalQueryRewriter<'a> {
     /// Wrap expression in decimal_from_text function
     fn wrap_in_decimal_from_text(&mut self, expr: Expr, context: &QueryContext) -> Expr {
         // Check if this is a float-returning math function - don't wrap these
-        if let Expr::Function(func) = &expr {
-            if self.is_float_returning_math_function(&func.name) {
+        if let Expr::Function(func) = &expr
+            && self.is_float_returning_math_function(&func.name) {
                 return expr; // Return as-is, don't wrap
             }
-        }
         
         // If this is a nested expression, check the inner expression
         if let Expr::Nested(inner) = &expr {
@@ -954,8 +950,8 @@ impl<'a> DecimalQueryRewriter<'a> {
                 func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_round"))]);
                 // PostgreSQL ROUND() has an optional second argument (scale) that defaults to 0
                 // decimal_round() always requires 2 arguments, so add default if missing
-                if let FunctionArguments::List(ref mut list) = func.args {
-                    if list.args.len() == 1 {
+                if let FunctionArguments::List(ref mut list) = func.args
+                    && list.args.len() == 1 {
                         list.args.push(FunctionArg::Unnamed(FunctionArgExpr::Expr(
                             Expr::Value(sqlparser::ast::ValueWithSpan { 
                                 value: sqlparser::ast::Value::Number("0".to_string(), false), 
@@ -966,7 +962,6 @@ impl<'a> DecimalQueryRewriter<'a> {
                             })
                         )));
                     }
-                }
             }
             "ABS" => {
                 func.name = ObjectName(vec![ObjectNamePart::Identifier(Ident::new("decimal_abs"))]);
@@ -1153,9 +1148,9 @@ impl<'a> DecimalQueryRewriter<'a> {
         match func_name.as_str() {
             "SUM" | "AVG" | "MIN" | "MAX" => {
                 // Ensure argument is wrapped in decimal conversion if needed
-                if let FunctionArguments::List(list) = &mut func.args {
-                    if !list.args.is_empty() {
-                        if let FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)) = &mut list.args[0] {
+                if let FunctionArguments::List(list) = &mut func.args
+                    && !list.args.is_empty()
+                        && let FunctionArg::Unnamed(FunctionArgExpr::Expr(arg)) = &mut list.args[0] {
                             // Check if argument is already a decimal function
                             let is_decimal_func = matches!(
                                 arg, 
@@ -1170,8 +1165,6 @@ impl<'a> DecimalQueryRewriter<'a> {
                                 *arg = self.wrap_in_decimal_from_text(arg.clone(), context);
                             }
                         }
-                    }
-                }
             }
             _ => {}
         }

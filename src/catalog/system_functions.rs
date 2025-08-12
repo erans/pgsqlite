@@ -390,12 +390,11 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
             if let Some(start) = sql_upper.find("PRIMARY KEY") {
                 // Simple extraction - look for column names in parentheses
                 let remaining = &create_sql[start..];
-                if let Some(paren_start) = remaining.find('(') {
-                    if let Some(paren_end) = remaining.find(')') {
+                if let Some(paren_start) = remaining.find('(')
+                    && let Some(paren_end) = remaining.find(')') {
                         let columns = &remaining[paren_start..=paren_end];
                         return Some(format!("PRIMARY KEY {columns}"));
                     }
-                }
             }
         }
     }

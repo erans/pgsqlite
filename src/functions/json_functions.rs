@@ -1266,11 +1266,10 @@ fn set_json_value(json: &mut JsonValue, path: &[String], new_value: JsonValue) {
             map.insert(last_key.clone(), new_value);
         }
         JsonValue::Array(arr) => {
-            if let Ok(index) = last_key.parse::<usize>() {
-                if index < arr.len() {
+            if let Ok(index) = last_key.parse::<usize>()
+                && index < arr.len() {
                     arr[index] = new_value;
                 }
-            }
         }
         _ => {},
     }

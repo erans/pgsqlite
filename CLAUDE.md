@@ -65,30 +65,30 @@ All datetime types use INTEGER storage (microseconds/days since epoch):
 
 ## Performance Benchmarks
 
-### Current Performance (2025-08-08) - Major Improvements!
+### Current Performance (2025-08-12) - psycopg3-text Dominates!
 
-#### With psycopg3-binary (BEST PERFORMANCE - Recommended)
-- SELECT: ~139x overhead (0.139ms) - **✓ 5x BETTER than target!**
-- SELECT (cached): ~85x overhead (0.341ms) - Needs optimization
-- UPDATE: ~96x overhead (0.096ms) - Close to target
-- DELETE: ~82x overhead (0.082ms) - Acceptable
-- INSERT: ~340x overhead (0.680ms) - Needs optimization
-- **Overall**: 168x overhead - **69% better than psycopg2!**
+#### With psycopg3-text (BEST SELECT PERFORMANCE - Recommended for read-heavy workloads)
+- SELECT: ~125x overhead (0.136ms) - **✓ 21.8x FASTER than psycopg2!**
+- SELECT (cached): ~90x overhead (0.299ms) - **✓ 5.5x FASTER than psycopg2**
+- UPDATE: ~70x overhead (0.084ms) - Acceptable
+- DELETE: ~78x overhead (0.072ms) - Acceptable
+- INSERT: ~381x overhead (0.661ms) - Needs optimization
+- **Overall**: Best overhead reduction vs native SQLite
 
-#### With psycopg3-text
-- SELECT: ~680x overhead (0.680ms) - **✓ Meets original target!**
-- SELECT (cached): ~237x overhead (0.949ms) - Needs optimization
-- UPDATE: ~208x overhead (0.208ms)
-- DELETE: ~190x overhead (0.190ms)
-- INSERT: ~411x overhead (0.822ms)
-- **Overall**: 331x overhead - 38% better than psycopg2
+#### With psycopg2 (BEST WRITE PERFORMANCE - Recommended for write-heavy workloads)
+- SELECT: ~2,692x overhead (2.963ms) - Poor read performance
+- SELECT (cached): ~520x overhead (1.656ms) - Poor cache performance
+- UPDATE: ~45x overhead (0.057ms) - **✓ MEETS TARGET, 1.5x faster than psycopg3**
+- DELETE: ~38x overhead (0.036ms) - **✓ MEETS TARGET, 2.0x faster than psycopg3**
+- INSERT: ~107x overhead (0.185ms) - **✓ 3.6x FASTER than psycopg3**
 
-#### With psycopg2 (Legacy)
-- SELECT: ~2,631x overhead (2.631ms)
-- SELECT (cached): ~494x overhead (1.483ms)
-- UPDATE: ~52x overhead (0.052ms) - **✓ Meets target**
-- DELETE: ~32x overhead (0.032ms) - **✓ Meets target**
-- INSERT: ~83x overhead (0.166ms)
+#### With psycopg3-binary (Mixed results - not recommended for simple operations)
+- SELECT: ~434x overhead (0.497ms) - Binary encoding overhead exceeds benefits
+- SELECT (cached): ~372x overhead (1.579ms) - Poor cache performance
+- UPDATE: ~65x overhead (0.086ms) - Similar to text mode
+- DELETE: ~67x overhead (0.071ms) - Similar to text mode
+- INSERT: ~377x overhead (0.691ms) - Similar to text mode
+- **Note**: Binary protocol fully functional but best suited for complex data types
 
 ### Performance Targets (2025-07-27)
 - SELECT: ~674.9x overhead (0.669ms) **✓ ACHIEVED with psycopg3**
@@ -157,7 +157,16 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-08-08)
+### Recently Fixed (2025-08-12)
+- **Full Binary Protocol Support for psycopg3**: Complete binary format implementation
+  - Fixed NUMERIC binary encoding - now properly encodes decimal values using PostgreSQL binary format
+  - Fixed duplicate RowDescription issue - Describe(Portal) now updates statement's field_descriptions to prevent duplicate sending
+  - Added proper format field propagation from Portal result_formats to FieldDescription
+  - Binary encoding now works for: INT2, INT4, INT8, FLOAT4, FLOAT8, BOOL, BYTEA, NUMERIC, UUID, JSON/JSONB, Money
+  - SQLAlchemy tests pass with psycopg3-binary driver (9/9 tests passing)
+  - Benchmarks now run successfully with psycopg3 binary mode
+
+### Previously Fixed (2025-08-08)
 - **SQLAlchemy Full Compatibility Achieved**: All tests passing for both psycopg2 and psycopg3-text drivers
   - Fixed json_object_agg type inference - now correctly returns TEXT type instead of JSON type
   - Updated integration tests to reflect current binary protocol capabilities

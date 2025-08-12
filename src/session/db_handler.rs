@@ -710,7 +710,7 @@ impl DbHandler {
     
     
     /// Get a mutable connection for operations that require &mut Connection
-    pub fn get_mut_connection(&self) -> Result<std::sync::MutexGuard<rusqlite::Connection>, rusqlite::Error> {
+    pub fn get_mut_connection(&self) -> Result<std::sync::MutexGuard<'_, rusqlite::Connection>, rusqlite::Error> {
         // Create a temporary connection for operations that need it
         // This is not ideal but maintains compatibility
         Err(rusqlite::Error::SqliteFailure(
@@ -1013,8 +1013,8 @@ impl DbHandler {
         
         // After a successful DML operation, check if we need to trigger WAL refresh
         // This is needed for autocommit mode where no explicit COMMIT is sent
-        if let Some(ref response) = result {
-            if query_type != QueryType::Select && response.rows_affected > 0 {
+        if let Some(ref response) = result
+            && query_type != QueryType::Select && response.rows_affected > 0 {
                 // Check if we're in autocommit mode
                 let is_autocommit = self.connection_manager.execute_with_session(session_id, |conn| {
                     let autocommit = conn.is_autocommit();
@@ -1026,7 +1026,6 @@ impl DbHandler {
                     self.connection_manager.refresh_all_other_connections(session_id)?;
                 }
             }
-        }
         
         Ok(result)
     }

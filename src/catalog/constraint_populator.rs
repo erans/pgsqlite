@@ -307,8 +307,8 @@ fn parse_column_defaults(table_name: &str, create_sql: &str) -> Vec<DefaultInfo>
 /// Get the column number (1-based) for a given column name in a CREATE TABLE statement
 fn get_column_number(create_sql: &str, target_column: &str) -> Option<i16> {
     // Extract the column definitions from CREATE TABLE
-    if let Some(cap) = TABLE_REGEX.captures(create_sql) {
-        if let Some(columns_part) = cap.get(1) {
+    if let Some(cap) = TABLE_REGEX.captures(create_sql)
+        && let Some(columns_part) = cap.get(1) {
             // Split by comma and look for our target column
             let columns_str = columns_part.as_str();
             let mut column_count = 0i16;
@@ -349,7 +349,6 @@ fn get_column_number(create_sql: &str, target_column: &str) -> Option<i16> {
                 }
             }
         }
-    }
     
     None
 }

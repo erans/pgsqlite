@@ -342,9 +342,9 @@ async fn add_table_attributes(
 
 fn extract_table_filter(select: &Select) -> Option<String> {
     // Look for WHERE attrelid = 'schema.table'::regclass or similar
-    if let Some(selection) = &select.selection {
-        if let Expr::BinaryOp { left, op, right } = selection {
-            if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
+    if let Some(selection) = &select.selection
+        && let Expr::BinaryOp { left, op, right } = selection
+            && matches!(op, sqlparser::ast::BinaryOperator::Eq) {
                 let is_attrelid = match left.as_ref() {
                     Expr::Identifier(ident) => ident.value.to_lowercase() == "attrelid",
                     Expr::CompoundIdentifier(parts) => {
@@ -355,19 +355,16 @@ fn extract_table_filter(select: &Select) -> Option<String> {
                 
                 if is_attrelid {
                     // Extract table name from right side
-                    if let Expr::Cast { expr, .. } = right.as_ref() {
-                        if let Expr::Value(sqlparser::ast::ValueWithSpan { 
+                    if let Expr::Cast { expr, .. } = right.as_ref()
+                        && let Expr::Value(sqlparser::ast::ValueWithSpan { 
                             value: SqlValue::SingleQuotedString(s), .. 
                         }) = expr.as_ref() {
                             // Remove schema prefix if present
                             let table_name = s.split('.').next_back().unwrap_or(s);
                             return Some(table_name.to_string());
                         }
-                    }
                 }
             }
-        }
-    }
     None
 }
 

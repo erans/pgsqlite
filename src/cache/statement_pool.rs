@@ -224,11 +224,10 @@ impl StatementPool {
 
     /// Update the last used time for a cached statement
     pub fn touch(&self, query: &str) {
-        if let Ok(mut statements) = self.statements.lock() {
-            if let Some(cached) = statements.get_mut(query) {
+        if let Ok(mut statements) = self.statements.lock()
+            && let Some(cached) = statements.get_mut(query) {
                 cached.last_used = std::time::Instant::now();
             }
-        }
     }
 
     /// Clear the statement pool (useful for DDL operations)

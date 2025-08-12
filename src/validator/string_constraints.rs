@@ -132,8 +132,8 @@ impl StringConstraintValidator {
         // Check cache
         let cache = self.constraints.read().unwrap();
         
-        if let Some(table_constraints) = cache.get(table_name) {
-            if let Some(constraint) = table_constraints.get(column_name) {
+        if let Some(table_constraints) = cache.get(table_name)
+            && let Some(constraint) = table_constraints.get(column_name) {
                 // Count characters (not bytes) for PostgreSQL compatibility
                 let char_count = value.chars().count() as i32;
                 
@@ -152,7 +152,6 @@ impl StringConstraintValidator {
                     });
                 }
             }
-        }
         
         Ok(())
     }
@@ -161,9 +160,9 @@ impl StringConstraintValidator {
     pub fn pad_char_value(&self, table_name: &str, column_name: &str, value: &str) -> String {
         let cache = self.constraints.read().unwrap();
         
-        if let Some(table_constraints) = cache.get(table_name) {
-            if let Some(constraint) = table_constraints.get(column_name) {
-                if constraint.is_char_type {
+        if let Some(table_constraints) = cache.get(table_name)
+            && let Some(constraint) = table_constraints.get(column_name)
+                && constraint.is_char_type {
                     let char_count = value.chars().count() as i32;
                     if char_count < constraint.max_length {
                         // Pad with spaces to reach the required length
@@ -171,8 +170,6 @@ impl StringConstraintValidator {
                         return format!("{}{}", value, " ".repeat(padding as usize));
                     }
                 }
-            }
-        }
         
         value.to_string()
     }

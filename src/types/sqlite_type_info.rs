@@ -9,11 +9,10 @@ pub fn get_pg_type_oid_from_sqlite(
     value: Option<&ValueRef>
 ) -> i32 {
     // First, try to get type from table schema if we have table name
-    if let Some(table) = table_name {
-        if let Ok(type_oid) = get_type_from_schema(conn, table, column_name) {
+    if let Some(table) = table_name
+        && let Ok(type_oid) = get_type_from_schema(conn, table, column_name) {
             return type_oid;
         }
-    }
     
     // Fall back to value-based inference
     match value {

@@ -164,14 +164,13 @@ impl ImplicitCastDetector {
         // If target is numeric and value is not, need implicit cast
         if Self::is_numeric_type(target_type) && !Self::is_numeric_type(value_type) {
             // Check for string literals that look like numbers
-            if let Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(s), .. }) = value_expr {
-                if s.parse::<f64>().is_ok() {
+            if let Expr::Value(ValueWithSpan { value: Value::SingleQuotedString(s), .. }) = value_expr
+                && s.parse::<f64>().is_ok() {
                     return Some(ImplicitCast::StringToDecimal {
                         expr: value_expr.clone(),
                         target_type,
                     });
                 }
-            }
             
             // Integer values can be implicitly cast to decimal
             if Self::is_integer_type(value_type) {

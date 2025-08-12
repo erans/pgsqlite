@@ -190,21 +190,18 @@ impl MigrationRunner {
             }
             MigrationAction::Combined { pre_sql, function, post_sql } => {
                 let mut combined_result = Ok(());
-                if let Some(sql) = pre_sql {
-                    if let Err(e) = self.conn.execute_batch(sql) {
+                if let Some(sql) = pre_sql
+                    && let Err(e) = self.conn.execute_batch(sql) {
                         combined_result = Err(anyhow::anyhow!("Pre-SQL execution failed: {}", e));
                     }
-                }
                 if combined_result.is_ok() {
                     combined_result = function(&self.conn);
                 }
-                if combined_result.is_ok() {
-                    if let Some(sql) = post_sql {
-                        if let Err(e) = self.conn.execute_batch(sql) {
+                if combined_result.is_ok()
+                    && let Some(sql) = post_sql
+                        && let Err(e) = self.conn.execute_batch(sql) {
                             combined_result = Err(anyhow::anyhow!("Post-SQL execution failed: {}", e));
                         }
-                    }
-                }
                 combined_result
             }
         };

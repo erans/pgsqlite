@@ -14,11 +14,10 @@ pub fn format_numeric_with_scale(value: f64, table_name: &str, column_name: &str
     // Try to get constraints from cache
     {
         let cache = NUMERIC_CONSTRAINT_CACHE.read().unwrap();
-        if let Some(table_constraints) = cache.get(table_name) {
-            if let Some((_precision, scale)) = table_constraints.get(column_name) {
+        if let Some(table_constraints) = cache.get(table_name)
+            && let Some((_precision, scale)) = table_constraints.get(column_name) {
                 return format!("{:.prec$}", value, prec = *scale as usize);
             }
-        }
     }
     
     // Not in cache, try to load from database
@@ -26,13 +25,13 @@ pub fn format_numeric_with_scale(value: f64, table_name: &str, column_name: &str
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_numeric_constraints'",
         [],
         |row| row.get::<_, i32>(0)
-    ) {
-        if has_table > 0 {
+    )
+        && has_table > 0 {
             // Load constraints for this table
             if let Ok(mut stmt) = conn.prepare(
                 "SELECT column_name, precision, scale FROM __pgsqlite_numeric_constraints WHERE table_name = ?1"
-            ) {
-                if let Ok(constraints) = stmt.query_map([table_name], |row| {
+            )
+                && let Ok(constraints) = stmt.query_map([table_name], |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, i32>(1)?,
@@ -53,9 +52,7 @@ pub fn format_numeric_with_scale(value: f64, table_name: &str, column_name: &str
                         return format!("{:.prec$}", value, prec = *scale as usize);
                     }
                 }
-            }
         }
-    }
     
     // No constraints found, use default formatting
     value.to_string()

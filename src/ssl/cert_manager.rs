@@ -65,22 +65,20 @@ impl CertificateManager {
         }
 
         // Priority 2: Check filesystem next to database
-        if !self.config.in_memory && self.config.database != ":memory:" && !self.config.ssl_ephemeral {
-            if let Some(cert_source) = self.check_filesystem_certificates()? {
+        if !self.config.in_memory && self.config.database != ":memory:" && !self.config.ssl_ephemeral
+            && let Some(cert_source) = self.check_filesystem_certificates()? {
                 return Ok(cert_source);
             }
-        }
 
         // Priority 3: Generate certificates
         debug!("Generating new certificates");
         let (cert, key) = self.generate_certificates()?;
 
         // Save to filesystem if appropriate
-        if !self.config.in_memory && self.config.database != ":memory:" && !self.config.ssl_ephemeral {
-            if let Err(e) = self.save_certificates(&cert, &key) {
+        if !self.config.in_memory && self.config.database != ":memory:" && !self.config.ssl_ephemeral
+            && let Err(e) = self.save_certificates(&cert, &key) {
                 warn!("Failed to save generated certificates: {}", e);
             }
-        }
 
         Ok(CertificateSource::Generated { cert, key })
     }

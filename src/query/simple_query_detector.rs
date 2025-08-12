@@ -249,21 +249,18 @@ pub fn is_fast_path_simple_query(query: &str) -> bool {
             if has_complex_returning(query_bytes, pos) {
                 return false;
             }
-        } else if let Some(pos) = memchr::memmem::find(query_bytes, b"returning") {
-            if has_complex_returning(query_bytes, pos) {
+        } else if let Some(pos) = memchr::memmem::find(query_bytes, b"returning")
+            && has_complex_returning(query_bytes, pos) {
                 return false;
             }
-        }
     }
     
     // Check for UPDATE ... FROM pattern (only if UPDATE)
-    if first_char == b'U' {
-        if let Some(set_pos) = memchr::memmem::find(query_bytes, b" SET ") {
-            if memchr::memmem::find(&query_bytes[set_pos..], b" FROM ").is_some() {
+    if first_char == b'U'
+        && let Some(set_pos) = memchr::memmem::find(query_bytes, b" SET ")
+            && memchr::memmem::find(&query_bytes[set_pos..], b" FROM ").is_some() {
                 return false;
             }
-        }
-    }
     
     // Check for datetime patterns in INSERT statements
     if first_char == b'I' {

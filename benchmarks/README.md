@@ -6,19 +6,33 @@ This directory contains performance benchmarks comparing direct SQLite access wi
 
 The benchmark suite measures the overhead introduced by the PostgreSQL wire protocol translation layer. It performs identical operations using both direct SQLite connections and PostgreSQL clients connecting through pgsqlite.
 
-## Latest Performance Results (2025-08-08)
+## Latest Performance Results (2025-08-12)
 
-### Best Performance: psycopg3-binary
-- **SELECT**: 0.139ms (139x overhead) - **5x better than target!**
-- **Overall**: 168x overhead - **69% better than psycopg2**
-- **Recommendation**: Use psycopg3-binary for production deployments
+### Best Performance by Operation Type
+
+#### Read Operations: psycopg3-text
+- **SELECT**: 0.136ms (125x overhead) - **21.8x faster than psycopg2!**
+- **SELECT (cached)**: 0.299ms (90x overhead) - **5.5x faster than psycopg2**
+- **Recommendation**: Use psycopg3-text for read-heavy workloads
+
+#### Write Operations: psycopg2
+- **INSERT**: 0.185ms (107x overhead) - **3.6x faster than psycopg3**
+- **UPDATE**: 0.057ms (45x overhead) - **1.5x faster than psycopg3**
+- **DELETE**: 0.036ms (38x overhead) - **2.0x faster than psycopg3**
+- **Recommendation**: Use psycopg2 for write-heavy workloads
 
 ### Driver Comparison
-| Driver | SELECT (ms) | Overall Overhead | vs psycopg2 |
-|--------|------------|------------------|-------------|
-| psycopg3-binary | 0.139 | 168x | 69% better |
-| psycopg3-text | 0.680 | 331x | 38% better |
-| psycopg2 | 2.631 | 539x | baseline |
+| Driver | SELECT (ms) | INSERT (ms) | UPDATE (ms) | DELETE (ms) | Best For |
+|--------|------------|-------------|-------------|-------------|----------|
+| psycopg3-text | **0.136** 🏆 | 0.661 | 0.084 | 0.072 | Read-heavy workloads |
+| psycopg2 | 2.963 | **0.185** 🏆 | **0.057** 🏆 | **0.036** 🏆 | Write-heavy workloads |
+| psycopg3-binary | 0.497 | 0.691 | 0.086 | 0.071 | Complex data types |
+
+### Key Findings
+- **psycopg3-text** dominates read performance with exceptional SELECT optimization
+- **psycopg2** remains superior for write operations despite being legacy
+- **psycopg3-binary** shows overhead that exceeds benefits for simple operations
+- Binary protocol is fully functional but best suited for complex data types (BYTEA, arrays, etc.)
 
 ## Running Benchmarks
 

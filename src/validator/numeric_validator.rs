@@ -568,11 +568,10 @@ fn is_computed_expression(value: &str) -> bool {
     }
     
     // Check for minus sign that's not at the beginning (indicating subtraction)
-    if let Some(minus_pos) = trimmed.find('-') {
-        if minus_pos > 0 {
+    if let Some(minus_pos) = trimmed.find('-')
+        && minus_pos > 0 {
             return true; // It's subtraction, not a negative number
         }
-    }
     
     // Check for function calls, subqueries, or CASE expressions
     if trimmed.contains('(') || 

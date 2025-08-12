@@ -39,23 +39,20 @@ impl BufferPoolConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
         
-        if let Ok(val) = std::env::var("PGSQLITE_BUFFER_POOL_SIZE") {
-            if let Ok(size) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_BUFFER_POOL_SIZE")
+            && let Ok(size) = val.parse::<usize>() {
                 config.max_pool_size = size;
             }
-        }
         
-        if let Ok(val) = std::env::var("PGSQLITE_BUFFER_INITIAL_CAPACITY") {
-            if let Ok(capacity) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_BUFFER_INITIAL_CAPACITY")
+            && let Ok(capacity) = val.parse::<usize>() {
                 config.initial_buffer_capacity = capacity;
             }
-        }
         
-        if let Ok(val) = std::env::var("PGSQLITE_BUFFER_MAX_CAPACITY") {
-            if let Ok(capacity) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_BUFFER_MAX_CAPACITY")
+            && let Ok(capacity) = val.parse::<usize>() {
                 config.max_buffer_capacity = capacity;
             }
-        }
         
         config
     }

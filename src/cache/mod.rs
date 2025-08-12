@@ -72,13 +72,12 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> LruCache<K, V> {
         let mut cache = self.cache.write().unwrap();
         
         // Simple eviction: remove oldest entry if at capacity
-        if cache.len() >= self.capacity && !cache.contains_key(&key) {
-            if let Some((oldest_key, _)) = cache.iter()
+        if cache.len() >= self.capacity && !cache.contains_key(&key)
+            && let Some((oldest_key, _)) = cache.iter()
                 .min_by_key(|(_, entry)| entry.last_accessed) {
                 let oldest_key = oldest_key.clone();
                 cache.remove(&oldest_key);
             }
-        }
         
         cache.insert(key, CacheEntry {
             value,

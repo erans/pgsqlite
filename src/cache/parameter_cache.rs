@@ -118,11 +118,10 @@ impl ParameterValueCache {
         };
         
         // Try to get from cache
-        if let Ok(cache) = self.cache.read() {
-            if let Some(value) = cache.get(&key) {
+        if let Ok(cache) = self.cache.read()
+            && let Some(value) = cache.get(&key) {
                 return Ok(value.clone());
             }
-        }
         
         // Convert and cache
         let value = convert_fn()?;

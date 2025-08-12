@@ -48,7 +48,6 @@ impl CreateTableTranslator {
         conn: Option<&Connection>
     ) -> Result<CreateTableResult, String> {
         let mut type_mapping = HashMap::new();
-        let mut check_constraints = Vec::new();
         
         // Clear enum and array columns trackers
         ENUM_COLUMNS.with(|ec| ec.borrow_mut().clear());
@@ -64,16 +63,11 @@ impl CreateTableTranslator {
                 columns_str, 
                 table_name, 
                 &mut type_mapping,
-                &mut check_constraints,
                 conn
             )?;
             
-            // Add CHECK constraints for ENUMs
-            let mut final_columns = sqlite_columns;
-            for constraint in check_constraints {
-                final_columns.push_str(", ");
-                final_columns.push_str(&constraint);
-            }
+            // No CHECK constraints to add anymore
+            let final_columns = sqlite_columns;
             
             // Reconstruct CREATE TABLE
             let sqlite_sql = format!("CREATE TABLE {table_name} ({final_columns})");
@@ -103,7 +97,6 @@ impl CreateTableTranslator {
         columns_str: &str,
         table_name: &str,
         type_mapping: &mut HashMap<String, TypeMapping>,
-        check_constraints: &mut Vec<String>,
         conn: Option<&Connection>
     ) -> Result<String, String> {
         let mut sqlite_columns = Vec::new();
@@ -157,7 +150,6 @@ impl CreateTableTranslator {
                 &column_def,
                 table_name,
                 type_mapping,
-                check_constraints,
                 conn
             )?;
             sqlite_columns.push(translated);
@@ -183,14 +175,13 @@ impl CreateTableTranslator {
         let upper_def = column_def.to_uppercase();
         if upper_def.trim().starts_with("PRIMARY KEY") {
             // Parse PRIMARY KEY (column_name) format
-            if let Some(start) = column_def.find('(') {
-                if let Some(end) = column_def.find(')') {
+            if let Some(start) = column_def.find('(')
+                && let Some(end) = column_def.find(')') {
                     let column_list = &column_def[start + 1..end];
                     let column_name = column_list.trim();
                     // Check if this references a SERIAL column (case-insensitive)
                     return serial_columns.iter().any(|serial_col| serial_col.eq_ignore_ascii_case(column_name));
                 }
-            }
         }
         false
     }
@@ -199,7 +190,6 @@ impl CreateTableTranslator {
         column_def: &str,
         table_name: &str,
         type_mapping: &mut HashMap<String, TypeMapping>,
-        check_constraints: &mut Vec<String>,
         conn: Option<&Connection>
     ) -> Result<String, String> {
         // Handle constraints (PRIMARY KEY, FOREIGN KEY, etc.)
@@ -374,11 +364,10 @@ impl CreateTableTranslator {
             if (pg_type.to_uppercase() == "SERIAL" || pg_type.to_uppercase() == "BIGSERIAL")
                 && part.to_uppercase() == "PRIMARY" {
                     // Skip "PRIMARY" and check if next is "KEY"
-                    if let Some(next_part) = parts.get(type_end_idx + i + 1) {
-                        if next_part.to_uppercase() == "KEY" {
+                    if let Some(next_part) = parts.get(type_end_idx + i + 1)
+                        && next_part.to_uppercase() == "KEY" {
                             skip_next = true;
                         }
-                    }
                     continue;
                 }
             
@@ -501,8 +490,8 @@ impl CreateTableTranslator {
     /// For NUMERIC/DECIMAL: encodes precision and scale (e.g., NUMERIC(10,2) -> Some(655366))
     fn extract_type_modifier(type_name: &str) -> Option<i32> {
         // Look for pattern like TYPE(n) or TYPE(n,m)
-        if let Some(start) = type_name.find('(') {
-            if let Some(end) = type_name.find(')') {
+        if let Some(start) = type_name.find('(')
+            && let Some(end) = type_name.find(')') {
                 let params = &type_name[start + 1..end];
                 let type_base = type_name[..start].trim().to_uppercase();
                 
@@ -521,14 +510,12 @@ impl CreateTableTranslator {
                     }
                 } else {
                     // For other types (VARCHAR, CHAR), just return the first parameter
-                    if let Some(first_param) = params.split(',').next() {
-                        if let Ok(length) = first_param.trim().parse::<i32>() {
+                    if let Some(first_param) = params.split(',').next()
+                        && let Ok(length) = first_param.trim().parse::<i32>() {
                             return Some(length);
                         }
-                    }
                 }
             }
-        }
         None
     }
 }

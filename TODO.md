@@ -54,22 +54,29 @@ This file tracks all future development tasks for the pgsqlite project. It serve
 
 ## 🚀 HIGH PRIORITY - Core Functionality & Performance
 
-### Binary Protocol Support for psycopg3 - COMPLETED (2025-08-04)
+### Binary Protocol Support for psycopg3 - COMPLETED (2025-08-12)
 - [x] **Core Binary Format Encoders** - Implemented for commonly used types
   - [x] Numeric/Decimal - Full PostgreSQL binary NUMERIC format with weight/scale/digits
   - [x] UUID - 16-byte raw UUID format without hyphens
   - [x] JSON/JSONB - JSON as text, JSONB with 1-byte version header
   - [x] Money - 8-byte integer representing cents (amount * 100)
+  - [x] INT2, INT4, INT8 - Native binary integer encoding
+  - [x] FLOAT4, FLOAT8 - IEEE 754 floating point encoding
+  - [x] BOOL - Single byte binary encoding
+  - [x] BYTEA - Direct binary data pass-through
 - [x] **Test Infrastructure Updates** - Support for multiple PostgreSQL drivers
   - [x] Added psycopg3 to Python test dependencies with binary extras
   - [x] Updated run_sqlalchemy_tests.sh with --driver flag (psycopg2, psycopg3-text, psycopg3-binary)
   - [x] Modified SQLAlchemy test suite to use selected driver with proper connection strings
   - [x] Created test_psycopg3_binary.py for direct binary protocol testing
-- [x] **Extended Protocol Integration** - Binary format handling in wire protocol
+- [x] **Extended Protocol Integration** - Full binary format handling in wire protocol
   - [x] Binary result format support in Execute message handling
   - [x] Type-specific binary encoding based on format codes
   - [x] Proper handling of single format code for all columns
   - [x] NULL value encoding with length -1
+  - [x] Fixed duplicate RowDescription issue for cached queries
+  - [x] Format field propagation from Portal to FieldDescription
+  - [x] NUMERIC binary encoding fix - properly encodes decimal values
 - [ ] **Remaining Binary Encoders** - For complete psycopg3 compatibility
   - [ ] Array types - Complex nested structure with dimensions and element OIDs
   - [ ] Range types (int4range, int8range, numrange) - Flags byte + bounds
@@ -98,27 +105,27 @@ This file tracks all future development tasks for the pgsqlite project. It serve
   - [x] Marked array and network type tests as ignored (not yet implemented)
   - [x] JSON columns now use TEXT type for compatibility
 
-### Performance Benchmarks - MAJOR IMPROVEMENTS (2025-08-08)
-- [x] **psycopg3-binary Driver Performance** - BEST OVERALL PERFORMANCE
-  - [x] SELECT: 0.139ms (~139x overhead) - **5x faster than psycopg3-text, 19x faster than psycopg2!**
-  - [x] CREATE: 0.810ms (~5.5x overhead) - **Best CREATE performance of all drivers**
-  - [x] UPDATE: 0.096ms (~96x overhead) - Acceptable performance
-  - [x] DELETE: 0.082ms (~82x overhead) - Acceptable performance
-  - [x] INSERT: 0.680ms (~340x overhead) - Needs optimization but consistent
-  - [x] Overall 168x overhead - **69% better than psycopg2, 49% better than psycopg3-text**
-- [x] **psycopg3-text Driver Performance** - Good text mode performance
-  - [x] SELECT: 0.656ms (~565x overhead) - **Meets original target of 0.669ms!**
-  - [x] SELECT queries 4x faster than psycopg2 (0.656ms vs 2.594ms)
-  - [x] Overall 40% lower overhead compared to psycopg2
-  - [x] CREATE operations 3.6x faster than psycopg2
-- [x] **psycopg2 Driver Performance** - Legacy compatibility
-  - [x] UPDATE: 0.057ms (~48x overhead) - **Meets target**
-  - [x] DELETE: 0.036ms (~37x overhead) - **Meets target**
-  - [x] Worst SELECT performance but stable for legacy apps
+### Performance Benchmarks - DRIVER COMPARISON (2025-08-12)
+- [x] **psycopg3-text Driver Performance** - BEST SELECT PERFORMANCE
+  - [x] SELECT: 0.136ms (~125x overhead) - **21.8x faster than psycopg2, 3.7x faster than binary!**
+  - [x] SELECT (cached): 0.299ms (~90x overhead) - **5.5x faster than psycopg2**
+  - [x] Best overall overhead reduction vs native SQLite
+  - [x] Exceptional read performance with text protocol optimizations
+- [x] **psycopg2 Driver Performance** - BEST WRITE PERFORMANCE
+  - [x] INSERT: 0.185ms (~107x overhead) - **3.6x faster than psycopg3 variants**
+  - [x] UPDATE: 0.057ms (~45x overhead) - **1.5x faster than psycopg3, meets target**
+  - [x] DELETE: 0.036ms (~38x overhead) - **2.0x faster than psycopg3, meets target**
+  - [x] Legacy driver excels at write operations
+- [x] **psycopg3-binary Driver Performance** - Mixed results
+  - [x] SELECT: 0.497ms (~434x overhead) - Binary encoding overhead not justified
+  - [x] UPDATE: 0.086ms (~65x overhead) - Similar to text mode
+  - [x] DELETE: 0.071ms (~67x overhead) - Similar to text mode
+  - [x] INSERT: 0.691ms (~377x overhead) - Similar to text mode
+  - [x] Binary protocol fully working but overhead exceeds benefits for simple types
 - [ ] **Remaining Performance Issues**
-  - [ ] Cached SELECT performance poor across all drivers (85x-514x overhead vs 17x target)
-  - [ ] INSERT performance needs optimization (340x-419x overhead vs 36x target)
-  - [ ] Cache effectiveness poor (0.4x-1.7x speedup, cache often slower)
+  - [ ] Cached SELECT still shows regression in some cases (cache slower than uncached)
+  - [ ] INSERT performance needs optimization across all drivers (107x-377x overhead vs 36x target)
+  - [ ] Binary protocol optimization potential for complex data types
 
 ### Connection-Per-Session Architecture - COMPLETED (2025-07-29)
 - [x] **Implement True Connection Isolation** - Match PostgreSQL behavior

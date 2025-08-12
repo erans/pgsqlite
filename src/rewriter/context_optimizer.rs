@@ -36,12 +36,11 @@ impl ContextOptimizer {
         F: FnOnce() -> QueryContext,
     {
         // Check cache first
-        if let Some(cached) = self.context_cache.get(query_hash) {
-            if cached.created_at.elapsed().as_secs() < self.cache_ttl {
+        if let Some(cached) = self.context_cache.get(query_hash)
+            && cached.created_at.elapsed().as_secs() < self.cache_ttl {
                 self.cache_hits += 1;
                 return cached.context.clone();
             }
-        }
 
         // Cache miss - compute new context
         self.cache_misses += 1;

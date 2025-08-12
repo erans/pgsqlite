@@ -141,8 +141,8 @@ impl NumericConstraintValidator {
         // Check cache
         let cache = self.constraints.read().unwrap();
         
-        if let Some(table_constraints) = cache.get(table_name) {
-            if let Some(constraint) = table_constraints.get(column_name) {
+        if let Some(table_constraints) = cache.get(table_name)
+            && let Some(constraint) = table_constraints.get(column_name) {
                 // Parse the value as a decimal
                 let decimal = match Decimal::from_str(value) {
                     Ok(d) => d,
@@ -174,7 +174,6 @@ impl NumericConstraintValidator {
                     });
                 }
             }
-        }
         
         Ok(())
     }
@@ -217,8 +216,8 @@ impl NumericConstraintValidator {
         
         let cache = self.constraints.read().unwrap();
         
-        if let Some(table_constraints) = cache.get(table_name) {
-            if let Some(constraint) = table_constraints.get(column_name) {
+        if let Some(table_constraints) = cache.get(table_name)
+            && let Some(constraint) = table_constraints.get(column_name) {
                 // Parse the value as a decimal
                 if let Ok(mut decimal) = Decimal::from_str(value) {
                     // Round to the specified scale
@@ -229,7 +228,6 @@ impl NumericConstraintValidator {
                     return formatted;
                 }
             }
-        }
         
         value.to_string()
     }

@@ -237,13 +237,12 @@ impl InsertTranslator {
             Ok(response) => {
                 let mut types = std::collections::HashMap::new();
                 for row in response.rows {
-                    if row.len() >= 2 {
-                        if let (Some(col_name), Some(pg_type)) = (&row[0], &row[1]) {
+                    if row.len() >= 2
+                        && let (Some(col_name), Some(pg_type)) = (&row[0], &row[1]) {
                             let col_str = String::from_utf8_lossy(col_name).to_string();
                             let type_str = String::from_utf8_lossy(pg_type).to_string();
                             types.insert(col_str.to_lowercase(), type_str);
                         }
-                    }
                 }
                 Ok(types)
             }
@@ -262,12 +261,11 @@ impl InsertTranslator {
             Ok(response) => {
                 let mut columns = Vec::new();
                 for row in response.rows {
-                    if row.len() > 1 {
-                        if let Some(col_name) = &row[1] {
+                    if row.len() > 1
+                        && let Some(col_name) = &row[1] {
                             let col_str = String::from_utf8_lossy(col_name).to_string();
                             columns.push(col_str);
                         }
-                    }
                 }
                 columns
             }
@@ -835,8 +833,8 @@ impl InsertTranslator {
             let expr_trimmed = expr.trim();
             
             // Check for CAST(p{n} AS TYPE) pattern
-            if expr_trimmed.starts_with("CAST(") {
-                if let Some(as_pos) = expr_trimmed.find(" AS ") {
+            if expr_trimmed.starts_with("CAST(")
+                && let Some(as_pos) = expr_trimmed.find(" AS ") {
                     let after_as = &expr_trimmed[as_pos + 4..];
                     if let Some(close_pos) = after_as.rfind(')') {
                         let cast_type = after_as[..close_pos].trim();
@@ -844,16 +842,14 @@ impl InsertTranslator {
                         continue;
                     }
                 }
-            }
             
             // Check for p{n}::TYPE pattern
-            if expr_trimmed.contains("::") {
-                if let Some(cast_pos) = expr_trimmed.find("::") {
+            if expr_trimmed.contains("::")
+                && let Some(cast_pos) = expr_trimmed.find("::") {
                     let cast_type = expr_trimmed[cast_pos + 2..].trim();
                     type_casts.push(Some(cast_type.to_string()));
                     continue;
                 }
-            }
             
             // No cast found
             type_casts.push(None);

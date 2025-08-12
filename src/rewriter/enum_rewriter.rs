@@ -76,20 +76,19 @@ impl<'a> EnumQueryRewriter<'a> {
                         let column_name = ident.value.clone();
                         
                         // Try to find the table for this column
-                        if let Some(table) = context.find_table_for_column(&column_name) {
-                            if self.is_enum_column(&table, &column_name) {
+                        if let Some(table) = context.find_table_for_column(&column_name)
+                            && self.is_enum_column(&table, &column_name) {
                                 // For ordering comparisons, we need to use the enum sort order
                                 if matches!(op, BinaryOperator::Lt | BinaryOperator::Gt | 
                                            BinaryOperator::LtEq | BinaryOperator::GtEq) {
                                     return self.rewrite_enum_ordering_comparison(expr, &table, &column_name);
                                 }
                             }
-                        }
                     }
                     
                     // Check if left side is a compound identifier (table.column)
-                    if let Expr::CompoundIdentifier(parts) = &**left {
-                        if parts.len() == 2 {
+                    if let Expr::CompoundIdentifier(parts) = &**left
+                        && parts.len() == 2 {
                             let table = parts[0].value.clone();
                             let column = parts[1].value.clone();
                             
@@ -101,7 +100,6 @@ impl<'a> EnumQueryRewriter<'a> {
                                 }
                             }
                         }
-                    }
                 }
             }
             

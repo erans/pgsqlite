@@ -84,8 +84,8 @@ impl CatalogInterceptor {
         // Parsing query for system functions
         match Parser::parse_sql(&dialect, &query_to_parse) {
             Ok(mut statements) => {
-                if statements.len() == 1 {
-                    if let Statement::Query(query_stmt) = &mut statements[0] {
+                if statements.len() == 1
+                    && let Statement::Query(query_stmt) = &mut statements[0] {
                         // First check if query contains system functions that need processing
                         let contains_functions = Self::query_contains_system_functions(query_stmt);
                         // Query contains system functions
@@ -127,13 +127,12 @@ impl CatalogInterceptor {
                                         // Re-parse the processed query to continue with catalog handling
                                         match Parser::parse_sql(&dialect, &processed_sql) {
                                             Ok(mut new_statements) => {
-                                                if new_statements.len() == 1 {
-                                                    if let Statement::Query(new_query) = &mut new_statements[0] {
+                                                if new_statements.len() == 1
+                                                    && let Statement::Query(new_query) = &mut new_statements[0] {
                                                         // Replace the current query with the processed one
                                                         *query_stmt = new_query.clone();
                                                         // Continue to the catalog handling below
                                                     }
-                                                }
                                             }
                                             Err(e) => {
                                                 // Failed to re-parse processed query
@@ -154,7 +153,6 @@ impl CatalogInterceptor {
                             return Some(Ok(response));
                         }
                     }
-                }
                 
                 // If we translated the query but it's not a special catalog query,
                 // execute the translated query directly
@@ -193,8 +191,8 @@ impl CatalogInterceptor {
                     if query_str.contains("pg_table_is_visible") && query_str.contains("pg_class.relname") {
                         // Extract the table name being checked
                         let table_name_pattern = regex::Regex::new(r"relname\s*=\s*'([^']+)'").unwrap();
-                        if let Some(captures) = table_name_pattern.captures(&query_str) {
-                            if let Some(table_name) = captures.get(1) {
+                        if let Some(captures) = table_name_pattern.captures(&query_str)
+                            && let Some(table_name) = captures.get(1) {
                                 let table_name_str = table_name.as_str();
                                 debug!("Checking existence of table: {}", table_name_str);
                                 
@@ -227,7 +225,6 @@ impl CatalogInterceptor {
                                     }
                                 }
                             }
-                        }
                     }
                     
                     // For other system functions, fall through to default handling
@@ -492,18 +489,16 @@ impl CatalogInterceptor {
 
         for (oid, typname, typtype, typelem, typbasetype, _typnamespace, typrelid) in types {
             // Apply OID filter if specified
-            if let Some(filter) = filter_oid {
-                if oid != filter {
+            if let Some(filter) = filter_oid
+                && oid != filter {
                     continue;
                 }
-            }
             
             // Apply typtype filter if specified
-            if let Some(ref filter) = filter_typtype {
-                if typtype != filter {
+            if let Some(ref filter) = filter_typtype
+                && typtype != filter {
                     continue;
                 }
-            }
 
             let mut row = Vec::new();
             for col in &columns {
@@ -575,11 +570,10 @@ impl CatalogInterceptor {
                 for enum_type in enum_types {
                         debug!("Processing enum type: {} (OID: {})", enum_type.type_name, enum_type.type_oid);
                         // Apply OID filter if specified
-                        if let Some(filter) = filter_oid {
-                            if enum_type.type_oid != filter {
+                        if let Some(filter) = filter_oid
+                            && enum_type.type_oid != filter {
                                 continue;
                             }
-                        }
                         
                         let mut row = Vec::new();
                         for col in &columns {
@@ -681,9 +675,9 @@ impl CatalogInterceptor {
         // Check if there's a WHERE clause filtering by OID
         let mut filter_oid = None;
         
-        if let Some(selection) = &select.selection {
-            if let Expr::BinaryOp { left, op, right } = selection {
-                if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
+        if let Some(selection) = &select.selection
+            && let Expr::BinaryOp { left, op, right } = selection
+                && matches!(op, sqlparser::ast::BinaryOperator::Eq) {
                     let is_oid_column = if let Expr::CompoundIdentifier(left_parts) = left.as_ref() {
                         left_parts.last().unwrap().value.to_lowercase() == "oid"
                     } else if let Expr::Identifier(ident) = left.as_ref() {
@@ -703,8 +697,6 @@ impl CatalogInterceptor {
                         }
                     }
                 }
-            }
-        }
         
         // Build response with all requested columns
         let mut rows = Vec::new();
@@ -753,11 +745,10 @@ impl CatalogInterceptor {
 
         for (oid, typname, typtype, typelem, typbasetype, _typnamespace, typrelid) in types {
             // Apply filter if specified
-            if let Some(filter) = filter_oid {
-                if oid != filter {
+            if let Some(filter) = filter_oid
+                && oid != filter {
                     continue;
                 }
-            }
 
             let mut row = Vec::new();
             for col in &columns {
@@ -820,19 +811,17 @@ impl CatalogInterceptor {
         if let SetExpr::Select(select) = &*query.body {
             // Check projections
             for item in &select.projection {
-                if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item {
-                    if Self::expression_contains_system_function(expr) {
+                if let SelectItem::UnnamedExpr(expr) | SelectItem::ExprWithAlias { expr, .. } = item
+                    && Self::expression_contains_system_function(expr) {
                         return true;
                     }
-                }
             }
             
             // Check WHERE clause
-            if let Some(selection) = &select.selection {
-                if Self::expression_contains_system_function(selection) {
+            if let Some(selection) = &select.selection
+                && Self::expression_contains_system_function(selection) {
                     return true;
                 }
-            }
         }
         false
     }
@@ -967,11 +956,10 @@ impl CatalogInterceptor {
                     false
                 };
                 
-                if is_typtype_column {
-                    if let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) = right.as_ref() {
+                if is_typtype_column
+                    && let Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) = right.as_ref() {
                         *filter_typtype = Some(s.clone());
                     }
-                }
             } else if matches!(op, sqlparser::ast::BinaryOperator::And) {
                 // Recursively check both sides of AND
                 Self::extract_filters(left, filter_oid, has_placeholder, filter_typtype);

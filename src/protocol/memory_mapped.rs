@@ -29,17 +29,15 @@ impl MemoryMappedConfig {
     pub fn from_env() -> Self {
         let mut config = Self::default();
         
-        if let Ok(val) = std::env::var("PGSQLITE_MMAP_MIN_SIZE") {
-            if let Ok(size) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_MMAP_MIN_SIZE")
+            && let Ok(size) = val.parse::<usize>() {
                 config.min_size_for_mmap = size;
             }
-        }
         
-        if let Ok(val) = std::env::var("PGSQLITE_MMAP_MAX_MEMORY") {
-            if let Ok(size) = val.parse::<usize>() {
+        if let Ok(val) = std::env::var("PGSQLITE_MMAP_MAX_MEMORY")
+            && let Ok(size) = val.parse::<usize>() {
                 config.max_memory_size = size;
             }
-        }
         
         if let Ok(dir) = std::env::var("PGSQLITE_TEMP_DIR") {
             config.temp_dir = Some(dir);

@@ -85,14 +85,13 @@ impl QueryCache {
         let mut metrics = self.metrics.write().unwrap();
         
         // LRU eviction: remove least recently used entry if at capacity
-        if cache.len() >= self.capacity && !cache.contains_key(&fingerprint) {
-            if let Some((key_to_remove, _)) = cache.iter()
+        if cache.len() >= self.capacity && !cache.contains_key(&fingerprint)
+            && let Some((key_to_remove, _)) = cache.iter()
                 .min_by_key(|(_, entry)| entry.last_accessed) {
                 let key_to_remove = *key_to_remove;
                 cache.remove(&key_to_remove);
                 metrics.evictions += 1;
             }
-        }
         
         cache.insert(fingerprint, CacheEntry {
             query,

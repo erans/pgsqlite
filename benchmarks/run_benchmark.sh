@@ -70,6 +70,18 @@ else
     echo -e "${YELLOW}Using Unix socket mode (default)${NC}"
 fi
 
+# Check driver mode - default to psycopg2
+DRIVER="psycopg2"
+if [[ "$@" == *"--driver psycopg3-text"* ]]; then
+    DRIVER="psycopg3-text"
+    echo -e "${YELLOW}Using psycopg3 text protocol${NC}"
+elif [[ "$@" == *"--driver psycopg3-binary"* ]]; then
+    DRIVER="psycopg3-binary"
+    echo -e "${YELLOW}Using psycopg3 binary protocol${NC}"
+else
+    echo -e "${YELLOW}Using psycopg2 (default)${NC}"
+fi
+
 # Check if --file-based flag was passed to use file-based mode
 if [[ "$@" == *"--file-based"* ]]; then
     echo -e "${YELLOW}Starting pgsqlite with file-based database${NC}"
@@ -104,11 +116,11 @@ echo -e "${GREEN}pgsqlite server started with PID: $PGSQLITE_PID on port $PGSQLI
 echo -e "\n${GREEN}[4/4] Running benchmarks...${NC}"
 cd benchmarks
 
-# Run the benchmark with Poetry, passing the port and socket dir if applicable
+# Run the benchmark with Poetry, passing the port, driver, and socket dir if applicable
 if [ -n "$SOCKET_DIR" ]; then
-    poetry run python benchmark.py --port $PGSQLITE_PORT --socket-dir $SOCKET_DIR "$@"
+    poetry run python benchmark.py --port $PGSQLITE_PORT --socket-dir $SOCKET_DIR --driver $DRIVER "$@"
 else
-    poetry run python benchmark.py --port $PGSQLITE_PORT "$@"
+    poetry run python benchmark.py --port $PGSQLITE_PORT --driver $DRIVER "$@"
 fi
 
 # Cleanup

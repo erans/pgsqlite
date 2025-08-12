@@ -28,13 +28,12 @@ impl ParameterParser {
                     while let Some((_, inner_ch)) = chars.next() {
                         if inner_ch == '\'' {
                             // Check if this is an escaped quote ('')
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '\'' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '\'' {
                                     // Escaped quote, skip it and continue in string
                                     chars.next();
                                     continue;
                                 }
-                            }
                             // End of string literal
                             break;
                         }
@@ -46,13 +45,12 @@ impl ParameterParser {
                     while let Some((_, inner_ch)) = chars.next() {
                         if inner_ch == '"' {
                             // Check if this is an escaped quote ("")
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '"' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '"' {
                                     // Escaped quote, skip it and continue in identifier
                                     chars.next();
                                     continue;
                                 }
-                            }
                             // End of quoted identifier
                             break;
                         }
@@ -75,13 +73,11 @@ impl ParameterParser {
                     }
                     
                     // If we found digits, this is a parameter
-                    if !param_num.is_empty() {
-                        if let Ok(param_number) = param_num.parse::<usize>() {
-                            if param_number > 0 && param_number <= 99 {
+                    if !param_num.is_empty()
+                        && let Ok(param_number) = param_num.parse::<usize>()
+                            && param_number > 0 && param_number <= 99 {
                                 parameters.insert(param_number);
                             }
-                        }
-                    }
                 }
                 _ => {
                     // Regular character, continue
@@ -109,13 +105,12 @@ impl ParameterParser {
                         result.push(inner_ch);
                         if inner_ch == '\'' {
                             // Check if this is an escaped quote ('')
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '\'' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '\'' {
                                     // Escaped quote, copy it and continue in string
                                     result.push(chars.next().unwrap().1);
                                     continue;
                                 }
-                            }
                             // End of string literal
                             break;
                         }
@@ -129,13 +124,12 @@ impl ParameterParser {
                         result.push(inner_ch);
                         if inner_ch == '"' {
                             // Check if this is an escaped quote ("")
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '"' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '"' {
                                     // Escaped quote, copy it and continue in identifier
                                     result.push(chars.next().unwrap().1);
                                     continue;
                                 }
-                            }
                             // End of quoted identifier
                             break;
                         }
@@ -159,15 +153,13 @@ impl ParameterParser {
                     }
                     
                     // If we found digits, this might be a parameter
-                    if !param_num.is_empty() {
-                        if let Ok(param_number) = param_num.parse::<usize>() {
-                            if param_number > 0 && param_number <= values.len() {
+                    if !param_num.is_empty()
+                        && let Ok(param_number) = param_num.parse::<usize>()
+                            && param_number > 0 && param_number <= values.len() {
                                 // Valid parameter number, substitute with value
                                 result.push_str(&values[param_number - 1]);
                                 continue;
                             }
-                        }
-                    }
                     
                     // Not a valid parameter, copy the $ and digits as-is
                     result.push('$');
@@ -198,13 +190,12 @@ impl ParameterParser {
                     while let Some((_, inner_ch)) = chars.next() {
                         if inner_ch == '\'' {
                             // Check if this is an escaped quote ('')
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '\'' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '\'' {
                                     // Escaped quote, skip it and continue in string
                                     chars.next();
                                     continue;
                                 }
-                            }
                             // End of string literal
                             break;
                         }
@@ -216,13 +207,12 @@ impl ParameterParser {
                     while let Some((_, inner_ch)) = chars.next() {
                         if inner_ch == '"' {
                             // Check if this is an escaped quote ("")
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '"' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '"' {
                                     // Escaped quote, skip it and continue in identifier
                                     chars.next();
                                     continue;
                                 }
-                            }
                             // End of quoted identifier
                             break;
                         }
@@ -231,15 +221,15 @@ impl ParameterParser {
                 // Handle potential Python-style parameter %(name)s
                 '%' => {
                     // Look ahead to see if this is followed by (name)s pattern
-                    if let Some((_, next_ch)) = chars.peek() {
-                        if *next_ch == '(' {
+                    if let Some((_, next_ch)) = chars.peek()
+                        && *next_ch == '(' {
                             chars.next(); // consume the '('
                             
                             // Collect parameter name
                             let mut param_name = String::new();
                             let mut found_closing = false;
                             
-                            while let Some((_, name_ch)) = chars.next() {
+                            for (_, name_ch) in chars.by_ref() {
                                 if name_ch == ')' {
                                     found_closing = true;
                                     break;
@@ -252,16 +242,13 @@ impl ParameterParser {
                             }
                             
                             // Check if we have )s after the parameter name
-                            if found_closing && !param_name.is_empty() {
-                                if let Some((_, s_ch)) = chars.peek() {
-                                    if *s_ch == 's' {
+                            if found_closing && !param_name.is_empty()
+                                && let Some((_, s_ch)) = chars.peek()
+                                    && *s_ch == 's' {
                                         chars.next(); // consume the 's'
                                         parameters.insert(param_name);
                                     }
-                                }
-                            }
                         }
-                    }
                 }
                 _ => {
                     // Regular character, continue
@@ -289,13 +276,12 @@ impl ParameterParser {
                         result.push(inner_ch);
                         if inner_ch == '\'' {
                             // Check if this is an escaped quote ('')
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '\'' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '\'' {
                                     // Escaped quote, copy it and continue in string
                                     result.push(chars.next().unwrap().1);
                                     continue;
                                 }
-                            }
                             // End of string literal
                             break;
                         }
@@ -309,13 +295,12 @@ impl ParameterParser {
                         result.push(inner_ch);
                         if inner_ch == '"' {
                             // Check if this is an escaped quote ("")
-                            if let Some((_, next_ch)) = chars.peek() {
-                                if *next_ch == '"' {
+                            if let Some((_, next_ch)) = chars.peek()
+                                && *next_ch == '"' {
                                     // Escaped quote, copy it and continue in identifier
                                     result.push(chars.next().unwrap().1);
                                     continue;
                                 }
-                            }
                             // End of quoted identifier
                             break;
                         }
@@ -333,7 +318,7 @@ impl ParameterParser {
                             let mut found_closing = false;
                             let mut collected_chars = Vec::new();
                             
-                            while let Some((_, name_ch)) = chars.next() {
+                            for (_, name_ch) in chars.by_ref() {
                                 collected_chars.push(name_ch);
                                 if name_ch == ')' {
                                     found_closing = true;
@@ -347,9 +332,9 @@ impl ParameterParser {
                             }
                             
                             // Check if we have )s after the parameter name
-                            if found_closing && !param_name.is_empty() {
-                                if let Some((_, s_ch)) = chars.peek() {
-                                    if *s_ch == 's' {
+                            if found_closing && !param_name.is_empty()
+                                && let Some((_, s_ch)) = chars.peek()
+                                    && *s_ch == 's' {
                                         chars.next(); // consume the 's'
                                         
                                         // Try to substitute with value
@@ -358,8 +343,6 @@ impl ParameterParser {
                                             continue;
                                         }
                                     }
-                                }
-                            }
                             
                             // Not a valid parameter or no substitution, copy as-is
                             result.push('%');

@@ -171,12 +171,11 @@ impl WhereEvaluator {
 
         let mut found = false;
         for item in list {
-            if let Some(item_val) = Self::get_expression_value(item, row_data) {
-                if value == item_val {
+            if let Some(item_val) = Self::get_expression_value(item, row_data)
+                && value == item_val {
                     found = true;
                     break;
                 }
-            }
         }
 
         if negated {

@@ -312,8 +312,8 @@ impl SchemaTypeMapper {
                 // Look for patterns like "sum(...) AS function_name" or "avg(...) AS function_name"
                 // This handles both simple aggregates and aggregate expressions
                 let pattern = format!(r"(?i)([\w_]+)\s*\([^)]+\)\s+(?:AS\s+)?{}\b", regex::escape(function_name));
-                if let Ok(re) = regex::Regex::new(&pattern) {
-                    if let Some(captures) = re.captures(q) {
+                if let Ok(re) = regex::Regex::new(&pattern)
+                    && let Some(captures) = re.captures(q) {
                         let actual_function = captures[1].to_uppercase();
                         // Check if this is an aggregate function
                         if matches!(actual_function.as_str(), "SUM" | "AVG" | "MAX" | "MIN" | "COUNT" | 
@@ -327,7 +327,6 @@ impl SchemaTypeMapper {
                             return Self::get_aggregate_return_type_with_query(&format!("{actual_function}()"), conn, table_name, None);
                         }
                     }
-                }
                 
                 // Also check for array concatenation operator pattern: column || array AS alias
                 // NOTE: For now, we return TEXT instead of TextArray because:
@@ -335,12 +334,11 @@ impl SchemaTypeMapper {
                 // 2. Clients expect to get strings, not PostgreSQL arrays
                 // 3. Binary array encoding is not yet implemented
                 let concat_pattern = format!(r"\w+\s*\|\|\s*[^\s]+\s+(?:AS\s+)?{}\b", regex::escape(function_name));
-                if let Ok(re) = regex::Regex::new(&concat_pattern) {
-                    if re.is_match(q) {
+                if let Ok(re) = regex::Regex::new(&concat_pattern)
+                    && re.is_match(q) {
                         // This is an array concatenation operation - return as TEXT
                         return Some(PgType::Text.to_oid());
                     }
-                }
             }
             return None;
         }
@@ -415,8 +413,8 @@ impl SchemaTypeMapper {
         // For other aggregates, we need to know the column type
         if let Some(column_name) = crate::types::QueryContextAnalyzer::extract_column_from_aggregation(function_name) {
             // Try to get the column type from schema
-            if let (Some(conn), Some(table)) = (conn, table_name) {
-                if let Some(base_type) = Self::get_type_from_schema(conn, table, &column_name) {
+            if let (Some(conn), Some(table)) = (conn, table_name)
+                && let Some(base_type) = Self::get_type_from_schema(conn, table, &column_name) {
                     // Map aggregate result based on base type
                     if upper.starts_with("SUM(") || upper.starts_with("AVG(") {
                         // SUM and AVG return numeric for numeric types
@@ -432,7 +430,6 @@ impl SchemaTypeMapper {
                         return Some(base_type);
                     }
                 }
-            }
             
             // If we couldn't look up the type from schema (conn or table is None),
             // try to infer it from the query context for MAX/MIN on likely DECIMAL columns

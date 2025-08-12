@@ -187,15 +187,13 @@ impl PgEnumHandler {
             }
             Expr::InList { expr, list, negated: false } => {
                 // Handle IN clauses
-                if let Expr::Identifier(ident) = expr.as_ref() {
-                    if ident.value.to_lowercase() == "enumtypid" && list.len() == 1 {
-                        if let Expr::Value(sqlparser::ast::ValueWithSpan { 
+                if let Expr::Identifier(ident) = expr.as_ref()
+                    && ident.value.to_lowercase() == "enumtypid" && list.len() == 1
+                        && let Expr::Value(sqlparser::ast::ValueWithSpan { 
                             value: sqlparser::ast::Value::Number(n, _), .. 
                         }) = &list[0] {
                             *filter_type_oid = n.parse().ok();
                         }
-                    }
-                }
             }
             _ => {}
         }

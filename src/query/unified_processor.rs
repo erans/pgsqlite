@@ -82,15 +82,14 @@ impl<'a> UnifiedProcessor<'a> {
             complexity = ComplexityLevel::Moderate;
         }
         
-        if memchr::memmem::find(query_bytes, b"::NUMERIC").is_some() ||
+        if (memchr::memmem::find(query_bytes, b"::NUMERIC").is_some() ||
            memchr::memmem::find(query_bytes, b"::numeric").is_some() ||
            memchr::memmem::find(query_bytes, b"CAST(").is_some() ||
-           memchr::memmem::find(query_bytes, b"cast(").is_some() {
-            if query.contains("NUMERIC") || query.contains("DECIMAL") {
+           memchr::memmem::find(query_bytes, b"cast(").is_some())
+            && (query.contains("NUMERIC") || query.contains("DECIMAL")) {
                 translations.insert(TranslationFlags::NUMERIC);
                 complexity = ComplexityLevel::Moderate;
             }
-        }
         
         if memchr::memchr(b'[', query_bytes).is_some() ||
            memchr::memmem::find(query_bytes, b"ANY(").is_some() ||
@@ -110,8 +109,8 @@ impl<'a> UnifiedProcessor<'a> {
         }
         
         // Check for datetime patterns in INSERT/UPDATE statements
-        if query_bytes.starts_with(b"INSERT") || query_bytes.starts_with(b"UPDATE") {
-            if memchr::memchr(b'\'', query_bytes).is_some() {
+        if (query_bytes.starts_with(b"INSERT") || query_bytes.starts_with(b"UPDATE"))
+            && memchr::memchr(b'\'', query_bytes).is_some() {
                 // Check for date pattern YYYY-MM-DD or time pattern HH:MM:SS
                 if memchr::memchr(b'-', query_bytes).is_some() ||
                    memchr::memchr(b':', query_bytes).is_some() {
@@ -119,24 +118,20 @@ impl<'a> UnifiedProcessor<'a> {
                     complexity = ComplexityLevel::Moderate;
                 }
             }
-        }
         
         // Check for batch operations
-        if let Some(delete_pos) = memchr::memmem::find(query_bytes, b"DELETE") {
-            if memchr::memmem::find(&query_bytes[delete_pos..], b"USING").is_some() {
+        if let Some(delete_pos) = memchr::memmem::find(query_bytes, b"DELETE")
+            && memchr::memmem::find(&query_bytes[delete_pos..], b"USING").is_some() {
                 translations.insert(TranslationFlags::BATCH_DELETE);
                 complexity = ComplexityLevel::Complex;
             }
-        }
         
-        if let Some(update_pos) = memchr::memmem::find(query_bytes, b"UPDATE") {
-            if let Some(set_pos) = memchr::memmem::find(&query_bytes[update_pos..], b" SET ") {
-                if memchr::memmem::find(&query_bytes[update_pos + set_pos..], b" FROM ").is_some() {
+        if let Some(update_pos) = memchr::memmem::find(query_bytes, b"UPDATE")
+            && let Some(set_pos) = memchr::memmem::find(&query_bytes[update_pos..], b" SET ")
+                && memchr::memmem::find(&query_bytes[update_pos + set_pos..], b" FROM ").is_some() {
                     translations.insert(TranslationFlags::BATCH_UPDATE);
                     complexity = ComplexityLevel::Complex;
                 }
-            }
-        }
         
         // If multiple translations needed, it's complex
         if translations.bits().count_ones() > 2 {
@@ -284,11 +279,10 @@ fn has_insert_special_patterns(bytes: &[u8]) -> bool {
 #[inline(always)]
 fn has_update_special_patterns(bytes: &[u8]) -> bool {
     // Check for UPDATE ... FROM
-    if let Some(set_pos) = memchr::memmem::find(bytes, b" SET ") {
-        if memchr::memmem::find(&bytes[set_pos..], b" FROM ").is_some() {
+    if let Some(set_pos) = memchr::memmem::find(bytes, b" SET ")
+        && memchr::memmem::find(&bytes[set_pos..], b" FROM ").is_some() {
             return true;
         }
-    }
     
     has_any_special_pattern_fast(bytes)
 }

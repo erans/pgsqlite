@@ -305,11 +305,10 @@ pub fn table_has_decimal_columns(
     schema_cache: &SchemaCache,
 ) -> Result<bool, rusqlite::Error> {
     // Check dedicated decimal cache first
-    if let Ok(cache) = DECIMAL_TABLE_CACHE.lock() {
-        if let Some(&has_decimal) = cache.get(table_name) {
+    if let Ok(cache) = DECIMAL_TABLE_CACHE.lock()
+        && let Some(&has_decimal) = cache.get(table_name) {
             return Ok(has_decimal);
         }
-    }
     
     // Fast decimal detection using bloom filter
     let has_decimal = schema_cache.has_decimal_columns(table_name);

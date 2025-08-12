@@ -518,7 +518,7 @@ impl ExtendedFastPath {
                         let seconds = unix_micros / 1_000_000;
                         
                         // If it's a reasonable timestamp (between year 1970 and 2100), treat as timestamp
-                        if seconds >= 0 && seconds < 4102444800 { // 2100-01-01
+                        if (0..4102444800).contains(&seconds) { // 2100-01-01
                             // Inferring as TIMESTAMP
                             Ok(rusqlite::types::Value::Integer(unix_micros))
                         } else {

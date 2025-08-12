@@ -105,11 +105,10 @@ impl<'a> ExpressionTypeResolver<'a> {
                     }
                     SelectItem::Wildcard(_) => {
                         // For wildcards, we need to get all columns from the referenced tables
-                        if let Some(table) = &cte_context.default_table {
-                            if let Ok(cols) = self.get_table_columns(table) {
+                        if let Some(table) = &cte_context.default_table
+                            && let Ok(cols) = self.get_table_columns(table) {
                                 column_types.extend(cols);
                             }
-                        }
                     }
                     SelectItem::QualifiedWildcard(name, _) => {
                         let table_name = match name {
@@ -230,23 +229,20 @@ impl<'a> ExpressionTypeResolver<'a> {
         
         // Query SQLite's pragma to get column information
         let query = format!("PRAGMA table_info({table_name})");
-        if let Ok(mut stmt) = self.conn.prepare(&query) {
-            if let Ok(rows) = stmt.query_map([], |row| {
+        if let Ok(mut stmt) = self.conn.prepare(&query)
+            && let Ok(rows) = stmt.query_map([], |row| {
                 let col_name: String = row.get(1)?;
                 Ok(col_name)
             }) {
-                for row in rows {
-                    if let Ok(col_name) = row {
-                        if let Some(type_oid) = SchemaTypeMapper::get_type_from_schema(self.conn, table_name, &col_name) {
-                            let pg_type = PgType::from_oid(type_oid).unwrap_or(PgType::Text);
-                            columns.push((col_name, pg_type));
-                        } else {
-                            columns.push((col_name, PgType::Text));
-                        }
+                for col_name in rows.flatten() {
+                    if let Some(type_oid) = SchemaTypeMapper::get_type_from_schema(self.conn, table_name, &col_name) {
+                        let pg_type = PgType::from_oid(type_oid).unwrap_or(PgType::Text);
+                        columns.push((col_name, pg_type));
+                    } else {
+                        columns.push((col_name, PgType::Text));
                     }
                 }
             }
-        }
         
         Ok(columns)
     }
@@ -356,28 +352,26 @@ impl<'a> ExpressionTypeResolver<'a> {
         // Check if this is a derived table or CTE
         if table_name == "__derived__" {
             // Look up in derived table columns
-            if let Some(alias) = table {
-                if let Some(columns) = context.derived_table_columns.get(alias) {
+            if let Some(alias) = table
+                && let Some(columns) = context.derived_table_columns.get(alias) {
                     for (col_name, col_type) in columns {
                         if col_name == column {
                             return *col_type;
                         }
                     }
                 }
-            }
             return PgType::Text;
         }
         
         // Also check if the table_name itself is a derived table (when column is unqualified)
-        if table.is_none() && context.derived_table_columns.contains_key(&table_name) {
-            if let Some(columns) = context.derived_table_columns.get(&table_name) {
+        if table.is_none() && context.derived_table_columns.contains_key(&table_name)
+            && let Some(columns) = context.derived_table_columns.get(&table_name) {
                 for (col_name, col_type) in columns {
                     if col_name == column {
                         return *col_type;
                     }
                 }
             }
-        }
         
         // Check if this is a CTE
         if let Some(cte_columns) = context.cte_columns.get(&table_name) {
