@@ -23,8 +23,75 @@ impl SystemFunctions {
             "pg_get_userbyid" => Self::pg_get_userbyid(args).await,
             "pg_get_indexdef" => Self::pg_get_indexdef(args, db).await,
             "to_regtype" => Self::to_regtype(args, db).await,
+            "obj_description" => Self::obj_description(args, db).await,
             _ => Ok(None), // Unknown function, let it pass through
         }
+    }
+
+    /// obj_description(object_oid, catalog_name) - Returns the description of a database object
+    pub async fn obj_description(
+        args: &[Expr],
+        db: Arc<DbHandler>,
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        if args.len() < 2 {
+            return Ok(Some("".to_string()));
+        }
+
+        // Extract object_oid from the first argument
+        let object_oid = match &args[0] {
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) => n.parse::<i64>().ok(),
+            _ => None,
+        };
+
+        // Extract catalog_name from the second argument
+        let catalog_name = match &args[1] {
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => Some(s.as_str()),
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::DoubleQuotedString(s), .. }) => Some(s.as_str()),
+            _ => None,
+        };
+
+        if let (Some(oid), Some(catalog)) = (object_oid, catalog_name) {
+            match catalog {
+                "pg_class" => {
+                    // Query for table, index, or view descriptions
+                    let query = format!(
+                        "SELECT name FROM sqlite_master WHERE type IN ('table', 'index', 'view') AND rowid = {}",
+                        oid
+                    );
+                    let result = db.query(&query).await?;
+                    if let Some(row) = result.rows.get(0) {
+                        if let Some(name_bytes) = row.get(0) {
+                            if let Some(name) = name_bytes.as_ref().and_then(|bytes| std::str::from_utf8(bytes).ok()) {
+                                return Ok(Some(format!("Description of {}", name)));
+                            }
+                        }
+                    }
+                },
+                "pg_attribute" => {
+                    // Query for column descriptions
+                    let query = format!(
+                        "SELECT m.name || '.' || p.name
+                        FROM sqlite_master m
+                        JOIN pragma_table_info(m.name) p
+                        WHERE m.type = 'table' AND m.rowid = {} / 1000 AND p.cid = {} % 1000",
+                        oid, oid
+                    );
+                    let result = db.query(&query).await?;
+                    if let Some(row) = result.rows.get(0) {
+                        if let Some(name_bytes) = row.get(0) {
+                            if let Some(name) = name_bytes.as_ref().and_then(|bytes| std::str::from_utf8(bytes).ok()) {
+                                return Ok(Some(format!("Description of column {}", name)));
+                            }
+                        }
+                    }
+                },
+                // Add more catalog types as needed
+                _ => {}
+            }
+        }
+
+        // If no description found or unsupported catalog
+        Ok(Some("".to_string()))
     }
 
     /// pg_get_constraintdef(constraint_oid) - Returns the definition of a constraint
@@ -489,6 +556,5 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
             search_start = actual_pos + 5; // Move past "CHECK"
         }
     }
-    
     None
 }

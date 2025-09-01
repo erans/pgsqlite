@@ -1,7 +1,11 @@
 use pgsqlite::catalog::CatalogInterceptor;
+use pgsqlite::catalog::system_functions::SystemFunctions;
 use pgsqlite::session::db_handler::DbHandler;
+use pgsqlite::config::Config;
 use pgsqlite::session::SessionState;
+use sqlparser::ast::Expr;
 use std::sync::Arc;
+use sqlparser::tokenizer::Location;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
@@ -180,4 +184,108 @@ async fn test_pg_attribute_queries() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(format!("{db_path}-wal"));
     let _ = std::fs::remove_file(format!("{db_path}-shm"));
+}
+
+#[tokio::test]
+async fn test_obj_description() {
+    // Setup: Create a test database and DbHandler
+    let config = Config::load(); // Assuming there's a default config
+    let db_handler = Arc::new(DbHandler::new_with_config(":memory:", &config).unwrap());
+
+    // Insert test data
+    db_handler.execute("CREATE TABLE test_table (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
+    db_handler.execute("CREATE INDEX test_index ON test_table (name)").await.unwrap();
+
+    // Test case 1: Object exists (table)
+    let args = vec![
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::Number("1".to_string(), false),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::SingleQuotedString("pg_class".to_string()),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+    ];
+    let result = SystemFunctions::obj_description(&args, db_handler.clone()).await.unwrap();
+    assert_eq!(result, Some("Description of test_table".to_string()));
+
+    // Test case 2: Object exists (column)
+    let args = vec![
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::Number("1001".to_string(), false),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::SingleQuotedString("pg_attribute".to_string()),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+    ];
+    let result = SystemFunctions::obj_description(&args, db_handler.clone()).await.unwrap();
+    assert_eq!(result, Some("Description of column test_table.name".to_string()));
+
+    // Test case 3: Object does not exist
+    let args = vec![
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::Number("9999".to_string(), false),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::SingleQuotedString("pg_class".to_string()),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+    ];
+    let result = SystemFunctions::obj_description(&args, db_handler.clone()).await.unwrap();
+    assert_eq!(result, Some("".to_string()));
+
+    // Test case 4: Invalid catalog_name
+    let args = vec![
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::Number("1".to_string(), false),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::SingleQuotedString("invalid_catalog".to_string()),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+    ];
+    let result = SystemFunctions::obj_description(&args, db_handler.clone()).await.unwrap();
+    assert_eq!(result, Some("".to_string()));
+
+    // Test case 5: Missing arguments
+    let args = vec![
+        Expr::Value(sqlparser::ast::ValueWithSpan {
+            value: sqlparser::ast::Value::Number("1".to_string(), false),
+            span: sqlparser::tokenizer::Span::new(
+                Location { line: 0, column: 0 },
+                Location { line: 0, column: 1 }
+            ),
+        }),
+    ];
+    let result = SystemFunctions::obj_description(&args, db_handler).await.unwrap();
+    assert_eq!(result, Some("".to_string()));
 }
