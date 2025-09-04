@@ -37,6 +37,7 @@ pub enum QueryType {
     Begin,
     Commit,
     Rollback,
+    Comment,
     Pragma,
     Explain,
     Unknown,
