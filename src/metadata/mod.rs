@@ -3,8 +3,10 @@ use std::collections::HashMap;
 
 pub mod enum_metadata;
 pub mod enum_triggers;
+pub mod object_resolver;
 pub use enum_metadata::{EnumMetadata, EnumType, EnumValue};
 pub use enum_triggers::EnumTriggers;
+pub use object_resolver::ObjectResolver;
 
 /// Represents a type mapping between PostgreSQL and SQLite
 #[derive(Debug, Clone)]

@@ -12,6 +12,7 @@ pub mod string_functions;
 pub mod math_functions;
 pub mod system_functions;
 pub mod fts_functions;
+pub mod comment_functions;
 
 use rusqlite::{Connection, Result};
 

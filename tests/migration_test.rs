@@ -23,7 +23,7 @@ fn test_fresh_database_migration() {
     
     // Should apply all migrations
     assert_eq!(applied.len(), MIGRATIONS.len());
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     
     // Verify schema version
     let conn = runner.into_connection();
@@ -32,7 +32,7 @@ fn test_fresh_database_migration() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "11");
+    assert_eq!(version, "12");
     
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -56,6 +56,7 @@ fn test_fresh_database_migration() {
     assert!(tables.contains(&"__pgsqlite_array_types".to_string()));
     assert!(tables.contains(&"__pgsqlite_fts_metadata".to_string()));
     assert!(tables.contains(&"__pgsqlite_type_map".to_string()));
+    assert!(tables.contains(&"__pgsqlite_comments".to_string()));
 }
 
 #[test]
@@ -67,7 +68,7 @@ fn test_idempotent_migrations() {
     let conn = Connection::open(&db_path).unwrap();
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
-    assert_eq!(applied.len(), 11);
+    assert_eq!(applied.len(), 12);
     drop(runner);
     
     // Second run - should apply nothing
@@ -108,8 +109,8 @@ fn test_existing_schema_detection() {
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
     
-    // Should recognize existing schema as version 1 and only apply version 2, 3, 4, 5, 6, 7, 8, 9, 10, and 11
-    assert_eq!(applied.len(), 10);
+    // Should recognize existing schema as version 1 and only apply version 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, and 12
+    assert_eq!(applied.len(), 11);
     assert_eq!(applied[0], 2);
     assert_eq!(applied[1], 3);
     assert_eq!(applied[2], 4);
@@ -120,6 +121,7 @@ fn test_existing_schema_detection() {
     assert_eq!(applied[7], 9);
     assert_eq!(applied[8], 10);
     assert_eq!(applied[9], 11);
+    assert_eq!(applied[10], 12);
     
     // Verify final version
     let conn = runner.into_connection();
@@ -128,7 +130,7 @@ fn test_existing_schema_detection() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "11");
+    assert_eq!(version, "12");
     
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -153,7 +155,7 @@ fn test_migration_history() {
     .unwrap()
     .collect::<Result<Vec<_>, _>>().unwrap();
     
-    assert_eq!(migrations.len(), 11);
+    assert_eq!(migrations.len(), 12);
     assert_eq!(migrations[0], (1, "initial_schema".to_string(), "completed".to_string()));
     assert_eq!(migrations[1], (2, "enum_type_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[2], (3, "datetime_timezone_support".to_string(), "completed".to_string()));
@@ -165,6 +167,7 @@ fn test_migration_history() {
     assert_eq!(migrations[8], (9, "fts_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[9], (10, "typcategory_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[10], (11, "fix_catalog_views".to_string(), "completed".to_string()));
+    assert_eq!(migrations[11], (12, "comment_system".to_string(), "completed".to_string()));
 }
 
 #[test] 

@@ -253,6 +253,50 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // obj_description(object_oid, catalog_name) - Returns comment for database object
+    conn.create_scalar_function(
+        "obj_description",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let _object_oid: i64 = ctx.get(0)?;
+            let _catalog_name: String = ctx.get(1)?;
+            
+            // For SQLite functions, we can't easily access the connection
+            // So we return NULL for now - this will be handled by query interceptor
+            // or comment function processor
+            Ok(Option::<String>::None)
+        },
+    )?;
+    
+    // obj_description(object_oid) - Deprecated one-parameter form
+    conn.create_scalar_function(
+        "obj_description",
+        1,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let _object_oid: i64 = ctx.get(0)?;
+            // Use the two-parameter version with default catalog
+            // For now, return NULL - will be handled by query interceptor for real queries
+            Ok(Option::<String>::None)
+        },
+    )?;
+    
+    // col_description(table_oid, column_number) - Returns comment for table column
+    conn.create_scalar_function(
+        "col_description",
+        2,
+        FunctionFlags::SQLITE_UTF8,
+        |ctx| {
+            let _table_oid: i64 = ctx.get(0)?;
+            let _column_number: i32 = ctx.get(1)?;
+            
+            // Query __pgsqlite_comments table for column comment
+            // For now, return NULL - will be handled by query interceptor
+            Ok(Option::<String>::None)
+        },
+    )?;
+    
     debug!("System functions registered successfully");
     Ok(())
 }
@@ -352,5 +396,41 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert_eq!(has_table_priv, 1); // true
+    }
+    
+    #[test]
+    fn test_obj_description() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_system_functions(&conn).unwrap();
+        
+        // Test two-parameter form (returns NULL since no comments table)
+        let desc: Option<String> = conn.query_row(
+            "SELECT obj_description(123456, 'pg_class')", 
+            [], 
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(desc, None); // Should return NULL
+        
+        // Test one-parameter form (deprecated)
+        let desc: Option<String> = conn.query_row(
+            "SELECT obj_description(123456)", 
+            [], 
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(desc, None); // Should return NULL
+    }
+    
+    #[test]
+    fn test_col_description() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_system_functions(&conn).unwrap();
+        
+        // Test col_description function (returns NULL since no comments table)
+        let desc: Option<String> = conn.query_row(
+            "SELECT col_description(123456, 1)", 
+            [], 
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(desc, None); // Should return NULL
     }
 }

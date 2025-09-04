@@ -49,6 +49,13 @@ impl QueryTypeDetector {
             }
         }
         
+        if bytes.len() >= 7 {
+            match &bytes[0..7] {
+                b"COMMENT" | b"comment" | b"Comment" => return QueryType::Comment,
+                _ => {}
+            }
+        }
+        
         if bytes.len() >= 8 {
             match &bytes[0..8] {
                 b"ROLLBACK" | b"rollback" | b"Rollback" => return QueryType::Rollback,
@@ -82,6 +89,8 @@ impl QueryTypeDetector {
             QueryType::Commit
         } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("ROLLBACK") {
             QueryType::Rollback
+        } else if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("COMMENT") {
+            QueryType::Comment
         } else {
             QueryType::Other
         }
@@ -108,6 +117,13 @@ impl QueryTypeDetector {
             }
         }
         
+        if bytes.len() >= 7 {
+            match &bytes[0..7] {
+                b"COMMENT" | b"comment" | b"Comment" => return true,
+                _ => {}
+            }
+        }
+        
         if bytes.len() >= 8 {
             match &bytes[0..8] {
                 b"TRUNCATE" | b"truncate" | b"Truncate" => return true,
@@ -121,6 +137,8 @@ impl QueryTypeDetector {
         } else if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("DROP") {
             true
         } else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ALTER") {
+            true
+        } else if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("COMMENT") {
             true
         } else { trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("TRUNCATE") }
     }
@@ -157,6 +175,7 @@ pub enum QueryType {
     Begin,
     Commit,
     Rollback,
+    Comment,
     Other,
 }
 
@@ -174,6 +193,7 @@ impl QueryType {
             QueryType::Begin => "BEGIN",
             QueryType::Commit => "COMMIT",
             QueryType::Rollback => "ROLLBACK",
+            QueryType::Comment => "COMMENT",
             QueryType::Other => "",
         }
     }

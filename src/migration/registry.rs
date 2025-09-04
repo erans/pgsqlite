@@ -18,6 +18,7 @@ lazy_static! {
         register_v9_fts_support(&mut registry);
         register_v10_typcategory_support(&mut registry);
         register_v11_fix_catalog_views(&mut registry);
+        register_v12_comment_system(&mut registry);
         
         registry
     };
@@ -1532,5 +1533,46 @@ fn register_v11_fix_catalog_views(registry: &mut BTreeMap<u32, Migration>) {
             "#,
         ])),
         dependencies: vec![10],
+    });
+}
+
+/// Version 12: Comment system
+fn register_v12_comment_system(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(12, Migration {
+        version: 12,
+        name: "comment_system",
+        description: "Add support for PostgreSQL-style comments on database objects",
+        up: MigrationAction::Sql(r#"
+            -- Comments table to store object comments
+            CREATE TABLE IF NOT EXISTS __pgsqlite_comments (
+                object_oid INTEGER NOT NULL,        -- OID of the commented object
+                catalog_name TEXT NOT NULL,         -- 'pg_class', 'pg_proc', 'pg_type', etc.
+                subobject_id INTEGER DEFAULT 0,     -- Column number for column comments, 0 for others
+                comment_text TEXT,                  -- The actual comment (NULL = remove comment)
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (object_oid, catalog_name, subobject_id)
+            );
+
+            -- Index for fast lookups
+            CREATE INDEX IF NOT EXISTS idx_comments_lookup 
+            ON __pgsqlite_comments(object_oid, catalog_name, subobject_id);
+            
+            -- Update schema version
+            UPDATE __pgsqlite_metadata 
+            SET value = '12', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove comments table
+            DROP TABLE IF EXISTS __pgsqlite_comments;
+            DROP INDEX IF EXISTS idx_comments_lookup;
+            
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata 
+            SET value = '11', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![11],
     });
 }

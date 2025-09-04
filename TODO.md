@@ -1727,7 +1727,16 @@ This file tracks all future development tasks for the pgsqlite project. It serve
     - [x] pg_get_indexdef(oid) - Return CREATE INDEX statement
     - [x] pg_get_constraintdef(oid) - Return constraint definition
     - [x] pg_get_expr(node, relation) - Return expression from node tree
+    - [x] obj_description(oid, catalog_name) - Returns comment for database object (stub implementation returns NULL)
     - [ ] regclass type casting support (e.g., 'tablename'::regclass)
+    - [ ] **Full Comment System Implementation** - Complete obj_description support
+      - [ ] Create __pgsqlite_comments table to store object comments
+      - [ ] Implement COMMENT ON TABLE/COLUMN/FUNCTION command parsing
+      - [ ] Store comments with proper object OID mapping
+      - [ ] Update obj_description function to return actual stored comments
+      - [ ] Add col_description(table_oid, column_number) function for column comments
+      - [ ] Add shobj_description(oid) function for shared objects
+      - [ ] Support comments in schema migration system
     - **Note**: System functions are detected and processed in query interceptor, replaced with their results before execution
   - [ ] **Additional System Catalogs**
     - [ ] pg_am (access methods) - Required for index queries
