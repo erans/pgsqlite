@@ -64,12 +64,8 @@ impl ExtendedFastPath {
                     Ok(()) => {
                         Ok(true)
                     },
-                    Err(e) => {
-                        if e.to_string().contains("FastPathFallback") {
-                            Ok(false) // Fall back to normal path
-                        } else {
-                            Ok(false) // Fall back to normal path
-                        }
+                    Err(_e) => {
+                        Ok(false) // Fall back to normal path
                     }
                 }
             }
@@ -78,12 +74,8 @@ impl ExtendedFastPath {
                     Ok(()) => {
                         Ok(true)
                     },
-                    Err(e) => {
-                        if e.to_string().contains("FastPathFallback") {
-                            Ok(false) // Fall back to normal path
-                        } else {
-                            Ok(false) // Fall back to normal path
-                        }
+                    Err(_e) => {
+                        Ok(false) // Fall back to normal path
                     }
                 }
             }
@@ -634,8 +626,8 @@ impl ExtendedFastPath {
                 // For parameter columns, use inferred type
                 let type_oid = if col_name.starts_with('$') || col_name == "?column?" || col_name == "NULL" {
                     if let Some(ref inferred_types) = portal_inferred_types {
-                        let param_idx = if col_name.starts_with('$') {
-                            col_name[1..].parse::<usize>().ok().map(|n| n - 1).unwrap_or(i)
+                        let param_idx = if let Some(stripped) = col_name.strip_prefix('$') {
+                            stripped.parse::<usize>().ok().map(|n| n - 1).unwrap_or(i)
                         } else {
                             i
                         };

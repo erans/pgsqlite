@@ -3,6 +3,7 @@
 mod json_translator;
 mod returning_translator;
 mod create_table_translator;
+mod create_index_translator;
 mod enum_validator;
 mod cast_translator;
 mod simd_search;
@@ -30,6 +31,7 @@ mod pg_table_is_visible_translator;
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
 pub use create_table_translator::{CreateTableTranslator, CreateTableResult};
+pub use create_index_translator::CreateIndexTranslator;
 pub use enum_validator::EnumValidator;
 pub use cast_translator::CastTranslator;
 pub use simd_search::SimdCastSearch;

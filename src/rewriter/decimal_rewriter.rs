@@ -167,11 +167,13 @@ impl<'a> DecimalQueryRewriter<'a> {
                 // Check if the table has decimal columns
                 if let sqlparser::ast::TableFactor::Table { name, .. } = &table.relation {
                     let table_name = name.to_string();
-                    let has_decimal_columns = self.any_table_has_decimal_columns(&[table_name.clone()]);
+                    let has_decimal_columns = self.any_table_has_decimal_columns(std::slice::from_ref(&table_name));
                     
                     // Create context with table name
-                    let mut context = QueryContext::default();
-                    context.default_table = Some(table_name);
+                    let context = QueryContext { 
+                        default_table: Some(table_name), 
+                        ..Default::default() 
+                    };
                     
                     // Always rewrite WHERE clause to check for implicit casts
                     if let Some(expr) = selection {
