@@ -157,7 +157,16 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-08-12)
+### Recently Fixed (2025-09-04)
+- **PostgreSQL Operator Class Support in CREATE INDEX**: Fixed "near varchar_pattern_ops: syntax error"
+  - Added CreateIndexTranslator for PostgreSQL operator class syntax translation
+  - Maps `varchar_pattern_ops`, `text_pattern_ops`, `bpchar_pattern_ops` to SQLite `COLLATE BINARY`
+  - Maps `varchar_ops`, `text_ops`, `bpchar_ops` to default SQLite collation
+  - Supports multiple operator classes in single index statement
+  - Full compatibility with Django/SQLAlchemy migrations that create pattern-optimized indexes
+  - Example: `CREATE INDEX idx_name ON table (column varchar_pattern_ops)` → `CREATE INDEX idx_name ON table (column COLLATE BINARY)`
+
+### Previously Fixed (2025-08-12)
 - **Full Binary Protocol Support for psycopg3**: Complete binary format implementation
   - Fixed NUMERIC binary encoding - now properly encodes decimal values using PostgreSQL binary format
   - Fixed duplicate RowDescription issue - Describe(Portal) now updates statement's field_descriptions to prevent duplicate sending
@@ -294,6 +303,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
 - **40+ PostgreSQL Types**: Including arrays, JSON/JSONB, ENUMs
 - **Full-Text Search**: PostgreSQL tsvector/tsquery with SQLite FTS5
+- **CREATE INDEX with Operator Classes**: Support for `varchar_pattern_ops`, `text_pattern_ops`, etc.
 - **psql Compatibility**: \d commands work via catalog tables
 
 ### JSON/JSONB Support

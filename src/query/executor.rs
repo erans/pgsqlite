@@ -273,8 +273,7 @@ impl QueryExecutor {
                         None
                     };
                     
-                    let (boolean_columns, mut datetime_columns, column_types, column_mappings, enum_columns) = if needs_type_conversion && table_name.is_some() {
-                        let table = table_name.as_ref().unwrap();
+                    let (boolean_columns, mut datetime_columns, column_types, column_mappings, enum_columns) = if let Some(ref table) = table_name.filter(|_| needs_type_conversion) {
                         let schema_info = get_table_schema_info(table, db, &session.id).await;
                         let mappings = extract_column_mappings_from_query(query, table);
                         // debug!("Column mappings for table '{}': {:?}", table, mappings);

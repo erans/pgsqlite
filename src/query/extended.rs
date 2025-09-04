@@ -4071,8 +4071,8 @@ impl ExtendedQueryHandler {
                             // This is a parameter column, get type from portal's inferred types
                             if let Some(ref inferred_types) = portal_inferred_types {
                                 // Try to extract parameter number from column name
-                                let param_idx = if col_name.starts_with('$') {
-                                    col_name[1..].parse::<usize>().ok().map(|n| n - 1)
+                                let param_idx = if let Some(stripped) = col_name.strip_prefix('$') {
+                                    stripped.parse::<usize>().ok().map(|n| n - 1)
                                 } else {
                                     Some(i) // Use column index for ?column?
                                 };
@@ -4948,9 +4948,12 @@ impl ExtendedQueryHandler {
             return Ok(());
         };
         
-        // Handle other DDL with potential JSON translation
+        // Handle other DDL with potential translation
         let translated_query = if query.to_lowercase().contains("json") || query.to_lowercase().contains("jsonb") {
             JsonTranslator::translate_statement(query)?
+        } else if query_starts_with_ignore_case(query, "CREATE INDEX") {
+            // Translate CREATE INDEX with operator classes
+            crate::translator::CreateIndexTranslator::translate(query)
         } else {
             query.to_string()
         };

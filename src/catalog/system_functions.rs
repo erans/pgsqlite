@@ -232,16 +232,12 @@ impl SystemFunctions {
 
     /// pg_get_expr(node_tree, relation_oid) - Returns the expression from a node tree
     async fn pg_get_expr(
-        args: &[Expr],
+        _args: &[Expr],
         _db: Arc<DbHandler>,
     ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
         // SQLite doesn't have expression trees like PostgreSQL
         // Return empty string for now
-        if args.len() >= 2 {
-            Ok(Some("".to_string()))
-        } else {
-            Ok(Some("".to_string()))
-        }
+        Ok(Some("".to_string()))
     }
 
     /// pg_get_userbyid(user_oid) - Returns username for an OID
