@@ -296,9 +296,95 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(Option::<String>::None)
         },
     )?;
-    
+
+    // pg_size_pretty(size_in_bytes) - Format size in bytes as human-readable string
+    conn.create_scalar_function(
+        "pg_size_pretty",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Try to get the value as either i64 or string that can be parsed
+            let size_bytes = match ctx.get_raw(0).data_type() {
+                rusqlite::types::Type::Integer => ctx.get::<i64>(0)?,
+                rusqlite::types::Type::Text => {
+                    let text: String = ctx.get(0)?;
+                    match text.parse::<i64>() {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Option::<String>::None), // Return NULL for invalid strings
+                    }
+                }
+                rusqlite::types::Type::Null => {
+                    return Ok(Option::<String>::None);
+                }
+                _ => {
+                    return Err(rusqlite::Error::UserFunctionError("Invalid size type".into()));
+                }
+            };
+
+            Ok(Some(format_size_pretty(size_bytes)))
+        },
+    )?;
+
+    // pg_size_pretty() - No argument version returns NULL
+    conn.create_scalar_function(
+        "pg_size_pretty",
+        0,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |_ctx| {
+            Ok(Option::<String>::None)
+        },
+    )?;
+
     debug!("System functions registered successfully");
     Ok(())
+}
+
+/// Format size in bytes as human-readable string using PostgreSQL's algorithm
+/// Uses binary prefixes: 1 kB = 1024 bytes, 1 MB = 1024² bytes, etc.
+/// Based on PostgreSQL source code in src/backend/utils/adt/dbsize.c
+fn format_size_pretty(mut size: i64) -> String {
+    let abs_size = size.abs() as u64;
+
+    // PostgreSQL unit definitions
+    const BYTES_LIMIT: u64 = 10 * 1024;  // 10240 bytes
+    const UNIT_LIMIT: u64 = 20 * 1024 - 1;  // 20479 (for kB, MB, GB, TB, PB)
+
+    // Check if we should display as bytes
+    if abs_size < BYTES_LIMIT {
+        return format!("{} bytes", size);
+    }
+
+    // Convert to kB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_kb = size.abs() as u64;
+    if abs_size_kb < UNIT_LIMIT {
+        return format!("{} kB", size);
+    }
+
+    // Convert to MB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_mb = size.abs() as u64;
+    if abs_size_mb < UNIT_LIMIT {
+        return format!("{} MB", size);
+    }
+
+    // Convert to GB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_gb = size.abs() as u64;
+    if abs_size_gb < UNIT_LIMIT {
+        return format!("{} GB", size);
+    }
+
+    // Convert to TB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_tb = size.abs() as u64;
+    if abs_size_tb < UNIT_LIMIT {
+        return format!("{} TB", size);
+    }
+
+    // Convert to PB (final unit)
+    size = (size + 512) / 1024; // Half-rounded division
+    format!("{} PB", size)
 }
 
 #[cfg(test)]

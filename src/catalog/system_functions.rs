@@ -23,6 +23,7 @@ impl SystemFunctions {
             "pg_get_userbyid" => Self::pg_get_userbyid(args).await,
             "pg_get_indexdef" => Self::pg_get_indexdef(args, db).await,
             "to_regtype" => Self::to_regtype(args, db).await,
+            "pg_size_pretty" => Self::pg_size_pretty(args).await,
             _ => Ok(None), // Unknown function, let it pass through
         }
     }
@@ -364,6 +365,84 @@ impl SystemFunctions {
             Some(oid) => Ok(Some(oid.to_string())),
             None => Ok(Some("NULL".to_string())),
         }
+    }
+
+    /// pg_size_pretty(size_in_bytes) - Formats a size in bytes as a human-readable string
+    /// Uses PostgreSQL-compatible binary prefixes (powers of 2)
+    async fn pg_size_pretty(
+        args: &[Expr],
+    ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        if args.is_empty() {
+            return Ok(Some("NULL".to_string()));
+        }
+
+        // Extract the size in bytes from the first argument
+        let size_bytes = match &args[0] {
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::Number(n, _), .. }) => {
+                n.parse::<i64>().ok()
+            }
+            Expr::Value(sqlparser::ast::ValueWithSpan { value: sqlparser::ast::Value::SingleQuotedString(s), .. }) => {
+                s.parse::<i64>().ok()
+            }
+            Expr::Identifier(ident) => {
+                // Handle column references - try to parse as number
+                ident.value.parse::<i64>().ok()
+            }
+            _ => None,
+        };
+
+        match size_bytes {
+            Some(bytes) => Ok(Some(Self::format_size_pretty(bytes))),
+            None => Ok(Some("NULL".to_string())),
+        }
+    }
+
+    /// Format size in bytes as human-readable string using PostgreSQL's algorithm
+    /// Uses binary prefixes: 1 kB = 1024 bytes, 1 MB = 1024² bytes, etc.
+    /// Based on PostgreSQL source code in src/backend/utils/adt/dbsize.c
+    fn format_size_pretty(mut size: i64) -> String {
+        let abs_size = size.abs() as u64;
+
+        // PostgreSQL unit definitions
+        const BYTES_LIMIT: u64 = 10 * 1024;  // 10240 bytes
+        const UNIT_LIMIT: u64 = 20 * 1024 - 1;  // 20479 (for kB, MB, GB, TB, PB)
+
+        // Check if we should display as bytes
+        if abs_size < BYTES_LIMIT {
+            return format!("{} bytes", size);
+        }
+
+        // Convert to kB and check limit
+        size = (size + 512) / 1024; // Half-rounded division
+        let abs_size_kb = size.abs() as u64;
+        if abs_size_kb < UNIT_LIMIT {
+            return format!("{} kB", size);
+        }
+
+        // Convert to MB and check limit
+        size = (size + 512) / 1024; // Half-rounded division
+        let abs_size_mb = size.abs() as u64;
+        if abs_size_mb < UNIT_LIMIT {
+            return format!("{} MB", size);
+        }
+
+        // Convert to GB and check limit
+        size = (size + 512) / 1024; // Half-rounded division
+        let abs_size_gb = size.abs() as u64;
+        if abs_size_gb < UNIT_LIMIT {
+            return format!("{} GB", size);
+        }
+
+        // Convert to TB and check limit
+        size = (size + 512) / 1024; // Half-rounded division
+        let abs_size_tb = size.abs() as u64;
+        if abs_size_tb < UNIT_LIMIT {
+            return format!("{} TB", size);
+        }
+
+        // Convert to PB (final unit)
+        size = (size + 512) / 1024; // Half-rounded division
+        format!("{} PB", size)
     }
 }
 

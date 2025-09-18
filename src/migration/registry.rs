@@ -19,7 +19,8 @@ lazy_static! {
         register_v10_typcategory_support(&mut registry);
         register_v11_fix_catalog_views(&mut registry);
         register_v12_comment_system(&mut registry);
-        
+        register_v13_pg_stat_views(&mut registry);
+
         registry
     };
 }
@@ -1574,5 +1575,182 @@ fn register_v12_comment_system(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![11],
+    });
+}
+
+/// Version 13: PostgreSQL statistics and system views
+fn register_v13_pg_stat_views(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(13, Migration {
+        version: 13,
+        name: "pg_stat_views",
+        description: "Add minimal PostgreSQL statistics views, pg_database, and pg_foreign_data_wrapper for compatibility",
+        up: MigrationAction::Sql(r#"
+            -- Create pg_stat_activity view with minimal but essential columns
+            CREATE VIEW IF NOT EXISTS pg_stat_activity AS
+            SELECT
+                1 as datid,                                            -- Database OID
+                'main' as datname,                                     -- Database name (SQLite default)
+                1 as pid,                                              -- Process ID (static in SQLite)
+                NULL as leader_pid,                                    -- Parallel leader PID (not applicable)
+                10 as usesysid,                                        -- User OID (default owner)
+                'postgres' as usename,                                 -- Username (default)
+                'pgsqlite' as application_name,                        -- Application name
+                NULL as client_addr,                                   -- Client address (local)
+                NULL as client_hostname,                               -- Client hostname
+                NULL as client_port,                                   -- Client port
+                datetime('now') as backend_start,                      -- Backend start time
+                NULL as xact_start,                                    -- Transaction start
+                NULL as query_start,                                   -- Query start
+                datetime('now') as state_change,                       -- Last state change
+                NULL as wait_event_type,                               -- Wait event type
+                NULL as wait_event,                                    -- Wait event name
+                'idle' as state,                                       -- Current state
+                NULL as backend_xid,                                   -- Transaction ID
+                NULL as backend_xmin,                                  -- Transaction min ID
+                NULL as query_id,                                      -- Query identifier
+                '<IDLE>' as query,                                     -- Current query
+                'client backend' as backend_type;                      -- Backend type
+
+            -- Create pg_stat_database view with database-wide statistics
+            CREATE VIEW IF NOT EXISTS pg_stat_database AS
+            SELECT
+                1 as datid,                                            -- Database OID
+                'main' as datname,                                     -- Database name
+                1 as numbackends,                                      -- Number of backends
+                0 as xact_commit,                                      -- Committed transactions
+                0 as xact_rollback,                                    -- Rolled back transactions
+                0 as blks_read,                                        -- Blocks read
+                0 as blks_hit,                                         -- Blocks hit
+                0 as tup_returned,                                     -- Tuples returned
+                0 as tup_fetched,                                      -- Tuples fetched
+                0 as tup_inserted,                                     -- Tuples inserted
+                0 as tup_updated,                                      -- Tuples updated
+                0 as tup_deleted,                                      -- Tuples deleted
+                0 as conflicts,                                        -- Conflicts
+                0 as temp_files,                                       -- Temp files
+                0 as temp_bytes,                                       -- Temp bytes
+                0 as deadlocks,                                        -- Deadlocks
+                0 as checksum_failures,                                -- Checksum failures
+                NULL as checksum_last_failure,                         -- Last checksum failure
+                0 as blk_read_time,                                    -- Block read time
+                0 as blk_write_time,                                   -- Block write time
+                NULL as session_time,                                  -- Session time
+                NULL as active_time,                                   -- Active time
+                NULL as idle_in_transaction_time,                      -- Idle in transaction time
+                0 as sessions,                                         -- Sessions
+                0 as sessions_abandoned,                               -- Abandoned sessions
+                0 as sessions_fatal,                                   -- Fatal sessions
+                0 as sessions_killed,                                  -- Killed sessions
+                datetime('now') as stats_reset;                        -- Stats reset time
+
+            -- Create pg_stat_user_tables view with table access statistics
+            CREATE VIEW IF NOT EXISTS pg_stat_user_tables AS
+            SELECT
+                CAST(oid_hash(name) AS TEXT) as relid,                 -- Table OID
+                'public' as schemaname,                                -- Schema name
+                name as relname,                                       -- Table name
+                0 as seq_scan,                                         -- Sequential scans
+                NULL as last_seq_scan,                                 -- Last sequential scan
+                0 as seq_tup_read,                                     -- Sequential tuples read
+                0 as idx_scan,                                         -- Index scans
+                NULL as last_idx_scan,                                 -- Last index scan
+                0 as idx_tup_fetch,                                    -- Index tuples fetched
+                0 as n_tup_ins,                                        -- Tuples inserted
+                0 as n_tup_upd,                                        -- Tuples updated
+                0 as n_tup_del,                                        -- Tuples deleted
+                0 as n_tup_hot_upd,                                    -- Hot updated tuples
+                0 as n_tup_newpage_upd,                                -- New page updated tuples
+                0 as n_live_tup,                                       -- Live tuples
+                0 as n_dead_tup,                                       -- Dead tuples
+                0 as n_mod_since_analyze,                              -- Modified since analyze
+                0 as n_ins_since_vacuum,                               -- Inserts since vacuum
+                NULL as last_vacuum,                                   -- Last vacuum
+                NULL as last_autovacuum,                               -- Last autovacuum
+                NULL as last_analyze,                                  -- Last analyze
+                NULL as last_autoanalyze,                              -- Last autoanalyze
+                0 as vacuum_count,                                     -- Vacuum count
+                0 as autovacuum_count,                                 -- Autovacuum count
+                0 as analyze_count,                                    -- Analyze count
+                0 as autoanalyze_count                                 -- Autoanalyze count
+            FROM sqlite_master
+            WHERE type = 'table'
+            AND name NOT LIKE '__pgsqlite_%'
+            AND name NOT LIKE 'sqlite_%';
+
+            -- Create pg_database view with database catalog information
+            CREATE VIEW IF NOT EXISTS pg_database AS
+            SELECT
+                1 as oid,                                              -- Database OID
+                'main' as datname,                                     -- Database name
+                10 as datdba,                                          -- Database owner OID
+                6 as encoding,                                         -- Encoding (UTF8)
+                'c' as datlocprovider,                                 -- Locale provider
+                false as datistemplate,                                -- Is template
+                true as datallowconn,                                  -- Allow connections
+                false as dathasloginevt,                               -- Has login events
+                -1 as datconnlimit,                                    -- Connection limit
+                1 as datfrozenxid,                                     -- Frozen transaction ID
+                1 as datminmxid,                                       -- Minimum multixact ID
+                1663 as dattablespace,                                 -- Default tablespace OID
+                'en_US.UTF-8' as datcollate,                           -- Collation
+                'en_US.UTF-8' as datctype,                             -- Character type
+                'en_US.UTF-8' as datlocale,                            -- Locale
+                NULL as daticurules,                                   -- ICU rules
+                NULL as datcollversion,                                -- Collation version
+                NULL as datacl;                                        -- Access control list
+
+            -- Create pg_foreign_data_wrapper view (empty but compatible)
+            CREATE VIEW IF NOT EXISTS pg_foreign_data_wrapper AS
+            SELECT
+                NULL as oid,                                           -- FDW OID
+                NULL as fdwname,                                       -- FDW name
+                NULL as fdwowner,                                      -- FDW owner OID
+                NULL as fdwhandler,                                    -- Handler function OID
+                NULL as fdwvalidator,                                  -- Validator function OID
+                NULL as fdwacl,                                        -- Access control list
+                NULL as fdwoptions                                     -- FDW options
+            WHERE 0 = 1;  -- Always empty (no FDWs in SQLite)
+
+            -- Additional statistics views commonly queried
+            CREATE VIEW IF NOT EXISTS pg_stat_all_tables AS
+            SELECT * FROM pg_stat_user_tables;
+
+            CREATE VIEW IF NOT EXISTS pg_stat_user_indexes AS
+            SELECT
+                NULL as relid,                                         -- Table OID
+                NULL as indexrelid,                                    -- Index OID
+                'public' as schemaname,                                -- Schema name
+                NULL as relname,                                       -- Table name
+                NULL as indexrelname,                                  -- Index name
+                0 as idx_scan,                                         -- Index scans
+                0 as idx_tup_read,                                     -- Index tuples read
+                0 as idx_tup_fetch                                     -- Index tuples fetched
+            WHERE 0 = 1;  -- Empty view
+
+            CREATE VIEW IF NOT EXISTS pg_stat_all_indexes AS
+            SELECT * FROM pg_stat_user_indexes;
+
+            -- Update schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '13', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove all the statistics views
+            DROP VIEW IF EXISTS pg_stat_activity;
+            DROP VIEW IF EXISTS pg_stat_database;
+            DROP VIEW IF EXISTS pg_stat_user_tables;
+            DROP VIEW IF EXISTS pg_stat_all_tables;
+            DROP VIEW IF EXISTS pg_stat_user_indexes;
+            DROP VIEW IF EXISTS pg_stat_all_indexes;
+            DROP VIEW IF EXISTS pg_database;
+            DROP VIEW IF EXISTS pg_foreign_data_wrapper;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '12', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![12],
     });
 }

@@ -858,6 +858,30 @@ impl QueryExecutor {
                 // Check if it's a SET command
                 if crate::query::SetHandler::is_set_command(query_to_execute) {
                     crate::query::SetHandler::handle_set_command(framed, session, query_to_execute).await
+                } else if query_to_execute.trim().to_uppercase().starts_with("GRANT") {
+                    // Handle GRANT commands
+                    info!("GRANT command received - SQLite doesn't have user/privilege management, succeeding with no-op");
+                    framed.send(BackendMessage::CommandComplete {
+                        tag: "GRANT".to_string()
+                    }).await
+                        .map_err(PgSqliteError::Io)?;
+                    Ok(())
+                } else if query_to_execute.trim().to_uppercase().starts_with("REVOKE") {
+                    // Handle REVOKE commands (often used with GRANT)
+                    info!("REVOKE command received - SQLite doesn't have user/privilege management, succeeding with no-op");
+                    framed.send(BackendMessage::CommandComplete {
+                        tag: "REVOKE".to_string()
+                    }).await
+                        .map_err(PgSqliteError::Io)?;
+                    Ok(())
+                } else if query_to_execute.trim().to_uppercase().starts_with("FLUSH") {
+                    // Handle FLUSH commands
+                    info!("FLUSH command received - SQLite doesn't have caching layers like PostgreSQL, succeeding with no-op");
+                    framed.send(BackendMessage::CommandComplete {
+                        tag: "FLUSH".to_string()
+                    }).await
+                        .map_err(PgSqliteError::Io)?;
+                    Ok(())
                 } else {
                     // Try to execute as-is
                     Self::execute_generic(framed, db, session, query_to_execute, query_router).await
@@ -1730,7 +1754,68 @@ impl QueryExecutor {
         use crate::translator::CreateTableTranslator;
         use crate::query::{QueryTypeDetector, QueryType};
         use crate::ddl::EnumDdlHandler;
-        
+        use tracing::info;
+
+        // Check if this is a CREATE DATABASE statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
+           query.trim_start()[6..].trim_start().to_uppercase().starts_with("DATABASE") {
+            info!("CREATE DATABASE command received - SQLite doesn't have database concept, succeeding with no-op");
+
+            // Send command complete
+            framed.send(BackendMessage::CommandComplete {
+                tag: "CREATE DATABASE".to_string()
+            }).await
+                .map_err(PgSqliteError::Io)?;
+
+            return Ok(());
+        }
+
+        // Check if this is a DROP DATABASE statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
+           query.trim_start()[4..].trim_start().to_uppercase().starts_with("DATABASE") {
+            info!("DROP DATABASE command received - SQLite doesn't have database concept, succeeding with no-op");
+
+            // Send command complete
+            framed.send(BackendMessage::CommandComplete {
+                tag: "DROP DATABASE".to_string()
+            }).await
+                .map_err(PgSqliteError::Io)?;
+
+            return Ok(());
+        }
+
+        // Check if this is a CREATE USER/ROLE statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) {
+            let after_create = query.trim_start()[6..].trim_start().to_uppercase();
+            if after_create.starts_with("USER") || after_create.starts_with("ROLE") {
+                info!("CREATE USER/ROLE command received - SQLite doesn't have user management, succeeding with no-op");
+
+                let tag = if after_create.starts_with("USER") { "CREATE USER" } else { "CREATE ROLE" };
+                framed.send(BackendMessage::CommandComplete {
+                    tag: tag.to_string()
+                }).await
+                    .map_err(PgSqliteError::Io)?;
+
+                return Ok(());
+            }
+        }
+
+        // Check if this is a DROP USER/ROLE statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) {
+            let after_drop = query.trim_start()[4..].trim_start().to_uppercase();
+            if after_drop.starts_with("USER") || after_drop.starts_with("ROLE") {
+                info!("DROP USER/ROLE command received - SQLite doesn't have user management, succeeding with no-op");
+
+                let tag = if after_drop.starts_with("USER") { "DROP USER" } else { "DROP ROLE" };
+                framed.send(BackendMessage::CommandComplete {
+                    tag: tag.to_string()
+                }).await
+                    .map_err(PgSqliteError::Io)?;
+
+                return Ok(());
+            }
+        }
+
         // Check if this is an ENUM DDL statement
         if EnumDdlHandler::is_enum_ddl(query) {
             // Handle ENUM DDL with session connections
@@ -1992,6 +2077,12 @@ impl QueryExecutor {
                     "CREATE TABLE".to_string()
                 } else if after_create.to_uppercase().starts_with("INDEX") {
                     "CREATE INDEX".to_string()
+                } else if after_create.to_uppercase().starts_with("DATABASE") {
+                    "CREATE DATABASE".to_string()
+                } else if after_create.to_uppercase().starts_with("USER") {
+                    "CREATE USER".to_string()
+                } else if after_create.to_uppercase().starts_with("ROLE") {
+                    "CREATE ROLE".to_string()
                 } else {
                     "CREATE".to_string()
                 }
@@ -2000,6 +2091,12 @@ impl QueryExecutor {
                 let after_drop = query.trim_start()[4..].trim_start();
                 if after_drop.to_uppercase().starts_with("TABLE") {
                     "DROP TABLE".to_string()
+                } else if after_drop.to_uppercase().starts_with("DATABASE") {
+                    "DROP DATABASE".to_string()
+                } else if after_drop.to_uppercase().starts_with("USER") {
+                    "DROP USER".to_string()
+                } else if after_drop.to_uppercase().starts_with("ROLE") {
+                    "DROP ROLE".to_string()
                 } else {
                     "DROP".to_string()
                 }

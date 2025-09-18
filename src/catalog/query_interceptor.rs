@@ -39,16 +39,19 @@ impl CatalogInterceptor {
         }
         
         // Check for catalog tables
-        let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") || 
+        let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
            lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
            lower_query.contains("pg_class") || lower_query.contains("pg_attribute") ||
-           lower_query.contains("pg_enum") || lower_query.contains("information_schema");
+           lower_query.contains("pg_enum") || lower_query.contains("information_schema") ||
+           lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
+           lower_query.contains("pg_foreign_data_wrapper");
            
         // Check for system functions
-        let has_system_functions = lower_query.contains("to_regtype") || 
+        let has_system_functions = lower_query.contains("to_regtype") ||
            lower_query.contains("pg_get_constraintdef") || lower_query.contains("pg_table_is_visible") ||
            lower_query.contains("format_type") || lower_query.contains("pg_get_expr") ||
-           lower_query.contains("pg_get_userbyid") || lower_query.contains("pg_get_indexdef");
+           lower_query.contains("pg_get_userbyid") || lower_query.contains("pg_get_indexdef") ||
+           lower_query.contains("pg_size_pretty");
            
         if !has_catalog_tables && !has_system_functions {
             return None;
