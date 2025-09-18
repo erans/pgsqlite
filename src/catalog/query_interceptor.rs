@@ -329,6 +329,11 @@ impl CatalogInterceptor {
             if table_name.contains("information_schema.tables") {
                 return Some(Self::handle_information_schema_tables_query(select, &db).await);
             }
+
+            // Handle pg_database queries
+            if table_name.contains("pg_database") || table_name.contains("pg_catalog.pg_database") {
+                return Some(Self::handle_pg_database_query(select, &db).await);
+            }
         }
         None
     }
@@ -1209,6 +1214,68 @@ impl CatalogInterceptor {
             columns: selected_columns,
             rows,
             rows_affected: rows_count,
+        }
+    }
+
+    async fn handle_pg_database_query(select: &Select, _db: &DbHandler) -> DbResponse {
+        debug!("Handling pg_database query");
+
+        // Define pg_database columns (PostgreSQL 17 compatible)
+        let all_columns = vec![
+            "oid".to_string(),
+            "datname".to_string(),
+            "datdba".to_string(),
+            "encoding".to_string(),
+            "datlocprovider".to_string(),
+            "datistemplate".to_string(),
+            "datallowconn".to_string(),
+            "dathasloginevt".to_string(),
+            "datconnlimit".to_string(),
+            "datfrozenxid".to_string(),
+            "datminmxid".to_string(),
+            "dattablespace".to_string(),
+            "datcollate".to_string(),
+            "datctype".to_string(),
+            "datlocale".to_string(),
+            "daticurules".to_string(),
+            "datcollversion".to_string(),
+            "datacl".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Single database entry representing the current SQLite database
+        let full_row: Vec<Option<Vec<u8>>> = vec![
+            Some("1".to_string().into_bytes()),                        // oid
+            Some("main".to_string().into_bytes()),                     // datname - the key field!
+            Some("10".to_string().into_bytes()),                       // datdba (owner)
+            Some("6".to_string().into_bytes()),                        // encoding (UTF8)
+            Some("d".to_string().into_bytes()),                        // datlocprovider (default)
+            Some("false".to_string().into_bytes()),                    // datistemplate (false)
+            Some("true".to_string().into_bytes()),                     // datallowconn (true)
+            Some("false".to_string().into_bytes()),                    // dathasloginevt (false)
+            Some("-1".to_string().into_bytes()),                       // datconnlimit (no limit)
+            Some("1".to_string().into_bytes()),                        // datfrozenxid
+            Some("1".to_string().into_bytes()),                        // datminmxid
+            Some("1663".to_string().into_bytes()),                     // dattablespace (default)
+            Some("en_US.UTF-8".to_string().into_bytes()),              // datcollate
+            Some("en_US.UTF-8".to_string().into_bytes()),              // datctype
+            None,                                                      // datlocale
+            None,                                                      // daticurules
+            None,                                                      // datcollversion
+            None,                                                      // datacl
+        ];
+
+        // Project only requested columns
+        let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+            .map(|&idx| full_row[idx].clone())
+            .collect();
+
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![projected_row],
+            rows_affected: 1,
         }
     }
 }
