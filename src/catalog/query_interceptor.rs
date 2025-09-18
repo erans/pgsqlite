@@ -320,6 +320,11 @@ impl CatalogInterceptor {
                 return (PgEnumHandler::handle_query(select, &db).await).ok();
             }
             
+            // Handle information_schema.schemata queries
+            if table_name.contains("information_schema.schemata") {
+                return Some(Self::handle_information_schema_schemata_query(select, &db).await);
+            }
+
             // Handle information_schema.tables queries
             if table_name.contains("information_schema.tables") {
                 return Some(Self::handle_information_schema_tables_query(select, &db).await);
@@ -1049,11 +1054,86 @@ impl CatalogInterceptor {
         })
     }
 
+    /// Extract selected columns from a SELECT query for information_schema views
+    fn extract_selected_columns(select: &Select, all_columns: &[String]) -> (Vec<String>, Vec<usize>) {
+        if select.projection.len() == 1 {
+            if let SelectItem::Wildcard(_) = &select.projection[0] {
+                // SELECT * - return all columns
+                return (all_columns.to_vec(), (0..all_columns.len()).collect::<Vec<_>>());
+            }
+        }
+
+        // Extract specific columns
+        let mut cols = Vec::new();
+        let mut indices = Vec::new();
+        for item in &select.projection {
+            if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
+                let col_name = ident.value.to_string();
+                if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                    cols.push(col_name);
+                    indices.push(idx);
+                }
+            }
+        }
+        (cols, indices)
+    }
+
+    async fn handle_information_schema_schemata_query(select: &Select, _db: &DbHandler) -> DbResponse {
+        debug!("Handling information_schema.schemata query");
+
+        // Define information_schema.schemata columns
+        let all_columns = vec![
+            "catalog_name".to_string(),
+            "schema_name".to_string(),
+            "schema_owner".to_string(),
+            "default_character_set_catalog".to_string(),
+            "default_character_set_schema".to_string(),
+            "default_character_set_name".to_string(),
+            "sql_path".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Define available schemas
+        let schemas = vec![
+            ("main", "public", "postgres"),      // Default public schema
+            ("main", "pg_catalog", "postgres"),  // System catalog schema
+            ("main", "information_schema", "postgres"), // Information schema
+        ];
+
+        let mut rows = Vec::new();
+        for (catalog, schema, owner) in schemas {
+            let full_row: Vec<Option<Vec<u8>>> = vec![
+                Some(catalog.to_string().into_bytes()),     // catalog_name
+                Some(schema.to_string().into_bytes()),      // schema_name
+                Some(owner.to_string().into_bytes()),       // schema_owner
+                None,                                       // default_character_set_catalog
+                None,                                       // default_character_set_schema
+                None,                                       // default_character_set_name
+                None,                                       // sql_path
+            ];
+
+            let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                .map(|&idx| full_row[idx].clone())
+                .collect();
+
+            rows.push(projected_row);
+        }
+
+        let rows_affected = rows.len();
+        DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected,
+        }
+    }
+
     async fn handle_information_schema_tables_query(select: &Select, db: &DbHandler) -> DbResponse {
         debug!("Handling information_schema.tables query");
-        
-        // Get list of tables from SQLite
-        let tables_response = match db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
+
+        // Get list of tables and views from SQLite
+        let tables_response = match db.query("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
             Ok(response) => response,
             Err(_) => return DbResponse {
                 columns: vec!["table_name".to_string()],
@@ -1061,8 +1141,8 @@ impl CatalogInterceptor {
                 rows_affected: 0,
             },
         };
-        
-        // Define information_schema.tables columns
+
+        // Define information_schema.tables columns (enhanced with all PostgreSQL standard columns)
         let all_columns = vec![
             "table_catalog".to_string(),
             "table_schema".to_string(),
@@ -1073,69 +1153,56 @@ impl CatalogInterceptor {
             "user_defined_type_catalog".to_string(),
             "user_defined_type_schema".to_string(),
             "user_defined_type_name".to_string(),
+            "is_insertable_into".to_string(),
+            "is_typed".to_string(),
+            "commit_action".to_string(),
         ];
-        
-        // Determine which columns to return based on SELECT clause
-        let (selected_columns, column_indices) = if select.projection.len() == 1 {
-            if let SelectItem::Wildcard(_) = &select.projection[0] {
-                // SELECT * - return all columns
-                (all_columns.clone(), (0..all_columns.len()).collect::<Vec<_>>())
-            } else {
-                // Extract specific columns
-                let mut cols = Vec::new();
-                let mut indices = Vec::new();
-                for item in &select.projection {
-                    if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
-                        let col_name = ident.value.to_string();
-                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                            cols.push(col_name);
-                            indices.push(idx);
-                        }
-                    }
-                }
-                (cols, indices)
-            }
-        } else {
-            // Multiple specific columns
-            let mut cols = Vec::new();
-            let mut indices = Vec::new();
-            for item in &select.projection {
-                if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
-                    let col_name = ident.value.to_string();
-                    if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                        cols.push(col_name);
-                        indices.push(idx);
-                    }
-                }
-            }
-            (cols, indices)
-        };
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
         
         // Build rows
         let mut rows = Vec::new();
         for table_row in &tables_response.rows {
-            if let Some(Some(table_name_bytes)) = table_row.first() {
-                let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
-                
-                // Create full row with all columns
-                let full_row: Vec<Option<Vec<u8>>> = vec![
-                    Some("main".to_string().into_bytes()),        // table_catalog
-                    Some("public".to_string().into_bytes()),      // table_schema  
-                    Some(table_name.into_bytes()),                // table_name
-                    Some("BASE TABLE".to_string().into_bytes()),  // table_type
-                    None,                                         // self_referencing_column_name
-                    None,                                         // reference_generation
-                    None,                                         // user_defined_type_catalog
-                    None,                                         // user_defined_type_schema
-                    None,                                         // user_defined_type_name
-                ];
-                
-                // Project only the requested columns
-                let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
-                    .map(|&idx| full_row[idx].clone())
-                    .collect();
-                
-                rows.push(projected_row);
+            if table_row.len() >= 2 {
+                if let (Some(Some(table_name_bytes)), Some(Some(table_type_bytes))) =
+                    (table_row.get(0), table_row.get(1)) {
+                    let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
+                    let sqlite_type = String::from_utf8_lossy(table_type_bytes).to_string();
+
+                    // Map SQLite type to PostgreSQL table_type
+                    let table_type = match sqlite_type.as_str() {
+                        "table" => "BASE TABLE",
+                        "view" => "VIEW",
+                        _ => "BASE TABLE", // Default fallback
+                    };
+
+                    // Determine if table is insertable (views are not)
+                    let is_insertable = if table_type == "VIEW" { "NO" } else { "YES" };
+
+                    // Create full row with all columns
+                    let full_row: Vec<Option<Vec<u8>>> = vec![
+                        Some("main".to_string().into_bytes()),        // table_catalog
+                        Some("public".to_string().into_bytes()),      // table_schema
+                        Some(table_name.into_bytes()),                // table_name
+                        Some(table_type.to_string().into_bytes()),    // table_type
+                        None,                                         // self_referencing_column_name
+                        None,                                         // reference_generation
+                        None,                                         // user_defined_type_catalog
+                        None,                                         // user_defined_type_schema
+                        None,                                         // user_defined_type_name
+                        Some(is_insertable.to_string().into_bytes()), // is_insertable_into
+                        Some("NO".to_string().into_bytes()),          // is_typed
+                        None,                                         // commit_action
+                    ];
+
+                    // Project only the requested columns
+                    let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                        .map(|&idx| full_row[idx].clone())
+                        .collect();
+
+                    rows.push(projected_row);
+                }
             }
         }
         
