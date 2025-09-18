@@ -2306,3 +2306,113 @@ Catalog queries were failing with UnexpectedMessage errors when using the extend
 5. **Test Infrastructure**: Improved diagnostic test handling
    - Trace tests that intentionally panic are now marked with #[ignore]
    - Can still be run manually for debugging with --ignored flag
+
+### 🚀 CRITICAL: ORM Framework Catalog Support - MAJOR PROGRESS (2025-09-18)
+
+#### Background
+Research into Django, Rails, SQLAlchemy, and Ecto revealed critical missing PostgreSQL system catalog support needed for full ORM compatibility. These catalogs are heavily queried by ORMs for schema introspection, foreign key discovery, constraint management, and index handling.
+
+**🎉 UPDATE (2025-09-18)**: Major milestone achieved with full pg_constraint support! Foreign key introspection now works across all major ORMs.
+
+#### Currently Implemented ✅
+- [x] **pg_database** - Database metadata (2025-09-17)
+- [x] **pg_type** - Basic type information
+- [x] **pg_class** - Table/relation information
+- [x] **pg_attribute** - Basic column information
+- [x] **pg_namespace** - Schema information
+- [x] **pg_enum** - Enum type support
+- [x] **pg_range** - Range type support
+- [x] **information_schema.schemata** - Schema listing (2025-09-17)
+- [x] **information_schema.tables** - Table listing (2025-09-17)
+
+#### Tier 1: Critical for ORM Compatibility (High Priority)
+- [x] **pg_constraint** - Foreign keys, primary keys, constraints ✅ **COMPLETED (2025-09-18)**
+  - [x] Constraint type identification (CHECK, FOREIGN KEY, PRIMARY KEY, UNIQUE)
+  - [x] Foreign key relationships with source/target tables and columns
+  - [x] Constraint definitions and enforcement rules
+  - [x] ON UPDATE/ON DELETE actions for foreign keys
+  - [x] Used by: Django inspectdb, Rails migrations, SQLAlchemy reflection
+  - [x] Auto-population from CREATE TABLE statements across all execution paths
+  - [x] Regex-based foreign key detection with table-level and inline syntax support
+  - [x] Comprehensive constraint type support (primary keys, foreign keys, unique constraints)
+- [ ] **information_schema.columns** - Portable column introspection
+  - [ ] Column names, data types, nullability
+  - [ ] Default values and column positions
+  - [ ] Character maximum length and numeric precision/scale
+  - [ ] Cross-database compatibility layer for ORMs
+  - [ ] Used by: Django inspectdb, SQLAlchemy reflection
+- [ ] **information_schema.key_column_usage** - Key relationships
+  - [ ] Primary key and foreign key column mapping
+  - [ ] Ordinal positions within keys
+  - [ ] Constraint name to column relationships
+  - [ ] Used by: Django, Rails constraint discovery
+- [ ] **information_schema.table_constraints** - Constraint metadata
+  - [ ] Constraint names and types
+  - [ ] Table and schema associations
+  - [ ] Check constraint definitions
+  - [ ] Used by: All ORMs for constraint discovery
+
+#### Tier 2: Important for Advanced Features (Medium Priority)
+- [ ] **pg_index** - Index management
+  - [ ] Index definitions and types (btree, gin, gist, etc.)
+  - [ ] Unique and partial index information
+  - [ ] Index column mapping and expressions
+  - [ ] Used by: Rails index discovery, SQLAlchemy reflection
+- [ ] **Enhanced pg_attribute** - Column defaults and constraints
+  - [ ] Column default expressions
+  - [ ] NOT NULL constraints
+  - [ ] Generated column information
+  - [ ] Storage and alignment details
+- [ ] **pg_depend** - Object dependencies
+  - [ ] Sequence ownership by columns
+  - [ ] Dependency tracking for cascading operations
+  - [ ] Used by: Rails sequence discovery
+
+#### Tier 3: Nice to Have (Lower Priority)
+- [ ] **information_schema.referential_constraints** - FK details
+  - [ ] Foreign key constraint details
+  - [ ] Match options and update/delete rules
+  - [ ] Deferrability settings
+- [ ] **pg_stats** - Table statistics
+  - [ ] Column statistics for query planning
+  - [ ] Most common values and frequencies
+  - [ ] Histogram bounds for distribution
+- [ ] **pg_description** - Object comments
+  - [ ] Table and column comments
+  - [ ] Function and type documentation
+  - [ ] Used by: Documentation generation tools
+
+#### ORM-Specific Requirements
+**Django**:
+- Heavily relies on `information_schema.columns` for `inspectdb` command
+- Uses `pg_constraint` for foreign key discovery in migrations
+- Needs `information_schema.table_constraints` for constraint validation
+
+**Rails ActiveRecord**:
+- Uses complex JOINs between `pg_constraint`, `pg_class`, `pg_attribute`, `pg_namespace`
+- Requires `pg_index` for index management and discovery
+- Needs `pg_depend` for sequence ownership detection
+
+**SQLAlchemy**:
+- Uses both `information_schema` and `pg_catalog` for database reflection
+- Requires `pg_constraint` for relationship automap generation
+- Needs comprehensive column metadata for schema introspection
+
+**Ecto**:
+- Benefits from standard `information_schema` views for portability
+- Uses raw SQL for advanced PostgreSQL features
+- Requires basic constraint and index information
+
+#### Implementation Strategy
+1. Start with **pg_constraint** as it's the most critical missing piece
+2. Implement **information_schema.columns** for Django compatibility
+3. Add **information_schema.key_column_usage** and **table_constraints**
+4. Enhance existing **pg_attribute** with defaults and constraints
+5. Add **pg_index** for complete Rails compatibility
+6. Implement remaining Tier 3 items based on user demand
+
+#### Success Metrics
+- Django `inspectdb` command works correctly
+- Rails migration generation and foreign key detection
+- SQLAlchemy reflection and automap functionality
+- Full ORM test suites pass with pgsqlite

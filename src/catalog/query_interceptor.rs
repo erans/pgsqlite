@@ -7,7 +7,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_enum::PgEnumHandler, system_functions::SystemFunctions};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_enum::PgEnumHandler, system_functions::SystemFunctions};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -319,7 +319,22 @@ impl CatalogInterceptor {
             if table_name.contains("pg_enum") || table_name.contains("pg_catalog.pg_enum") {
                 return (PgEnumHandler::handle_query(select, &db).await).ok();
             }
-            
+
+            // Handle pg_constraint queries
+            if table_name.contains("pg_constraint") || table_name.contains("pg_catalog.pg_constraint") {
+                info!("Routing to PgConstraintHandler for table: {}", table_name);
+                return match PgConstraintHandler::handle_query(select, &db).await {
+                    Ok(response) => {
+                        debug!("PgConstraintHandler returned {} rows", response.rows.len());
+                        Some(response)
+                    },
+                    Err(_) => {
+                        // PgConstraintHandler error
+                        None
+                    },
+                };
+            }
+
             // Handle information_schema.schemata queries
             if table_name.contains("information_schema.schemata") {
                 return Some(Self::handle_information_schema_schemata_query(select, &db).await);

@@ -2054,20 +2054,21 @@ impl QueryExecutor {
                 // Datetime conversion is now handled by InsertTranslator and value converters
                 // No need for triggers anymore
                 
-                // Populate PostgreSQL catalog tables with constraint information
-                if let Some(table_name) = extract_table_name_from_create(query) {
-                    db.with_session_connection(&session.id, |conn| {
-                        // Populate pg_constraint, pg_attrdef, and pg_index tables
-                        if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
-                            // Log the error but don't fail the CREATE TABLE operation
-                            debug!("Failed to populate constraints for table {}: {}", table_name, e);
-                        } else {
-                            debug!("Successfully populated constraint catalog tables for table: {}", table_name);
-                        }
-                        Ok(())
-                    }).await?;
-                }
             }
+        }
+
+        // Populate PostgreSQL catalog tables with constraint information for ALL CREATE TABLE statements
+        if let Some(table_name) = extract_table_name_from_create(query) {
+            db.with_session_connection(&session.id, |conn| {
+                // Populate pg_constraint, pg_attrdef, and pg_index tables
+                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                    // Log the error but don't fail the CREATE TABLE operation
+                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                } else {
+                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                }
+                Ok(())
+            }).await?;
         }
         
         let tag = match QueryTypeDetector::detect_query_type(query) {
@@ -2570,7 +2571,7 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
 }
 
 /// Extract table name from CREATE TABLE statement
-fn extract_table_name_from_create(query: &str) -> Option<String> {
+pub fn extract_table_name_from_create(query: &str) -> Option<String> {
     // Look for CREATE TABLE pattern with case-insensitive search
     let create_table_pos = query.as_bytes().windows(12)
         .position(|window| window.eq_ignore_ascii_case(b"CREATE TABLE"))?;

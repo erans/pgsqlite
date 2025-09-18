@@ -3,7 +3,7 @@ use uuid::Uuid;
 use rusqlite::OptionalExtension;
 use crate::cache::SchemaCache;
 use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
-use crate::query::{QueryTypeDetector, QueryType, process_query};
+use crate::query::{QueryTypeDetector, QueryType, process_query, executor::extract_table_name_from_create};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
@@ -608,8 +608,20 @@ impl DbHandler {
             
             // Process query with fast path optimization
             let processed_query = process_query(query, &conn, &self.schema_cache)?;
-            
+
             let rows_affected = conn.execute(&processed_query, [])?;
+
+            // Populate constraints for CREATE TABLE statements
+            if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
+                && let Some(table_name) = extract_table_name_from_create(query) {
+                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
+                    // Log the error but don't fail the CREATE TABLE operation
+                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                } else {
+                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                }
+            }
+
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],
@@ -651,8 +663,20 @@ impl DbHandler {
         self.connection_manager.execute_with_session(session_id, |conn| {
             // Process query with fast path optimization
             let processed_query = process_query(query, conn, &self.schema_cache)?;
-            
+
             let rows_affected = conn.execute(&processed_query, [])?;
+
+            // Populate constraints for CREATE TABLE statements
+            if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
+                && let Some(table_name) = extract_table_name_from_create(query) {
+                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                    // Log the error but don't fail the CREATE TABLE operation
+                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                } else {
+                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                }
+            }
+
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],

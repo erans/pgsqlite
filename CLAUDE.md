@@ -12,6 +12,9 @@ cargo test              # Run unit tests
 cargo check             # Check for errors/warnings
 cargo clippy            # Check for code quality issues
 ./tests/runner/run_ssl_tests.sh  # Run integration tests (from project root)
+
+# Constraint-specific tests
+cargo test --test pg_constraint_test  # Test pg_constraint functionality
 ```
 
 **Pre-commit checklist**: Run ALL of these before committing:
@@ -157,7 +160,19 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-09-04)
+### Recently Fixed (2025-09-18)
+- **PostgreSQL Constraint Support (pg_constraint)**: Full constraint introspection for ORM compatibility
+  - Added comprehensive pg_constraint table population for all CREATE TABLE operations
+  - Supports foreign key, primary key, unique, and check constraint detection
+  - Multi-execution path support: extended protocol, simple query, and db.execute() methods
+  - Regex-based foreign key parsing with table-level and inline syntax support
+  - Proper PostgreSQL type compatibility (TEXT for OIDs, BOOLEAN for flags)
+  - Auto-populates constraints: employees_dept_id_fkey → departments relationship
+  - Enables full ORM constraint introspection for Django, Rails, SQLAlchemy, and Ecto
+  - Files: src/catalog/constraint_populator.rs, src/session/db_handler.rs, src/query/extended.rs
+  - Fixed: "Found 0 foreign key constraints" → "Found 1+ foreign key constraints"
+
+### Previously Fixed (2025-09-04)
 - **PostgreSQL Operator Class Support in CREATE INDEX**: Fixed "near varchar_pattern_ops: syntax error"
   - Added CreateIndexTranslator for PostgreSQL operator class syntax translation
   - Maps `varchar_pattern_ops`, `text_pattern_ops`, `bpchar_pattern_ops` to SQLite `COLLATE BINARY`
@@ -298,6 +313,7 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **DateTime Column Aliases**: Fixed "unable to parse date" errors in SELECT queries with aliases
 
 ### Major Features
+- **PostgreSQL Constraint Support**: Full pg_constraint table with foreign key introspection
 - **Binary Protocol Support**: psycopg3 compatibility with binary format encoders
 - **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
@@ -316,8 +332,29 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - Operators: `@>`, `<@`, `&&`, `||`
 - Functions: unnest(), array_agg() with DISTINCT/ORDER BY
 
-## SQLAlchemy Compatibility
+## ORM Framework Compatibility
 
+**Full ORM compatibility** achieved with comprehensive PostgreSQL catalog support:
+
+### Constraint Introspection ✅
+- **Django**: `inspectdb` command discovers foreign key relationships via `pg_constraint`
+- **Rails**: ActiveRecord association mapping through constraint discovery
+- **SQLAlchemy**: Relationship automap generation with complete constraint metadata
+- **Ecto**: Schema introspection with proper foreign key detection
+
+**Example queries now work correctly:**
+```sql
+-- Foreign key discovery (Django/Rails pattern)
+SELECT conname, contype, conrelid, confrelid FROM pg_constraint WHERE contype = 'f';
+
+-- Constraint metadata (SQLAlchemy pattern)
+SELECT conname, contype, condeferrable, condeferred, convalidated FROM pg_constraint;
+
+-- Primary key discovery (all ORMs)
+SELECT conname, contype, conkey FROM pg_constraint WHERE contype = 'p';
+```
+
+### SQLAlchemy Compatibility
 **Full SQLAlchemy ORM support** with all tests passing for both psycopg2 and psycopg3-text drivers:
 
 ```python

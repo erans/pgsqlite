@@ -33,6 +33,14 @@ static DEFAULT_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bDEFAULT\s+([^,\)]+)").unwrap()
 });
 
+static FOREIGN_KEY_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)FOREIGN\s+KEY\s*\(\s*([^)]+)\s*\)\s+REFERENCES\s+(\w+)\s*\(\s*([^)]+)\s*\)").unwrap()
+});
+
+static INLINE_FOREIGN_KEY_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bREFERENCES\s+(\w+)\s*\(\s*([^)]+)\s*\)").unwrap()
+});
+
 static TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)CREATE\s+TABLE\s+[^(]+\(\s*(.+)\s*\)").unwrap()
 });
@@ -40,7 +48,7 @@ static TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
 /// Populate PostgreSQL catalog tables with constraint information for a newly created table
 pub fn populate_constraints_for_table(conn: &Connection, table_name: &str) -> Result<()> {
     info!("Populating constraints for table: {}", table_name);
-    
+
     // Get the CREATE TABLE statement from SQLite
     let create_sql = get_create_table_sql(conn, table_name)?;
     debug!("CREATE TABLE SQL: {}", create_sql);
@@ -72,10 +80,22 @@ fn get_create_table_sql(conn: &Connection, table_name: &str) -> Result<String> {
 fn generate_table_oid(name: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     name.hash(&mut hasher);
     (((hasher.finish() & 0x7FFFFFFF) % 1000000 + 16384) as i32).to_string()
+}
+
+/// Extract referenced table name from foreign key definition and return its OID
+fn get_referenced_table_oid(_conn: &Connection, definition: &str) -> Result<String> {
+    // Extract table name from "FOREIGN KEY REFERENCES table_name(column)"
+    if let Some(cap) = Regex::new(r"(?i)REFERENCES\s+(\w+)").unwrap().captures(definition)
+        && let Some(table_name) = cap.get(1) {
+            return Ok(generate_table_oid(table_name.as_str()));
+        }
+
+    // Fallback to a default OID if parsing fails
+    Ok("0".to_string())
 }
 
 /// Populate pg_constraint table with constraint information
@@ -83,19 +103,47 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
     let constraints = parse_table_constraints(table_name, create_sql);
     
     for constraint in constraints {
-        conn.execute(
-            "INSERT OR IGNORE INTO pg_constraint (
-                oid, conname, contype, conrelid, conkey, consrc
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            [
-                &constraint.oid,
-                &constraint.name,
-                &constraint.contype,
-                table_oid,
-                &constraint.columns.join(","),
-                &constraint.definition,
-            ]
-        )?;
+        if constraint.contype == "f" {
+            // Foreign key constraint - needs additional fields
+            let ref_table_oid = get_referenced_table_oid(conn, &constraint.definition)?;
+            conn.execute(
+                "INSERT OR IGNORE INTO pg_constraint (
+                    oid, conname, contype, conrelid, confrelid, conkey, confkey,
+                    confupdtype, confdeltype, confmatchtype, conislocal, convalidated
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![
+                    constraint.oid,                           // oid as TEXT
+                    constraint.name,
+                    constraint.contype,
+                    table_oid,                               // conrelid as TEXT
+                    ref_table_oid.parse::<i32>().unwrap_or(0), // confrelid as INTEGER
+                    format!("{{{}}}", constraint.columns.join(",")),
+                    "{1}".to_string(), // Default to column 1 of referenced table
+                    "a".to_string(),   // NO ACTION (default)
+                    "a".to_string(),   // NO ACTION (default)
+                    "s".to_string(),   // SIMPLE (default)
+                    true,              // conislocal as boolean
+                    true,              // convalidated as boolean
+                ]
+            )?;
+        } else {
+            // Other constraint types
+            conn.execute(
+                "INSERT OR IGNORE INTO pg_constraint (
+                    oid, conname, contype, conrelid, conkey, consrc, conislocal, convalidated
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    constraint.oid,     // oid as TEXT
+                    constraint.name,
+                    constraint.contype,
+                    table_oid,         // conrelid as TEXT
+                    format!("{{{}}}", constraint.columns.join(",")),
+                    constraint.definition,
+                    true,              // conislocal as boolean
+                    true,              // convalidated as boolean
+                ]
+            )?;
+        }
         
         debug!("Inserted constraint: {} (type: {}) for table: {}", 
                constraint.name, constraint.contype, table_name);
@@ -279,7 +327,48 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
             });
         }
     }
-    
+
+    // Parse table-level FOREIGN KEY constraints
+    for cap in FOREIGN_KEY_REGEX.captures_iter(create_sql) {
+        if let (Some(local_columns), Some(ref_table), Some(ref_columns)) =
+            (cap.get(1), cap.get(2), cap.get(3)) {
+            let local_cols: Vec<String> = local_columns.as_str()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+            let ref_cols: Vec<String> = ref_columns.as_str()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+
+            let constraint_name = format!("{}_{}_fkey", table_name, local_cols.join("_"));
+            constraints.push(ConstraintInfo {
+                oid: generate_table_oid(&constraint_name),
+                name: constraint_name,
+                contype: "f".to_string(),
+                columns: local_cols,
+                definition: format!("FOREIGN KEY REFERENCES {}({})",
+                                  ref_table.as_str(), ref_cols.join(", ")),
+            });
+        }
+    }
+
+    // Parse inline FOREIGN KEY constraints (column REFERENCES table(column))
+    for cap in INLINE_FOREIGN_KEY_REGEX.captures_iter(create_sql) {
+        if let (Some(column_name), Some(ref_table), Some(ref_column)) =
+            (cap.get(1), cap.get(2), cap.get(3)) {
+            let constraint_name = format!("{}_{}_fkey", table_name, column_name.as_str());
+            constraints.push(ConstraintInfo {
+                oid: generate_table_oid(&constraint_name),
+                name: constraint_name,
+                contype: "f".to_string(),
+                columns: vec![column_name.as_str().to_string()],
+                definition: format!("FOREIGN KEY REFERENCES {}({})",
+                                  ref_table.as_str(), ref_column.as_str()),
+            });
+        }
+    }
+
     constraints
 }
 
