@@ -1,5 +1,5 @@
 mod common;
-use common::{setup_test_server, setup_test_server_with_init};
+use common::setup_test_server_with_init;
 
 #[tokio::test]
 async fn test_information_schema_comprehensive() {

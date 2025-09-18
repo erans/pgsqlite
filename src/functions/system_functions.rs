@@ -343,7 +343,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
 /// Uses binary prefixes: 1 kB = 1024 bytes, 1 MB = 1024² bytes, etc.
 /// Based on PostgreSQL source code in src/backend/utils/adt/dbsize.c
 fn format_size_pretty(mut size: i64) -> String {
-    let abs_size = size.abs() as u64;
+    let abs_size = size.unsigned_abs();
 
     // PostgreSQL unit definitions
     const BYTES_LIMIT: u64 = 10 * 1024;  // 10240 bytes
@@ -356,28 +356,28 @@ fn format_size_pretty(mut size: i64) -> String {
 
     // Convert to kB and check limit
     size = (size + 512) / 1024; // Half-rounded division
-    let abs_size_kb = size.abs() as u64;
+    let abs_size_kb = size.unsigned_abs();
     if abs_size_kb < UNIT_LIMIT {
         return format!("{} kB", size);
     }
 
     // Convert to MB and check limit
     size = (size + 512) / 1024; // Half-rounded division
-    let abs_size_mb = size.abs() as u64;
+    let abs_size_mb = size.unsigned_abs();
     if abs_size_mb < UNIT_LIMIT {
         return format!("{} MB", size);
     }
 
     // Convert to GB and check limit
     size = (size + 512) / 1024; // Half-rounded division
-    let abs_size_gb = size.abs() as u64;
+    let abs_size_gb = size.unsigned_abs();
     if abs_size_gb < UNIT_LIMIT {
         return format!("{} GB", size);
     }
 
     // Convert to TB and check limit
     size = (size + 512) / 1024; // Half-rounded division
-    let abs_size_tb = size.abs() as u64;
+    let abs_size_tb = size.unsigned_abs();
     if abs_size_tb < UNIT_LIMIT {
         return format!("{} TB", size);
     }

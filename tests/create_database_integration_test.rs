@@ -7,7 +7,7 @@ async fn test_create_database_execution() {
     // Create a temporary file database for the test
     let temp_file = format!("/tmp/test_create_database_execution_{}.db", uuid::Uuid::new_v4());
     let db = Arc::new(DbHandler::new(&temp_file).expect("Failed to create database"));
-    let session = Arc::new(SessionState::new("test".to_string(), "test".to_string()));
+    let _session = Arc::new(SessionState::new("test".to_string(), "test".to_string()));
 
     // Test CREATE DATABASE command by executing it directly on the database
     let result = db.query("CREATE DATABASE testdb").await;

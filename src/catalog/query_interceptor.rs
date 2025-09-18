@@ -1056,12 +1056,11 @@ impl CatalogInterceptor {
 
     /// Extract selected columns from a SELECT query for information_schema views
     fn extract_selected_columns(select: &Select, all_columns: &[String]) -> (Vec<String>, Vec<usize>) {
-        if select.projection.len() == 1 {
-            if let SelectItem::Wildcard(_) = &select.projection[0] {
+        if select.projection.len() == 1
+            && let SelectItem::Wildcard(_) = &select.projection[0] {
                 // SELECT * - return all columns
                 return (all_columns.to_vec(), (0..all_columns.len()).collect::<Vec<_>>());
             }
-        }
 
         // Extract specific columns
         let mut cols = Vec::new();
@@ -1164,9 +1163,9 @@ impl CatalogInterceptor {
         // Build rows
         let mut rows = Vec::new();
         for table_row in &tables_response.rows {
-            if table_row.len() >= 2 {
-                if let (Some(Some(table_name_bytes)), Some(Some(table_type_bytes))) =
-                    (table_row.get(0), table_row.get(1)) {
+            if table_row.len() >= 2
+                && let (Some(Some(table_name_bytes)), Some(Some(table_type_bytes))) =
+                    (table_row.first(), table_row.get(1)) {
                     let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
                     let sqlite_type = String::from_utf8_lossy(table_type_bytes).to_string();
 
@@ -1203,7 +1202,6 @@ impl CatalogInterceptor {
 
                     rows.push(projected_row);
                 }
-            }
         }
         
         let rows_count = rows.len();
