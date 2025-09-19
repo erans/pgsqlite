@@ -501,6 +501,11 @@ impl CatalogInterceptor {
                 return Some(Self::handle_information_schema_routines_query(select, &db).await);
             }
 
+            // Handle information_schema.views queries
+            if table_name.contains("information_schema.views") {
+                return Some(Self::handle_information_schema_views_query(select, &db).await);
+            }
+
             // Handle pg_database queries
             if table_name.contains("pg_database") || table_name.contains("pg_catalog.pg_database") {
                 return Some(Ok(Self::handle_pg_database_query(select, &db).await));
@@ -2459,6 +2464,575 @@ impl CatalogInterceptor {
             let column_mapping = HashMap::new(); // Empty mapping for now
             if WhereEvaluator::evaluate(where_clause, &string_data, &column_mapping) {
                 filtered.push(routine.clone());
+            }
+        }
+
+        Ok(filtered)
+    }
+
+    pub async fn handle_information_schema_views_query(select: &Select, db: &DbHandler) -> Result<DbResponse, PgSqliteError> {
+        debug!("Handling information_schema.views query");
+
+        // Define information_schema.views columns (PostgreSQL standard)
+        let all_columns = vec![
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "view_definition".to_string(),
+            "check_option".to_string(),
+            "is_updatable".to_string(),
+            "is_insertable_into".to_string(),
+            "is_trigger_updatable".to_string(),
+            "is_trigger_deletable".to_string(),
+            "is_trigger_insertable_into".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Get views from SQLite
+        let views = Self::get_sqlite_views(db).await?;
+
+        // Apply WHERE clause filtering if present
+        let filtered_views = if let Some(where_clause) = &select.selection {
+            Self::apply_views_where_filter(&views, where_clause)?
+        } else {
+            views
+        };
+
+        // Build response rows
+        let mut rows = Vec::new();
+        for view_data in filtered_views {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if col_idx < all_columns.len() {
+                    let column_name = &all_columns[col_idx];
+                    let value = view_data.get(column_name).cloned().unwrap_or_else(|| b"".to_vec());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some(b"".to_vec()));
+                }
+            }
+            rows.push(row);
+        }
+
+        let rows_count = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        })
+    }
+
+    async fn get_sqlite_views(db: &DbHandler) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut views = Vec::new();
+
+        // Use get_mut_connection to avoid recursion
+        match db.get_mut_connection() {
+            Ok(conn) => {
+                let query = "SELECT name, sql FROM sqlite_master WHERE type='view' AND name NOT LIKE '__pgsqlite_%' AND name NOT LIKE 'pg_%' AND name NOT LIKE 'information_schema_%'";
+
+                let mut stmt = conn.prepare(query).map_err(PgSqliteError::Sqlite)?;
+                let rows = stmt.query_map([], |row| {
+                    let name: String = row.get(0)?;
+                    let sql: String = row.get(1)?;
+                    Ok((name, sql))
+                }).map_err(PgSqliteError::Sqlite)?;
+
+                debug!("get_sqlite_views direct query");
+                for view_info in rows.flatten() {
+                    let (view_name, view_sql) = view_info;
+                    debug!("Found view: {}", view_name);
+
+                    let mut view = HashMap::new();
+
+                    // Basic view information
+                    view.insert("table_catalog".to_string(), b"main".to_vec());
+                    view.insert("table_schema".to_string(), b"public".to_vec());
+                    view.insert("view_name".to_string(), view_name.as_bytes().to_vec());
+                    view.insert("table_name".to_string(), view_name.as_bytes().to_vec());
+
+                    // View definition - extract from CREATE VIEW statement
+                    let view_definition = Self::extract_view_definition(&view_sql);
+                    view.insert("view_definition".to_string(), view_definition.as_bytes().to_vec());
+
+                    // Standard PostgreSQL defaults for SQLite views
+                    view.insert("check_option".to_string(), b"NONE".to_vec());
+                    view.insert("is_updatable".to_string(), b"NO".to_vec());
+                    view.insert("is_insertable_into".to_string(), b"NO".to_vec());
+                    view.insert("is_trigger_updatable".to_string(), b"NO".to_vec());
+                    view.insert("is_trigger_deletable".to_string(), b"NO".to_vec());
+                    view.insert("is_trigger_insertable_into".to_string(), b"NO".to_vec());
+
+                    views.push(view);
+                }
+            }
+            Err(e) => {
+                debug!("No database connection available: {:?}", e);
+            }
+        }
+
+        Ok(views)
+    }
+
+    pub async fn handle_information_schema_referential_constraints_query(select: &Select, db: &DbHandler) -> Result<DbResponse, PgSqliteError> {
+        debug!("Handling information_schema.referential_constraints query");
+        // Define information_schema.referential_constraints columns (PostgreSQL standard)
+        let all_columns = vec![
+            "constraint_catalog".to_string(),
+            "constraint_schema".to_string(),
+            "constraint_name".to_string(),
+            "unique_constraint_catalog".to_string(),
+            "unique_constraint_schema".to_string(),
+            "unique_constraint_name".to_string(),
+            "match_option".to_string(),
+            "update_rule".to_string(),
+            "delete_rule".to_string(),
+        ];
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        // Get referential constraints from pg_constraint
+        let constraints = Self::get_referential_constraints(db).await?;
+        // Apply WHERE clause filtering if present
+        let filtered_constraints = if let Some(where_clause) = &select.selection {
+            Self::apply_referential_constraints_where_filter(&constraints, where_clause)?
+        } else {
+            constraints
+        };
+        // Build response rows
+        let mut rows = Vec::new();
+        for constraint_data in filtered_constraints {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if col_idx < all_columns.len() {
+                    let column_name = &all_columns[col_idx];
+                    let value = constraint_data.get(column_name).cloned().unwrap_or_else(|| b"".to_vec());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some(b"".to_vec()));
+                }
+            }
+            rows.push(row);
+        }
+        let rows_count = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        })
+    }
+
+    async fn get_referential_constraints(db: &DbHandler) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut constraints = Vec::new();
+        // Query pg_constraint for foreign key constraints only
+        let query = "SELECT conname, confrelid FROM pg_constraint WHERE contype = 'f'";
+        let constraints_response: Result<DbResponse, PgSqliteError> = match db.get_mut_connection() {
+            Ok(conn) => {
+                let mut stmt = conn.prepare(query)?;
+                let mut rows = Vec::new();
+                let mut query_rows = stmt.query([])?;
+                while let Some(row) = query_rows.next()? {
+                    let constraint_name: String = row.get(0)?;
+                    let referenced_table_oid: String = row.get(1)?;
+                    rows.push(vec![Some(constraint_name.into_bytes()), Some(referenced_table_oid.into_bytes())]);
+                }
+                Ok(DbResponse {
+                    columns: vec!["conname".to_string(), "confrelid".to_string()],
+                    rows,
+                    rows_affected: 0,
+                })
+            }
+            Err(e) => {
+                debug!("Failed to get referential constraints: {:?}", e);
+                return Ok(constraints);
+            }
+        };
+
+        // Process each foreign key constraint
+        for constraint_row in &constraints_response?.rows {
+            if constraint_row.len() >= 2
+                && let (Some(Some(name_bytes)), Some(Some(ref_oid_bytes))) =
+                    (constraint_row.first(), constraint_row.get(1)) {
+                    let constraint_name = String::from_utf8_lossy(name_bytes).to_string();
+                    let referenced_table_oid = String::from_utf8_lossy(ref_oid_bytes).to_string();
+
+                    debug!("Processing referential constraint: {}", constraint_name);
+                    let mut constraint = HashMap::new();
+
+                    // Basic constraint information
+                    constraint.insert("constraint_catalog".to_string(), b"main".to_vec());
+                    constraint.insert("constraint_schema".to_string(), b"public".to_vec());
+                    constraint.insert("constraint_name".to_string(), constraint_name.as_bytes().to_vec());
+
+                    // Referenced constraint information - try to find the primary key constraint
+                    // of the referenced table
+                    let referenced_constraint_name = Self::find_referenced_constraint_name(db, &referenced_table_oid).await
+                        .unwrap_or_else(|_| format!("{}_pkey", Self::get_table_name_from_oid(&referenced_table_oid)));
+
+                    constraint.insert("unique_constraint_catalog".to_string(), b"main".to_vec());
+                    constraint.insert("unique_constraint_schema".to_string(), b"public".to_vec());
+                    constraint.insert("unique_constraint_name".to_string(), referenced_constraint_name.as_bytes().to_vec());
+
+                    // SQLite foreign key defaults (SQLite doesn't store these explicitly)
+                    constraint.insert("match_option".to_string(), b"NONE".to_vec());
+                    constraint.insert("update_rule".to_string(), b"NO ACTION".to_vec());
+                    constraint.insert("delete_rule".to_string(), b"NO ACTION".to_vec());
+
+                    constraints.push(constraint);
+                }
+        }
+        Ok(constraints)
+    }
+
+    async fn find_referenced_constraint_name(db: &DbHandler, table_oid: &str) -> Result<String, PgSqliteError> {
+        // Try to find the primary key constraint for the referenced table
+        let query = "SELECT conname FROM pg_constraint WHERE conrelid = ?1 AND contype = 'p'";
+        match db.get_mut_connection() {
+            Ok(conn) => {
+                let mut stmt = conn.prepare(query)?;
+                match stmt.query_row([table_oid], |row| row.get::<_, String>(0)) {
+                    Ok(constraint_name) => Ok(constraint_name),
+                    Err(_) => {
+                        // Fallback: generate a primary key constraint name
+                        let table_name = Self::get_table_name_from_oid(table_oid);
+                        Ok(format!("{}_pkey", table_name))
+                    }
+                }
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn get_table_name_from_oid(oid: &str) -> String {
+        // This is a simplified approach - in practice we'd query pg_class
+        // For now, extract table name from common OID patterns
+        if let Ok(oid_num) = oid.parse::<u64>() {
+            format!("table_{}", oid_num % 1000)
+        } else {
+            "unknown_table".to_string()
+        }
+    }
+
+    fn apply_referential_constraints_where_filter(
+        constraints: &[HashMap<String, Vec<u8>>],
+        where_clause: &Expr,
+    ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut filtered = Vec::new();
+
+        for constraint in constraints {
+            // Convert Vec<u8> to String for WhereEvaluator
+            let mut string_data = HashMap::new();
+            for (key, value) in constraint {
+                if let Ok(string_val) = String::from_utf8(value.clone()) {
+                    string_data.insert(key.clone(), string_val);
+                }
+            }
+
+            let column_mapping = HashMap::new(); // Empty mapping for now
+            if WhereEvaluator::evaluate(where_clause, &string_data, &column_mapping) {
+                filtered.push(constraint.clone());
+            }
+        }
+
+        Ok(filtered)
+    }
+
+    pub async fn handle_information_schema_referential_constraints_query_with_session(select: &Select, db: &DbHandler, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Define information_schema.referential_constraints columns (PostgreSQL standard)
+        let all_columns = vec![
+            "constraint_catalog".to_string(),
+            "constraint_schema".to_string(),
+            "constraint_name".to_string(),
+            "unique_constraint_catalog".to_string(),
+            "unique_constraint_schema".to_string(),
+            "unique_constraint_name".to_string(),
+            "match_option".to_string(),
+            "update_rule".to_string(),
+            "delete_rule".to_string(),
+        ];
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        // Get referential constraints using session connection
+        let constraints = Self::get_referential_constraints_with_session(db, session_id).await?;
+        // Apply WHERE clause filtering if present
+        let filtered_constraints = if let Some(where_clause) = &select.selection {
+            Self::apply_referential_constraints_where_filter(&constraints, where_clause)?
+        } else {
+            constraints
+        };
+        // Build response rows
+        let mut rows = Vec::new();
+        for constraint_data in filtered_constraints {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if col_idx < all_columns.len() {
+                    let column_name = &all_columns[col_idx];
+                    let value = constraint_data.get(column_name).cloned().unwrap_or_else(|| b"".to_vec());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some(b"".to_vec()));
+                }
+            }
+            rows.push(row);
+        }
+        let rows_count = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        })
+    }
+
+    async fn get_referential_constraints_with_session(db: &DbHandler, session_id: &Uuid) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut constraints = Vec::new();
+        // Use session connection to see constraints created in this session
+        let constraints_response = match db.connection_manager().execute_with_session(session_id, |conn| {
+            let query = "SELECT conname, confrelid FROM pg_constraint WHERE contype = 'f'";
+            let mut stmt = conn.prepare(query)?;
+            let mut rows = Vec::new();
+            let mut query_rows = stmt.query([])?;
+            while let Some(row) = query_rows.next()? {
+                let constraint_name: String = row.get(0)?;
+                let referenced_table_oid: i64 = row.get(1)?;
+                let referenced_table_oid_str = referenced_table_oid.to_string();
+                rows.push(vec![Some(constraint_name.into_bytes()), Some(referenced_table_oid_str.into_bytes())]);
+            }
+            Ok(DbResponse {
+                columns: vec!["conname".to_string(), "confrelid".to_string()],
+                rows,
+                rows_affected: 0,
+            })
+        }) {
+            Ok(response) => response,
+            Err(e) => {
+                debug!("Failed to get referential constraints from session: {:?}", e);
+                return Ok(constraints);
+            }
+        };
+
+        // Process each foreign key constraint
+        for constraint_row in &constraints_response.rows {
+            if constraint_row.len() >= 2
+                && let (Some(Some(name_bytes)), Some(Some(ref_oid_bytes))) =
+                    (constraint_row.first(), constraint_row.get(1)) {
+                    let constraint_name = String::from_utf8_lossy(name_bytes).to_string();
+                    let referenced_table_oid = String::from_utf8_lossy(ref_oid_bytes).to_string();
+
+                    debug!("Processing referential constraint with session: {}", constraint_name);
+                    let mut constraint = HashMap::new();
+
+                    // Basic constraint information
+                    constraint.insert("constraint_catalog".to_string(), b"main".to_vec());
+                    constraint.insert("constraint_schema".to_string(), b"public".to_vec());
+                    constraint.insert("constraint_name".to_string(), constraint_name.as_bytes().to_vec());
+
+                    // Referenced constraint information - try to find the primary key constraint
+                    // of the referenced table using session connection
+                    let referenced_constraint_name = Self::find_referenced_constraint_name_with_session(db, session_id, &referenced_table_oid).await
+                        .unwrap_or_else(|_| format!("{}_pkey", Self::get_table_name_from_oid(&referenced_table_oid)));
+
+                    constraint.insert("unique_constraint_catalog".to_string(), b"main".to_vec());
+                    constraint.insert("unique_constraint_schema".to_string(), b"public".to_vec());
+                    constraint.insert("unique_constraint_name".to_string(), referenced_constraint_name.as_bytes().to_vec());
+
+                    // SQLite foreign key defaults (SQLite doesn't store these explicitly)
+                    constraint.insert("match_option".to_string(), b"NONE".to_vec());
+                    constraint.insert("update_rule".to_string(), b"NO ACTION".to_vec());
+                    constraint.insert("delete_rule".to_string(), b"NO ACTION".to_vec());
+
+                    constraints.push(constraint);
+                }
+        }
+        Ok(constraints)
+    }
+
+    async fn find_referenced_constraint_name_with_session(db: &DbHandler, session_id: &Uuid, table_oid: &str) -> Result<String, PgSqliteError> {
+        // Try to find the primary key constraint for the referenced table using session connection
+        match db.connection_manager().execute_with_session(session_id, |conn| {
+            let query = "SELECT conname FROM pg_constraint WHERE conrelid = ?1 AND contype = 'p'";
+            let mut stmt = conn.prepare(query)?;
+            match stmt.query_row([table_oid], |row| row.get::<_, String>(0)) {
+                Ok(constraint_name) => Ok(constraint_name),
+                Err(_) => {
+                    // Fallback: generate a primary key constraint name
+                    let table_name = Self::get_table_name_from_oid(table_oid);
+                    Ok(format!("{}_pkey", table_name))
+                }
+            }
+        }) {
+            Ok(constraint_name) => Ok(constraint_name),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn handle_information_schema_views_query_with_session(select: &Select, db: &DbHandler, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        debug!("Handling information_schema.views query with session");
+        // Define information_schema.views columns (PostgreSQL standard)
+        let all_columns = vec![
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "view_definition".to_string(),
+            "check_option".to_string(),
+            "is_updatable".to_string(),
+            "is_insertable_into".to_string(),
+            "is_trigger_updatable".to_string(),
+            "is_trigger_deletable".to_string(),
+            "is_trigger_insertable_into".to_string(),
+        ];
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        // Get views from SQLite using session connection
+        let views = Self::get_sqlite_views_with_session(db, session_id).await?;
+        // Apply WHERE clause filtering if present
+        let filtered_views = if let Some(where_clause) = &select.selection {
+            Self::apply_views_where_filter(&views, where_clause)?
+        } else {
+            views
+        };
+        // Build response rows
+        let mut rows = Vec::new();
+        for view_data in filtered_views {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if col_idx < all_columns.len() {
+                    let column_name = &all_columns[col_idx];
+                    let value = view_data.get(column_name).cloned().unwrap_or_else(|| b"".to_vec());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some(b"".to_vec()));
+                }
+            }
+            rows.push(row);
+        }
+        let rows_count = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        })
+    }
+
+    async fn get_sqlite_views_with_session(db: &DbHandler, session_id: &Uuid) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut views = Vec::new();
+        // Use session connection to see views created in this session
+        let views_response = match db.connection_manager().execute_with_session(session_id, |conn| {
+            let query = "SELECT name, sql FROM sqlite_master WHERE type='view' AND name NOT LIKE '__pgsqlite_%' AND name NOT LIKE 'pg_%' AND name NOT LIKE 'information_schema_%'";
+            let mut stmt = conn.prepare(query)?;
+            let mut rows = Vec::new();
+            let mut query_rows = stmt.query([])?;
+            while let Some(row) = query_rows.next()? {
+                let name: String = row.get(0)?;
+                let sql: String = row.get(1)?;
+                rows.push(vec![Some(name.into_bytes()), Some(sql.into_bytes())]);
+            }
+            Ok(DbResponse {
+                columns: vec!["name".to_string(), "sql".to_string()],
+                rows,
+                rows_affected: 0,
+            })
+        }) {
+            Ok(response) => response,
+            Err(e) => {
+                debug!("Failed to get views from session: {:?}", e);
+                return Ok(views);
+            }
+        };
+
+        // Process each view
+        for view_row in &views_response.rows {
+            if view_row.len() >= 2
+                && let (Some(Some(name_bytes)), Some(Some(sql_bytes))) =
+                    (view_row.first(), view_row.get(1)) {
+                    let view_name = String::from_utf8_lossy(name_bytes).to_string();
+                    let view_sql = String::from_utf8_lossy(sql_bytes).to_string();
+
+                    debug!("Found view with session: {}", view_name);
+                    let mut view = HashMap::new();
+                    // Basic view information
+                    view.insert("table_catalog".to_string(), b"main".to_vec());
+                    view.insert("table_schema".to_string(), b"public".to_vec());
+                    view.insert("view_name".to_string(), view_name.as_bytes().to_vec());
+                    view.insert("table_name".to_string(), view_name.as_bytes().to_vec());
+                    // View definition - extract from CREATE VIEW statement
+                    let view_definition = Self::extract_view_definition(&view_sql);
+                    view.insert("view_definition".to_string(), view_definition.as_bytes().to_vec());
+                    // Standard PostgreSQL defaults for SQLite views
+                    view.insert("check_option".to_string(), b"NONE".to_vec());
+                    view.insert("is_updatable".to_string(), b"NO".to_vec());
+                    view.insert("is_insertable_into".to_string(), b"NO".to_vec());
+                    view.insert("is_trigger_updatable".to_string(), b"NO".to_vec());
+                    view.insert("is_trigger_deletable".to_string(), b"NO".to_vec());
+                    view.insert("is_trigger_insertable_into".to_string(), b"NO".to_vec());
+                    views.push(view);
+                }
+        }
+        Ok(views)
+    }
+
+    fn extract_view_definition(sql: &str) -> String {
+        // Extract the SELECT part from "CREATE VIEW name AS SELECT ..."
+        // Be more careful to find the correct AS keyword (after CREATE VIEW viewname)
+        let upper_sql = sql.to_uppercase();
+
+        // Look for CREATE VIEW pattern first
+        if let Some(create_view_pos) = upper_sql.find("CREATE VIEW") {
+            // Find the AS that comes after CREATE VIEW and the view name, but before any SELECT
+            let after_create_view = &upper_sql[create_view_pos + 11..]; // Skip "CREATE VIEW"
+
+            // Find the AS keyword that should come after the view name but before SELECT
+            // Look for patterns that indicate the main AS clause (not column aliases)
+            let mut as_candidates = Vec::new();
+
+            // Collect all possible AS positions
+            if let Some(pos) = after_create_view.find(" AS ") {
+                as_candidates.push((pos, 4));
+            }
+            if let Some(pos) = after_create_view.find("\nAS ") {
+                as_candidates.push((pos, 4));
+            }
+            if let Some(pos) = after_create_view.find(" AS\n") {
+                as_candidates.push((pos, 4));
+            }
+            if let Some(pos) = after_create_view.find("\nAS\n") {
+                as_candidates.push((pos, 4));
+            }
+
+            // Take the first AS that appears (should be the one after the view name)
+            if let Some(&(as_pos, skip_len)) = as_candidates.iter().min() {
+                let actual_pos = create_view_pos + 11 + as_pos + skip_len;
+                let select_part = &sql[actual_pos..];
+                return select_part.trim().to_string();
+            } else if let Some(as_pos) = after_create_view.find("AS") {
+                // Generic AS fallback
+                let actual_pos = create_view_pos + 11 + as_pos + 2;
+                let select_part = &sql[actual_pos..];
+                return select_part.trim().to_string();
+            }
+        }
+
+        // Fallback - return the trimmed SQL
+        sql.trim().to_string()
+    }
+
+    fn apply_views_where_filter(
+        views: &[HashMap<String, Vec<u8>>],
+        where_clause: &Expr,
+    ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut filtered = Vec::new();
+
+        for view in views {
+            // Convert Vec<u8> to String for WhereEvaluator
+            let mut string_data = HashMap::new();
+            for (key, value) in view {
+                if let Ok(string_val) = String::from_utf8(value.clone()) {
+                    string_data.insert(key.clone(), string_val);
+                }
+            }
+
+            let column_mapping = HashMap::new(); // Empty mapping for now
+            if WhereEvaluator::evaluate(where_clause, &string_data, &column_mapping) {
+                filtered.push(view.clone());
             }
         }
 

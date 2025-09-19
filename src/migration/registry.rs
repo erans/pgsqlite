@@ -27,6 +27,8 @@ lazy_static! {
         register_v18_pg_roles_user_support(&mut registry);
         register_v19_pg_stats_support(&mut registry);
         register_v20_information_schema_routines_support(&mut registry);
+        register_v21_information_schema_views_support(&mut registry);
+        register_v22_information_schema_referential_constraints_support(&mut registry);
 
         registry
     };
@@ -2358,5 +2360,56 @@ fn register_v20_information_schema_routines_support(registry: &mut BTreeMap<u32,
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![19],
+    });
+}
+
+/// Version 21: Add information_schema.views support for view metadata
+fn register_v21_information_schema_views_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(21, Migration {
+        version: 21,
+        name: "information_schema_views_support",
+        description: "Add PostgreSQL information_schema.views view for view metadata and introspection",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.views is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '21', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.views is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '20', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![20],
+    });
+}
+
+fn register_v22_information_schema_referential_constraints_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(22, Migration {
+        version: 22,
+        name: "information_schema_referential_constraints_support",
+        description: "Add PostgreSQL information_schema.referential_constraints view for foreign key constraint metadata and introspection",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.referential_constraints is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '22', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.referential_constraints is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '21', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![21],
     });
 }

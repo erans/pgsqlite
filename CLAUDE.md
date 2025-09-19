@@ -163,10 +163,36 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v18: pg_roles and pg_user views for user/role management
 - v19: pg_stats view for table statistics and query optimization
 - v20: information_schema.routines support for function metadata
+- v21: information_schema.views support for view metadata
+- v22: information_schema.referential_constraints support for foreign key metadata
 
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **information_schema.referential_constraints Foreign Key Metadata Support**: Complete PostgreSQL foreign key constraint introspection for ORM compatibility
+  - Added comprehensive information_schema.referential_constraints table implementation with session-aware connection handling
+  - Supports all 9 PostgreSQL-standard columns: constraint_catalog, constraint_schema, constraint_name, unique_constraint_catalog, unique_constraint_schema, unique_constraint_name, match_option, update_rule, delete_rule
+  - Session-based constraint discovery using connection-per-session architecture for proper transaction isolation
+  - Direct integration with existing pg_constraint catalog for foreign key constraint detection and metadata extraction
+  - Migration v22 enables information_schema.referential_constraints support with complete SQL standard compliance
+  - Fixed critical data type issue: confrelid column read as INTEGER instead of STRING for proper constraint resolution
+  - Integrated into catalog query interceptor with WHERE clause filtering and proper error handling
+  - Enables Django foreign key discovery via inspectdb, SQLAlchemy relationship automap generation, Rails association mapping, Ecto schema introspection
+  - Files: src/catalog/query_interceptor.rs, src/migration/registry.rs (v22), src/session/db_handler.rs, tests/information_schema_referential_constraints_test.rs
+  - Impact: Completes critical constraint metadata access for ORM frameworks requiring foreign key relationship discovery capabilities
+
+- **information_schema.views View Metadata Support**: Complete PostgreSQL view introspection for ORM compatibility
+  - Added comprehensive information_schema.views table implementation with session-aware connection handling
+  - Supports 10 PostgreSQL-standard columns: table_catalog, table_schema, table_name, view_definition, check_option, is_updatable, etc.
+  - Enhanced view definition extraction with proper AS keyword parsing for multiline CREATE VIEW statements
+  - Session-based view discovery using connection-per-session architecture for proper isolation
+  - Filters out system catalog views (pg_*, information_schema_*) to return only user-created views
+  - Migration v21 enables information_schema.views support with complete SQL standard compliance
+  - Integrated into catalog query interceptor with WHERE clause filtering and connection isolation
+  - Enables Django view discovery via inspectdb, SQLAlchemy metadata reflection, Rails schema introspection, Ecto database analysis
+  - Files: src/catalog/query_interceptor.rs, src/migration/registry.rs (v21), src/session/db_handler.rs, tests/information_schema_views_test.rs
+  - Impact: Completes critical view metadata access for ORM frameworks requiring view introspection capabilities
+
 - **information_schema.routines Function Metadata Support**: Complete PostgreSQL function introspection for ORM compatibility
   - Added comprehensive information_schema.routines table implementation with 76+ PostgreSQL-standard columns
   - Provides metadata for 40+ built-in functions including string, math, aggregate, datetime, JSON, array, UUID, system, and full-text search functions
@@ -451,11 +477,11 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 **Full ORM compatibility** achieved with comprehensive PostgreSQL catalog support:
 
-### Constraint Introspection ✅
-- **Django**: `inspectdb` command discovers foreign key relationships via `pg_constraint`
-- **Rails**: ActiveRecord association mapping through constraint discovery
-- **SQLAlchemy**: Relationship automap generation with complete constraint metadata
-- **Ecto**: Schema introspection with proper foreign key detection
+### Constraint Introspection ✅ **ENHANCED (2025-09-19)**
+- **Django**: `inspectdb` command discovers foreign key relationships via `pg_constraint` and `information_schema.referential_constraints`
+- **Rails**: ActiveRecord association mapping through constraint discovery with complete foreign key metadata
+- **SQLAlchemy**: Relationship automap generation with complete constraint metadata including update/delete rules
+- **Ecto**: Schema introspection with proper foreign key detection and constraint metadata
 
 ### Index Management ✅ **NEW (2025-09-18)**
 - **Django**: `inspectdb` discovers indexes for model generation via `pg_index`
@@ -496,6 +522,10 @@ SELECT conname, contype, condeferrable, condeferred, convalidated FROM pg_constr
 
 -- Primary key discovery (all ORMs)
 SELECT conname, contype, conkey FROM pg_constraint WHERE contype = 'p';
+
+-- Foreign key constraint details (information_schema pattern) - NEW!
+SELECT constraint_name, unique_constraint_name, match_option, update_rule, delete_rule
+FROM information_schema.referential_constraints;
 
 -- Index discovery (Rails/SQLAlchemy pattern) - NEW!
 SELECT i.indexrelid, ic.relname as index_name, i.indrelid, tc.relname as table_name,
@@ -600,6 +630,24 @@ SELECT routine_name, external_language, parameter_style, sql_data_access FROM in
 
 -- Built-in function availability (all ORMs)
 SELECT routine_name, data_type FROM information_schema.routines WHERE routine_name LIKE '%agg%';
+```
+
+### View Metadata and Introspection ✅ **NEW (2025-09-19)**
+- **Django**: `inspectdb` discovers database views via `information_schema.views` for model generation and complex query optimization
+- **SQLAlchemy**: Complete view reflection and metadata analysis through standardized `information_schema.views` table
+- **Rails**: ActiveRecord view discovery for read-only model creation and database schema analysis
+- **Ecto**: Schema introspection includes view metadata for advanced query optimization and migration planning
+
+**Example queries now work correctly:**
+```sql
+-- View discovery (Django/Rails pattern)
+SELECT table_name, view_definition FROM information_schema.views WHERE table_schema = 'public';
+
+-- View metadata (SQLAlchemy pattern)
+SELECT table_name, is_updatable, is_insertable_into, check_option FROM information_schema.views;
+
+-- View definition analysis (all ORMs)
+SELECT table_name, view_definition FROM information_schema.views WHERE table_name LIKE '%summary%';
 ```
 
 ### SQLAlchemy Compatibility

@@ -2412,10 +2412,10 @@ Research into Django, Rails, SQLAlchemy, and Ecto revealed critical missing Post
   - [x] Full ORM compatibility for sequence ownership detection
 
 #### Tier 3: Nice to Have (Lower Priority)
-- [ ] **information_schema.referential_constraints** - FK details
-  - [ ] Foreign key constraint details
-  - [ ] Match options and update/delete rules
-  - [ ] Deferrability settings
+- [x] **information_schema.referential_constraints** - FK details ✅ **COMPLETED (2025-09-19)**
+  - [x] Foreign key constraint details
+  - [x] Match options and update/delete rules
+  - [x] Deferrability settings
 - [x] **pg_stats** - Table statistics ✅ **COMPLETED (2025-09-19)**
   - [x] Column statistics for query planning
   - [x] Most common values and frequencies
@@ -2532,7 +2532,7 @@ After comprehensive analysis, identified missing catalog tables needed for **ent
   - Status: Medium impact - enables database administration features
 
 #### 🔵 **Medium Priority (Nice to Have)**
-- [ ] **information_schema.views** - View metadata and introspection
+- [x] **information_schema.views** - View metadata and introspection ✅ **COMPLETED (2025-09-19)**
 - [ ] **information_schema.triggers** - Trigger information (limited SQLite support)
 - [ ] **Permission functions**: `pg_has_role()`, `has_table_privilege()`
 - [ ] **Session functions**: `current_user`, `current_database()`
