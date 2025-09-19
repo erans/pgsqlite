@@ -26,6 +26,7 @@ lazy_static! {
         register_v17_pg_description_support(&mut registry);
         register_v18_pg_roles_user_support(&mut registry);
         register_v19_pg_stats_support(&mut registry);
+        register_v20_information_schema_routines_support(&mut registry);
 
         registry
     };
@@ -2331,5 +2332,31 @@ fn register_v19_pg_stats_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![18],
+    });
+}
+
+/// Version 20: Add information_schema.routines support for function metadata
+fn register_v20_information_schema_routines_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(20, Migration {
+        version: 20,
+        name: "information_schema_routines_support",
+        description: "Add PostgreSQL information_schema.routines view for function and procedure metadata",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.routines is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '20', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.routines is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '19', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![19],
     });
 }

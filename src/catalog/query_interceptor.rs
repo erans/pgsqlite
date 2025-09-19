@@ -8,10 +8,11 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_proc::PgProcHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, system_functions::SystemFunctions};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_proc::PgProcHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
+use std::collections::HashMap;
 
 /// Type alias for the complex Future type returned by process_expression
 type ProcessExpressionFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
@@ -493,6 +494,11 @@ impl CatalogInterceptor {
                 } else {
                     return None;
                 }
+            }
+
+            // Handle information_schema.routines queries
+            if table_name.contains("information_schema.routines") {
+                return Some(Self::handle_information_schema_routines_query(select, &db).await);
             }
 
             // Handle pg_database queries
@@ -2133,5 +2139,329 @@ impl CatalogInterceptor {
             _ => {}
         }
         Vec::new()
+    }
+
+    pub async fn handle_information_schema_routines_query(select: &Select, _db: &DbHandler) -> Result<DbResponse, PgSqliteError> {
+        debug!("Handling information_schema.routines query");
+
+        // Define information_schema.routines columns (PostgreSQL standard)
+        let all_columns = vec![
+            "specific_catalog".to_string(),
+            "specific_schema".to_string(),
+            "specific_name".to_string(),
+            "routine_catalog".to_string(),
+            "routine_schema".to_string(),
+            "routine_name".to_string(),
+            "routine_type".to_string(),
+            "module_catalog".to_string(),
+            "module_schema".to_string(),
+            "module_name".to_string(),
+            "udt_catalog".to_string(),
+            "udt_schema".to_string(),
+            "udt_name".to_string(),
+            "data_type".to_string(),
+            "character_maximum_length".to_string(),
+            "character_octet_length".to_string(),
+            "character_set_catalog".to_string(),
+            "character_set_schema".to_string(),
+            "character_set_name".to_string(),
+            "collation_catalog".to_string(),
+            "collation_schema".to_string(),
+            "collation_name".to_string(),
+            "numeric_precision".to_string(),
+            "numeric_precision_radix".to_string(),
+            "numeric_scale".to_string(),
+            "datetime_precision".to_string(),
+            "interval_type".to_string(),
+            "interval_precision".to_string(),
+            "type_udt_catalog".to_string(),
+            "type_udt_schema".to_string(),
+            "type_udt_name".to_string(),
+            "scope_catalog".to_string(),
+            "scope_schema".to_string(),
+            "scope_name".to_string(),
+            "maximum_cardinality".to_string(),
+            "dtd_identifier".to_string(),
+            "routine_body".to_string(),
+            "routine_definition".to_string(),
+            "external_name".to_string(),
+            "external_language".to_string(),
+            "parameter_style".to_string(),
+            "is_deterministic".to_string(),
+            "sql_data_access".to_string(),
+            "is_null_call".to_string(),
+            "sql_path".to_string(),
+            "schema_level_routine".to_string(),
+            "max_dynamic_result_sets".to_string(),
+            "is_user_defined_cast".to_string(),
+            "is_implicitly_invocable".to_string(),
+            "security_type".to_string(),
+            "to_sql_specific_catalog".to_string(),
+            "to_sql_specific_schema".to_string(),
+            "to_sql_specific_name".to_string(),
+            "as_locator".to_string(),
+            "created".to_string(),
+            "last_altered".to_string(),
+            "new_savepoint_level".to_string(),
+            "is_udt_dependent".to_string(),
+            "result_cast_from_data_type".to_string(),
+            "result_cast_as_locator".to_string(),
+            "result_cast_char_max_length".to_string(),
+            "result_cast_char_octet_length".to_string(),
+            "result_cast_char_set_catalog".to_string(),
+            "result_cast_char_set_schema".to_string(),
+            "result_cast_char_set_name".to_string(),
+            "result_cast_collation_catalog".to_string(),
+            "result_cast_collation_schema".to_string(),
+            "result_cast_collation_name".to_string(),
+            "result_cast_numeric_precision".to_string(),
+            "result_cast_numeric_precision_radix".to_string(),
+            "result_cast_numeric_scale".to_string(),
+            "result_cast_datetime_precision".to_string(),
+            "result_cast_interval_type".to_string(),
+            "result_cast_interval_precision".to_string(),
+            "result_cast_type_udt_catalog".to_string(),
+            "result_cast_type_udt_schema".to_string(),
+            "result_cast_type_udt_name".to_string(),
+            "result_cast_scope_catalog".to_string(),
+            "result_cast_scope_schema".to_string(),
+            "result_cast_scope_name".to_string(),
+            "result_cast_maximum_cardinality".to_string(),
+            "result_cast_dtd_identifier".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Get system functions from pg_proc style data
+        let functions = Self::get_system_functions_for_routines();
+
+        // Apply WHERE clause filtering if present
+        let filtered_functions = if let Some(where_clause) = &select.selection {
+            Self::apply_routines_where_filter(&functions, where_clause)?
+        } else {
+            functions
+        };
+
+        // Build response rows
+        let mut rows = Vec::new();
+        for func_data in filtered_functions {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if col_idx < all_columns.len() {
+                    let column_name = &all_columns[col_idx];
+                    let value = func_data.get(column_name).cloned().unwrap_or_else(|| b"".to_vec());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some(b"".to_vec()));
+                }
+            }
+            rows.push(row);
+        }
+
+        let rows_count = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        })
+    }
+
+    fn get_system_functions_for_routines() -> Vec<HashMap<String, Vec<u8>>> {
+        let mut functions = Vec::new();
+
+        // Built-in SQL functions with enhanced metadata for information_schema.routines
+        let function_data = vec![
+            // String functions
+            ("length", "FUNCTION", "text", "integer", "SQL", "CONTAINS_SQL"),
+            ("lower", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("upper", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("substr", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("replace", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("trim", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("ltrim", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("rtrim", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+
+            // Math functions
+            ("abs", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("round", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("ceil", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("floor", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("sqrt", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("power", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+
+            // Aggregate functions
+            ("count", "FUNCTION", "bigint", "bigint", "SQL", "CONTAINS_SQL"),
+            ("sum", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("avg", "FUNCTION", "numeric", "numeric", "SQL", "CONTAINS_SQL"),
+            ("max", "FUNCTION", "anyelement", "anyelement", "SQL", "CONTAINS_SQL"),
+            ("min", "FUNCTION", "anyelement", "anyelement", "SQL", "CONTAINS_SQL"),
+
+            // Date/time functions
+            ("now", "FUNCTION", "timestamp with time zone", "timestamp with time zone", "SQL", "CONTAINS_SQL"),
+            ("current_timestamp", "FUNCTION", "timestamp with time zone", "timestamp with time zone", "SQL", "CONTAINS_SQL"),
+            ("current_date", "FUNCTION", "date", "date", "SQL", "CONTAINS_SQL"),
+            ("current_time", "FUNCTION", "time with time zone", "time with time zone", "SQL", "CONTAINS_SQL"),
+            ("date_trunc", "FUNCTION", "timestamp with time zone", "timestamp with time zone", "SQL", "CONTAINS_SQL"),
+            ("extract", "FUNCTION", "numeric", "double precision", "SQL", "CONTAINS_SQL"),
+
+            // JSON functions
+            ("json_agg", "FUNCTION", "json", "json", "SQL", "CONTAINS_SQL"),
+            ("jsonb_agg", "FUNCTION", "jsonb", "jsonb", "SQL", "CONTAINS_SQL"),
+            ("json_object_agg", "FUNCTION", "json", "json", "SQL", "CONTAINS_SQL"),
+            ("jsonb_object_agg", "FUNCTION", "jsonb", "jsonb", "SQL", "CONTAINS_SQL"),
+            ("json_extract", "FUNCTION", "json", "json", "SQL", "CONTAINS_SQL"),
+            ("jsonb_extract", "FUNCTION", "jsonb", "jsonb", "SQL", "CONTAINS_SQL"),
+
+            // Array functions
+            ("array_agg", "FUNCTION", "anyarray", "anyarray", "SQL", "CONTAINS_SQL"),
+            ("unnest", "FUNCTION", "anyelement", "setof anyelement", "SQL", "CONTAINS_SQL"),
+            ("array_length", "FUNCTION", "integer", "integer", "SQL", "CONTAINS_SQL"),
+
+            // UUID functions
+            ("uuid_generate_v4", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+
+            // System functions
+            ("version", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("current_user", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
+            ("session_user", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
+            ("user", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
+
+            // Full-text search functions
+            ("to_tsvector", "FUNCTION", "tsvector", "tsvector", "SQL", "CONTAINS_SQL"),
+            ("to_tsquery", "FUNCTION", "tsquery", "tsquery", "SQL", "CONTAINS_SQL"),
+            ("plainto_tsquery", "FUNCTION", "tsquery", "tsquery", "SQL", "CONTAINS_SQL"),
+            ("ts_rank", "FUNCTION", "real", "real", "SQL", "CONTAINS_SQL"),
+        ];
+
+        for (name, routine_type, _param_type, return_type, language, data_access) in function_data {
+            let mut func = HashMap::new();
+
+            // Core identification
+            func.insert("specific_catalog".to_string(), b"main".to_vec());
+            func.insert("specific_schema".to_string(), b"pg_catalog".to_vec());
+            func.insert("specific_name".to_string(), format!("{}_main_pg_catalog", name).into_bytes());
+            func.insert("routine_catalog".to_string(), b"main".to_vec());
+            func.insert("routine_schema".to_string(), b"pg_catalog".to_vec());
+            func.insert("routine_name".to_string(), name.as_bytes().to_vec());
+            func.insert("routine_type".to_string(), routine_type.as_bytes().to_vec());
+
+            // Module information (NULL for built-in functions)
+            func.insert("module_catalog".to_string(), b"".to_vec());
+            func.insert("module_schema".to_string(), b"".to_vec());
+            func.insert("module_name".to_string(), b"".to_vec());
+
+            // Return type information
+            func.insert("udt_catalog".to_string(), b"main".to_vec());
+            func.insert("udt_schema".to_string(), b"pg_catalog".to_vec());
+            func.insert("udt_name".to_string(), return_type.as_bytes().to_vec());
+            func.insert("data_type".to_string(), return_type.as_bytes().to_vec());
+
+            // Character/String type attributes (mostly NULL for our functions)
+            func.insert("character_maximum_length".to_string(), b"".to_vec());
+            func.insert("character_octet_length".to_string(), b"".to_vec());
+            func.insert("character_set_catalog".to_string(), b"".to_vec());
+            func.insert("character_set_schema".to_string(), b"".to_vec());
+            func.insert("character_set_name".to_string(), b"".to_vec());
+            func.insert("collation_catalog".to_string(), b"".to_vec());
+            func.insert("collation_schema".to_string(), b"".to_vec());
+            func.insert("collation_name".to_string(), b"".to_vec());
+
+            // Numeric type attributes (mostly NULL for our functions)
+            func.insert("numeric_precision".to_string(), b"".to_vec());
+            func.insert("numeric_precision_radix".to_string(), b"".to_vec());
+            func.insert("numeric_scale".to_string(), b"".to_vec());
+
+            // DateTime attributes (mostly NULL)
+            func.insert("datetime_precision".to_string(), b"".to_vec());
+            func.insert("interval_type".to_string(), b"".to_vec());
+            func.insert("interval_precision".to_string(), b"".to_vec());
+
+            // Type information
+            func.insert("type_udt_catalog".to_string(), b"main".to_vec());
+            func.insert("type_udt_schema".to_string(), b"pg_catalog".to_vec());
+            func.insert("type_udt_name".to_string(), return_type.as_bytes().to_vec());
+
+            // Scope information (mostly NULL)
+            func.insert("scope_catalog".to_string(), b"".to_vec());
+            func.insert("scope_schema".to_string(), b"".to_vec());
+            func.insert("scope_name".to_string(), b"".to_vec());
+
+            // Cardinality and identifier
+            func.insert("maximum_cardinality".to_string(), b"".to_vec());
+            func.insert("dtd_identifier".to_string(), b"1".to_vec());
+
+            // Function body and definition
+            func.insert("routine_body".to_string(), b"EXTERNAL".to_vec());
+            func.insert("routine_definition".to_string(), b"".to_vec());
+            func.insert("external_name".to_string(), name.as_bytes().to_vec());
+            func.insert("external_language".to_string(), language.as_bytes().to_vec());
+
+            // Function characteristics
+            func.insert("parameter_style".to_string(), b"SQL".to_vec());
+            func.insert("is_deterministic".to_string(), b"NO".to_vec());
+            func.insert("sql_data_access".to_string(), data_access.as_bytes().to_vec());
+            func.insert("is_null_call".to_string(), b"YES".to_vec());
+            func.insert("sql_path".to_string(), b"".to_vec());
+            func.insert("schema_level_routine".to_string(), b"YES".to_vec());
+            func.insert("max_dynamic_result_sets".to_string(), b"0".to_vec());
+            func.insert("is_user_defined_cast".to_string(), b"NO".to_vec());
+            func.insert("is_implicitly_invocable".to_string(), b"NO".to_vec());
+            func.insert("security_type".to_string(), b"INVOKER".to_vec());
+
+            // SQL-specific information (mostly NULL)
+            func.insert("to_sql_specific_catalog".to_string(), b"".to_vec());
+            func.insert("to_sql_specific_schema".to_string(), b"".to_vec());
+            func.insert("to_sql_specific_name".to_string(), b"".to_vec());
+            func.insert("as_locator".to_string(), b"NO".to_vec());
+
+            // Timestamps (NULL for built-in functions)
+            func.insert("created".to_string(), b"".to_vec());
+            func.insert("last_altered".to_string(), b"".to_vec());
+
+            // Additional attributes (mostly NULL)
+            func.insert("new_savepoint_level".to_string(), b"".to_vec());
+            func.insert("is_udt_dependent".to_string(), b"NO".to_vec());
+
+            // Result cast information (all NULL for our simple functions)
+            for prefix in &["result_cast_"] {
+                for suffix in &["from_data_type", "as_locator", "char_max_length", "char_octet_length",
+                              "char_set_catalog", "char_set_schema", "char_set_name", "collation_catalog",
+                              "collation_schema", "collation_name", "numeric_precision", "numeric_precision_radix",
+                              "numeric_scale", "datetime_precision", "interval_type", "interval_precision",
+                              "type_udt_catalog", "type_udt_schema", "type_udt_name", "scope_catalog",
+                              "scope_schema", "scope_name", "maximum_cardinality", "dtd_identifier"] {
+                    func.insert(format!("{}{}", prefix, suffix), b"".to_vec());
+                }
+            }
+
+            functions.push(func);
+        }
+
+        functions
+    }
+
+    fn apply_routines_where_filter(
+        routines: &[HashMap<String, Vec<u8>>],
+        where_clause: &Expr,
+    ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut filtered = Vec::new();
+
+        for routine in routines {
+            // Convert Vec<u8> to String for WhereEvaluator
+            let mut string_data = HashMap::new();
+            for (key, value) in routine {
+                if let Ok(string_val) = String::from_utf8(value.clone()) {
+                    string_data.insert(key.clone(), string_val);
+                }
+            }
+
+            let column_mapping = HashMap::new(); // Empty mapping for now
+            if WhereEvaluator::evaluate(where_clause, &string_data, &column_mapping) {
+                filtered.push(routine.clone());
+            }
+        }
+
+        Ok(filtered)
     }
 }

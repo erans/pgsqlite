@@ -162,10 +162,21 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v17: pg_description view for object comments
 - v18: pg_roles and pg_user views for user/role management
 - v19: pg_stats view for table statistics and query optimization
+- v20: information_schema.routines support for function metadata
 
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **information_schema.routines Function Metadata Support**: Complete PostgreSQL function introspection for ORM compatibility
+  - Added comprehensive information_schema.routines table implementation with 76+ PostgreSQL-standard columns
+  - Provides metadata for 40+ built-in functions including string, math, aggregate, datetime, JSON, array, UUID, system, and full-text search functions
+  - Complete function metadata: routine_name, routine_type, data_type, external_language, parameter_style, security_type, etc.
+  - Migration v20 enables information_schema.routines support with full SQL standard compliance
+  - Integrated into catalog query interceptor with WHERE clause filtering and session-based execution
+  - Enables Django function discovery via inspectdb, SQLAlchemy metadata reflection, Rails schema introspection, Ecto database analysis
+  - Files: src/catalog/query_interceptor.rs, src/migration/registry.rs (v20), src/session/db_handler.rs, tests/information_schema_routines_test.rs
+  - Impact: Completes information_schema compliance for standardized function metadata access across all major ORMs
+
 - **pg_stats Table Statistics Support**: Complete PostgreSQL query optimization and performance hints system
   - Added comprehensive pg_stats table implementation for ORM query planning and optimization
   - Realistic statistics generation based on column types and naming patterns (null_frac, n_distinct, correlation)
@@ -572,6 +583,24 @@ ORDER BY column_count DESC;  -- Table analysis
 - **Rails**: Performance analysis tools leverage statistics for query performance monitoring
 - **Django**: Query optimization through statistics-based decision making in ORM layer
 - **Ecto**: Database introspection includes table statistics for performance tuning
+
+### Function Metadata and Introspection ✅ **NEW (2025-09-19)**
+- **Django**: `inspectdb` discovers available functions via `information_schema.routines` for custom model methods
+- **SQLAlchemy**: Function reflection and metadata analysis through standardized `information_schema.routines`
+- **Rails**: ActiveRecord function discovery for stored procedure integration and custom SQL optimization
+- **Ecto**: Schema introspection includes function metadata for database function mapping
+
+**Example queries now work correctly:**
+```sql
+-- Function discovery (Django/Rails pattern)
+SELECT routine_name, routine_type, data_type FROM information_schema.routines WHERE routine_schema = 'pg_catalog';
+
+-- Function metadata (SQLAlchemy pattern)
+SELECT routine_name, external_language, parameter_style, sql_data_access FROM information_schema.routines;
+
+-- Built-in function availability (all ORMs)
+SELECT routine_name, data_type FROM information_schema.routines WHERE routine_name LIKE '%agg%';
+```
 
 ### SQLAlchemy Compatibility
 **Full SQLAlchemy ORM support** with all tests passing for both psycopg2 and psycopg3-text drivers:
