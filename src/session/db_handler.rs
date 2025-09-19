@@ -475,6 +475,23 @@ impl DbHandler {
             });
         }
 
+        // Handle information_schema.check_constraints queries
+        if lower_query.contains("information_schema.check_constraints") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_check_constraints_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["constraint_catalog".to_string(), "constraint_schema".to_string(), "constraint_name".to_string(), "check_clause".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
         // Handle information_schema.views queries
         if lower_query.contains("information_schema.views") {
             use crate::catalog::query_interceptor::CatalogInterceptor;
@@ -670,6 +687,23 @@ impl DbHandler {
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["constraint_name".to_string(), "constraint_catalog".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.check_constraints queries
+        if lower_query.contains("information_schema.check_constraints") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_check_constraints_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["constraint_catalog".to_string(), "constraint_schema".to_string(), "constraint_name".to_string(), "check_clause".to_string()],
                 rows: vec![],
                 rows_affected: 0,
             });

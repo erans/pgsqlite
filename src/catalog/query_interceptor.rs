@@ -3038,4 +3038,124 @@ impl CatalogInterceptor {
 
         Ok(filtered)
     }
+
+    pub async fn handle_information_schema_check_constraints_query_with_session(select: &Select, db: &DbHandler, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Define information_schema.check_constraints columns (PostgreSQL standard)
+        let all_columns = vec![
+            "constraint_catalog".to_string(),
+            "constraint_schema".to_string(),
+            "constraint_name".to_string(),
+            "check_clause".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Get check constraints using session connection
+        let constraints = Self::get_check_constraints_with_session(db, session_id).await?;
+
+        // Apply WHERE clause filtering if present
+        let filtered_constraints = if let Some(where_clause) = &select.selection {
+            Self::apply_check_constraints_where_filter(&constraints, where_clause)?
+        } else {
+            constraints
+        };
+
+        // Build response rows
+        let mut rows = Vec::new();
+        for constraint_data in filtered_constraints {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if col_idx < all_columns.len() {
+                    let column_name = &all_columns[col_idx];
+                    let value = constraint_data.get(column_name).cloned().unwrap_or_else(|| b"".to_vec());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some(b"".to_vec()));
+                }
+            }
+            rows.push(row);
+        }
+
+        let rows_count = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        })
+    }
+
+    async fn get_check_constraints_with_session(db: &DbHandler, session_id: &Uuid) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut constraints = Vec::new();
+
+        // Use session connection to see constraints created in this session
+        let constraints_response = match db.connection_manager().execute_with_session(session_id, |conn| {
+            let query = "SELECT conname, consrc FROM pg_constraint WHERE contype = 'c'";
+            let mut stmt = conn.prepare(query)?;
+            let mut rows = Vec::new();
+            let mut query_rows = stmt.query([])?;
+            while let Some(row) = query_rows.next()? {
+                let constraint_name: String = row.get(0)?;
+                let check_clause: String = row.get(1)?;
+                rows.push(vec![Some(constraint_name.into_bytes()), Some(check_clause.into_bytes())]);
+            }
+            Ok(DbResponse {
+                columns: vec!["conname".to_string(), "consrc".to_string()],
+                rows,
+                rows_affected: 0,
+            })
+        }) {
+            Ok(response) => response,
+            Err(e) => {
+                debug!("Failed to get check constraints from session: {:?}", e);
+                return Ok(constraints);
+            }
+        };
+
+        // Process each check constraint
+        for constraint_row in &constraints_response.rows {
+            if constraint_row.len() >= 2
+                && let (Some(Some(name_bytes)), Some(Some(clause_bytes))) =
+                    (constraint_row.first(), constraint_row.get(1)) {
+                    let constraint_name = String::from_utf8_lossy(name_bytes).to_string();
+                    let check_clause = String::from_utf8_lossy(clause_bytes).to_string();
+
+                    let mut constraint = HashMap::new();
+
+                    // Standard information_schema.check_constraints columns
+                    constraint.insert("constraint_catalog".to_string(), b"main".to_vec());
+                    constraint.insert("constraint_schema".to_string(), b"public".to_vec());
+                    constraint.insert("constraint_name".to_string(), constraint_name.as_bytes().to_vec());
+                    constraint.insert("check_clause".to_string(), check_clause.as_bytes().to_vec());
+
+                    constraints.push(constraint);
+                }
+        }
+
+        Ok(constraints)
+    }
+
+    fn apply_check_constraints_where_filter(
+        constraints: &[HashMap<String, Vec<u8>>],
+        where_clause: &Expr,
+    ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut filtered = Vec::new();
+
+        for constraint in constraints {
+            // Convert Vec<u8> to String for WhereEvaluator
+            let mut string_data = HashMap::new();
+            for (key, value) in constraint {
+                if let Ok(string_val) = String::from_utf8(value.clone()) {
+                    string_data.insert(key.clone(), string_val);
+                }
+            }
+
+            let column_mapping = HashMap::new(); // Empty mapping for now
+            if WhereEvaluator::evaluate(where_clause, &string_data, &column_mapping) {
+                filtered.push(constraint.clone());
+            }
+        }
+
+        Ok(filtered)
+    }
 }

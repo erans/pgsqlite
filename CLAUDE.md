@@ -165,10 +165,23 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v20: information_schema.routines support for function metadata
 - v21: information_schema.views support for view metadata
 - v22: information_schema.referential_constraints support for foreign key metadata
+- v23: information_schema.check_constraints support for check constraint metadata
 
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **information_schema.check_constraints Check Constraint Metadata Support**: Complete PostgreSQL check constraint introspection for ORM compatibility
+  - Added comprehensive information_schema.check_constraints table implementation with session-aware connection handling
+  - Supports all 4 PostgreSQL-standard columns: constraint_catalog, constraint_schema, constraint_name, check_clause
+  - Session-based constraint discovery using connection-per-session architecture for proper transaction isolation
+  - Direct integration with existing pg_constraint catalog for check constraint detection and metadata extraction
+  - Migration v23 enables information_schema.check_constraints support with complete SQL standard compliance
+  - Supports both user-defined check constraints and system constraints (NOT NULL, column-level, table-level)
+  - Integrated into catalog query interceptor with WHERE clause filtering and proper error handling
+  - Enables Django constraint discovery via inspectdb, SQLAlchemy constraint validation, Rails constraint introspection, Ecto schema validation
+  - Files: src/catalog/query_interceptor.rs, src/migration/registry.rs (v23), src/session/db_handler.rs, tests/information_schema_check_constraints_test.rs
+  - Impact: Completes critical constraint validation metadata access for ORM frameworks requiring check constraint introspection capabilities
+
 - **information_schema.referential_constraints Foreign Key Metadata Support**: Complete PostgreSQL foreign key constraint introspection for ORM compatibility
   - Added comprehensive information_schema.referential_constraints table implementation with session-aware connection handling
   - Supports all 9 PostgreSQL-standard columns: constraint_catalog, constraint_schema, constraint_name, unique_constraint_catalog, unique_constraint_schema, unique_constraint_name, match_option, update_rule, delete_rule
@@ -478,10 +491,10 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 **Full ORM compatibility** achieved with comprehensive PostgreSQL catalog support:
 
 ### Constraint Introspection ✅ **ENHANCED (2025-09-19)**
-- **Django**: `inspectdb` command discovers foreign key relationships via `pg_constraint` and `information_schema.referential_constraints`
-- **Rails**: ActiveRecord association mapping through constraint discovery with complete foreign key metadata
-- **SQLAlchemy**: Relationship automap generation with complete constraint metadata including update/delete rules
-- **Ecto**: Schema introspection with proper foreign key detection and constraint metadata
+- **Django**: `inspectdb` command discovers foreign key relationships via `pg_constraint` and `information_schema.referential_constraints`, plus check constraint validation via `information_schema.check_constraints`
+- **Rails**: ActiveRecord association mapping through constraint discovery with complete foreign key metadata and check constraint introspection
+- **SQLAlchemy**: Relationship automap generation with complete constraint metadata including update/delete rules and check constraint validation
+- **Ecto**: Schema introspection with proper foreign key detection, constraint metadata, and check constraint validation capabilities
 
 ### Index Management ✅ **NEW (2025-09-18)**
 - **Django**: `inspectdb` discovers indexes for model generation via `pg_index`
@@ -526,6 +539,9 @@ SELECT conname, contype, conkey FROM pg_constraint WHERE contype = 'p';
 -- Foreign key constraint details (information_schema pattern) - NEW!
 SELECT constraint_name, unique_constraint_name, match_option, update_rule, delete_rule
 FROM information_schema.referential_constraints;
+
+-- Check constraint details (information_schema pattern) - NEW!
+SELECT constraint_name, check_clause FROM information_schema.check_constraints;
 
 -- Index discovery (Rails/SQLAlchemy pattern) - NEW!
 SELECT i.indexrelid, ic.relname as index_name, i.indrelid, tc.relname as table_name,

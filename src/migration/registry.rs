@@ -29,6 +29,7 @@ lazy_static! {
         register_v20_information_schema_routines_support(&mut registry);
         register_v21_information_schema_views_support(&mut registry);
         register_v22_information_schema_referential_constraints_support(&mut registry);
+        register_v23_information_schema_check_constraints_support(&mut registry);
 
         registry
     };
@@ -2411,5 +2412,31 @@ fn register_v22_information_schema_referential_constraints_support(registry: &mu
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![21],
+    });
+}
+
+/// Version 23: information_schema.check_constraints support
+fn register_v23_information_schema_check_constraints_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(23, Migration {
+        version: 23,
+        name: "information_schema_check_constraints",
+        description: "Add PostgreSQL information_schema.check_constraints view for check constraint metadata and introspection",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.check_constraints is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '23', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.check_constraints is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '22', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![22],
     });
 }
