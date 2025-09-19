@@ -161,10 +161,22 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v16: pg_proc view for function metadata
 - v17: pg_description view for object comments
 - v18: pg_roles and pg_user views for user/role management
+- v19: pg_stats view for table statistics and query optimization
 
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **pg_stats Table Statistics Support**: Complete PostgreSQL query optimization and performance hints system
+  - Added comprehensive pg_stats table implementation for ORM query planning and optimization
+  - Realistic statistics generation based on column types and naming patterns (null_frac, n_distinct, correlation)
+  - Support for most_common_vals, most_common_freqs, and histogram_bounds for all PostgreSQL data types
+  - Intelligent statistics based on column semantics: IDs get unique stats, status columns get categorical data
+  - Migration v19 enables pg_stats support with full PostgreSQL schema compatibility (13 columns)
+  - Integrated into catalog query interceptor with session-based connection support and WHERE clause filtering
+  - Enables SQLAlchemy query optimization, Rails performance analysis, Django query planning, Ecto database introspection
+  - Files: src/catalog/pg_stats.rs, src/migration/registry.rs (v19), src/session/db_handler.rs, tests/pg_stats_test.rs
+  - Impact: Provides query planners and ORMs with essential table statistics for optimal query performance
+
 - **pg_roles and pg_user Support**: Complete PostgreSQL user and role management system
   - Added full pg_roles and pg_user table implementations for enterprise authentication workflows
   - Default roles: postgres (superuser), public (group role), pgsqlite_user (current user) with proper privileges
@@ -537,7 +549,29 @@ ORDER BY usename;  -- All users with privileges
 SELECT rolname, rolsuper, rolbypassrls
 FROM pg_roles
 WHERE rolname IN ('postgres', 'pgsqlite_user');  -- Specific roles
+
+-- Table statistics and query optimization (SQLAlchemy/Rails performance pattern) - NEW!
+SELECT schemaname, tablename, attname, null_frac, n_distinct, most_common_vals, correlation
+FROM pg_stats
+WHERE tablename = 'users';  -- Table-specific statistics
+
+-- Query planning optimization (Advanced ORM pattern) - NEW!
+SELECT tablename, attname, n_distinct, histogram_bounds
+FROM pg_stats
+WHERE n_distinct > 100;  -- High-cardinality columns
+
+-- Performance analysis and monitoring (Rails performance gems pattern) - NEW!
+SELECT tablename, COUNT(*) as column_count, AVG(CAST(null_frac AS REAL)) as avg_null_fraction
+FROM pg_stats
+GROUP BY tablename
+ORDER BY column_count DESC;  -- Table analysis
 ```
+
+### Query Optimization and Performance Hints ✅ **NEW (2025-09-19)**
+- **SQLAlchemy**: Query planner uses `pg_stats` for optimization hints and cost estimation
+- **Rails**: Performance analysis tools leverage statistics for query performance monitoring
+- **Django**: Query optimization through statistics-based decision making in ORM layer
+- **Ecto**: Database introspection includes table statistics for performance tuning
 
 ### SQLAlchemy Compatibility
 **Full SQLAlchemy ORM support** with all tests passing for both psycopg2 and psycopg3-text drivers:

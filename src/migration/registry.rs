@@ -25,6 +25,7 @@ lazy_static! {
         register_v16_pg_proc_support(&mut registry);
         register_v17_pg_description_support(&mut registry);
         register_v18_pg_roles_user_support(&mut registry);
+        register_v19_pg_stats_support(&mut registry);
 
         registry
     };
@@ -2304,5 +2305,31 @@ fn register_v18_pg_roles_user_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![17],
+    });
+}
+
+/// Version 19: Add pg_stats support for query optimization hints
+fn register_v19_pg_stats_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(19, Migration {
+        version: 19,
+        name: "pg_stats_support",
+        description: "Add PostgreSQL pg_stats view for query optimization and performance hints",
+        up: MigrationAction::SqlBatch(&[
+            // Note: pg_stats is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '19', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- pg_stats is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '18', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![18],
     });
 }

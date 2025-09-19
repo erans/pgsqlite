@@ -8,7 +8,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_proc::PgProcHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, system_functions::SystemFunctions};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_proc::PgProcHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, system_functions::SystemFunctions};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -52,6 +52,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_enum") || lower_query.contains("pg_proc") ||
            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
+           lower_query.contains("pg_stats") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -271,7 +272,7 @@ impl CatalogInterceptor {
                             table_name.contains("pg_constraint") || table_name.contains("pg_index") ||
                             table_name.contains("pg_depend") || table_name.contains("pg_proc") ||
                             table_name.contains("pg_description") || table_name.contains("pg_roles") ||
-                            table_name.contains("pg_user")) {
+                            table_name.contains("pg_user") || table_name.contains("pg_stats")) {
                             debug!("Passing JOIN query on catalog tables to SQLite views");
                             return None;
                         }
@@ -422,6 +423,21 @@ impl CatalogInterceptor {
                     },
                     Err(_) => {
                         // PgUserHandler error
+                        None
+                    },
+                };
+            }
+            // Handle pg_stats queries
+            if table_name.contains("pg_stats") || table_name.contains("pg_catalog.pg_stats") {
+                info!("Routing to PgStatsHandler for table: {}", table_name);
+                debug!("PgStatsHandler input select: {:?}", select);
+                return match PgStatsHandler::handle_query(select, &db).await {
+                    Ok(response) => {
+                        debug!("PgStatsHandler returned {} rows", response.rows.len());
+                        Some(Ok(response))
+                    },
+                    Err(_) => {
+                        // PgStatsHandler error
                         None
                     },
                 };
