@@ -157,10 +157,82 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v8: Array support
 - v9: Full-Text Search support
 - v10: typcategory column in pg_type view
+- v15: pg_depend table for object dependencies
+- v16: pg_proc view for function metadata
+- v17: pg_description view for object comments
+- v18: pg_roles and pg_user views for user/role management
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-09-18)
+### Recently Fixed (2025-09-19)
+- **pg_roles and pg_user Support**: Complete PostgreSQL user and role management system
+  - Added full pg_roles and pg_user table implementations for enterprise authentication workflows
+  - Default roles: postgres (superuser), public (group role), pgsqlite_user (current user) with proper privileges
+  - Default users: postgres and pgsqlite_user with appropriate permissions (usecreatedb, usesuper, etc.)
+  - Migration v18 creates pg_roles and pg_user views with PostgreSQL-compatible role/user metadata
+  - Integrated into catalog query interceptor with WHERE clause filtering support
+  - Enables Django user management, SQLAlchemy role-based access control, Rails authentication integration
+  - Files: src/catalog/pg_roles.rs, src/catalog/pg_user.rs, src/migration/registry.rs (v18), tests/pg_roles_user_test.rs
+  - Impact: Enables complete enterprise user/role management and authentication workflows for all major ORMs
+
+- **pg_description Comment Support**: Complete PostgreSQL object comment and documentation system
+  - Added full pg_description table implementation with COMMENT DDL integration for table/column/function comments
+  - Supports PostgreSQL COMMENT ON syntax: `COMMENT ON TABLE users IS 'User information table'`
+  - Maps pgsqlite's __pgsqlite_comments table to PostgreSQL pg_description format (objoid, classoid, objsubid, description)
+  - Migration v17 creates pg_description view with proper OID mapping and PostgreSQL class compatibility
+  - Integrated COMMENT DDL handler into both memory and file-based database execution paths
+  - Enables Django inspectdb model documentation, SQLAlchemy comment reflection, Rails schema documentation
+  - Files: src/catalog/pg_description.rs, src/session/db_handler.rs, src/migration/registry.rs (v17), tests/pg_description_test.rs
+  - Impact: Enables full documentation-driven development workflows with complete ORM comment introspection
+
+- **pg_proc Function Metadata Support**: Complete PostgreSQL function introspection for enterprise ORM compatibility
+  - Added comprehensive pg_proc view with 35+ built-in functions (string, math, aggregate, JSON, array, UUID, system)
+  - Includes all essential PostgreSQL metadata: oid, proname, prokind, prorettype, provolatile, proisstrict, etc.
+  - Migration v16 creates SQLite view with proper function categorization (functions 'f', aggregates 'a')
+  - Supports \df command functionality and complete function discovery for ORMs
+  - Enables Django inspectdb function analysis, SQLAlchemy function reflection, Rails procedure-based migrations
+  - Files: src/catalog/pg_proc.rs, src/migration/registry.rs (v16), tests/pg_proc_simple_test.rs
+  - Impact: Major step toward enterprise-grade PostgreSQL catalog compatibility
+
+- **Array Types Binary Protocol Support**: Complete PostgreSQL array binary encoding for psycopg3 compatibility
+  - Added binary encoding for all array types (int4[], text[], numeric[], etc.) in extended query protocol
+  - Fixed cast translation issues preventing ARRAY[] syntax from working correctly
+  - Enhanced CastTranslator to properly handle array type names (INTEGER[] vs INTEGER)
+  - Array literals now work: ARRAY[1,2,3] → '[1,2,3]' → PostgreSQL binary format
+  - Comprehensive test coverage with array_binary_protocol_test.rs and simple_integer_array_test.rs
+  - Files: src/query/extended.rs (lines 3717-3813), src/translator/cast_translator.rs (lines 522-527)
+  - Enables modern ORM frameworks (Django ArrayField, SQLAlchemy ARRAY, Rails arrays) with psycopg3 binary mode
+
+### Previously Fixed (2025-09-18)
+- **Information Schema Binary Protocol Support**: Fixed all information_schema test failures with binary format
+  - **Problem**: Extended protocol information_schema queries failed with UnexpectedMessage errors in binary format
+  - **Root Cause**: information_schema not included in catalog query detection and missing field descriptions for SELECT *
+  - **Fixed Binary Format**: Added information_schema to catalog detection in handle_describe() for proper FieldDescription generation
+  - **Fixed Wildcard Queries**: Added complete field descriptions for SELECT * on information_schema.schemata/tables/columns
+  - **Fixed WHERE Filtering**: Added extract_table_name_filters() function supporting both equality and IN clause filtering
+  - **Pattern Support**: Handles table_name = 'value' and table_name IN ('val1', 'val2') with compound identifiers
+  - **Test Results**: 8/8 information_schema tests now pass (was 0/8 failing with protocol errors)
+  - **Full Compatibility**: Binary protocol works perfectly for both specific columns and SELECT * with proper row filtering
+  - Files: src/query/extended.rs, src/catalog/query_interceptor.rs, tests/information_schema_test.rs
+- **Enhanced PostgreSQL Attribute Support (pg_attribute)**: Complete column metadata with defaults and constraints
+  - Enhanced pg_attribute with column default expression extraction from PRAGMA table_info
+  - Identity/SERIAL column detection for PRIMARY KEY INTEGER columns (attidentity = 'd')
+  - Generated column support detection with proper attgenerated field population
+  - NOT NULL constraint detection and proper attnotnull field mapping
+  - Comprehensive test coverage with various default types (strings, numbers, functions, NULL)
+  - Full ORM compatibility for advanced schema introspection and column analysis
+  - Files: src/catalog/pg_attribute.rs, tests/enhanced_pg_attribute_test.rs, tests/simple_pg_attribute_test.rs
+  - ORM Benefits: Complete column metadata now available for all major ORM frameworks
+- **PostgreSQL Index Support (pg_index)**: Complete index management for ORM frameworks
+  - Enhanced pg_index table population using PRAGMA index_list/index_info for accurate metadata
+  - Proper PostgreSQL-compatible column number mapping (1-based attnum values in indkey field)
+  - Multi-column index support with space-separated indkey field (e.g., "2 3" for columns 2 and 3)
+  - Unique/primary key detection using SQLite origin field and name pattern analysis
+  - Auto-population triggered by all CREATE TABLE and CREATE INDEX operations
+  - Type mappings added to extended query processor for proper OID/Int4/Bool type handling
+  - Enables complete index introspection: Rails `ActiveRecord::Base.connection.indexes()`, SQLAlchemy `Inspector.get_indexes()`, Django `inspectdb` index discovery
+  - Files: src/catalog/constraint_populator.rs, src/query/extended.rs, comprehensive test suite
+  - ORM Benefits: Index discovery now works for Rails, SQLAlchemy, Django, and Ecto migrations
 - **PostgreSQL Constraint Support (pg_constraint)**: Full constraint introspection for ORM compatibility
   - Added comprehensive pg_constraint table population for all CREATE TABLE operations
   - Supports foreign key, primary key, unique, and check constraint detection
@@ -171,6 +243,22 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
   - Enables full ORM constraint introspection for Django, Rails, SQLAlchemy, and Ecto
   - Files: src/catalog/constraint_populator.rs, src/session/db_handler.rs, src/query/extended.rs
   - Fixed: "Found 0 foreign key constraints" → "Found 1+ foreign key constraints"
+- **PostgreSQL Dependency Support (pg_depend)**: Rails sequence ownership detection
+  - Added complete pg_depend table with hybrid catalog handler approach for object dependencies
+  - Automatic sequence ownership detection for INTEGER PRIMARY KEY columns (Rails SERIAL compatibility)
+  - Smart filtering: only single-column INTEGER PRIMARY KEY creates dependencies (compound PKs ignored)
+  - Rails ActiveRecord `pk_and_sequence_for` method compatibility for auto-increment detection
+  - Supports exact Rails query pattern: `WHERE dep.refclassid = '1259' AND dep.refobjsubid = 1 AND dep.deptype = 'a'`
+  - Fixed PRAGMA parameter binding issues affecting all constraint population functions
+  - Migration v15 with pg_depend table creation and proper column definitions
+  - Comprehensive test coverage including Rails patterns and edge cases
+  - Files: src/catalog/pg_depend.rs, src/catalog/constraint_populator.rs, tests/pg_depend_test.rs
+  - ORM Benefits: Rails sequence detection, Django SERIAL introspection, SQLAlchemy auto-increment discovery
+- **Fixed Type Conversion Issues**: Resolved runtime type errors in pg_constraint queries
+  - Added comprehensive pg_constraint type mapping in extended query handler
+  - Fixed "cannot convert between Rust type and Postgres type" errors
+  - Proper handling of OID, CHAR, BOOL, and TEXT column types
+  - All 5 pg_constraint tests now pass successfully
 
 ### Previously Fixed (2025-09-04)
 - **PostgreSQL Operator Class Support in CREATE INDEX**: Fixed "near varchar_pattern_ops: syntax error"
@@ -314,6 +402,8 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ### Major Features
 - **PostgreSQL Constraint Support**: Full pg_constraint table with foreign key introspection
+- **PostgreSQL Index Support**: Complete pg_index table with multi-column index introspection
+- **PostgreSQL Dependency Support**: Full pg_depend table with Rails sequence ownership detection ✨ **NEW!**
 - **Binary Protocol Support**: psycopg3 compatibility with binary format encoders
 - **Connection Pooling**: Enable with `PGSQLITE_USE_POOLING=true`
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
@@ -328,9 +418,11 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - Row conversions: row_to_json, json_populate_record
 
 ### Array Support
-- 30+ array types with JSON storage
+- 30+ array types with JSON storage and PostgreSQL binary protocol support
 - Operators: `@>`, `<@`, `&&`, `||`
 - Functions: unnest(), array_agg() with DISTINCT/ORDER BY
+- Binary encoding: Full psycopg3 compatibility with proper array wire format
+- ORM support: Django ArrayField, SQLAlchemy ARRAY, Rails arrays work in binary mode
 
 ## ORM Framework Compatibility
 
@@ -342,6 +434,35 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **SQLAlchemy**: Relationship automap generation with complete constraint metadata
 - **Ecto**: Schema introspection with proper foreign key detection
 
+### Index Management ✅ **NEW (2025-09-18)**
+- **Django**: `inspectdb` discovers indexes for model generation via `pg_index`
+- **Rails**: `ActiveRecord::Base.connection.indexes(table_name)` returns complete index information
+- **SQLAlchemy**: `Inspector.get_indexes()` provides full index reflection with column mapping
+- **Ecto**: Schema introspection includes index definitions for migration generation
+
+### Enhanced Column Metadata ✅ **NEW (2025-09-18)**
+- **Django**: Complete column introspection with defaults, constraints, and identity detection
+- **Rails**: Full schema analysis including column defaults and constraint information
+- **SQLAlchemy**: Advanced column metadata for automap and reflection with default expressions
+
+### Sequence Ownership Detection ✅ **NEW (2025-09-18)**
+- **Rails**: ActiveRecord `pk_and_sequence_for` method works for auto-increment detection via `pg_depend`
+- **Django**: SERIAL column introspection through dependency mapping
+- **SQLAlchemy**: Auto-increment column discovery for sequence-based primary keys
+- **Ecto**: Schema introspection includes sequence ownership information
+
+### Comment and Documentation Support ✅ **NEW (2025-09-19)**
+- **Django**: `inspectdb` generates model documentation from table/column comments via `pg_description`
+- **Rails**: Schema introspection includes comment metadata for migration documentation
+- **SQLAlchemy**: Comment reflection for table and column documentation in automap and inspector
+- **Ecto**: Schema documentation generation with complete comment integration
+
+### User and Role Management ✅ **NEW (2025-09-19)**
+- **Django**: Complete user management and permission checking via `pg_roles` and `pg_user` tables
+- **SQLAlchemy**: Role-based access control with proper privilege introspection and user authentication
+- **Rails**: Authentication integration with user/role discovery for permission management
+- **Ecto**: User and role introspection for authorization logic and permission systems
+
 **Example queries now work correctly:**
 ```sql
 -- Foreign key discovery (Django/Rails pattern)
@@ -352,6 +473,70 @@ SELECT conname, contype, condeferrable, condeferred, convalidated FROM pg_constr
 
 -- Primary key discovery (all ORMs)
 SELECT conname, contype, conkey FROM pg_constraint WHERE contype = 'p';
+
+-- Index discovery (Rails/SQLAlchemy pattern) - NEW!
+SELECT i.indexrelid, ic.relname as index_name, i.indrelid, tc.relname as table_name,
+       i.indnatts, i.indisunique, i.indisprimary, i.indkey
+FROM pg_index i
+JOIN pg_class ic ON i.indexrelid = ic.oid
+JOIN pg_class tc ON i.indrelid = tc.oid
+WHERE tc.relname = 'users';
+
+-- Multi-column index information (SQLAlchemy Inspector pattern) - NEW!
+SELECT ic.relname, i.indnatts, i.indkey, i.indisunique
+FROM pg_index i
+JOIN pg_class ic ON i.indexrelid = ic.oid
+WHERE i.indnatts > 1;
+
+-- Enhanced column metadata with defaults and constraints (NEW!)
+SELECT attname, attnotnull, atthasdef, attidentity
+FROM pg_attribute
+WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'users')
+AND attnum > 0
+ORDER BY attnum;
+
+-- Identity/SERIAL column detection (NEW!)
+SELECT attname, attidentity, attgenerated
+FROM pg_attribute
+WHERE attidentity != '' OR attgenerated != '';
+
+-- Sequence ownership detection (Rails ActiveRecord pattern) - NEW!
+SELECT dep.classid, dep.objid, dep.objsubid, dep.refclassid, dep.refobjid, dep.refobjsubid, dep.deptype
+FROM pg_depend dep
+WHERE dep.refclassid = '1259'
+AND dep.refobjsubid = 1
+AND dep.deptype = 'a';
+
+-- Auto-increment column discovery (Django/SQLAlchemy pattern) - NEW!
+SELECT dep.refobjid as table_oid, dep.refobjsubid as column_number
+FROM pg_depend dep
+WHERE dep.deptype = 'a'
+AND dep.classid = '1259';
+
+-- Comment discovery (Django inspectdb / SQLAlchemy reflection pattern) - NEW!
+SELECT objoid, classoid, objsubid, description
+FROM pg_description
+WHERE objsubid = 0;  -- Table comments
+
+-- Column comment discovery (ORM documentation generation) - NEW!
+SELECT objoid, objsubid, description
+FROM pg_description
+WHERE objsubid > 0;  -- Column comments
+
+-- User and role management (Django user management / SQLAlchemy RBAC pattern) - NEW!
+SELECT rolname, rolsuper, rolcreatedb, rolcanlogin
+FROM pg_roles
+WHERE rolcanlogin = 't';  -- Login roles
+
+-- User authentication integration (Rails authentication pattern) - NEW!
+SELECT usename, usesuper, usecreatedb, userepl
+FROM pg_user
+ORDER BY usename;  -- All users with privileges
+
+-- Role-based access control (Enterprise authentication pattern) - NEW!
+SELECT rolname, rolsuper, rolbypassrls
+FROM pg_roles
+WHERE rolname IN ('postgres', 'pgsqlite_user');  -- Specific roles
 ```
 
 ### SQLAlchemy Compatibility

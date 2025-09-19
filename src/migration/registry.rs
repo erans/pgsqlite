@@ -20,6 +20,11 @@ lazy_static! {
         register_v11_fix_catalog_views(&mut registry);
         register_v12_comment_system(&mut registry);
         register_v13_pg_stat_views(&mut registry);
+        register_v14_information_schema_views(&mut registry);
+        register_v15_pg_depend_support(&mut registry);
+        register_v16_pg_proc_support(&mut registry);
+        register_v17_pg_description_support(&mut registry);
+        register_v18_pg_roles_user_support(&mut registry);
 
         registry
     };
@@ -1752,5 +1757,552 @@ fn register_v13_pg_stat_views(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![12],
+    });
+}
+
+/// Version 14: Information schema views as real SQLite views
+fn register_v14_information_schema_views(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(14, Migration {
+        version: 14,
+        name: "information_schema_views",
+        description: "Create information_schema views as real SQLite views to enable JOINs for ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create information_schema views as real SQLite views with underscores
+            // These can be JOINed and the interceptor will query them
+            // Use existing pg_* catalog tables for consistency
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_tables AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                relname as table_name,
+                CASE relkind
+                    WHEN 'r' THEN 'BASE TABLE'
+                    WHEN 'v' THEN 'VIEW'
+                    ELSE 'UNKNOWN'
+                END as table_type,
+                'YES' as is_insertable_into,
+                NULL as self_referencing_column_name,
+                NULL as reference_generation,
+                NULL as user_defined_type_catalog,
+                NULL as user_defined_type_schema,
+                NULL as user_defined_type_name,
+                'NO' as is_typed,
+                'NO' as commit_action
+            FROM pg_class
+            WHERE relkind IN ('r', 'v');
+            "#,
+
+            // Create information_schema.columns view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_columns AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                a.attname as column_name,
+                a.attnum as ordinal_position,
+                NULL as column_default,
+                CASE WHEN a.attnotnull = 't' THEN 'NO' ELSE 'YES' END as is_nullable,
+                CASE a.atttypid
+                    WHEN 23 THEN 'integer'
+                    WHEN 25 THEN 'text'
+                    WHEN 700 THEN 'real'
+                    WHEN 701 THEN 'double precision'
+                    WHEN 17 THEN 'bytea'
+                    WHEN 1043 THEN 'character varying'
+                    WHEN 1042 THEN 'character'
+                    WHEN 16 THEN 'boolean'
+                    WHEN 1082 THEN 'date'
+                    WHEN 1083 THEN 'time without time zone'
+                    WHEN 1114 THEN 'timestamp without time zone'
+                    WHEN 1184 THEN 'timestamp with time zone'
+                    WHEN 1700 THEN 'numeric'
+                    ELSE 'text'
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as domain_catalog,
+                NULL as domain_schema,
+                NULL as domain_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'NO' as is_self_referencing,
+                'NO' as is_identity,
+                NULL as identity_generation,
+                NULL as identity_start,
+                NULL as identity_increment,
+                NULL as identity_maximum,
+                NULL as identity_minimum,
+                NULL as identity_cycle,
+                'NO' as is_generated,
+                NULL as generation_expression,
+                'NO' as is_updatable
+            FROM pg_class c
+            JOIN pg_attribute a ON c.oid = a.attrelid
+            WHERE c.relkind = 'r'
+              AND a.attnum > 0;
+            "#,
+
+            // Create information_schema.key_column_usage view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_key_column_usage AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                a.attname as column_name,
+                a.attnum as ordinal_position,
+                NULL as position_in_unique_constraint
+            FROM pg_constraint con
+            JOIN pg_class c ON con.conrelid = c.oid
+            JOIN pg_attribute a ON c.oid = a.attrelid
+            WHERE con.contype IN ('p', 'u', 'f')
+              AND a.attnum > 0
+              AND (',' || con.conkey || ',') LIKE ('%,' || a.attnum || ',%');
+            "#,
+
+            // Create information_schema.table_constraints view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_table_constraints AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                CASE con.contype
+                    WHEN 'p' THEN 'PRIMARY KEY'
+                    WHEN 'u' THEN 'UNIQUE'
+                    WHEN 'f' THEN 'FOREIGN KEY'
+                    WHEN 'c' THEN 'CHECK'
+                    ELSE 'UNKNOWN'
+                END as constraint_type,
+                CASE WHEN con.condeferrable THEN 'YES' ELSE 'NO' END as is_deferrable,
+                CASE WHEN con.condeferred THEN 'YES' ELSE 'NO' END as initially_deferred,
+                CASE WHEN con.convalidated THEN 'YES' ELSE 'NO' END as enforced
+            FROM pg_constraint con
+            JOIN pg_class c ON con.conrelid = c.oid;
+            "#,
+
+            // Create information_schema.referential_constraints view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_referential_constraints AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                'main' as unique_constraint_catalog,
+                'public' as unique_constraint_schema,
+                ref_c.relname || '_pkey' as unique_constraint_name,
+                'NONE' as match_option,
+                CASE con.confupdtype
+                    WHEN 'a' THEN 'NO ACTION'
+                    WHEN 'r' THEN 'RESTRICT'
+                    WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL'
+                    WHEN 'd' THEN 'SET DEFAULT'
+                    ELSE 'NO ACTION'
+                END as update_rule,
+                CASE con.confdeltype
+                    WHEN 'a' THEN 'NO ACTION'
+                    WHEN 'r' THEN 'RESTRICT'
+                    WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL'
+                    WHEN 'd' THEN 'SET DEFAULT'
+                    ELSE 'NO ACTION'
+                END as delete_rule
+            FROM pg_constraint con
+            JOIN pg_class c ON con.conrelid = c.oid
+            LEFT JOIN pg_class ref_c ON con.confrelid = ref_c.oid
+            WHERE con.contype = 'f';
+            "#,
+
+            // Create information_schema.schemata view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_schemata AS
+            SELECT
+                'main' as catalog_name,
+                'public' as schema_name,
+                'postgres' as schema_owner,
+                NULL as default_character_set_catalog,
+                NULL as default_character_set_schema,
+                NULL as default_character_set_name,
+                NULL as sql_path;
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '14', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove information_schema views
+            DROP VIEW IF EXISTS information_schema_tables;
+            DROP VIEW IF EXISTS information_schema_columns;
+            DROP VIEW IF EXISTS information_schema_key_column_usage;
+            DROP VIEW IF EXISTS information_schema_table_constraints;
+            DROP VIEW IF EXISTS information_schema_referential_constraints;
+            DROP VIEW IF EXISTS information_schema_schemata;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '13', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![13],
+    });
+}
+
+/// Version 15: pg_depend support for Rails sequence ownership detection
+fn register_v15_pg_depend_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(15, Migration {
+        version: 15,
+        name: "pg_depend_support",
+        description: "Add pg_depend view for Rails sequence ownership detection and ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_depend table for storing object dependencies
+            r#"
+            CREATE TABLE IF NOT EXISTS pg_depend (
+                classid TEXT NOT NULL,      -- OID of system catalog (e.g., '1259' for pg_class)
+                objid TEXT NOT NULL,        -- OID of dependent object
+                objsubid INTEGER NOT NULL,  -- Column number for table dependencies, 0 otherwise
+                refclassid TEXT NOT NULL,   -- OID of system catalog where referenced object is listed
+                refobjid TEXT NOT NULL,     -- OID of referenced object
+                refobjsubid INTEGER NOT NULL, -- Column number for referenced object
+                deptype CHAR(1) NOT NULL,   -- Dependency type: 'a' = automatic, 'n' = normal, etc.
+                PRIMARY KEY (classid, objid, objsubid, refclassid, refobjid, refobjsubid)
+            );
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '15', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_depend table
+            DROP TABLE IF EXISTS pg_depend;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '14', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![14],
+    });
+}
+
+/// Version 16: pg_proc support for function introspection and \df command
+fn register_v16_pg_proc_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(16, Migration {
+        version: 16,
+        name: "pg_proc_support",
+        description: "Add pg_proc view for function introspection, \\df command, and complete ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_proc view with essential function metadata
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_proc AS
+            SELECT
+                (16384 + row_number() OVER ()) as oid,          -- Unique OID starting from 16384
+                func_name as proname,                           -- Function name
+                11 as pronamespace,                             -- pg_catalog namespace
+                10 as proowner,                                 -- postgres user OID
+                12 as prolang,                                  -- SQL language OID
+                1 as procost,                                   -- Cost estimate
+                0 as prorows,                                   -- Estimated result rows
+                0 as provariadic,                               -- Variadic argument OID
+                0 as prosupport,                                -- Support function OID
+                func_kind as prokind,                           -- Function kind ('f', 'a', 'p')
+                'f' as prosecdef,                               -- Security definer
+                'f' as proleakproof,                            -- Leak proof
+                func_strict as proisstrict,                     -- Strict (returns null on null input)
+                func_retset as proretset,                       -- Returns set
+                func_volatile as provolatile,                   -- Volatility ('i', 's', 'v')
+                's' as proparallel,                             -- Parallel safety
+                0 as pronargs,                                  -- Number of arguments (simplified)
+                0 as pronargdefaults,                           -- Number of default arguments
+                func_rettype as prorettype,                     -- Return type OID
+                '' as proargtypes,                              -- Argument types (simplified)
+                NULL as proallargtypes,                         -- All argument types
+                NULL as proargmodes,                            -- Argument modes
+                NULL as proargnames,                            -- Argument names
+                NULL as proargdefaults,                         -- Argument defaults
+                NULL as protrftypes,                            -- Transform types
+                '' as prosrc,                                   -- Function source
+                NULL as probin,                                 -- Object file
+                NULL as prosqlbody,                             -- SQL body
+                NULL as proconfig,                              -- Configuration
+                NULL as proacl                                  -- Access privileges
+            FROM (
+                -- String functions
+                SELECT 'length' as func_name, 'f' as func_kind, 't' as func_strict, 'f' as func_retset, 'i' as func_volatile, 23 as func_rettype
+                UNION ALL SELECT 'lower', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'upper', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'substr', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'replace', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'trim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'ltrim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'rtrim', 'f', 't', 'f', 'i', 25
+
+                -- Math functions
+                UNION ALL SELECT 'abs', 'f', 't', 'f', 'i', 23
+                UNION ALL SELECT 'round', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'ceil', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'floor', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'sqrt', 'f', 't', 'f', 'i', 701
+                UNION ALL SELECT 'power', 'f', 't', 'f', 'i', 701
+
+                -- Aggregate functions
+                UNION ALL SELECT 'count', 'a', 'f', 't', 'v', 20  -- bigint
+                UNION ALL SELECT 'sum', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'avg', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'max', 'a', 'f', 't', 'v', 2283  -- any
+                UNION ALL SELECT 'min', 'a', 'f', 't', 'v', 2283  -- any
+
+                -- Date/time functions
+                UNION ALL SELECT 'now', 'f', 'f', 'f', 'v', 1184  -- timestamptz
+                UNION ALL SELECT 'date', 'f', 't', 'f', 'i', 1082  -- date
+                UNION ALL SELECT 'extract', 'f', 't', 'f', 'i', 701  -- float8
+
+                -- JSON functions
+                UNION ALL SELECT 'json_agg', 'a', 'f', 't', 'v', 114     -- json
+                UNION ALL SELECT 'jsonb_agg', 'a', 'f', 't', 'v', 3802   -- jsonb
+                UNION ALL SELECT 'json_object_agg', 'a', 'f', 't', 'v', 114  -- json
+                UNION ALL SELECT 'json_extract', 'f', 't', 'f', 'i', 25   -- text
+                UNION ALL SELECT 'jsonb_set', 'f', 't', 'f', 'i', 3802    -- jsonb
+
+                -- Array functions
+                UNION ALL SELECT 'array_agg', 'a', 'f', 't', 'v', 2277    -- anyarray
+                UNION ALL SELECT 'unnest', 'f', 'f', 't', 'i', 2283       -- setof any
+                UNION ALL SELECT 'array_length', 'f', 't', 'f', 'i', 23   -- int4
+
+                -- UUID functions
+                UNION ALL SELECT 'uuid_generate_v4', 'f', 'f', 'f', 'v', 2950  -- uuid
+
+                -- System functions
+                UNION ALL SELECT 'version', 'f', 'f', 'f', 's', 25        -- text
+                UNION ALL SELECT 'current_database', 'f', 'f', 'f', 's', 19  -- name
+                UNION ALL SELECT 'current_user', 'f', 'f', 'f', 's', 19   -- name
+                UNION ALL SELECT 'pg_table_is_visible', 'f', 't', 'f', 's', 16  -- bool
+                UNION ALL SELECT 'format_type', 'f', 't', 'f', 'i', 25    -- text
+                UNION ALL SELECT 'pg_get_constraintdef', 'f', 't', 'f', 's', 25  -- text
+            );
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '16', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_proc view
+            DROP VIEW IF EXISTS pg_proc;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '15', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![15],
+    });
+}
+
+/// Version 17: pg_description support for object comments and documentation
+fn register_v17_pg_description_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(17, Migration {
+        version: 17,
+        name: "pg_description_support",
+        description: "Add pg_description view for object comments, table/column documentation, and complete ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_description view with object comment metadata
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_description AS
+            SELECT
+                objoid,
+                classoid,
+                objsubid,
+                description
+            FROM (
+                -- Table comments (objsubid = 0)
+                SELECT
+                    object_oid as objoid,
+                    1259 as classoid,                                  -- pg_class OID
+                    subobject_id as objsubid,                          -- 0 for table itself
+                    comment_text as description
+                FROM __pgsqlite_comments
+                WHERE catalog_name = 'pg_class' AND subobject_id = 0
+
+                UNION ALL
+
+                -- Column comments (objsubid = column number)
+                SELECT
+                    object_oid as objoid,
+                    1259 as classoid,                                  -- pg_class OID
+                    subobject_id as objsubid,                          -- Column number
+                    comment_text as description
+                FROM __pgsqlite_comments
+                WHERE catalog_name = 'pg_class' AND subobject_id > 0
+
+                UNION ALL
+
+                -- Function comments (objsubid = 0)
+                SELECT
+                    object_oid as objoid,
+                    1255 as classoid,                                  -- pg_proc OID
+                    subobject_id as objsubid,                          -- 0 for function itself
+                    comment_text as description
+                FROM __pgsqlite_comments
+                WHERE catalog_name = 'pg_proc'
+            )
+            WHERE description IS NOT NULL AND description != '';
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '17', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_description view
+            DROP VIEW IF EXISTS pg_description;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '16', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![16],
+    });
+}
+
+/// Version 18: Add pg_roles and pg_user support
+fn register_v18_pg_roles_user_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(18, Migration {
+        version: 18,
+        name: "pg_roles_user_support",
+        description: "Add PostgreSQL pg_roles and pg_user views for user and role management",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_roles view for role information
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_roles AS
+            SELECT
+                10 as oid,
+                'postgres' as rolname,
+                't' as rolsuper,
+                't' as rolinherit,
+                't' as rolcreaterole,
+                't' as rolcreatedb,
+                't' as rolcanlogin,
+                't' as rolreplication,
+                -1 as rolconnlimit,
+                '********' as rolpassword,
+                NULL as rolvaliduntil,
+                't' as rolbypassrls,
+                NULL as rolconfig
+            UNION ALL
+            SELECT
+                0 as oid,
+                'public' as rolname,
+                'f' as rolsuper,
+                't' as rolinherit,
+                'f' as rolcreaterole,
+                'f' as rolcreatedb,
+                'f' as rolcanlogin,
+                'f' as rolreplication,
+                -1 as rolconnlimit,
+                NULL as rolpassword,
+                NULL as rolvaliduntil,
+                'f' as rolbypassrls,
+                NULL as rolconfig
+            UNION ALL
+            SELECT
+                100 as oid,
+                'pgsqlite_user' as rolname,
+                't' as rolsuper,
+                't' as rolinherit,
+                't' as rolcreaterole,
+                't' as rolcreatedb,
+                't' as rolcanlogin,
+                'f' as rolreplication,
+                -1 as rolconnlimit,
+                '********' as rolpassword,
+                NULL as rolvaliduntil,
+                't' as rolbypassrls,
+                NULL as rolconfig;
+            "#,
+            // Create pg_user view for user information
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_user AS
+            SELECT
+                'postgres' as usename,
+                10 as usesysid,
+                't' as usecreatedb,
+                't' as usesuper,
+                't' as userepl,
+                't' as usebypassrls,
+                '********' as passwd,
+                NULL as valuntil,
+                NULL as useconfig
+            UNION ALL
+            SELECT
+                'pgsqlite_user' as usename,
+                100 as usesysid,
+                't' as usecreatedb,
+                't' as usesuper,
+                'f' as userepl,
+                't' as usebypassrls,
+                '********' as passwd,
+                NULL as valuntil,
+                NULL as useconfig;
+            "#,
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '18', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_roles and pg_user views
+            DROP VIEW IF EXISTS pg_roles;
+            DROP VIEW IF EXISTS pg_user;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '17', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![17],
     });
 }
