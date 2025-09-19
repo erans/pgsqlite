@@ -49,6 +49,7 @@ impl CatalogInterceptor {
         // Check for catalog tables
         let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
            lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
+           lower_query.contains("pg_tablespace") ||
            lower_query.contains("pg_class") || lower_query.contains("pg_attribute") ||
            lower_query.contains("pg_enum") || lower_query.contains("pg_proc") ||
            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
@@ -273,7 +274,8 @@ impl CatalogInterceptor {
                             table_name.contains("pg_constraint") || table_name.contains("pg_index") ||
                             table_name.contains("pg_depend") || table_name.contains("pg_proc") ||
                             table_name.contains("pg_description") || table_name.contains("pg_roles") ||
-                            table_name.contains("pg_user") || table_name.contains("pg_stats")) {
+                            table_name.contains("pg_user") || table_name.contains("pg_stats") ||
+                            table_name.contains("pg_tablespace")) {
                             debug!("Passing JOIN query on catalog tables to SQLite views");
                             return None;
                         }
@@ -330,7 +332,12 @@ impl CatalogInterceptor {
             if table_name.contains("pg_range") || table_name.contains("pg_catalog.pg_range") {
                 return Some(Ok(Self::handle_pg_range_query(select)));
             }
-            
+
+            // Handle pg_tablespace queries
+            if table_name.contains("pg_tablespace") || table_name.contains("pg_catalog.pg_tablespace") {
+                return Some(Ok(Self::handle_pg_tablespace_query(select)));
+            }
+
             // Handle pg_class queries
             if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
                 return Some(PgClassHandler::handle_query(select, &db).await);
@@ -836,7 +843,46 @@ impl CatalogInterceptor {
             rows_affected,
         }
     }
-    
+
+    pub fn handle_pg_tablespace_query(_select: &Select) -> DbResponse {
+        // Return standard PostgreSQL tablespaces
+        let columns = vec![
+            "oid".to_string(),
+            "spcname".to_string(),
+            "spcowner".to_string(),
+            "spcacl".to_string(),
+            "spcoptions".to_string(),
+        ];
+
+        let rows = vec![
+            // pg_default tablespace (oid 1663)
+            vec![
+                Some("1663".to_string().into_bytes()),
+                Some("pg_default".to_string().into_bytes()),
+                Some("10".to_string().into_bytes()), // Default superuser oid
+                Some("".to_string().into_bytes()),   // No ACL (NULL)
+                Some("".to_string().into_bytes()),   // No options (NULL)
+            ],
+            // pg_global tablespace (oid 1664)
+            vec![
+                Some("1664".to_string().into_bytes()),
+                Some("pg_global".to_string().into_bytes()),
+                Some("10".to_string().into_bytes()), // Default superuser oid
+                Some("".to_string().into_bytes()),   // No ACL (NULL)
+                Some("".to_string().into_bytes()),   // No options (NULL)
+            ],
+        ];
+
+        let rows_affected = rows.len();
+        debug!("Returning {} rows for pg_tablespace query with {} columns: {:?}", rows_affected, columns.len(), columns);
+
+        DbResponse {
+            columns,
+            rows,
+            rows_affected,
+        }
+    }
+
     fn handle_pg_type_join_query(select: &Select) -> DbResponse {
         // Handle the complex JOIN query that tokio-postgres uses
         // Extract which columns are being selected

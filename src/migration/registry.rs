@@ -30,6 +30,7 @@ lazy_static! {
         register_v21_information_schema_views_support(&mut registry);
         register_v22_information_schema_referential_constraints_support(&mut registry);
         register_v23_information_schema_check_constraints_support(&mut registry);
+        register_v24_pg_tablespace_support(&mut registry);
 
         registry
     };
@@ -2438,5 +2439,31 @@ fn register_v23_information_schema_check_constraints_support(registry: &mut BTre
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![22],
+    });
+}
+
+/// Version 24: pg_tablespace support
+fn register_v24_pg_tablespace_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(24, Migration {
+        version: 24,
+        name: "pg_tablespace_support",
+        description: "Add PostgreSQL pg_tablespace catalog support for tablespace introspection and ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Note: pg_tablespace is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '24', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- pg_tablespace is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '23', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![23],
     });
 }

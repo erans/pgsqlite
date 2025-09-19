@@ -166,10 +166,19 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v21: information_schema.views support for view metadata
 - v22: information_schema.referential_constraints support for foreign key metadata
 - v23: information_schema.check_constraints support for check constraint metadata
+- v24: pg_tablespace support for tablespace introspection and enterprise storage management
 
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **PostgreSQL pg_tablespace Catalog Support**: Complete tablespace introspection for ORM enterprise storage management
+  - Added comprehensive pg_tablespace catalog table with all 5 PostgreSQL-standard columns: oid, spcname, spcowner, spcacl, spcoptions
+  - Provides standard PostgreSQL tablespaces: pg_default (OID 1663) and pg_global (OID 1664) for full compatibility
+  - Direct routing in db_handler.rs for both simple queries and PostgreSQL protocol client connections
+  - Enables ORM tablespace-aware deployments and enterprise storage management introspection
+  - Files: src/catalog/query_interceptor.rs, src/session/db_handler.rs, src/migration/registry.rs
+  - Complete test coverage: 7 comprehensive tests covering all ORM patterns and edge cases
+  - Migration v24 added for version tracking and upgrade compatibility
 - **information_schema.check_constraints Check Constraint Metadata Support**: Complete PostgreSQL check constraint introspection for ORM compatibility
   - Added comprehensive information_schema.check_constraints table implementation with session-aware connection handling
   - Supports all 4 PostgreSQL-standard columns: constraint_catalog, constraint_schema, constraint_name, check_clause
@@ -510,8 +519,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ### Sequence Ownership Detection ✅ **NEW (2025-09-18)**
 - **Rails**: ActiveRecord `pk_and_sequence_for` method works for auto-increment detection via `pg_depend`
 - **Django**: SERIAL column introspection through dependency mapping
-- **SQLAlchemy**: Auto-increment column discovery for sequence-based primary keys
-- **Ecto**: Schema introspection includes sequence ownership information
+
+### Tablespace Management ✅ **NEW (2025-09-19)**
+- **Django**: Enterprise storage management through `pg_tablespace` introspection for tablespace-aware deployments
+- **Rails**: ActiveRecord tablespace configuration and discovery for partitioned storage architectures
+- **SQLAlchemy**: Advanced tablespace reflection for enterprise database configurations
+- **Ecto**: Schema introspection includes tablespace information for distributed storage management
 
 ### Comment and Documentation Support ✅ **NEW (2025-09-19)**
 - **Django**: `inspectdb` generates model documentation from table/column comments via `pg_description`
@@ -542,6 +555,12 @@ FROM information_schema.referential_constraints;
 
 -- Check constraint details (information_schema pattern) - NEW!
 SELECT constraint_name, check_clause FROM information_schema.check_constraints;
+
+-- Tablespace discovery (Django/Rails enterprise pattern) - NEW!
+SELECT oid, spcname, spcowner FROM pg_tablespace;
+
+-- Tablespace metadata (SQLAlchemy pattern) - NEW!
+SELECT spcname, spcowner, spcacl, spcoptions FROM pg_tablespace WHERE spcname NOT LIKE 'pg_temp%';
 
 -- Index discovery (Rails/SQLAlchemy pattern) - NEW!
 SELECT i.indexrelid, ic.relname as index_name, i.indrelid, tc.relname as table_name,

@@ -441,6 +441,23 @@ impl DbHandler {
             });
         }
 
+        // Handle pg_tablespace queries
+        if lower_query.contains("pg_tablespace") || lower_query.contains("pg_catalog.pg_tablespace") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_tablespace_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["oid".to_string(), "spcname".to_string(), "spcowner".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
         // Handle information_schema.routines queries first
         if lower_query.contains("information_schema.routines") {
             use crate::catalog::query_interceptor::CatalogInterceptor;
@@ -655,6 +672,23 @@ impl DbHandler {
                 columns: vec!["current_user".to_string()],
                 rows: vec![vec![Some("postgres".to_string().into_bytes())]],
                 rows_affected: 1,
+            });
+        }
+
+        // Handle pg_tablespace queries
+        if lower_query.contains("pg_tablespace") || lower_query.contains("pg_catalog.pg_tablespace") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_tablespace_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["oid".to_string(), "spcname".to_string(), "spcowner".to_string()],
+                rows: vec![],
+                rows_affected: 0,
             });
         }
 
