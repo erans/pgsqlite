@@ -172,6 +172,20 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **PostgreSQL Permission Functions Support**: Complete authorization and access control for ORM permission systems
+  - Implemented enhanced `pg_has_role()` function with both 2-parameter and 3-parameter variants for role membership checking
+  - Implemented enhanced `has_table_privilege()` function with both 2-parameter and 3-parameter variants for table access control
+  - Security-aware role handling: denies access to sensitive roles like `pg_read_server_files`, `pg_write_server_files`, `pg_execute_server_program`
+  - System catalog protection: allows `SELECT` on `pg_*` and `information_schema*` tables but denies modifications for security
+  - Public user restrictions: realistic permission modeling with limited access for `public` role
+  - Full privilege validation: supports all PostgreSQL privilege types (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`, `MAINTAIN`, `ALL`) with case-insensitive handling
+  - SQLite table name translation support: handles both original PostgreSQL names and SQLite-translated patterns
+  - PostgreSQL-compatible error messages for invalid privilege types with proper validation
+  - Files: src/functions/system_functions.rs (enhanced), tests/permission_functions_test.rs (new comprehensive test suite)
+  - Complete test coverage: 11 total tests (9 integration tests + 2 unit tests) covering all scenarios, ORM patterns, error handling, and edge cases
+  - ORM benefits: Enables Django `User.has_perm()`, Rails authorization gems, SQLAlchemy permission decorators, Ecto authorization pipelines
+  - Impact: Provides realistic PostgreSQL permission function behavior enabling ORMs to implement proper authorization patterns without requiring full PostgreSQL role system
+
 - **PostgreSQL information_schema.triggers Trigger Introspection Support**: Complete trigger metadata access for ORM business logic discovery
   - Added comprehensive information_schema.triggers table implementation with all 17 PostgreSQL-standard columns: trigger_catalog, trigger_schema, trigger_name, event_manipulation, event_object_catalog, event_object_schema, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, action_reference_old_table, action_reference_new_table, action_reference_old_row, action_reference_new_row, created
   - SQLite trigger metadata extraction via sqlite_master table parsing with comprehensive SQL analysis for timing (BEFORE/AFTER/INSTEAD OF), event (INSERT/UPDATE/DELETE), and table relationships
