@@ -167,10 +167,23 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - v22: information_schema.referential_constraints support for foreign key metadata
 - v23: information_schema.check_constraints support for check constraint metadata
 - v24: pg_tablespace support for tablespace introspection and enterprise storage management
+- v25: information_schema.triggers support for trigger introspection and business logic discovery
 
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **PostgreSQL information_schema.triggers Trigger Introspection Support**: Complete trigger metadata access for ORM business logic discovery
+  - Added comprehensive information_schema.triggers table implementation with all 17 PostgreSQL-standard columns: trigger_catalog, trigger_schema, trigger_name, event_manipulation, event_object_catalog, event_object_schema, event_object_table, action_order, action_condition, action_statement, action_orientation, action_timing, action_reference_old_table, action_reference_new_table, action_reference_old_row, action_reference_new_row, created
+  - SQLite trigger metadata extraction via sqlite_master table parsing with comprehensive SQL analysis for timing (BEFORE/AFTER/INSTEAD OF), event (INSERT/UPDATE/DELETE), and table relationships
+  - Session-aware connection architecture using `with_session_connection()` to avoid recursion and maintain proper transaction isolation
+  - Advanced trigger SQL parsing logic that correctly identifies event types before "ON" clause to avoid confusion with trigger body statements
+  - Complete WHERE clause filtering support for trigger_name, event_object_table, event_manipulation, trigger_schema, and all catalog columns
+  - Migration v25 enables information_schema.triggers support with full PostgreSQL information schema compliance
+  - Enables Django trigger discovery via inspectdb for business logic detection, Rails trigger-based model validation introspection, SQLAlchemy trigger metadata reflection, Ecto schema trigger analysis
+  - Files: src/catalog/query_interceptor.rs, src/session/db_handler.rs, src/migration/registry.rs (v25), tests/information_schema_triggers_test.rs
+  - Complete test coverage: 8 comprehensive tests including basic queries, all columns, multiple triggers, WHERE filtering, ORM compatibility patterns, timing types, action statements, and empty database scenarios
+  - Impact: Completes trigger introspection capabilities for ORM frameworks requiring database business logic discovery and trigger-based feature detection
+
 - **PostgreSQL pg_tablespace Catalog Support**: Complete tablespace introspection for ORM enterprise storage management
   - Added comprehensive pg_tablespace catalog table with all 5 PostgreSQL-standard columns: oid, spcname, spcowner, spcacl, spcoptions
   - Provides standard PostgreSQL tablespaces: pg_default (OID 1663) and pg_global (OID 1664) for full compatibility
@@ -538,6 +551,12 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 - **Rails**: Authentication integration with user/role discovery for permission management
 - **Ecto**: User and role introspection for authorization logic and permission systems
 
+### Trigger Introspection ✅ **NEW (2025-09-19)**
+- **Django**: `inspectdb` discovers trigger-based business logic via `information_schema.triggers` for advanced model generation
+- **Rails**: ActiveRecord trigger analysis for schema awareness and business rule detection in database migrations
+- **SQLAlchemy**: Complete trigger metadata reflection for automap discovery and schema introspection with timing, events, and action statements
+- **Ecto**: Schema introspection includes trigger definitions for migration generation and business logic documentation
+
 **Example queries now work correctly:**
 ```sql
 -- Foreign key discovery (Django/Rails pattern)
@@ -561,6 +580,14 @@ SELECT oid, spcname, spcowner FROM pg_tablespace;
 
 -- Tablespace metadata (SQLAlchemy pattern) - NEW!
 SELECT spcname, spcowner, spcacl, spcoptions FROM pg_tablespace WHERE spcname NOT LIKE 'pg_temp%';
+
+-- Trigger discovery (Django/Rails business logic pattern) - NEW!
+SELECT trigger_name, event_manipulation, event_object_table, action_timing
+FROM information_schema.triggers WHERE trigger_schema = 'public';
+
+-- Trigger metadata (SQLAlchemy/Ecto pattern) - NEW!
+SELECT trigger_name, event_object_table, action_timing, event_manipulation, action_statement
+FROM information_schema.triggers WHERE event_object_table = 'user_table';
 
 -- Index discovery (Rails/SQLAlchemy pattern) - NEW!
 SELECT i.indexrelid, ic.relname as index_name, i.indrelid, tc.relname as table_name,

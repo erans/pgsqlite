@@ -31,6 +31,7 @@ lazy_static! {
         register_v22_information_schema_referential_constraints_support(&mut registry);
         register_v23_information_schema_check_constraints_support(&mut registry);
         register_v24_pg_tablespace_support(&mut registry);
+        register_v25_information_schema_triggers_support(&mut registry);
 
         registry
     };
@@ -2465,5 +2466,31 @@ fn register_v24_pg_tablespace_support(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![23],
+    });
+}
+
+/// Version 25: information_schema.triggers support
+fn register_v25_information_schema_triggers_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(25, Migration {
+        version: 25,
+        name: "information_schema_triggers_support",
+        description: "Add PostgreSQL information_schema.triggers support for trigger introspection and ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.triggers is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '25', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.triggers is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '24', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![24],
     });
 }

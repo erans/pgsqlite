@@ -3204,4 +3204,196 @@ impl CatalogInterceptor {
 
         Ok(filtered)
     }
+
+    /// Handle information_schema.triggers queries with session-aware connection
+    pub async fn handle_information_schema_triggers_query_with_session(select: &Select, db: &DbHandler, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Define information_schema.triggers columns (PostgreSQL standard)
+        let all_columns = vec![
+            "trigger_catalog".to_string(),
+            "trigger_schema".to_string(),
+            "trigger_name".to_string(),
+            "event_manipulation".to_string(),
+            "event_object_catalog".to_string(),
+            "event_object_schema".to_string(),
+            "event_object_table".to_string(),
+            "action_order".to_string(),
+            "action_condition".to_string(),
+            "action_statement".to_string(),
+            "action_orientation".to_string(),
+            "action_timing".to_string(),
+            "action_reference_old_table".to_string(),
+            "action_reference_new_table".to_string(),
+            "action_reference_old_row".to_string(),
+            "action_reference_new_row".to_string(),
+            "created".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Get triggers using session connection
+        let triggers = Self::get_triggers_with_session(db, session_id).await?;
+
+        // Apply WHERE clause filtering if present
+        let filtered_triggers = if let Some(where_clause) = &select.selection {
+            Self::apply_triggers_where_filter(&triggers, where_clause)?
+        } else {
+            triggers
+        };
+
+        // Build response rows with selected columns
+        let mut result_rows = Vec::new();
+        for trigger in &filtered_triggers {
+            let mut row = Vec::new();
+            for &col_idx in &column_indices {
+                if let Some(column_name) = all_columns.get(col_idx) {
+                    let value = trigger.get(column_name)
+                        .cloned()
+                        .unwrap_or_else(|| "".to_string().into_bytes());
+                    row.push(Some(value));
+                } else {
+                    row.push(Some("".to_string().into_bytes()));
+                }
+            }
+            result_rows.push(row);
+        }
+
+        let rows_affected = result_rows.len();
+        debug!("Returning {} rows for information_schema.triggers query with {} columns: {:?}",
+               rows_affected, selected_columns.len(), selected_columns);
+
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows: result_rows,
+            rows_affected,
+        })
+    }
+
+    /// Get triggers from SQLite using session connection
+    async fn get_triggers_with_session(db: &DbHandler, session_id: &Uuid) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut triggers = Vec::new();
+
+        // Query SQLite's sqlite_master for trigger information using direct connection access
+        let triggers_data = match db.with_session_connection(session_id, |conn| {
+            let mut stmt = conn.prepare("SELECT name, tbl_name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")?;
+            let mut rows = Vec::new();
+            let mut prepared_rows = stmt.query([])?;
+
+            while let Some(row) = prepared_rows.next()? {
+                let name: String = row.get(0)?;
+                let tbl_name: String = row.get(1)?;
+                let sql: String = row.get(2)?;
+                rows.push((name, tbl_name, sql));
+            }
+
+            Ok::<Vec<(String, String, String)>, rusqlite::Error>(rows)
+        }).await {
+            Ok(data) => data,
+            Err(e) => {
+                debug!("Failed to get triggers from session: {:?}", e);
+                return Ok(triggers);
+            }
+        };
+
+        // Process each trigger
+        for (trigger_name, table_name, trigger_sql) in &triggers_data {
+
+            // Parse trigger SQL to extract details
+            let (timing, event, orientation) = Self::parse_trigger_sql(trigger_sql);
+
+            let mut trigger = HashMap::new();
+            trigger.insert("trigger_catalog".to_string(), "main".to_string().into_bytes());
+            trigger.insert("trigger_schema".to_string(), "public".to_string().into_bytes());
+            trigger.insert("trigger_name".to_string(), trigger_name.clone().into_bytes());
+            trigger.insert("event_manipulation".to_string(), event.into_bytes());
+            trigger.insert("event_object_catalog".to_string(), "main".to_string().into_bytes());
+            trigger.insert("event_object_schema".to_string(), "public".to_string().into_bytes());
+            trigger.insert("event_object_table".to_string(), table_name.clone().into_bytes());
+            trigger.insert("action_order".to_string(), "1".to_string().into_bytes());
+            trigger.insert("action_condition".to_string(), "".to_string().into_bytes()); // SQLite doesn't expose WHEN conditions separately
+            trigger.insert("action_statement".to_string(), trigger_sql.clone().into_bytes());
+            trigger.insert("action_orientation".to_string(), orientation.into_bytes());
+            trigger.insert("action_timing".to_string(), timing.into_bytes());
+            trigger.insert("action_reference_old_table".to_string(), "".to_string().into_bytes());
+            trigger.insert("action_reference_new_table".to_string(), "".to_string().into_bytes());
+            trigger.insert("action_reference_old_row".to_string(), "".to_string().into_bytes());
+            trigger.insert("action_reference_new_row".to_string(), "".to_string().into_bytes());
+            trigger.insert("created".to_string(), "".to_string().into_bytes());
+
+            triggers.push(trigger);
+        }
+
+        Ok(triggers)
+    }
+
+    /// Parse SQLite trigger SQL to extract timing, event, and orientation
+    fn parse_trigger_sql(sql: &str) -> (String, String, String) {
+        let sql_upper = sql.to_uppercase();
+
+        // Parse timing (BEFORE, AFTER, INSTEAD OF)
+        let timing = if sql_upper.contains("BEFORE") {
+            "BEFORE".to_string()
+        } else if sql_upper.contains("AFTER") {
+            "AFTER".to_string()
+        } else if sql_upper.contains("INSTEAD OF") {
+            "INSTEAD OF".to_string()
+        } else {
+            "BEFORE".to_string() // Default
+        };
+
+        // Parse event (INSERT, UPDATE, DELETE) by looking at the trigger definition structure
+        // SQLite trigger syntax: CREATE TRIGGER name [BEFORE|AFTER|INSTEAD OF] [INSERT|UPDATE|DELETE] ON table
+        let event = if let Some(on_pos) = sql_upper.find(" ON ") {
+            // Look before " ON " for the trigger event
+            let before_on = &sql_upper[..on_pos];
+
+            // Look for the event words in the trigger definition
+            if before_on.contains(" DELETE") || before_on.ends_with("DELETE") {
+                "DELETE".to_string()
+            } else if before_on.contains(" UPDATE") || before_on.ends_with("UPDATE") {
+                "UPDATE".to_string()
+            } else {
+                "INSERT".to_string() // Default (includes INSERT or unknown)
+            }
+        } else {
+            // Fallback to original logic if no " ON " found
+            if sql_upper.contains("DELETE") {
+                "DELETE".to_string()
+            } else if sql_upper.contains("UPDATE") {
+                "UPDATE".to_string()
+            } else {
+                "INSERT".to_string() // Default (includes INSERT or unknown)
+            }
+        };
+
+        // SQLite triggers are always ROW-level
+        let orientation = "ROW".to_string();
+
+        (timing, event, orientation)
+    }
+
+    /// Apply WHERE clause filtering to triggers
+    fn apply_triggers_where_filter(
+        triggers: &[HashMap<String, Vec<u8>>],
+        where_clause: &Expr,
+    ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut filtered = Vec::new();
+
+        for trigger in triggers {
+            // Convert Vec<u8> to String for WhereEvaluator
+            let mut string_data = HashMap::new();
+            for (key, value) in trigger {
+                if let Ok(string_val) = String::from_utf8(value.clone()) {
+                    string_data.insert(key.clone(), string_val);
+                }
+            }
+
+            let column_mapping = HashMap::new(); // Empty mapping for now
+            if WhereEvaluator::evaluate(where_clause, &string_data, &column_mapping) {
+                filtered.push(trigger.clone());
+            }
+        }
+
+        Ok(filtered)
+    }
 }
