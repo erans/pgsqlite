@@ -115,7 +115,7 @@ impl StatementPool {
         conn: &Connection,
         query: &str,
         params: P,
-    ) -> Result<(Vec<String>, Vec<Vec<Option<Vec<u8>>>>), rusqlite::Error> {
+    ) -> Result<(Vec<String>, crate::session::db_handler::DbRows), rusqlite::Error> {
         let (mut stmt, metadata) = self.prepare_and_cache(conn, query)?;
         
         // Execute query and collect results

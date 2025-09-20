@@ -11,6 +11,7 @@ async fn benchmark_realistic_portal_scenarios() {
     println!("\n🎯 === Realistic Portal Usage Scenarios Benchmark ===");
     println!("Testing real-world scenarios where portal management provides clear benefits\n");
     
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     thread::sleep(Duration::from_secs(2));
     

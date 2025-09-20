@@ -153,8 +153,10 @@ fn test_expression_type_resolver_float_types() {
     use sqlparser::ast::{Expr, Ident};
     use pgsqlite::rewriter::QueryContext;
     
-    let mut context = QueryContext::default();
-    context.default_table = Some("measurements".to_string());
+    let context = QueryContext {
+        default_table: Some("measurements".to_string()),
+        ..Default::default()
+    };
     
     // Test temperature column (REAL/FLOAT4)
     let expr = Expr::Identifier(Ident::new("temperature"));

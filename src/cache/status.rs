@@ -1,4 +1,5 @@
 use crate::session::GLOBAL_QUERY_CACHE;
+use crate::session::db_handler::DbRows;
 
 /// Cache status information
 #[derive(Debug, Clone)]
@@ -35,7 +36,7 @@ pub fn get_cache_status() -> CacheStatus {
 }
 
 /// Format cache status as a PostgreSQL result set
-pub fn format_cache_status_as_table() -> (Vec<String>, Vec<Vec<Option<Vec<u8>>>>) {
+pub fn format_cache_status_as_table() -> (Vec<String>, DbRows) {
     let status = get_cache_status();
     
     let columns = vec![

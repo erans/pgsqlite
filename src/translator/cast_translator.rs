@@ -248,6 +248,12 @@ impl CastTranslator {
                             // Use pgsqlite's time conversion function
                             format!("pg_time_from_text({expr})")
                         }
+                        // Handle array types - arrays are stored as JSON strings in SQLite
+                        t if t.ends_with("[]") || t.ends_with(" ARRAY") => {
+                            // For array types, just return the expression without the cast
+                            // Arrays are stored as JSON strings in SQLite, so the cast is not needed
+                            expr.to_string()
+                        }
                         _ => {
                             // For non-datetime types, use regular cast logic
                             // If postgres_to_sqlite_type returns TEXT and the original type is not a text type,
@@ -307,6 +313,12 @@ impl CastTranslator {
                         }
                         "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
                             format!("pg_time_from_text({expr})")
+                        }
+                        // Handle array types - arrays are stored as JSON strings in SQLite
+                        t if t.ends_with("[]") || t.ends_with(" ARRAY") => {
+                            // For array types, just return the expression without the cast
+                            // Arrays are stored as JSON strings in SQLite, so the cast is not needed
+                            expr.to_string()
                         }
                         _ => {
                             format!("CAST({expr} AS {type_name})")
@@ -503,8 +515,16 @@ impl CastTranslator {
                     }
                     return len;
                 } else if let Some(next_char) = after.as_bytes().get(len) {
+                    // Check if this is an array type (followed by [])
+                    if *next_char == b'[' && after.len() > len + 1 && after.as_bytes().get(len + 1) == Some(&b']') {
+                        // This is an array type like INTEGER[] - include the [] in the type name
+                        if after.contains("RETURNING") {
+                            eprintln!("DEBUG: Array type '{}[]' detected, returning {}", type_name, len + 2);
+                        }
+                        return len + 2;
+                    }
                     // Check if next character is not alphanumeric (word boundary)
-                    if !next_char.is_ascii_alphanumeric() && *next_char != b'_' {
+                    else if !next_char.is_ascii_alphanumeric() && *next_char != b'_' {
                         if after.contains("RETURNING") {
                             eprintln!("DEBUG: Type '{}' followed by non-alphanumeric '{}', returning {}", type_name, *next_char as char, len);
                         }
@@ -747,6 +767,12 @@ impl CastTranslator {
                         "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
                             // Use pgsqlite's time conversion function
                             format!("pg_time_from_text({expr})")
+                        }
+                        // Handle array types - arrays are stored as JSON strings in SQLite
+                        t if t.ends_with("[]") || t.ends_with(" ARRAY") => {
+                            // For array types, just return the expression without the cast
+                            // Arrays are stored as JSON strings in SQLite, so the cast is not needed
+                            expr.to_string()
                         }
                         _ => {
                             // For non-datetime types, use regular cast logic

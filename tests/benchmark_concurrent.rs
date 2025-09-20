@@ -5,7 +5,6 @@ use pgsqlite::session::DbHandler;
 
 /// Concurrent read/write benchmark to test connection pooling performance
 /// Tests mixed workloads with different read/write ratios
-
 const TEST_DURATION: Duration = Duration::from_secs(3);
 const WARMUP_DURATION: Duration = Duration::from_secs(1);
 

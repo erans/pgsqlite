@@ -36,9 +36,9 @@ async fn test_batch_update_with_values() -> Result<(), Box<dyn std::error::Error
     let select_result = db_handler.query("SELECT id, name, age FROM batch_users ORDER BY id").await?;
     
     // Check that rows 1-3 were updated
-    let expected_data = vec![
+    let expected_data = [
         (1, "Alice", 25),
-        (2, "Bob", 30), 
+        (2, "Bob", 30),
         (3, "Charlie", 35),
         (4, "User4", 40),  // Unchanged
         (5, "User5", 50),  // Unchanged

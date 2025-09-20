@@ -10,6 +10,7 @@ async fn benchmark_extended_protocol_parameters() {
     println!("\n=== Extended Protocol Parameter Handling Benchmark ===");
     
     // Start pgsqlite server
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     
     // Wait for server to start

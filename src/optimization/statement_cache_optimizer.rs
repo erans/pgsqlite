@@ -75,7 +75,7 @@ impl StatementCacheOptimizer {
         conn: &Connection,
         query: &str,
         params: P,
-    ) -> Result<(Vec<String>, Vec<Vec<Option<Vec<u8>>>>), rusqlite::Error> {
+    ) -> Result<(Vec<String>, crate::session::db_handler::DbRows), rusqlite::Error> {
         if !self.enabled {
             return self.execute_basic_query(conn, query, params);
         }
@@ -166,7 +166,7 @@ impl StatementCacheOptimizer {
         conn: &Connection,
         query: &str,
         params: P,
-    ) -> Result<(Vec<String>, Vec<Vec<Option<Vec<u8>>>>), rusqlite::Error> {
+    ) -> Result<(Vec<String>, crate::session::db_handler::DbRows), rusqlite::Error> {
         let mut stmt = conn.prepare(query)?;
         let column_names: Vec<String> = stmt.column_names().iter().map(|&s| s.to_string()).collect();
         

@@ -185,9 +185,11 @@ pub async fn handle_test_connection_with_pool(
         while let Some(msg) = framed.next().await {
             let message = msg?;
             debug!("Received message: {:?}", message);
+            println!("HANDLE_CONNECTION: Received message: {:?}", message);
             match message {
                 FrontendMessage::Query(sql) => {
                     info!("Received Query (simple protocol): {}", sql);
+                    println!("HANDLE_CONNECTION: About to call QueryExecutor::execute_query with: '{}'", sql);
                     // Execute the query with optional query routing
                     match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
                         Ok(()) => {
@@ -243,6 +245,7 @@ pub async fn handle_test_connection_with_pool(
                     }
                 }
                 FrontendMessage::Execute { portal, max_rows } => {
+                    println!("HANDLE_CONNECTION: About to call ExtendedQueryHandler::handle_execute for portal: '{}'", portal);
                     match ExtendedQueryHandler::handle_execute(&mut framed, &db_handler, &session, portal, max_rows).await {
                         Ok(()) => {},
                         Err(e) => {

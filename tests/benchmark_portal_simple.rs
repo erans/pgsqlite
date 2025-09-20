@@ -8,6 +8,7 @@ async fn benchmark_simple_portal_demo() {
     println!("\n🚀 === Simple Portal Management Demo ===");
     println!("Demonstrating portal management benefits with basic operations\n");
     
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     
     // Wait for server to be ready with retry logic

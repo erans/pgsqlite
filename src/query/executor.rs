@@ -155,10 +155,11 @@ impl QueryExecutor {
         session: &Arc<SessionState>,
         query: &str,
         query_router: Option<&Arc<QueryRouter>>,
-    ) -> Result<(), PgSqliteError> 
+    ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
+        println!("EXECUTOR: execute_query called with: '{}'", query);
         // Executing query
         
         // Strip SQL comments first to avoid parsing issues
@@ -930,9 +931,13 @@ impl QueryExecutor {
             }
         
         // Check if this is a catalog query first
+        println!("EXECUTOR: About to call catalog interceptor with query: '{}'", query);
         let response = if let Some(catalog_result) = crate::catalog::CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
             info!("Query intercepted by catalog handler");
-            catalog_result?
+            println!("EXECUTOR: Got catalog result, about to unwrap");
+            let unwrapped = catalog_result?;
+            println!("EXECUTOR: Unwrapped catalog result, columns: {}, rows: {}", unwrapped.columns.len(), unwrapped.rows.len());
+            unwrapped
         } else {
             // Route query through query router if available
             if let Some(router) = query_router {
@@ -1943,6 +1948,8 @@ impl QueryExecutor {
                                 &type_mapping.pg_type
                             };
                             let pg_type_lower = base_type.to_lowercase();
+                            debug!("Processing type mapping: {}.{} -> {} (base_type: {}, modifier: {})",
+                                table_name, parts[1], type_mapping.pg_type, base_type, modifier);
                             
                             if pg_type_lower == "varchar" || pg_type_lower == "char" || 
                                pg_type_lower == "character varying" || pg_type_lower == "character" ||

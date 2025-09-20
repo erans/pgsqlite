@@ -5,6 +5,8 @@ use std::str::FromStr;
 
 /// Test basic binary protocol support with simple types
 #[tokio::test]
+#[allow(clippy::approx_constant)]
+#[allow(clippy::bool_assert_comparison)]
 async fn test_basic_binary_protocol() {
     let server = setup_test_server().await;
     let client = &server.client;
@@ -94,6 +96,7 @@ async fn test_basic_binary_protocol() {
 /// Integration test for core binary protocol support
 #[tokio::test] 
 #[ignore] // This test requires full binary protocol support for all types
+#[allow(clippy::approx_constant)]
 async fn test_comprehensive_binary_protocol() {
     let server = setup_test_server().await;
     let client = &server.client;

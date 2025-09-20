@@ -1,3 +1,5 @@
+#![allow(clippy::collapsible_if)]
+
 mod common;
 use common::setup_test_server;
 

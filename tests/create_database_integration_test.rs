@@ -1,17 +1,16 @@
-use std::sync::Arc;
-use pgsqlite::session::DbHandler;
-use pgsqlite::session::SessionState;
+mod common;
+use common::setup_test_server;
 
 #[tokio::test]
 async fn test_create_database_execution() {
-    // Create a temporary file database for the test
-    let temp_file = format!("/tmp/test_create_database_execution_{}.db", uuid::Uuid::new_v4());
-    let db = Arc::new(DbHandler::new(&temp_file).expect("Failed to create database"));
-    let _session = Arc::new(SessionState::new("test".to_string(), "test".to_string()));
+    let _ = env_logger::builder().is_test(true).try_init();
 
-    // Test CREATE DATABASE command by executing it directly on the database
-    let result = db.query("CREATE DATABASE testdb").await;
+    let server = setup_test_server().await;
+    let client = &server.client;
 
+    // Test CREATE DATABASE command through PostgreSQL protocol
+    // Use simple_query() to ensure it goes through the DDL path
+    let result = client.simple_query("CREATE DATABASE testdb").await;
     assert!(result.is_ok(), "CREATE DATABASE should succeed: {:?}", result);
 
     // Test different variations
@@ -24,10 +23,7 @@ async fn test_create_database_execution() {
     ];
 
     for query in variations {
-        let result = db.query(query).await;
+        let result = client.simple_query(query).await;
         assert!(result.is_ok(), "CREATE DATABASE variation should succeed: {} - {:?}", query, result);
     }
-
-    // Clean up
-    std::fs::remove_file(&temp_file).ok();
 }

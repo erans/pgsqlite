@@ -103,7 +103,7 @@ async fn test_information_schema_comprehensive() {
     assert!(all_schemata[0].len() >= 3); // Should have multiple columns
 
     let all_tables = client.query("SELECT * FROM information_schema.tables LIMIT 1", &[]).await.unwrap();
-    assert!(all_tables.len() >= 1);
+    assert!(!all_tables.is_empty());
     assert!(all_tables[0].len() >= 4); // Should have multiple columns
 
     println!("✓ All information_schema tests passed!");

@@ -11,6 +11,7 @@ async fn benchmark_portal_management_comprehensive() {
     println!("\n🚀 === Portal Management Performance Benchmark Suite ===");
     
     // Start pgsqlite server
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     thread::sleep(Duration::from_secs(2));
     
@@ -418,7 +419,8 @@ fn start_server() -> Child {
 async fn benchmark_portal_memory_stress() {
     println!("\n💾 === Portal Memory Stress Test ===");
     println!("Testing memory efficiency with very large result sets\n");
-    
+
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     thread::sleep(Duration::from_secs(2));
     

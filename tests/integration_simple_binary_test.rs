@@ -36,7 +36,7 @@ async fn test_basic_binary_protocol() {
             &true,
             &12345i32,
             &9876543210i64,
-            &3.14159f64,
+            &std::f64::consts::PI,
             &"Binary Protocol Test",
             &bytea_val,
             &json_str
@@ -65,7 +65,7 @@ async fn test_basic_binary_protocol() {
     assert!(bool_val);
     assert_eq!(int4_val, 12345);
     assert_eq!(int8_val, 9876543210);
-    assert!((float8_val - 3.14159).abs() < 0.00001);
+    assert!((float8_val - std::f64::consts::PI).abs() < 0.00001);
     assert_eq!(text_val, "Binary Protocol Test");
     assert_eq!(bytea_result, bytea_val);
     assert_eq!(json_val, r#"{"test": "binary", "value": 42}"#);

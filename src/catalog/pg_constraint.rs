@@ -90,11 +90,10 @@ impl PgConstraintHandler {
 
     fn extract_requested_columns(select: &Select, all_columns: &[String]) -> Vec<String> {
         // Check for wildcard
-        if select.projection.len() == 1 {
-            if let SelectItem::Wildcard(_) = &select.projection[0] {
+        if select.projection.len() == 1
+            && let SelectItem::Wildcard(_) = &select.projection[0] {
                 return all_columns.to_vec();
             }
-        }
 
         // Extract specific columns
         let mut columns = Vec::new();
@@ -106,13 +105,14 @@ impl PgConstraintHandler {
                         columns.push(col_name);
                     }
                 }
-                SelectItem::ExprWithAlias { expr, alias } => {
-                    if let Expr::Identifier(ident) = expr {
-                        let col_name = ident.value.to_string();
-                        if all_columns.contains(&col_name) {
-                            columns.push(alias.value.to_string());
-                        }
+                SelectItem::ExprWithAlias { expr: Expr::Identifier(ident), alias } => {
+                    let col_name = ident.value.to_string();
+                    if all_columns.contains(&col_name) {
+                        columns.push(alias.value.to_string());
                     }
+                }
+                SelectItem::ExprWithAlias { .. } => {
+                    // Handle other expression types if needed
                 }
                 _ => {}
             }
@@ -145,9 +145,9 @@ impl PgConstraintHandler {
                 // Extract primary key constraints
                 let mut pk_columns = Vec::new();
                 for info_row in &table_info_response.rows {
-                    if info_row.len() >= 6 {
-                        if let (Some(Some(cid_bytes)), Some(Some(name_bytes)), Some(Some(pk_bytes))) =
-                            (info_row.get(0), info_row.get(1), info_row.get(5)) {
+                    if info_row.len() >= 6
+                        && let (Some(Some(cid_bytes)), Some(Some(name_bytes)), Some(Some(pk_bytes))) =
+                            (info_row.first(), info_row.get(1), info_row.get(5)) {
                             let pk_flag = String::from_utf8_lossy(pk_bytes);
                             if pk_flag == "1" {
                                 let column_name = String::from_utf8_lossy(name_bytes).to_string();
@@ -155,7 +155,6 @@ impl PgConstraintHandler {
                                 pk_columns.push((cid + 1, column_name)); // PostgreSQL uses 1-based indexing
                             }
                         }
-                    }
                 }
 
                 // Create primary key constraint if any columns found
@@ -192,9 +191,9 @@ impl PgConstraintHandler {
                 let fk_response = db.query(&format!("PRAGMA foreign_key_list({})", table_name)).await?;
 
                 for fk_row in &fk_response.rows {
-                    if fk_row.len() >= 8 {
-                        if let (Some(Some(id_bytes)), Some(Some(table_bytes)), Some(Some(from_bytes)), Some(Some(to_bytes))) =
-                            (fk_row.get(0), fk_row.get(2), fk_row.get(3), fk_row.get(4)) {
+                    if fk_row.len() >= 8
+                        && let (Some(Some(id_bytes)), Some(Some(table_bytes)), Some(Some(from_bytes)), Some(Some(to_bytes))) =
+                            (fk_row.first(), fk_row.get(2), fk_row.get(3), fk_row.get(4)) {
 
                             let fk_id = String::from_utf8_lossy(id_bytes);
                             let ref_table = String::from_utf8_lossy(table_bytes).to_string();
@@ -231,7 +230,6 @@ impl PgConstraintHandler {
                             constraints.push(constraint);
                             constraint_id += 1;
                         }
-                    }
                 }
             }
         }
@@ -243,14 +241,13 @@ impl PgConstraintHandler {
         let table_info = db.query(&format!("PRAGMA table_info({})", table_name)).await?;
 
         for (idx, row) in table_info.rows.iter().enumerate() {
-            if row.len() >= 2 {
-                if let Some(Some(name_bytes)) = row.get(1) {
+            if row.len() >= 2
+                && let Some(Some(name_bytes)) = row.get(1) {
                     let name = String::from_utf8_lossy(name_bytes);
                     if name == column_name {
                         return Ok((idx + 1) as i32); // PostgreSQL uses 1-based indexing
                     }
                 }
-            }
         }
 
         Ok(1) // Default fallback

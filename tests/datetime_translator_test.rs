@@ -115,26 +115,24 @@ async fn test_insert_translator_conversion() {
         "SELECT typeof(date_col) FROM translator_test WHERE id = 1"
     ).await.unwrap();
     
-    if let Some(msg) = type_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))) {
-        if let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
+    if let Some(msg) = type_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_)))
+        && let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
             let col_type = data.get("typeof(date_col)").unwrap();
             println!("Storage type after InsertTranslator: {col_type}");
             assert_eq!(col_type, "integer", "InsertTranslator should convert to INTEGER");
         }
-    }
     
     // Test retrieval conversion
     let value_check = client.simple_query(
         "SELECT date_col FROM translator_test WHERE id = 1"
     ).await.unwrap();
     
-    if let Some(msg) = value_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))) {
-        if let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
+    if let Some(msg) = value_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_)))
+        && let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
             let date_str = data.get("date_col").unwrap();
             println!("Retrieved value after conversion: {date_str}");
             assert_eq!(date_str, "2024-01-15", "Value converter should convert back to date string");
         }
-    }
     
     server.abort();
 }

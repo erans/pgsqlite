@@ -679,6 +679,7 @@ impl DbHandler {
     
     /// Query with session-specific connection
     pub async fn query_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        eprintln!("🔍 query_with_session called with query: {}", query);
         // Check if this is a catalog query that should be intercepted
         // We need to do this before applying translations
         let lower_query = query.to_lowercase();
@@ -1002,14 +1003,115 @@ impl DbHandler {
                 };
             }
 
-            // Process query with fast path optimization
-            let processed_query = process_query(query, &conn, &self.schema_cache)?;
+            // Check if this is a CREATE TABLE statement that needs special handling
+            let (processed_query, type_mappings) =
+                if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+                    eprintln!("🔨 Processing CREATE TABLE statement in query_with_session...");
+                    // Use CREATE TABLE translator with full metadata capture
+                    use crate::translator::CreateTableTranslator;
+                    match CreateTableTranslator::translate_with_connection_full(query, Some(&conn)) {
+                        Ok(result) => {
+                            debug!("CREATE TABLE translated with {} type mappings", result.type_mappings.len());
+                            (result.sql, result.type_mappings)
+                        }
+                        Err(e) => {
+                            return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("CREATE TABLE translation failed: {}", e))
+                            ));
+                        }
+                    }
+                } else {
+                    // Process query with fast path optimization for non-CREATE TABLE statements
+                    let processed = process_query(query, &conn, &self.schema_cache)?;
+                    (processed, std::collections::HashMap::new())
+                };
 
             let rows_affected = conn.execute(&processed_query, [])?;
 
-            // Populate constraints for CREATE TABLE statements
+            // Handle CREATE TABLE metadata storage and constraints
             if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
                 && let Some(table_name) = extract_table_name_from_create(query) {
+
+                // Store type mappings in schema metadata table
+                debug!("CREATE TABLE metadata storage: {} type mappings found", type_mappings.len());
+                if !type_mappings.is_empty() {
+                    // Initialize the metadata table if it doesn't exist
+                    let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        pg_type TEXT NOT NULL,
+                        sqlite_type TEXT NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_query, []) {
+                        debug!("Failed to create __pgsqlite_schema table: {}", e);
+                    }
+
+                    // Initialize numeric constraints table if it doesn't exist
+                    let init_numeric_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        precision INTEGER NOT NULL,
+                        scale INTEGER NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_numeric_query, []) {
+                        debug!("Failed to create __pgsqlite_numeric_constraints table: {}", e);
+                    }
+
+                    // Store each type mapping
+                    for (full_column, type_mapping) in &type_mappings {
+                        // Split table.column format
+                        let parts: Vec<&str> = full_column.split('.').collect();
+                        if parts.len() == 2 && parts[0] == table_name {
+                            let insert_query = format!(
+                                "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
+                                table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
+                            );
+
+                            if let Err(e) = conn.execute(&insert_query, []) {
+                                debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e);
+                            } else {
+                                debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type);
+                            }
+
+                            // Store numeric constraints if present
+                            debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
+                            if let Some(modifier) = type_mapping.type_modifier {
+                                // Extract base type without parameters
+                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                    type_mapping.pg_type[..paren_pos].trim()
+                                } else {
+                                    &type_mapping.pg_type
+                                };
+                                let pg_type_lower = base_type.to_lowercase();
+
+                                if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                                    // Decode precision and scale from modifier
+                                    let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                                    let precision = (tmp_typmod >> 16) & 0xFFFF;
+                                    let scale = tmp_typmod & 0xFFFF;
+
+                                    let constraint_query = format!(
+                                        "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) VALUES ('{}', '{}', {}, {})",
+                                        table_name, parts[1], precision, scale
+                                    );
+
+                                    if let Err(e) = conn.execute(&constraint_query, []) {
+                                        debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                    } else {
+                                        debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Populate constraints for CREATE TABLE statements
                 if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
                     // Log the error but don't fail the CREATE TABLE operation
                     debug!("Failed to populate constraints for table {}: {}", table_name, e);
@@ -1028,18 +1130,44 @@ impl DbHandler {
     
     /// Execute with session-specific connection (with optional cached connection)
     pub async fn execute_with_session_cached(
-        &self, 
-        query: &str, 
+        &self,
+        query: &str,
         session_id: &Uuid,
         cached_conn: Option<&Arc<parking_lot::Mutex<rusqlite::Connection>>>
     ) -> Result<DbResponse, PgSqliteError> {
+        eprintln!("🗂️ execute_with_session_cached called, cached_conn: {}", cached_conn.is_some());
         match cached_conn {
             Some(conn) => {
                 self.connection_manager.execute_with_cached_connection(conn, |conn| {
                     // Process query with fast path optimization
                     let processed_query = process_query(query, conn, &self.schema_cache)?;
-                    
+
                     let rows_affected = conn.execute(&processed_query, [])?;
+
+                    // Handle CREATE TABLE metadata storage
+                    if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+                        if let Some(table_name) = extract_table_name_from_create(query) {
+                            // Get type mappings from CREATE TABLE translator
+                            use crate::translator::CreateTableTranslator;
+                            if let Ok(result) = CreateTableTranslator::translate_with_connection_full(query, Some(conn)) {
+                                if !result.type_mappings.is_empty() {
+                                    // Store type mappings and numeric constraints
+                                    if let Err(e) = self.store_create_table_metadata(conn, &table_name, &result.type_mappings) {
+                                        debug!("Failed to store CREATE TABLE metadata: {}", e);
+                                    }
+                                }
+
+                                // Populate constraints for CREATE TABLE statements
+                                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                                    // Log the error but don't fail the CREATE TABLE operation
+                                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                                } else {
+                                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                                }
+                            }
+                        }
+                    }
+
                     Ok(DbResponse {
                         columns: vec![],
                         rows: vec![],
@@ -1079,14 +1207,116 @@ impl DbHandler {
         }
 
         self.connection_manager.execute_with_session(session_id, |conn| {
-            // Process query with fast path optimization
-            let processed_query = process_query(query, conn, &self.schema_cache)?;
+            // Check if this is a CREATE TABLE statement that needs special handling
+            let (processed_query, type_mappings, _array_columns, _enum_columns) =
+                if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+                    debug!("Processing CREATE TABLE statement with translation...");
+                    // Use CREATE TABLE translator with full metadata capture
+                    use crate::translator::CreateTableTranslator;
+                    match CreateTableTranslator::translate_with_connection_full(query, Some(conn)) {
+                        Ok(result) => {
+                            debug!("CREATE TABLE translated with {} type mappings and {} array columns",
+                                result.type_mappings.len(), result.array_columns.len());
+                            (result.sql, result.type_mappings, result.array_columns, result.enum_columns)
+                        }
+                        Err(e) => {
+                            return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("CREATE TABLE translation failed: {}", e))
+                            ));
+                        }
+                    }
+                } else {
+                    // Process query with fast path optimization for non-CREATE TABLE statements
+                    let processed = process_query(query, conn, &self.schema_cache)?;
+                    (processed, std::collections::HashMap::new(), Vec::new(), Vec::new())
+                };
 
             let rows_affected = conn.execute(&processed_query, [])?;
 
-            // Populate constraints for CREATE TABLE statements
+            // Handle CREATE TABLE metadata storage and constraints
             if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
                 && let Some(table_name) = extract_table_name_from_create(query) {
+
+                // Store type mappings in schema metadata table
+                debug!("CREATE TABLE metadata storage: {} type mappings found", type_mappings.len());
+                if !type_mappings.is_empty() {
+                    // Initialize the metadata table if it doesn't exist
+                    let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        pg_type TEXT NOT NULL,
+                        sqlite_type TEXT NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_query, []) {
+                        debug!("Failed to create __pgsqlite_schema table: {}", e);
+                    }
+
+                    // Initialize numeric constraints table if it doesn't exist
+                    let init_numeric_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        precision INTEGER NOT NULL,
+                        scale INTEGER NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_numeric_query, []) {
+                        debug!("Failed to create __pgsqlite_numeric_constraints table: {}", e);
+                    }
+
+                    // Store each type mapping
+                    for (full_column, type_mapping) in &type_mappings {
+                        // Split table.column format
+                        let parts: Vec<&str> = full_column.split('.').collect();
+                        if parts.len() == 2 && parts[0] == table_name {
+                            let insert_query = format!(
+                                "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
+                                table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
+                            );
+
+                            if let Err(e) = conn.execute(&insert_query, []) {
+                                debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e);
+                            } else {
+                                debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type);
+                            }
+
+                            // Store numeric constraints if present
+                            debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
+                            if let Some(modifier) = type_mapping.type_modifier {
+                                // Extract base type without parameters
+                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                    type_mapping.pg_type[..paren_pos].trim()
+                                } else {
+                                    &type_mapping.pg_type
+                                };
+                                let pg_type_lower = base_type.to_lowercase();
+
+                                if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                                    // Decode precision and scale from modifier
+                                    let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                                    let precision = (tmp_typmod >> 16) & 0xFFFF;
+                                    let scale = tmp_typmod & 0xFFFF;
+
+                                    let constraint_query = format!(
+                                        "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) VALUES ('{}', '{}', {}, {})",
+                                        table_name, parts[1], precision, scale
+                                    );
+
+                                    if let Err(e) = conn.execute(&constraint_query, []) {
+                                        debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                    } else {
+                                        debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Populate constraints for CREATE TABLE statements
                 if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
                     // Log the error but don't fail the CREATE TABLE operation
                     debug!("Failed to populate constraints for table {}: {}", table_name, e);
@@ -1666,6 +1896,88 @@ impl DbHandler {
                 rows_affected: 0,
             })
         })
+    }
+
+    /// Store CREATE TABLE metadata including type mappings and numeric constraints
+    fn store_create_table_metadata(
+        &self,
+        conn: &rusqlite::Connection,
+        table_name: &str,
+        type_mappings: &std::collections::HashMap<String, crate::metadata::TypeMapping>
+    ) -> Result<(), rusqlite::Error> {
+        debug!("Storing CREATE TABLE metadata: {} type mappings found", type_mappings.len());
+
+        // Initialize the metadata table if it doesn't exist
+        let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            pg_type TEXT NOT NULL,
+            sqlite_type TEXT NOT NULL,
+            PRIMARY KEY (table_name, column_name)
+        )";
+
+        conn.execute(init_query, [])?;
+
+        // Initialize numeric constraints table if it doesn't exist
+        let init_numeric_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            precision INTEGER NOT NULL,
+            scale INTEGER NOT NULL,
+            PRIMARY KEY (table_name, column_name)
+        )";
+
+        conn.execute(init_numeric_query, [])?;
+
+        // Store each type mapping
+        for (full_column, type_mapping) in type_mappings {
+            // Split table.column format
+            let parts: Vec<&str> = full_column.split('.').collect();
+            if parts.len() == 2 && parts[0] == table_name {
+                let insert_query = format!(
+                    "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
+                    table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
+                );
+
+                if let Err(e) = conn.execute(&insert_query, []) {
+                    debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e);
+                } else {
+                    debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type);
+                }
+
+                // Store numeric constraints if present
+                debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
+                if let Some(modifier) = type_mapping.type_modifier {
+                    // Extract base type without parameters
+                    let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                        type_mapping.pg_type[..paren_pos].trim()
+                    } else {
+                        &type_mapping.pg_type
+                    };
+                    let pg_type_lower = base_type.to_lowercase();
+
+                    if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                        // Decode precision and scale from modifier
+                        let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                        let precision = (tmp_typmod >> 16) & 0xFFFF;
+                        let scale = tmp_typmod & 0xFFFF;
+
+                        let constraint_query = format!(
+                            "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) VALUES ('{}', '{}', {}, {})",
+                            table_name, parts[1], precision, scale
+                        );
+
+                        if let Err(e) = conn.execute(&constraint_query, []) {
+                            debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                        } else {
+                            debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Rewrite information_schema queries to use real SQLite views

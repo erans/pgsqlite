@@ -5,8 +5,11 @@ use std::sync::RwLock;
 use regex::Regex;
 use crate::error::PgError;
 
+/// Type alias for numeric constraint cache
+type NumericConstraintCache = HashMap<String, HashMap<String, (i32, i32)>>;
+
 /// Cache for numeric constraints by table
-static CONSTRAINT_CACHE: Lazy<RwLock<HashMap<String, HashMap<String, (i32, i32)>>>> = 
+static CONSTRAINT_CACHE: Lazy<RwLock<NumericConstraintCache>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 pub struct NumericValidator;
@@ -261,6 +264,13 @@ impl NumericValidator {
         // Validate each value against its constraint
         for (col_name, value) in insert_data.iter() {
             if let Some((precision, scale)) = constraints.get(col_name) {
+                // Skip validation for array literals (they get translated to TEXT)
+                if value.trim().starts_with("ARRAY[") || value.trim().starts_with('[') {
+                    // This is an array literal, skip numeric validation
+                    // Array elements will be validated during array processing if needed
+                    continue;
+                }
+
                 Self::validate_value(value, *precision, *scale)
                     .map_err(|mut e| {
                         // Add column name to error
@@ -308,6 +318,13 @@ impl NumericValidator {
         // Validate each value against its constraint
         for (col_name, value) in update_data.iter() {
             if let Some((precision, scale)) = constraints.get(col_name) {
+                // Skip validation for array literals (they get translated to TEXT)
+                if value.trim().starts_with("ARRAY[") || value.trim().starts_with('[') {
+                    // This is an array literal, skip numeric validation
+                    // Array elements will be validated during array processing if needed
+                    continue;
+                }
+
                 Self::validate_value(value, *precision, *scale)
                     .map_err(|mut e| {
                         // Add column name to error

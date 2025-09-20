@@ -68,8 +68,10 @@ fn parse_expression(expr_str: &str) -> Expr {
 fn test_resolve_column_types() {
     let conn = setup_test_db();
     let mut resolver = ExpressionTypeResolver::new(&conn);
-    let mut context = QueryContext::default();
-    context.default_table = Some("test_table".to_string());
+    let context = QueryContext {
+        default_table: Some("test_table".to_string()),
+        ..Default::default()
+    };
     
     // Test simple column reference
     let expr = parse_expression("price");
@@ -124,8 +126,10 @@ fn test_resolve_literal_types() {
 fn test_resolve_binary_operation_types() {
     let conn = setup_test_db();
     let mut resolver = ExpressionTypeResolver::new(&conn);
-    let mut context = QueryContext::default();
-    context.default_table = Some("test_table".to_string());
+    let context = QueryContext {
+        default_table: Some("test_table".to_string()),
+        ..Default::default()
+    };
     
     // Numeric + Integer -> Numeric
     let expr = parse_expression("price + quantity");
@@ -152,8 +156,10 @@ fn test_resolve_binary_operation_types() {
 fn test_resolve_function_types() {
     let conn = setup_test_db();
     let mut resolver = ExpressionTypeResolver::new(&conn);
-    let mut context = QueryContext::default();
-    context.default_table = Some("test_table".to_string());
+    let context = QueryContext {
+        default_table: Some("test_table".to_string()),
+        ..Default::default()
+    };
     
     // COUNT always returns Int8
     let expr = parse_expression("COUNT(*)");
@@ -236,8 +242,10 @@ fn test_resolve_qualified_columns() {
 fn test_involves_decimal() {
     let conn = setup_test_db();
     let mut resolver = ExpressionTypeResolver::new(&conn);
-    let mut context = QueryContext::default();
-    context.default_table = Some("test_table".to_string());
+    let context = QueryContext {
+        default_table: Some("test_table".to_string()),
+        ..Default::default()
+    };
     
     // Direct decimal column
     let expr = parse_expression("price");
@@ -286,8 +294,10 @@ fn test_cast_expression_types() {
 fn test_nested_expressions() {
     let conn = setup_test_db();
     let mut resolver = ExpressionTypeResolver::new(&conn);
-    let mut context = QueryContext::default();
-    context.default_table = Some("test_table".to_string());
+    let context = QueryContext {
+        default_table: Some("test_table".to_string()),
+        ..Default::default()
+    };
     
     // Nested arithmetic
     let expr = parse_expression("(price + 10) * 2");

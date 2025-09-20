@@ -165,3 +165,41 @@ Lower overhead percentages indicate better protocol translation efficiency.
 - **TCP**: Standard network connection, includes TCP/IP overhead
 - **In-Memory (default)**: SQLite database in RAM, eliminates disk I/O
 - **File-Based**: SQLite database on disk, includes disk I/O overhead
+
+## Specialized Benchmarks
+
+### Array Binary Protocol Benchmark
+
+Tests the performance of PostgreSQL array types with psycopg3 binary protocol:
+
+```bash
+# Run array benchmark with default settings (100 iterations)
+./run_array_benchmark.sh
+
+# Run with custom iterations
+./run_array_benchmark.sh --iterations 500
+
+# Run with custom port
+./run_array_benchmark.sh --port 15500
+
+# Run with debug build
+./run_array_benchmark.sh --debug
+```
+
+**What's tested:**
+- Integer arrays (`INTEGER[]`)
+- Bigint arrays (`BIGINT[]`)
+- Text arrays (`TEXT[]`)
+- Float arrays (`DOUBLE PRECISION[]`)
+- Boolean arrays (`BOOLEAN[]`)
+
+**Array sizes tested:** 5, 10, 50, 100, 500 elements
+
+**Operations:** CREATE, INSERT, SELECT, UPDATE with binary protocol encoding
+
+**Requirements:**
+- Poetry for dependency management: `curl -sSL https://install.python-poetry.org | python3 -`
+- Dependencies are automatically installed by the script via `poetry install`
+- Includes: psycopg3, tabulate, colorama (already configured in pyproject.toml)
+
+This benchmark specifically measures the overhead of PostgreSQL array binary encoding/decoding compared to direct SQLite JSON array storage, which is essential for understanding the performance impact of using modern ORM array fields (Django ArrayField, SQLAlchemy ARRAY, Rails arrays) with psycopg3 binary mode.

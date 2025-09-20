@@ -66,8 +66,8 @@ async fn test_pg_constraint_foreign_keys() {
     for row in &rows {
         let conname: &str = row.get(0);
         let contype: &str = row.get(1);
-        let conrelid: &str = row.get(2);  // conrelid is TEXT in schema
-        let confrelid: i32 = row.get(3);  // confrelid is INTEGER in schema
+        let conrelid: &str = row.get(2);  // conrelid is OID type (as string)
+        let confrelid: &str = row.get(3);  // confrelid is OID type (as string)
         let conkey: &str = row.get(4);
         let confkey: &str = row.get(5);
 
@@ -76,7 +76,7 @@ async fn test_pg_constraint_foreign_keys() {
     }
 
     // Should have at least one foreign key
-    assert!(rows.len() >= 1, "Should have at least 1 foreign key constraint");
+    assert!(!rows.is_empty(), "Should have at least 1 foreign key constraint");
 
     // Check that it's actually a foreign key
     let fk_row = &rows[0];
@@ -84,11 +84,9 @@ async fn test_pg_constraint_foreign_keys() {
     assert_eq!(contype, "f", "Should be foreign key type");
 
     // Check that referenced table is different from source table
-    let conrelid: &str = fk_row.get(2);  // TEXT type
-    let confrelid: i32 = fk_row.get(3);  // INTEGER type
-    // Convert to same type for comparison
-    let conrelid_int: i32 = conrelid.parse().unwrap_or(0);
-    assert_ne!(conrelid_int, confrelid, "Source and target tables should be different");
+    let conrelid: &str = fk_row.get(2);  // OID type (as string)
+    let confrelid: &str = fk_row.get(3);  // OID type (as string)
+    assert_ne!(conrelid, confrelid, "Source and target tables should be different");
 }
 
 #[tokio::test]
@@ -123,7 +121,7 @@ async fn test_pg_constraint_primary_keys() {
     }
 
     // Should have at least one primary key
-    assert!(rows.len() >= 1, "Should have at least 1 primary key constraint");
+    assert!(!rows.is_empty(), "Should have at least 1 primary key constraint");
 
     // Check that it's actually a primary key
     let pk_row = &rows[0];
@@ -176,7 +174,7 @@ async fn test_pg_constraint_sqlalchemy_pattern() {
     // Check that all constraints are validated
     for row in &rows {
         let convalidated: bool = row.get(4);  // BOOLEAN type
-        assert_eq!(convalidated, true, "All constraints should be validated");
+        assert!(convalidated, "All constraints should be validated");
     }
 }
 
@@ -216,7 +214,7 @@ async fn test_pg_constraint_django_pattern() {
     }
 
     // Should have at least one foreign key
-    assert!(rows.len() >= 1, "Should have at least 1 foreign key");
+    assert!(!rows.is_empty(), "Should have at least 1 foreign key");
 
     // Check FK action types (should be defaults)
     let fk_row = &rows[0];

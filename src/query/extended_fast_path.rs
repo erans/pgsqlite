@@ -22,6 +22,7 @@ impl ExtendedFastPath {
     }
     
     /// Execute a parameterized query using prepared statements directly
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &Arc<DbHandler>,

@@ -438,7 +438,7 @@ impl CreateTableTranslator {
     }
     
     /// Parse array type notation and return (is_array, element_type, dimensions)
-    fn parse_array_type(pg_type: &str, parts: &[&str], type_start_idx: usize) -> (bool, String, i32) {
+    pub fn parse_array_type(pg_type: &str, parts: &[&str], type_start_idx: usize) -> (bool, String, i32) {
         // Check if the type ends with [] or has [] in subsequent parts
         let mut is_array = false;
         let mut element_type = pg_type.to_string();

@@ -172,6 +172,22 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 ## Key Features & Fixes
 
 ### Recently Fixed (2025-09-19)
+- **PostgreSQL Session Functions Support**: Complete session information access for ORM connection management and logging
+  - Implemented `current_user()` and `session_user()` functions returning "postgres" for ORM authentication compatibility
+  - Implemented `current_database()` function returning "main" for database introspection and logging
+  - Implemented `current_schema()` function returning "public" for schema introspection and ORM schema routing
+  - Implemented `current_schemas()` function with implicit parameter support: returns `["pg_catalog","public"]` with implicit=true, `["public"]` with implicit=false
+  - Added PostgreSQL identifier translation support: converts bare identifiers (`current_user`) to function calls (`current_user()`) for SQLite compatibility
+  - Dual-processor support: integrated SessionIdentifierTranslator into both LazyQueryProcessor and UnifiedProcessor query pipelines
+  - Enhanced unified_processor with SESSION_IDENTIFIER translation flag and memchr-optimized pattern detection for maximum performance
+  - Session identifier pattern detection using word boundaries to avoid false positives (e.g., `current_user_id` remains unchanged)
+  - Case-insensitive support for all function variants: `current_user`, `CURRENT_USER`, `session_user`, `SESSION_USER`
+  - Comprehensive ORM compatibility patterns: Django connection validation, SQLAlchemy session info queries, Rails environment checks, Ecto connection metadata
+  - Files: src/translator/session_identifier_translator.rs (new), src/query/lazy_processor.rs, src/query/unified_processor.rs, tests/session_functions_test.rs (comprehensive test suite)
+  - Complete test coverage: 11 integration tests covering basic functionality, ORM patterns, table operations, audit logging, session consistency, and error handling
+  - ORM benefits: Enables Django connection validation queries, SQLAlchemy session introspection, Rails database environment detection, Ecto connection metadata retrieval
+  - Impact: Provides complete session function compatibility enabling ORMs to perform connection validation, user tracking, and database environment detection
+
 - **PostgreSQL Permission Functions Support**: Complete authorization and access control for ORM permission systems
   - Implemented enhanced `pg_has_role()` function with both 2-parameter and 3-parameter variants for role membership checking
   - Implemented enhanced `has_table_privilege()` function with both 2-parameter and 3-parameter variants for table access control

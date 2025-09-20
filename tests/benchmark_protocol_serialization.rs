@@ -16,6 +16,7 @@ async fn benchmark_protocol_serialization() {
     println!("\n=== Protocol Serialization Profiling ===");
     
     // Start pgsqlite server
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     thread::sleep(Duration::from_secs(2));
     

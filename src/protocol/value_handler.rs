@@ -464,9 +464,11 @@ mod tests {
     
     #[test]
     fn test_mmap_enabled_config() {
-        let mut config = ValueHandlerConfig::default();
-        config.enable_mmap = true;
-        config.large_value_threshold = 100; // Very small threshold for testing
+        let mut config = ValueHandlerConfig {
+            enable_mmap: true,
+            large_value_threshold: 100, // Very small threshold for testing
+            ..Default::default()
+        };
         config.mmap_config.min_size_for_mmap = 50;
         
         let handler = ValueHandler::with_config(config);

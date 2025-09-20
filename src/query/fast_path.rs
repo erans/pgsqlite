@@ -396,7 +396,7 @@ pub fn query_fast_path(
                 let mut rows = Vec::new();
                 let result_rows = stmt.query_map([], |row| {
                     let mut values = Vec::new();
-                    for i in 0..column_count {
+                    for (i, _) in columns.iter().enumerate().take(column_count) {
                         match row.get_ref(i)? {
                             ValueRef::Null => values.push(None),
                             ValueRef::Integer(int_val) => {
@@ -638,7 +638,7 @@ fn execute_fast_select_with_params(
     let mut rows = Vec::new();
     let result_rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
         let mut values = Vec::new();
-        for i in 0..column_count {
+        for (i, _) in columns.iter().enumerate().take(column_count) {
             match row.get_ref(i)? {
                 ValueRef::Null => values.push(None),
                 ValueRef::Integer(int_val) => {
@@ -756,7 +756,7 @@ fn execute_fast_select(
     let mut rows = Vec::new();
     let result_rows = stmt.query_map([], |row| {
         let mut values = Vec::new();
-        for i in 0..column_count {
+        for (i, _) in columns.iter().enumerate().take(column_count) {
             match row.get_ref(i)? {
                 ValueRef::Null => values.push(None),
                 ValueRef::Integer(int_val) => {
