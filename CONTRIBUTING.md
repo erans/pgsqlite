@@ -93,12 +93,21 @@ Environment: Ubuntu 22.04, Rust 1.75, pgsqlite v0.1.0
 
 ### Before Submitting
 
+Follow this complete checklist to ensure code quality:
+
+- [ ] Run `cargo build` - no compilation errors
 - [ ] Run `cargo test` - all tests pass
+- [ ] Run `cargo clippy` - no warnings (use `cargo clippy --fix` for automatic fixes)
 - [ ] Run `cargo fmt` - code is formatted
-- [ ] Run `cargo clippy` - no warnings
 - [ ] Update documentation if needed
 - [ ] Add tests for new functionality
-- [ ] Update CHANGELOG.md if applicable
+- [ ] Update TODO.md if applicable (mark completed tasks, add new discoveries)
+
+**Pre-commit checklist**: Run ALL of these before committing:
+1. `cargo check` - No errors or warnings
+2. `cargo clippy` - Review and fix warnings where reasonable
+3. `cargo build` - Successful build
+4. `cargo test` - All tests pass
 
 ### PR Guidelines
 

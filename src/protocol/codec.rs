@@ -265,14 +265,12 @@ fn encode_row_description(fields: Vec<FieldDescription>, dst: &mut BytesMut) {
 
 fn encode_data_row(values: &[Option<Vec<u8>>], dst: &mut BytesMut) {
     // Debug logging for array fields
-    if values.len() == 1 {
-        if let Some(Some(data)) = values.get(0) {
-            if data.len() == 41 {
+    if values.len() == 1
+        && let Some(Some(data)) = values.first()
+            && data.len() == 41 {
                 println!("DEBUG: encode_data_row sending 41-byte field (likely array with nulls)");
                 println!("  Data length being written: {}", data.len());
             }
-        }
-    }
 
     dst.put_u8(b'D');
     let len_pos = dst.len();

@@ -75,8 +75,7 @@ impl SchemaTypeMapper {
     /// Map PostgreSQL type string to OID
     pub fn pg_type_string_to_oid(pg_type: &str) -> i32 {
         // Handle array types first (before basic types)
-        if pg_type.ends_with("[]") {
-            let base_type = &pg_type[..pg_type.len() - 2];
+        if let Some(base_type) = pg_type.strip_suffix("[]") {
             // Remove any parameters like (50) from VARCHAR(50)
             let base_without_params = if let Some(paren_pos) = base_type.find('(') {
                 &base_type[..paren_pos]

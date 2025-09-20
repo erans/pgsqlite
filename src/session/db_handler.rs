@@ -1145,8 +1145,8 @@ impl DbHandler {
                     let rows_affected = conn.execute(&processed_query, [])?;
 
                     // Handle CREATE TABLE metadata storage
-                    if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
-                        if let Some(table_name) = extract_table_name_from_create(query) {
+                    if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
+                        && let Some(table_name) = extract_table_name_from_create(query) {
                             // Get type mappings from CREATE TABLE translator
                             use crate::translator::CreateTableTranslator;
                             if let Ok(result) = CreateTableTranslator::translate_with_connection_full(query, Some(conn)) {
@@ -1166,7 +1166,6 @@ impl DbHandler {
                                 }
                             }
                         }
-                    }
 
                     Ok(DbResponse {
                         columns: vec![],

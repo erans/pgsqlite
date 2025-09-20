@@ -4736,7 +4736,7 @@ impl ExtendedQueryHandler {
             let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
             if query.contains("int_array_with_nulls") {
                 println!("DEBUG: encoded_row has {} fields", encoded_row.len());
-                if let Some(first_field) = encoded_row.get(0) {
+                if let Some(first_field) = encoded_row.first() {
                     if let Some(data) = first_field {
                         println!("DEBUG: First field has {} bytes, hex: {:02x?}", data.len(), &data[..std::cmp::min(50, data.len())]);
                     } else {

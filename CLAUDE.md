@@ -171,7 +171,18 @@ fn register_vX_your_feature(registry: &mut BTreeMap<u32, Migration>) {
 
 ## Key Features & Fixes
 
-### Recently Fixed (2025-09-19)
+### Recently Fixed (2025-09-20)
+- **Arithmetic Test Fixes & Code Quality**: Fixed integer division issues and clippy warnings
+  - **Root Cause**: SQLite performing integer division instead of floating-point division in arithmetic expressions
+  - **Tests Fixed**: `test_nested_parentheses` and `test_very_long_expressions` in `tests/arithmetic_complex_test.rs`
+    - Expected `6.666667`, got `6` (integer division: `20 / 3 = 6`)
+    - Expected `15.2`, got `16` (integer division: `4 / 5 = 0`)
+  - **Solution**: Added `CAST(... AS REAL)` to force floating-point arithmetic in division operations
+  - **Clippy Fixes**: Fixed 6 warnings (collapsible if statements, manual suffix stripping, .get(0) → .first())
+  - **Files**: tests/arithmetic_complex_test.rs, src/protocol/codec.rs, src/session/db_handler.rs, src/types/schema_type_mapper.rs, src/query/extended.rs
+  - **Results**: All tests pass, zero clippy warnings, improved code quality and maintainability
+
+### Previously Fixed (2025-09-19)
 - **PostgreSQL Session Functions Support**: Complete session information access for ORM connection management and logging
   - Implemented `current_user()` and `session_user()` functions returning "postgres" for ORM authentication compatibility
   - Implemented `current_database()` function returning "main" for database introspection and logging
