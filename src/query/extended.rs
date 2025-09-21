@@ -3342,6 +3342,18 @@ impl ExtendedQueryHandler {
                 // This can be improved later to return proper OID binary format
                 _ => PgType::Text.to_oid(),
             }
+        } else if query.contains("information_schema.columns") {
+            match column_name {
+                "ordinal_position" | "character_maximum_length" | "character_octet_length" |
+                "numeric_precision" | "numeric_precision_radix" | "numeric_scale" |
+                "datetime_precision" | "interval_precision" | "maximum_cardinality" => PgType::Int4.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("information_schema.key_column_usage") {
+            match column_name {
+                "ordinal_position" | "position_in_unique_constraint" => PgType::Int4.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
         } else {
             // Default to text for unknown catalog tables
             PgType::Text.to_oid()
