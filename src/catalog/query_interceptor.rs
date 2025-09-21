@@ -1671,9 +1671,22 @@ impl CatalogInterceptor {
                             };
                             let is_primary_key = String::from_utf8_lossy(pk_bytes) == "1";
 
-                            // Map SQLite type to PostgreSQL type
+                            // First try to get type from __pgsqlite_schema, then fall back to SQLite type
+                            let pg_type = match db.connection_manager().execute_with_session(session_id, |conn| {
+                                let query = "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ? AND column_name = ?";
+                                let mut stmt = conn.prepare(query)?;
+                                let result = stmt.query_row([&table_name, &column_name], |row| {
+                                    row.get::<_, String>(0)
+                                });
+                                Ok(result)
+                            }) {
+                                Ok(Ok(stored_type)) => stored_type,
+                                _ => sqlite_type.clone(),
+                            };
+
+                            // Map type to PostgreSQL type
                             let (pg_data_type, char_max_length, numeric_precision, numeric_scale) =
-                                Self::map_sqlite_type_to_pg_column_info(&sqlite_type);
+                                Self::map_sqlite_type_to_pg_column_info(&pg_type);
 
                             // Determine nullability
                             let is_nullable = if not_null || is_primary_key { "NO" } else { "YES" };
@@ -1763,7 +1776,7 @@ impl CatalogInterceptor {
                 let params: Vec<&str> = params_str.split(',').map(|s| s.trim()).collect();
 
                 match base_type {
-                    "VARCHAR" | "CHAR" => {
+                    "VARCHAR" | "CHAR" | "CHARACTER VARYING" => {
                         let length = params.first().and_then(|p| p.parse().ok()).unwrap_or(255);
                         return ("character varying".to_string(), Some(length), None, None);
                     },
@@ -1793,6 +1806,8 @@ impl CatalogInterceptor {
             "UUID" => ("uuid".to_string(), None, None, None),
             "JSON" => ("json".to_string(), None, None, None),
             "JSONB" => ("jsonb".to_string(), None, None, None),
+            "VARCHAR" | "CHARACTER VARYING" => ("character varying".to_string(), None, None, None),
+            "CHAR" | "CHARACTER" => ("character".to_string(), None, None, None),
             _ => {
                 // Default fallback for unknown types
                 if sqlite_type_upper.contains("CHAR") || sqlite_type_upper.contains("TEXT") {
