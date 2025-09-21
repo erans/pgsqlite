@@ -4,27 +4,44 @@ use uuid::Uuid;
 struct TestContext {
     db_handler: DbHandler,
     session_id: Uuid,
+    db_path: String,
 }
 
 impl TestContext {
     async fn execute(&self, query: &str) -> Result<pgsqlite::session::DbResponse, pgsqlite::PgSqliteError> {
         self.db_handler.execute_with_session(query, &self.session_id).await
     }
-    
+
     async fn query(&self, query: &str) -> Result<pgsqlite::session::DbResponse, pgsqlite::PgSqliteError> {
         self.db_handler.query_with_session(query, &self.session_id).await
     }
 }
 
+impl Drop for TestContext {
+    fn drop(&mut self) {
+        // Clean up temporary database files
+        let _ = std::fs::remove_file(&self.db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", &self.db_path));
+        let _ = std::fs::remove_file(format!("{}-shm", &self.db_path));
+    }
+}
+
 async fn setup_test_db() -> TestContext {
-    let db_handler = DbHandler::new(":memory:").unwrap();
+    // Use unique temporary file for each test to avoid conflicts
+    let unique_id = Uuid::new_v4();
+    let db_path = format!("/tmp/decimal_test_{}.db", unique_id);
+    let db_handler = DbHandler::new(&db_path).unwrap();
     let session_id = Uuid::new_v4();
-    
+
     // Create session connection
     db_handler.create_session_connection(session_id).await.unwrap();
-    
-    let ctx = TestContext { db_handler, session_id };
-    
+
+    let ctx = TestContext {
+        db_handler,
+        session_id,
+        db_path: db_path.clone(),
+    };
+
     // Create tables with NUMERIC columns
     ctx.execute(
         "CREATE TABLE accounts (
@@ -34,14 +51,14 @@ async fn setup_test_db() -> TestContext {
             credit_limit TEXT
         )"
     ).await.unwrap();
-    
-    // Insert type metadata
+
+    // Insert type metadata (use INSERT OR IGNORE to avoid conflicts)
     ctx.execute(
-        "INSERT INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
+        "INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
          ('accounts', 'balance', 'NUMERIC', 'DECIMAL'),
          ('accounts', 'credit_limit', 'NUMERIC', 'DECIMAL')"
     ).await.unwrap();
-    
+
     ctx.execute(
         "CREATE TABLE transactions (
             id INTEGER PRIMARY KEY,
@@ -51,13 +68,13 @@ async fn setup_test_db() -> TestContext {
             type TEXT
         )"
     ).await.unwrap();
-    
+
     ctx.execute(
-        "INSERT INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
+        "INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
          ('transactions', 'amount', 'NUMERIC', 'DECIMAL'),
          ('transactions', 'fee', 'NUMERIC', 'DECIMAL')"
     ).await.unwrap();
-    
+
     ctx
 }
 
@@ -251,7 +268,7 @@ async fn test_mixed_type_operations() {
     ).await.unwrap();
     
     ctx.execute(
-        "INSERT INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
+        "INSERT OR IGNORE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES
          ('mixed_types', 'decimal_val', 'NUMERIC', 'DECIMAL')"
     ).await.unwrap();
     
