@@ -203,21 +203,124 @@ impl CatalogInterceptor {
 
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         debug!("handle_catalog_query called");
+        println!("HANDLE_CATALOG_QUERY: called with query");
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
+            println!("HANDLE_CATALOG_QUERY: Is SELECT query, from.len()={}, has_joins={}",
+                     select.from.len(),
+                     !select.from.is_empty() && !select.from[0].joins.is_empty());
             debug!("Is SELECT query, from.len()={}, has_joins={}",
                      select.from.len(),
                      !select.from.is_empty() && !select.from[0].joins.is_empty());
             // Check if this is a JOIN query involving catalog tables
             if !select.from.is_empty() && !select.from[0].joins.is_empty() {
                 debug!("Detected as JOIN query");
+                println!("HANDLE_CATALOG_QUERY: Detected as JOIN query");
+
+                // Check if this is a JOIN between information_schema tables
+                if let TableFactor::Table { name: main_table, .. } = &select.from[0].relation {
+                    let main_table_name = main_table.to_string().to_lowercase();
+                    println!("HANDLE_CATALOG_QUERY: Main table name: '{}'", main_table_name);
+
+                    // Check if main table and all JOINs are information_schema tables
+                    let is_information_schema_join = main_table_name.contains("information_schema") &&
+                        select.from[0].joins.iter().all(|j| {
+                            if let TableFactor::Table { name: join_table, .. } = &j.relation {
+                                let join_table_name = join_table.to_string().to_lowercase();
+                                println!("HANDLE_CATALOG_QUERY: Join table name: '{}'", join_table_name);
+                                join_table_name.contains("information_schema")
+                            } else {
+                                false
+                            }
+                        });
+
+                    println!("HANDLE_CATALOG_QUERY: is_information_schema_join = {}", is_information_schema_join);
+
+                    if is_information_schema_join {
+                        debug!("Detected information_schema JOIN query - translating and executing");
+                        println!("HANDLE_CATALOG_QUERY: Detected information_schema JOIN query");
+
+                        // Information_schema tables exist as views with underscores, not dots
+                        // e.g., information_schema_table_constraints instead of information_schema.table_constraints
+                        // We need to translate the query to use the correct view names
+                        if let Some(ref session) = session {
+                            let session_id = session.id;
+                            let mut query_str = query.to_string();
+
+                            // Replace information_schema.table_name with information_schema_table_name
+                            query_str = query_str.replace("information_schema.table_constraints", "information_schema_table_constraints");
+                            query_str = query_str.replace("information_schema.key_column_usage", "information_schema_key_column_usage");
+                            query_str = query_str.replace("information_schema.referential_constraints", "information_schema_referential_constraints");
+                            query_str = query_str.replace("information_schema.columns", "information_schema_columns");
+                            query_str = query_str.replace("information_schema.tables", "information_schema_tables");
+                            query_str = query_str.replace("information_schema.schemata", "information_schema_schemata");
+
+                            println!("HANDLE_CATALOG_QUERY: Translated query: {}", query_str);
+
+                            match db.connection_manager().execute_with_session(&session_id, |conn| {
+                                debug!("Executing translated information_schema JOIN query: {}", query_str);
+
+                                // Execute the translated query
+                                let mut stmt = conn.prepare(&query_str)?;
+                                let column_count = stmt.column_count();
+                                let mut columns = Vec::new();
+                                for i in 0..column_count {
+                                    columns.push(stmt.column_name(i)?.to_string());
+                                }
+
+                                let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
+                                    let mut values = Vec::new();
+                                    for i in 0..column_count {
+                                        // Try to get as string, handle NULL values
+                                        let value: rusqlite::Result<Option<String>> = row.get(i);
+                                        match value {
+                                            Ok(Some(s)) => values.push(Some(s.into_bytes())),
+                                            Ok(None) => values.push(None),
+                                            Err(_) => values.push(None),
+                                        }
+                                    }
+                                    Ok(values)
+                                })?.collect();
+
+                                match rows_result {
+                                    Ok(rows) => {
+                                        let rows_affected = rows.len();
+                                        Ok(DbResponse {
+                                            columns,
+                                            rows,
+                                            rows_affected,
+                                        })
+                                    }
+                                    Err(e) => {
+                                        debug!("Failed to execute translated JOIN query: {}", e);
+                                        Err(e)
+                                    }
+                                }
+                            }) {
+                                Ok(response) => {
+                                    debug!("Successfully executed translated JOIN query, returning {} rows with {} columns",
+                                           response.rows_affected, response.columns.len());
+                                    println!("HANDLE_CATALOG_QUERY: Successfully executed translated JOIN, {} rows, {} columns",
+                                            response.rows_affected, response.columns.len());
+                                    return Some(response);
+                                }
+                                Err(e) => {
+                                    debug!("Failed to execute translated JOIN: {}", e);
+                                    println!("HANDLE_CATALOG_QUERY: Failed to execute translated JOIN: {}", e);
+                                    // Fall through to try other methods
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Check if the query contains system functions that need special handling
                 let query_str = query.to_string();
-                let contains_system_functions = query_str.contains("pg_table_is_visible") || 
+                let contains_system_functions = query_str.contains("pg_table_is_visible") ||
                                               query_str.contains("pg_get_constraintdef") ||
                                               query_str.contains("format_type") ||
                                               query_str.contains("pg_get_expr");
-                
+
                 if contains_system_functions {
                     // This query contains system functions that need special handling
                     debug!("JOIN query contains system functions, handling specially");
@@ -1673,12 +1776,23 @@ impl CatalogInterceptor {
 
                             // First try to get type from __pgsqlite_schema, then fall back to SQLite type
                             let pg_type = match db.connection_manager().execute_with_session(session_id, |conn| {
-                                let query = "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ? AND column_name = ?";
-                                let mut stmt = conn.prepare(query)?;
-                                let result = stmt.query_row([&table_name, &column_name], |row| {
-                                    row.get::<_, String>(0)
-                                });
-                                Ok(result)
+                                // Check if __pgsqlite_schema exists first
+                                let table_exists: i32 = conn.query_row(
+                                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_schema'",
+                                    [],
+                                    |row| row.get(0)
+                                ).unwrap_or(0);
+
+                                if table_exists > 0 {
+                                    let query = "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ? AND column_name = ?";
+                                    let mut stmt = conn.prepare(query)?;
+                                    let result = stmt.query_row([&table_name, &column_name], |row| {
+                                        row.get::<_, String>(0)
+                                    });
+                                    Ok(result)
+                                } else {
+                                    Err(rusqlite::Error::InvalidPath("__pgsqlite_schema not found".into()))
+                                }
                             }) {
                                 Ok(Ok(stored_type)) => stored_type,
                                 _ => sqlite_type.clone(),
