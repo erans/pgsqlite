@@ -46,9 +46,9 @@ async fn test_pg_database_all_columns() {
     assert_eq!(datdba, 10);
     assert_eq!(encoding, 6); // UTF8
     assert_eq!(datlocprovider, "d");
-    assert_eq!(datistemplate, "false");
-    assert_eq!(datallowconn, "true");
-    assert_eq!(dathasloginevt, "false");
+    assert_eq!(datistemplate, "f");
+    assert_eq!(datallowconn, "t");
+    assert_eq!(dathasloginevt, "f");
     assert_eq!(datconnlimit, -1); // No limit
 }
 

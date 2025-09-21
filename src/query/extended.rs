@@ -520,7 +520,7 @@ impl ExtendedQueryHandler {
                cleaned_query.contains("pg_class") || cleaned_query.contains("pg_attribute") ||
                cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
                cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_index") ||
-               cleaned_query.contains("pg_depend") {
+               cleaned_query.contains("pg_depend") || cleaned_query.contains("pg_database") {
                 info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
                 Vec::new()
             } else {
@@ -1900,7 +1900,7 @@ impl ExtendedQueryHandler {
                                    query.contains("pg_namespace") || query.contains("pg_class") ||
                                    query.contains("pg_attribute") || query.contains("pg_constraint") ||
                                    query.contains("pg_index") || query.contains("pg_depend") ||
-                                   query.contains("information_schema");
+                                   query.contains("pg_database") || query.contains("information_schema");
             
             // Then send RowDescription or NoData
             if !stmt.field_descriptions.is_empty() {
@@ -1954,7 +1954,46 @@ impl ExtendedQueryHandler {
                             if is_select_star {
                                 // For SELECT *, we need to determine which catalog table is being queried
                                 // and return all its columns
-                                if query.contains("pg_class") {
+                                if query.contains("pg_database") {
+                                    info!("DESCRIBE: Generating field descriptions for pg_database SELECT *");
+                                    println!("DEBUG: pg_database field descriptions being generated");
+                                    // Return all pg_database columns
+                                    let all_columns = vec![
+                                        ("oid", PgType::Int4.to_oid()),
+                                        ("datname", PgType::Text.to_oid()),
+                                        ("datdba", PgType::Int4.to_oid()),
+                                        ("encoding", PgType::Int4.to_oid()),
+                                        ("datlocprovider", PgType::Text.to_oid()),
+                                        ("datistemplate", PgType::Text.to_oid()),   // Using Text since we return 'f'/'t'
+                                        ("datallowconn", PgType::Text.to_oid()),    // Using Text since we return 'f'/'t'
+                                        ("dathasloginevt", PgType::Text.to_oid()),  // Using Text since we return 'f'/'t'
+                                        ("datconnlimit", PgType::Int4.to_oid()),
+                                        ("datfrozenxid", PgType::Text.to_oid()),
+                                        ("datminmxid", PgType::Text.to_oid()),
+                                        ("dattablespace", PgType::Int4.to_oid()),
+                                        ("datcollate", PgType::Text.to_oid()),
+                                        ("datctype", PgType::Text.to_oid()),
+                                        ("datlocale", PgType::Text.to_oid()),
+                                        ("daticurules", PgType::Text.to_oid()),
+                                        ("datcollversion", PgType::Text.to_oid()),
+                                        ("datacl", PgType::Text.to_oid()),
+                                    ];
+
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        if i == 5 {
+                                            println!("DEBUG: pg_database column 5 ({}): type_oid = {}", name, oid);
+                                        }
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("pg_class") {
                                     // Return all pg_class columns (33 total in current PostgreSQL)
                                     const OID_TYPE: i32 = 26;
                                     const XID_TYPE: i32 = 28;
@@ -3342,6 +3381,20 @@ impl ExtendedQueryHandler {
                 // This can be improved later to return proper OID binary format
                 _ => PgType::Text.to_oid(),
             }
+        } else if query.contains("pg_database") {
+            match column_name {
+                "oid" => PgType::Int4.to_oid(),
+                "datname" => PgType::Text.to_oid(),
+                "datdba" => PgType::Int4.to_oid(),
+                "encoding" => PgType::Int4.to_oid(),
+                "datlocprovider" => PgType::Text.to_oid(),
+                "datistemplate" | "datallowconn" | "dathasloginevt" => PgType::Text.to_oid(), // Text because we return 'f'/'t'
+                "datconnlimit" => PgType::Int4.to_oid(),
+                "dattablespace" => PgType::Int4.to_oid(),
+                "datfrozenxid" | "datminmxid" | "datcollate" | "datctype" |
+                "datlocale" | "daticurules" | "datcollversion" | "datacl" => PgType::Text.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
         } else if query.contains("information_schema.columns") {
             match column_name {
                 "ordinal_position" | "character_maximum_length" | "character_octet_length" |
@@ -4328,6 +4381,12 @@ impl ExtendedQueryHandler {
                                     *attnum_bytes = attnum_str.trim().as_bytes().to_vec();
                                 }
                     }
+                } else if query.contains("pg_database") {
+                    info!("Converting pg_database boolean data for binary encoding");
+                    // pg_database has boolean columns that need special handling
+                    // They're stored as 'f'/'t' but need to be converted for binary format
+                    // No conversion needed here - the binary encoder will handle 'f'/'t' for Bool type
+                    println!("EXTENDED: pg_database binary format - boolean columns will be handled by encoder");
                 } else if query.contains("information_schema") {
                     info!("Converting information_schema text data for binary encoding");
                     // For information_schema queries, the data is already in text format

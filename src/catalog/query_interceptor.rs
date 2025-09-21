@@ -2291,9 +2291,9 @@ impl CatalogInterceptor {
             Some("10".to_string().into_bytes()),                       // datdba (owner)
             Some("6".to_string().into_bytes()),                        // encoding (UTF8)
             Some("d".to_string().into_bytes()),                        // datlocprovider (default)
-            Some("false".to_string().into_bytes()),                    // datistemplate (false)
-            Some("true".to_string().into_bytes()),                     // datallowconn (true)
-            Some("false".to_string().into_bytes()),                    // dathasloginevt (false)
+            Some("f".to_string().into_bytes()),                        // datistemplate (false) - PostgreSQL uses 'f'/'t' for bool
+            Some("t".to_string().into_bytes()),                        // datallowconn (true) - PostgreSQL uses 'f'/'t' for bool
+            Some("f".to_string().into_bytes()),                        // dathasloginevt (false) - PostgreSQL uses 'f'/'t' for bool
             Some("-1".to_string().into_bytes()),                       // datconnlimit (no limit)
             Some("1".to_string().into_bytes()),                        // datfrozenxid
             Some("1".to_string().into_bytes()),                        // datminmxid
