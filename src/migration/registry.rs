@@ -32,6 +32,7 @@ lazy_static! {
         register_v23_information_schema_check_constraints_support(&mut registry);
         register_v24_pg_tablespace_support(&mut registry);
         register_v25_information_schema_triggers_support(&mut registry);
+        register_v26_enhanced_pg_attribute_support(&mut registry);
 
         registry
     };
@@ -2492,5 +2493,143 @@ fn register_v25_information_schema_triggers_support(registry: &mut BTreeMap<u32,
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![24],
+    });
+}
+
+/// Version 26: Enhanced pg_attribute support with proper default and identity detection
+fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(26, Migration {
+        version: 26,
+        name: "enhanced_pg_attribute_support",
+        description: "Enhanced pg_attribute view with proper default and identity column detection for JOIN queries",
+        up: MigrationAction::SqlBatch(&[
+            // Drop existing pg_attribute view
+            r#"
+            DROP VIEW IF EXISTS pg_attribute;
+            "#,
+
+            // Create enhanced pg_attribute view with proper default and identity detection
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_attribute AS
+            SELECT
+                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                p.cid + 1 as attnum,
+                p.name as attname,
+                CASE
+                    WHEN p.type LIKE '%INT%' THEN 23
+                    WHEN p.type = 'TEXT' THEN 25
+                    WHEN p.type = 'REAL' THEN 700
+                    WHEN p.type = 'BLOB' THEN 17
+                    WHEN p.type LIKE '%CHAR%' THEN 1043
+                    WHEN p.type = 'BOOLEAN' THEN 16
+                    WHEN p.type = 'DATE' THEN 1082
+                    WHEN p.type LIKE 'TIME%' THEN 1083
+                    WHEN p.type LIKE 'TIMESTAMP%' THEN 1114
+                    ELSE 25
+                END as atttypid,
+                -1 as attstattarget,
+                0 as attlen,
+                0 as attndims,
+                -1 as attcacheoff,
+                CASE WHEN p."notnull" = 1 THEN 't' ELSE 'f' END as attnotnull,
+
+                -- Enhanced default detection using pg_attrdef table
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM pg_attrdef def
+                        WHERE def.adrelid = CAST(oid_hash(m.name) AS TEXT)
+                        AND def.adnum = CAST(p.cid + 1 AS TEXT)
+                    ) THEN 't'
+                    ELSE 'f'
+                END as atthasdef,
+
+                'f' as atthasmissing,
+
+                -- Enhanced identity column detection for INTEGER PRIMARY KEY
+                CASE
+                    WHEN p.type LIKE '%INT%' AND p.pk = 1 THEN 'd'
+                    ELSE ''
+                END as attidentity,
+
+                '' as attgenerated,
+                'f' as attisdropped,
+                't' as attislocal,
+                0 as attinhcount,
+                0 as attcollation,
+                '' as attacl,
+                '' as attoptions,
+                '' as attfdwoptions,
+                '' as attmissingval
+            FROM pragma_table_info(m.name) p
+            JOIN sqlite_master m ON m.type = 'table'
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '26', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            // Drop enhanced view
+            r#"
+            DROP VIEW IF EXISTS pg_attribute;
+            "#,
+
+            // Restore original simple view
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_attribute AS
+            SELECT
+                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                p.cid + 1 as attnum,
+                p.name as attname,
+                CASE
+                    WHEN p.type LIKE '%INT%' THEN 23
+                    WHEN p.type = 'TEXT' THEN 25
+                    WHEN p.type = 'REAL' THEN 700
+                    WHEN p.type = 'BLOB' THEN 17
+                    WHEN p.type LIKE '%CHAR%' THEN 1043
+                    WHEN p.type = 'BOOLEAN' THEN 16
+                    WHEN p.type = 'DATE' THEN 1082
+                    WHEN p.type LIKE 'TIME%' THEN 1083
+                    WHEN p.type LIKE 'TIMESTAMP%' THEN 1114
+                    ELSE 25
+                END as atttypid,
+                -1 as attstattarget,
+                0 as attlen,
+                0 as attndims,
+                -1 as attcacheoff,
+                CASE WHEN p.type LIKE '%NOT NULL%' THEN 't' ELSE 'f' END as attnotnull,
+                'f' as atthasdef,
+                'f' as atthasmissing,
+                '' as attidentity,
+                '' as attgenerated,
+                't' as attisdropped,
+                't' as attislocal,
+                0 as attinhcount,
+                0 as attcollation,
+                '' as attacl,
+                '' as attoptions,
+                '' as attfdwoptions,
+                '' as attmissingval
+            FROM pragma_table_info(m.name) p
+            JOIN sqlite_master m ON m.type = 'table'
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Restore schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '25', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![25],
     });
 }

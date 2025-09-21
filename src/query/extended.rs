@@ -957,7 +957,7 @@ impl ExtendedQueryHandler {
         let translated_query = Some(translated_for_analysis);
         
         let stmt = PreparedStatement {
-            query: cleaned_query.clone(),
+            query: query.clone(), // Store original query instead of cleaned_query
             translated_query,
             param_types: actual_param_types.clone(),
             param_formats: vec![0; actual_param_types.len()], // Default to text format
@@ -3214,8 +3214,21 @@ impl ExtendedQueryHandler {
         const TEXT_ARRAY_TYPE: i32 = 1009;
         const PG_NODE_TREE_TYPE: i32 = 194;
         
-        // Determine which catalog table based on query
-        if query.contains("pg_class") {
+        // Determine which catalog table based on column name patterns first, then query content
+        // First check if this is a pg_attribute column (regardless of what tables are in the query)
+        if column_name.starts_with("att") ||
+           ["not_null", "has_default", "is_not_null", "has_def"].contains(&column_name) {
+            match column_name {
+                "attrelid" | "atttypid" | "attcollation" => OID_TYPE,
+                "attname" | "attacl" | "attoptions" | "attfdwoptions" | "attmissingval" => PgType::Text.to_oid(),
+                "attstattarget" | "attndims" | "attcacheoff" | "atttypmod" | "attinhcount" => PgType::Int4.to_oid(),
+                "attlen" | "attnum" => PgType::Int2.to_oid(),
+                "attbyval" | "attnotnull" | "atthasdef" | "atthasmissing" | "attisdropped" | "attislocal" |
+                "not_null" | "has_default" | "is_not_null" | "has_def" => PgType::Bool.to_oid(),
+                "attalign" | "attstorage" | "attcompression" | "attidentity" | "attgenerated" => PgType::Char.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("pg_class") {
             match column_name {
                 "oid" | "relnamespace" | "reltype" | "reloftype" | "relowner" | "relam" | "relfilenode" | 
                 "reltablespace" | "reltoastrelid" | "relrewrite" => OID_TYPE,
@@ -3231,16 +3244,6 @@ impl ExtendedQueryHandler {
                 "relacl" => ACLITEM_ARRAY_TYPE,
                 "reloptions" => TEXT_ARRAY_TYPE,
                 "relpartbound" => PG_NODE_TREE_TYPE,
-                _ => PgType::Text.to_oid(),
-            }
-        } else if query.contains("pg_attribute") {
-            match column_name {
-                "attrelid" | "atttypid" | "attcollation" => OID_TYPE,
-                "attname" | "attacl" | "attoptions" | "attfdwoptions" | "attmissingval" => PgType::Text.to_oid(),
-                "attstattarget" | "attndims" | "attcacheoff" | "atttypmod" | "attinhcount" => PgType::Int4.to_oid(),
-                "attlen" | "attnum" => PgType::Int2.to_oid(),
-                "attbyval" | "attnotnull" | "atthasdef" | "atthasmissing" | "attisdropped" | "attislocal" => PgType::Bool.to_oid(),
-                "attalign" | "attstorage" | "attcompression" | "attidentity" | "attgenerated" => PgType::Char.to_oid(),
                 _ => PgType::Text.to_oid(),
             }
         } else if query.contains("pg_type") {
