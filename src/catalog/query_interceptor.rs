@@ -202,10 +202,15 @@ impl CatalogInterceptor {
     }
 
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
+        debug!("handle_catalog_query called");
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
+            debug!("Is SELECT query, from.len()={}, has_joins={}",
+                     select.from.len(),
+                     !select.from.is_empty() && !select.from[0].joins.is_empty());
             // Check if this is a JOIN query involving catalog tables
             if !select.from.is_empty() && !select.from[0].joins.is_empty() {
+                debug!("Detected as JOIN query");
                 // Check if the query contains system functions that need special handling
                 let query_str = query.to_string();
                 let contains_system_functions = query_str.contains("pg_table_is_visible") || 
@@ -264,19 +269,87 @@ impl CatalogInterceptor {
                     // For other system functions, fall through to default handling
                     debug!("Unable to handle this specific system function query pattern");
                 } else {
-                    // For JOIN queries on catalog tables without system functions, 
-                    // return None to let SQLite handle it
-                    // This allows the views to work properly with JOINs
+                    debug!("In JOIN query else block (no system functions)");
+                    // Check if this is a pg_attribute JOIN query that we should handle
                     if let TableFactor::Table { name, .. } = &select.from[0].relation {
                         let table_name = name.to_string().to_lowercase();
-                        if table_name.contains("pg_") && (table_name.contains("pg_class") ||
-                            table_name.contains("pg_namespace") || table_name.contains("pg_attribute") ||
-                            table_name.contains("pg_constraint") || table_name.contains("pg_index") ||
-                            table_name.contains("pg_depend") || table_name.contains("pg_proc") ||
-                            table_name.contains("pg_description") || table_name.contains("pg_roles") ||
-                            table_name.contains("pg_user") || table_name.contains("pg_stats") ||
-                            table_name.contains("pg_tablespace")) {
-                            debug!("Passing JOIN query on catalog tables to SQLite views");
+                        debug!("Checking JOIN query with main table: '{}'", table_name);
+
+                        // Handle pg_attribute JOIN queries specially to avoid connection context issues
+                        let has_catalog_joins = select.from[0].joins.iter().any(|j| {
+                            if let TableFactor::Table { name, .. } = &j.relation {
+                                let join_table = name.to_string().to_lowercase();
+                                debug!("  Found JOIN table: '{}'", join_table);
+                                join_table.contains("pg_attribute") || join_table.contains("pg_type")
+                            } else {
+                                false
+                            }
+                        });
+
+                        if (table_name.contains("pg_class") || table_name.contains("pg_attribute")) && has_catalog_joins {
+                            debug!("Intercepting pg_attribute JOIN query for special handling");
+                            // Execute the query using session connection to ensure table visibility
+                            if let Some(ref session) = session {
+                                if let Some(db_handler) = session.get_db_handler().await {
+                                    let session_id = session.id;
+                                    let query_str = query.to_string();
+
+
+                                    match db_handler.with_session_connection(&session_id, |conn| {
+                                        debug!("Executing catalog JOIN query with session connection: {}", query_str);
+
+                                        // Execute the query directly with the session's connection
+                                        let mut stmt = conn.prepare(&query_str)?;
+                                        let column_count = stmt.column_count();
+                                        let mut columns = Vec::new();
+                                        for i in 0..column_count {
+                                            columns.push(stmt.column_name(i)?.to_string());
+                                        }
+
+                                        let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
+                                            let mut values = Vec::new();
+                                            for i in 0..column_count {
+                                                let value: Option<String> = row.get(i).ok();
+                                                values.push(value.map(|s| s.into_bytes()));
+                                            }
+                                            Ok(values)
+                                        })?.collect();
+
+                                        match rows_result {
+                                            Ok(rows) => {
+                                                let rows_affected = rows.len();
+                                                Ok(DbResponse {
+                                                    columns,
+                                                    rows,
+                                                    rows_affected,
+                                                })
+                                            }
+                                            Err(e) => {
+                                                debug!("Failed to execute catalog JOIN query: {}", e);
+                                                Err(e)
+                                            }
+                                        }
+                                    }).await {
+                                        Ok(response) => {
+                                            debug!("Successfully executed catalog JOIN query, returning {} rows", response.rows_affected);
+                                            return Some(response);
+                                        }
+                                        Err(e) => {
+                                            debug!("Failed to execute catalog JOIN with session connection: {}", e);
+                                            // Fall through to try other methods
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // For other catalog table JOINs, still return None to let SQLite handle
+                        if table_name.contains("pg_") && (table_name.contains("pg_constraint") ||
+                            table_name.contains("pg_index") || table_name.contains("pg_depend") ||
+                            table_name.contains("pg_proc") || table_name.contains("pg_description") ||
+                            table_name.contains("pg_roles") || table_name.contains("pg_user") ||
+                            table_name.contains("pg_stats") || table_name.contains("pg_tablespace")) {
+                            debug!("Passing other catalog JOIN query to SQLite views");
                             return None;
                         }
                     }

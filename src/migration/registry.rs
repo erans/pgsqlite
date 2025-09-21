@@ -2503,9 +2503,50 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
         name: "enhanced_pg_attribute_support",
         description: "Enhanced pg_attribute view with proper default and identity column detection for JOIN queries",
         up: MigrationAction::SqlBatch(&[
-            // Drop existing pg_attribute view
+            // Drop existing views to ensure consistent OID generation
             r#"
             DROP VIEW IF EXISTS pg_attribute;
+            DROP VIEW IF EXISTS pg_class;
+            "#,
+
+            // Recreate pg_class with oid_hash for consistent OID generation
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_class AS
+            SELECT
+                -- Use oid_hash for consistent OID generation across all catalog views
+                CAST(oid_hash(name) AS TEXT) as oid,
+                name as relname,
+                2200 as relnamespace,  -- public schema
+                CASE
+                    WHEN type = 'table' THEN 'r'
+                    WHEN type = 'view' THEN 'v'
+                    WHEN type = 'index' THEN 'i'
+                END as relkind,
+                10 as relowner,
+                CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                0 as relfilenode,
+                0 as reltablespace,
+                0 as relpages,
+                -1 as reltuples,
+                0 as relallvisible,
+                0 as reltoastrelid,
+                CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                'f' as relisshared,
+                'p' as relpersistence,
+                'h' as relkind_full,
+                't' as relispopulated,
+                'v' as relreplident,
+                't' as relispartition,
+                0 as relrewrite,
+                0 as relfrozenxid,
+                0 as relminmxid,
+                NULL as relacl,
+                NULL as reloptions,
+                NULL as relpartbound
+            FROM sqlite_master
+            WHERE type IN ('table', 'view', 'index')
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%';
             "#,
 
             // Create enhanced pg_attribute view with proper default and identity detection
