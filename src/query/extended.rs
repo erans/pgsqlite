@@ -5482,9 +5482,10 @@ impl ExtendedQueryHandler {
             if let Some(table_name) = extract_table_name_from_create(query) {
                 db.with_session_connection(&session.id, |conn| {
                     // Populate pg_constraint, pg_attrdef, and pg_index tables
+                    info!("Extended: About to populate constraints for table: {}", table_name);
                     if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
                         // Log the error but don't fail the CREATE TABLE operation
-                        debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                        warn!("Failed to populate constraints for table {}: {}", table_name, e);
                     } else {
                         debug!("Successfully populated constraint catalog tables for table: {}", table_name);
                     }

@@ -10,7 +10,7 @@ use crate::validator::StringConstraintValidator;
 use crate::session::ConnectionManager;
 use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
-use tracing::debug;
+use tracing::{debug, info, error};
 
 /// Database response structure
 #[derive(Debug)]
@@ -1112,11 +1112,13 @@ impl DbHandler {
                 }
 
                 // Populate constraints for CREATE TABLE statements
+                eprintln!("🔍 About to populate constraints for table: {}", table_name);
+                info!("About to populate constraints for table: {}", table_name);
                 if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
                     // Log the error but don't fail the CREATE TABLE operation
-                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                    error!("Failed to populate constraints for table {}: {}", table_name, e);
                 } else {
-                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                    info!("Successfully populated constraint catalog tables for table: {}", table_name);
                 }
             }
 

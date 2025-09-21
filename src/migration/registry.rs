@@ -320,7 +320,14 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 -- pg_attribute view (column information)
                 CREATE VIEW IF NOT EXISTS pg_attribute AS
                 SELECT 
-                    CAST(oid_hash(m.name) AS TEXT) as attrelid,     -- table OID
+                    CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,     -- table OID
                     p.cid + 1 as attnum,                             -- column number (1-based)
                     p.name as attname,                               -- column name
                     CASE 
@@ -364,9 +371,16 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 -- Enhanced pg_class view that works with JOINs
                 CREATE VIEW IF NOT EXISTS pg_class AS
                 SELECT 
-                    -- Generate stable OID from table name using hash function
+                    -- Generate stable OID from table name using SQLite built-in functions
                     -- Cast to TEXT to handle both numeric and string comparisons
-                    CAST(oid_hash(name) AS TEXT) as oid,
+                    CAST(
+                        (
+                            (unicode(substr(name, 1, 1)) * 1000000) +
+                            (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                            (unicode(substr(name || '  ', 3, 1)) * 100) +
+                            (length(name) * 7)
+                        ) % 1000000 + 16384
+                    AS TEXT) as oid,
                     name as relname,
                     2200 as relnamespace,  -- public schema
                     CASE 
@@ -385,7 +399,14 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                     CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
                     'f' as relisshared,
                     'p' as relpersistence,
-                    CAST(oid_hash(name || '_type') AS TEXT) as reltype,
+                    CAST(
+                        (
+                            (unicode(substr(name || '_type', 1, 1)) * 1000000) +
+                            (unicode(substr(name || '_type' || ' ', 2, 1)) * 10000) +
+                            (unicode(substr(name || '_type' || '  ', 3, 1)) * 100) +
+                            (length(name || '_type') * 7)
+                        ) % 1000000 + 16384
+                    AS TEXT) as reltype,
                     0 as reloftype,
                     0 as relnatts,
                     0 as relchecks,
@@ -421,7 +442,7 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                     contypid INTEGER DEFAULT 0,
                     conindid INTEGER DEFAULT 0,  -- index OID for unique/primary
                     conparentid INTEGER DEFAULT 0,
-                    confrelid INTEGER DEFAULT 0, -- referenced table for foreign keys
+                    confrelid TEXT DEFAULT '0', -- referenced table for foreign keys (TEXT to match pg_class.oid)
                     confupdtype CHAR(1) DEFAULT ' ',
                     confdeltype CHAR(1) DEFAULT ' ',
                     confmatchtype CHAR(1) DEFAULT ' ',
@@ -591,12 +612,8 @@ fn populate_catalog_tables(conn: &rusqlite::Connection) -> anyhow::Result<()> {
 
 // Helper functions for parsing and OID generation
 fn generate_table_oid(name: &str) -> i32 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    ((hasher.finish() & 0x7FFFFFFF) % 1000000 + 16384) as i32
+    use crate::utils::generate_oid_i32;
+    generate_oid_i32(name)
 }
 
 struct ConstraintInfo {
@@ -1500,7 +1517,14 @@ fn register_v11_fix_catalog_views(registry: &mut BTreeMap<u32, Migration>) {
             r#"
             CREATE VIEW IF NOT EXISTS pg_attribute AS
             SELECT 
-                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,
                 p.cid + 1 as attnum,
                 p.name as attname,
                 CASE 
@@ -1659,7 +1683,14 @@ fn register_v13_pg_stat_views(registry: &mut BTreeMap<u32, Migration>) {
             -- Create pg_stat_user_tables view with table access statistics
             CREATE VIEW IF NOT EXISTS pg_stat_user_tables AS
             SELECT
-                CAST(oid_hash(name) AS TEXT) as relid,                 -- Table OID
+                CAST(
+                    (
+                        (unicode(substr(name, 1, 1)) * 1000000) +
+                        (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '  ', 3, 1)) * 100) +
+                        (length(name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as relid,                 -- Table OID
                 'public' as schemaname,                                -- Schema name
                 name as relname,                                       -- Table name
                 0 as seq_scan,                                         -- Sequential scans
@@ -2513,8 +2544,15 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
             r#"
             CREATE VIEW IF NOT EXISTS pg_class AS
             SELECT
-                -- Use oid_hash for consistent OID generation across all catalog views
-                CAST(oid_hash(name) AS TEXT) as oid,
+                -- Use SQLite built-in functions for consistent OID generation
+                CAST(
+                    (
+                        (unicode(substr(name, 1, 1)) * 1000000) +
+                        (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '  ', 3, 1)) * 100) +
+                        (length(name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as oid,
                 name as relname,
                 2200 as relnamespace,  -- public schema
                 CASE
@@ -2553,7 +2591,14 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
             r#"
             CREATE VIEW IF NOT EXISTS pg_attribute AS
             SELECT
-                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,
                 p.cid + 1 as attnum,
                 p.name as attname,
                 CASE
@@ -2578,7 +2623,14 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
                 CASE
                     WHEN EXISTS (
                         SELECT 1 FROM pg_attrdef def
-                        WHERE def.adrelid = CAST(oid_hash(m.name) AS TEXT)
+                        WHERE def.adrelid = CAST(
+                            (
+                                (unicode(substr(m.name, 1, 1)) * 1000000) +
+                                (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                                (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                                (length(m.name) * 7)
+                            ) % 1000000 + 16384
+                        AS TEXT)
                         AND def.adnum = CAST(p.cid + 1 AS TEXT)
                     ) THEN 't'
                     ELSE 'f'
@@ -2625,7 +2677,14 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
             r#"
             CREATE VIEW IF NOT EXISTS pg_attribute AS
             SELECT
-                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,
                 p.cid + 1 as attnum,
                 p.name as attname,
                 CASE

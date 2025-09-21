@@ -16,6 +16,7 @@ pub mod schema_drift;
 pub mod error;
 pub mod validator;
 pub mod optimization;
+pub mod utils;
 #[macro_use]
 pub mod profiling;
 

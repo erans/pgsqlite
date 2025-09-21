@@ -47,6 +47,7 @@ static TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
 
 /// Populate PostgreSQL catalog tables with constraint information for a newly created table
 pub fn populate_constraints_for_table(conn: &Connection, table_name: &str) -> Result<()> {
+    eprintln!("🎯 populate_constraints_for_table called for: {}", table_name);
     info!("Populating constraints for table: {}", table_name);
 
     // Get the CREATE TABLE statement from SQLite
@@ -55,7 +56,7 @@ pub fn populate_constraints_for_table(conn: &Connection, table_name: &str) -> Re
     
     // Generate table OID (consistent with pg_class view)
     let table_oid = generate_table_oid(table_name);
-    
+
     // Parse and populate constraints
     populate_table_constraints(conn, table_name, &create_sql, &table_oid)?;
 
@@ -81,12 +82,33 @@ fn get_create_table_sql(conn: &Connection, table_name: &str) -> Result<String> {
 
 /// Generate table OID using the same algorithm as the pg_class view
 fn generate_table_oid(name: &str) -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
+    // Must match the formula in pg_class view for JOIN compatibility:
+    // (unicode(substr(name, 1, 1)) * 1000000) +
+    // (unicode(substr(name || ' ', 2, 1)) * 10000) +
+    // (unicode(substr(name || '  ', 3, 1)) * 100) +
+    // (length(name) * 7)
+    let name_with_padding = format!("{}  ", name);
+    let chars: Vec<char> = name_with_padding.chars().collect();
+    let char1 = chars.get(0).copied().unwrap_or(' ') as u32;
+    let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
+    let char3 = chars.get(2).copied().unwrap_or(' ') as u32;
+    let length = name.len() as u32;
 
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    (((hasher.finish() & 0x7FFFFFFF) % 1000000 + 16384) as i32).to_string()
+    let oid = ((char1 * 1000000) + (char2 * 10000) + (char3 * 100) + (length * 7)) % 1000000 + 16384;
+    oid.to_string()
+}
+
+/// Generate constraint OID with better collision avoidance
+fn generate_constraint_oid(name: &str, contype: &str) -> String {
+    use crate::utils::generate_oid;
+    // Add the constraint type to the name to avoid collisions between different constraint types
+    let unique_name = format!("{}_{}", name, contype);
+    // Use a different offset range for constraints to avoid collision with tables
+    let base_oid = generate_oid(&unique_name);
+    // Offset by 500000 to put constraints in a different range
+    let final_oid = base_oid + 500000;
+    eprintln!("  🔑 OID generation: {} + {} -> base:{} final:{}", name, contype, base_oid, final_oid);
+    final_oid.to_string()
 }
 
 /// Extract referenced table name from foreign key definition and return its OID
@@ -94,6 +116,7 @@ fn get_referenced_table_oid(_conn: &Connection, definition: &str) -> Result<Stri
     // Extract table name from "FOREIGN KEY REFERENCES table_name(column)"
     if let Some(cap) = Regex::new(r"(?i)REFERENCES\s+(\w+)").unwrap().captures(definition)
         && let Some(table_name) = cap.get(1) {
+            // Use the same formula as pg_class view for consistency
             return Ok(generate_table_oid(table_name.as_str()));
         }
 
@@ -104,12 +127,38 @@ fn get_referenced_table_oid(_conn: &Connection, definition: &str) -> Result<Stri
 /// Populate pg_constraint table with constraint information
 fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &str, table_oid: &str) -> Result<()> {
     let constraints = parse_table_constraints(table_name, create_sql);
-    
+    eprintln!("🔎 Found {} constraints for table {}", constraints.len(), table_name);
+    for c in &constraints {
+        eprintln!("  - {} (type: {})", c.name, c.contype);
+    }
+
     for constraint in constraints {
         if constraint.contype == "f" {
             // Foreign key constraint - needs additional fields
+            info!("Found foreign key constraint: {} for column: {:?}", constraint.name, constraint.columns);
             let ref_table_oid = get_referenced_table_oid(conn, &constraint.definition)?;
-            conn.execute(
+            info!("Referenced table OID: {}", ref_table_oid);
+
+            // Convert column names to column numbers for conkey
+            let col_nums: Vec<String> = constraint.columns
+                .iter()
+                .filter_map(|col_name| get_column_number(create_sql, col_name))
+                .map(|n| n.to_string())
+                .collect();
+
+            // Check if this OID already exists
+            let existing: Result<String, _> = conn.query_row(
+                "SELECT conname FROM pg_constraint WHERE oid = ?1",
+                [&constraint.oid],
+                |row| row.get(0)
+            );
+            if let Ok(existing_name) = existing {
+                eprintln!("  ⚠️ OID {} already exists for constraint: {}", constraint.oid, existing_name);
+            }
+
+            eprintln!("💾 Inserting foreign key: oid={}, name={}, conrelid={}, confrelid={}, conkey={:?}, confkey={:?}",
+                     constraint.oid, constraint.name, table_oid, ref_table_oid, col_nums, "{1}");
+            let result = conn.execute(
                 "INSERT OR IGNORE INTO pg_constraint (
                     oid, conname, contype, conrelid, confrelid, conkey, confkey,
                     confupdtype, confdeltype, confmatchtype, conislocal, convalidated
@@ -119,8 +168,8 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                     constraint.name,
                     constraint.contype,
                     table_oid,                               // conrelid as TEXT
-                    ref_table_oid.parse::<i32>().unwrap_or(0), // confrelid as INTEGER
-                    format!("{{{}}}", constraint.columns.join(",")),
+                    ref_table_oid,                           // confrelid as TEXT (to match pg_class.oid)
+                    format!("{{{}}}", col_nums.join(",")),   // Use column numbers instead of names
                     "{1}".to_string(), // Default to column 1 of referenced table
                     "a".to_string(),   // NO ACTION (default)
                     "a".to_string(),   // NO ACTION (default)
@@ -128,9 +177,19 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                     true,              // conislocal as boolean
                     true,              // convalidated as boolean
                 ]
-            )?;
+            );
+            match result {
+                Ok(n) => eprintln!("  ✅ Inserted {} row(s)", n),
+                Err(e) => eprintln!("  ❌ Failed to insert: {}", e),
+            }
         } else {
-            // Other constraint types
+            // Other constraint types - also convert to column numbers
+            let col_nums: Vec<String> = constraint.columns
+                .iter()
+                .filter_map(|col_name| get_column_number(create_sql, col_name))
+                .map(|n| n.to_string())
+                .collect();
+
             conn.execute(
                 "INSERT OR IGNORE INTO pg_constraint (
                     oid, conname, contype, conrelid, conkey, consrc, conislocal, convalidated
@@ -140,7 +199,7 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                     constraint.name,
                     constraint.contype,
                     table_oid,         // conrelid as TEXT
-                    format!("{{{}}}", constraint.columns.join(",")),
+                    format!("{{{}}}", col_nums.join(",")),   // Use column numbers instead of names
                     constraint.definition,
                     true,              // conislocal as boolean
                     true,              // convalidated as boolean
@@ -210,7 +269,7 @@ fn populate_table_indexes(conn: &Connection, table_name: &str, table_oid: &str) 
 
     for index_result in index_rows {
         let (_seq, index_name, is_unique, origin, _partial) = index_result?;
-        let index_oid = generate_table_oid(&index_name);
+        let index_oid = generate_constraint_oid(&index_name, "i");
 
         // Skip auto-indexes created by SQLite for unique constraints
         if index_name.starts_with("sqlite_") {
@@ -293,13 +352,14 @@ struct DefaultInfo {
 /// Parse table constraints from CREATE TABLE statement
 fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<ConstraintInfo> {
     let mut constraints = Vec::new();
-    
+    info!("Parsing constraints for table: {} from SQL: {}", table_name, create_sql);
+
     // Parse PRIMARY KEY constraints
     // Look for both inline PRIMARY KEY and table-level PRIMARY KEY
     for cap in PK_REGEX.captures_iter(create_sql) {
         if let Some(column_name) = cap.get(1) {
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&format!("{table_name}_pkey")),
+                oid: generate_constraint_oid(&format!("{table_name}_pkey"), "p"),
                 name: format!("{table_name}_pkey"),
                 contype: "p".to_string(),
                 columns: vec![column_name.as_str().to_string()],
@@ -316,7 +376,7 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
                 .map(|s| s.trim().to_string())
                 .collect();
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&format!("{table_name}_pkey")),
+                oid: generate_constraint_oid(&format!("{table_name}_pkey"), "p"),
                 name: format!("{table_name}_pkey"),
                 contype: "p".to_string(),
                 columns,
@@ -329,7 +389,7 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
     for cap in UNIQUE_REGEX.captures_iter(create_sql) {
         if let Some(column_name) = cap.get(1) {
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&format!("{}_{}_key", table_name, column_name.as_str())),
+                oid: generate_constraint_oid(&format!("{}_{}_key", table_name, column_name.as_str()), "u"),
                 name: format!("{}_{}_key", table_name, column_name.as_str()),
                 contype: "u".to_string(),
                 columns: vec![column_name.as_str().to_string()],
@@ -347,7 +407,7 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
                 .collect();
             let constraint_name = format!("{}_{}_key", table_name, columns.join("_"));
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&constraint_name),
+                oid: generate_constraint_oid(&constraint_name, "u"),
                 name: constraint_name,
                 contype: "u".to_string(),
                 columns,
@@ -361,7 +421,7 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
         if let Some(check_expr) = cap.get(1) {
             let constraint_name = format!("{}_check{}", table_name, i + 1);
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&constraint_name),
+                oid: generate_constraint_oid(&constraint_name, "c"),
                 name: constraint_name,
                 contype: "c".to_string(),
                 columns: vec![], // CHECK constraints don't have specific columns
@@ -375,7 +435,7 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
         if let Some(column_name) = cap.get(1) {
             let constraint_name = format!("{}_{}_not_null", table_name, column_name.as_str());
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&constraint_name),
+                oid: generate_constraint_oid(&constraint_name, "c"),
                 name: constraint_name,
                 contype: "c".to_string(),
                 columns: vec![column_name.as_str().to_string()],
@@ -399,7 +459,7 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
 
             let constraint_name = format!("{}_{}_fkey", table_name, local_cols.join("_"));
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&constraint_name),
+                oid: generate_constraint_oid(&constraint_name, "f"),
                 name: constraint_name,
                 contype: "f".to_string(),
                 columns: local_cols,
@@ -410,12 +470,14 @@ fn parse_table_constraints(table_name: &str, create_sql: &str) -> Vec<Constraint
     }
 
     // Parse inline FOREIGN KEY constraints (column REFERENCES table(column))
+    info!("Checking for inline foreign keys with regex");
     for cap in INLINE_FOREIGN_KEY_REGEX.captures_iter(create_sql) {
         if let (Some(column_name), Some(ref_table), Some(ref_column)) =
             (cap.get(1), cap.get(2), cap.get(3)) {
+            info!("Found inline foreign key: {} REFERENCES {}({})", column_name.as_str(), ref_table.as_str(), ref_column.as_str());
             let constraint_name = format!("{}_{}_fkey", table_name, column_name.as_str());
             constraints.push(ConstraintInfo {
-                oid: generate_table_oid(&constraint_name),
+                oid: generate_constraint_oid(&constraint_name, "f"),
                 name: constraint_name,
                 contype: "f".to_string(),
                 columns: vec![column_name.as_str().to_string()],
@@ -439,7 +501,7 @@ fn parse_column_defaults(table_name: &str, create_sql: &str) -> Vec<DefaultInfo>
             let column_num = get_column_number(create_sql, column_name.as_str()).unwrap_or(1);
             
             defaults.push(DefaultInfo {
-                oid: generate_table_oid(&format!("{}_{}_default", table_name, column_name.as_str())),
+                oid: generate_constraint_oid(&format!("{}_{}_default", table_name, column_name.as_str()), "d"),
                 column_num,
                 default_expr: default_value.as_str().trim().to_string(),
             });
@@ -559,12 +621,8 @@ fn populate_table_dependencies(conn: &Connection, table_name: &str, table_oid: &
 
 /// Generate a deterministic OID for a sequence based on table and column name
 fn generate_sequence_oid(table_name: &str, column_name: &str) -> u32 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-
+    use crate::utils::generate_oid;
     let sequence_name = format!("{}_{}_seq", table_name, column_name);
-    let mut hasher = DefaultHasher::new();
-    sequence_name.hash(&mut hasher);
-    let hash = hasher.finish();
-    32768 + ((hash % 65536) as u32) // Different range from tables to avoid conflicts
+    // Use the standard OID generator but offset for sequences to avoid conflicts
+    generate_oid(&sequence_name) + 50000
 }
