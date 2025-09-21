@@ -2534,13 +2534,11 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
         name: "enhanced_pg_attribute_support",
         description: "Enhanced pg_attribute view with proper default and identity column detection for JOIN queries",
         up: MigrationAction::SqlBatch(&[
-            // Drop existing views to ensure consistent OID generation
-            r#"
-            DROP VIEW IF EXISTS pg_attribute;
-            DROP VIEW IF EXISTS pg_class;
-            "#,
+            // Drop existing views separately to ensure they're really gone
+            r#"DROP VIEW IF EXISTS pg_attribute"#,
+            r#"DROP VIEW IF EXISTS pg_class"#,
 
-            // Recreate pg_class with oid_hash for consistent OID generation
+            // Recreate pg_class with SQLite built-in functions for consistent OID generation
             r#"
             CREATE VIEW IF NOT EXISTS pg_class AS
             SELECT
