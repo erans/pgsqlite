@@ -2226,6 +2226,56 @@ impl ExtendedQueryHandler {
                                             format: 0,
                                         });
                                     }
+                                } else if query.contains("information_schema.key_column_usage") {
+                                    // Return all information_schema.key_column_usage columns (9 total)
+                                    let all_columns = vec![
+                                        ("constraint_catalog", PgType::Text.to_oid()),
+                                        ("constraint_schema", PgType::Text.to_oid()),
+                                        ("constraint_name", PgType::Text.to_oid()),
+                                        ("table_catalog", PgType::Text.to_oid()),
+                                        ("table_schema", PgType::Text.to_oid()),
+                                        ("table_name", PgType::Text.to_oid()),
+                                        ("column_name", PgType::Text.to_oid()),
+                                        ("ordinal_position", PgType::Int4.to_oid()),
+                                        ("position_in_unique_constraint", PgType::Int4.to_oid()),
+                                    ];
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("information_schema.table_constraints") {
+                                    // Return all information_schema.table_constraints columns
+                                    let all_columns = vec![
+                                        ("constraint_catalog", PgType::Text.to_oid()),
+                                        ("constraint_schema", PgType::Text.to_oid()),
+                                        ("constraint_name", PgType::Text.to_oid()),
+                                        ("table_catalog", PgType::Text.to_oid()),
+                                        ("table_schema", PgType::Text.to_oid()),
+                                        ("table_name", PgType::Text.to_oid()),
+                                        ("constraint_type", PgType::Text.to_oid()),
+                                        ("is_deferrable", PgType::Text.to_oid()),
+                                        ("initially_deferred", PgType::Text.to_oid()),
+                                        ("enforced", PgType::Text.to_oid()),
+                                        ("nulls_distinct", PgType::Text.to_oid()),
+                                    ];
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
                                 }
                             } else {
                                 // Parse the projection to get column names and types
