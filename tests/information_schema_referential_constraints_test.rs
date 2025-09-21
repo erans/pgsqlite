@@ -13,9 +13,9 @@ async fn test_information_schema_referential_constraints_basic() {
     let session_id = Uuid::new_v4();
     db_handler.create_session_connection(session_id).await.unwrap();
 
-    // Create test tables with foreign key constraints
-    db_handler.execute("CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT, dept_id INTEGER REFERENCES departments(id))").await.unwrap();
+    // Create test tables with foreign key constraints using the same session
+    db_handler.execute_with_session("CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE employees (id INTEGER PRIMARY KEY, name TEXT, dept_id INTEGER REFERENCES departments(id))", &session_id).await.unwrap();
 
     // Test basic query
     let result = db_handler.query_with_session("SELECT constraint_name, constraint_catalog, constraint_schema FROM information_schema.referential_constraints", &session_id).await.unwrap();
@@ -49,9 +49,9 @@ async fn test_information_schema_referential_constraints_all_columns() {
     let session_id = Uuid::new_v4();
     db_handler.create_session_connection(session_id).await.unwrap();
 
-    // Create test tables
-    db_handler.execute("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE)").await.unwrap();
-    db_handler.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER REFERENCES categories(id))").await.unwrap();
+    // Create test tables using the same session
+    db_handler.execute_with_session("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT UNIQUE)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, category_id INTEGER REFERENCES categories(id))", &session_id).await.unwrap();
 
     // Test all columns
     let result = db_handler.query_with_session("SELECT * FROM information_schema.referential_constraints", &session_id).await.unwrap();
@@ -112,9 +112,9 @@ async fn test_information_schema_referential_constraints_multiple_fks() {
     db_handler.create_session_connection(session_id).await.unwrap();
 
     // Create multiple tables with foreign keys
-    db_handler.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, user_id INTEGER REFERENCES users(id), category_id INTEGER REFERENCES categories(id))").await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE categories (id INTEGER PRIMARY KEY, name TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE posts (id INTEGER PRIMARY KEY, title TEXT, user_id INTEGER REFERENCES users(id), category_id INTEGER REFERENCES categories(id))", &session_id).await.unwrap();
 
     // Test query
     let result = db_handler.query_with_session("SELECT constraint_name, constraint_catalog FROM information_schema.referential_constraints ORDER BY constraint_name", &session_id).await.unwrap();
@@ -147,9 +147,9 @@ async fn test_information_schema_referential_constraints_where_filtering() {
     db_handler.create_session_connection(session_id).await.unwrap();
 
     // Create test tables
-    db_handler.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, amount DECIMAL)").await.unwrap();
-    db_handler.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE order_items (id INTEGER PRIMARY KEY, order_id INTEGER REFERENCES orders(id), customer_id INTEGER REFERENCES customers(id))").await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE orders (id INTEGER PRIMARY KEY, amount DECIMAL)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE order_items (id INTEGER PRIMARY KEY, order_id INTEGER REFERENCES orders(id), customer_id INTEGER REFERENCES customers(id))", &session_id).await.unwrap();
 
     // Test filtering by constraint name pattern
     let result = db_handler.query_with_session("SELECT constraint_name FROM information_schema.referential_constraints WHERE constraint_name LIKE '%order_id%'", &session_id).await.unwrap();
@@ -179,8 +179,8 @@ async fn test_information_schema_referential_constraints_no_foreign_keys() {
     db_handler.create_session_connection(session_id).await.unwrap();
 
     // Create tables without foreign key constraints
-    db_handler.execute("CREATE TABLE simple_table (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE another_table (id INTEGER PRIMARY KEY, value INTEGER)").await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE simple_table (id INTEGER PRIMARY KEY, name TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE another_table (id INTEGER PRIMARY KEY, value INTEGER)", &session_id).await.unwrap();
 
     // Test query - should return no rows
     let result = db_handler.query_with_session("SELECT * FROM information_schema.referential_constraints", &session_id).await.unwrap();
@@ -201,8 +201,8 @@ async fn test_information_schema_referential_constraints_table_level_fk() {
     db_handler.create_session_connection(session_id).await.unwrap();
 
     // Create tables with table-level foreign key constraint
-    db_handler.execute("CREATE TABLE suppliers (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, supplier_id INTEGER, FOREIGN KEY (supplier_id) REFERENCES suppliers(id))").await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE suppliers (id INTEGER PRIMARY KEY, name TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, supplier_id INTEGER, FOREIGN KEY (supplier_id) REFERENCES suppliers(id))", &session_id).await.unwrap();
 
     // Test query
     let result = db_handler.query_with_session("SELECT constraint_name, unique_constraint_name FROM information_schema.referential_constraints", &session_id).await.unwrap();
@@ -228,8 +228,8 @@ async fn test_information_schema_referential_constraints_orm_compatibility() {
     db_handler.create_session_connection(session_id).await.unwrap();
 
     // Create Django/Rails-style schema
-    db_handler.execute("CREATE TABLE django_content_type (id INTEGER PRIMARY KEY, app_label TEXT, model TEXT)").await.unwrap();
-    db_handler.execute("CREATE TABLE auth_permission (id INTEGER PRIMARY KEY, name TEXT, content_type_id INTEGER REFERENCES django_content_type(id))").await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE django_content_type (id INTEGER PRIMARY KEY, app_label TEXT, model TEXT)", &session_id).await.unwrap();
+    db_handler.execute_with_session("CREATE TABLE auth_permission (id INTEGER PRIMARY KEY, name TEXT, content_type_id INTEGER REFERENCES django_content_type(id))", &session_id).await.unwrap();
 
     // Test ORM-style queries
 

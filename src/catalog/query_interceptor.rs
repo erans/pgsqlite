@@ -679,6 +679,15 @@ impl CatalogInterceptor {
                 }
             }
 
+            // Handle information_schema.referential_constraints queries
+            if table_name.contains("information_schema.referential_constraints") {
+                if let Some(ref session_state) = session {
+                    return Some(Self::handle_information_schema_referential_constraints_query_with_session(select, &db, &session_state.id).await);
+                } else {
+                    return None;
+                }
+            }
+
             // Handle information_schema.routines queries
             if table_name.contains("information_schema.routines") {
                 return Some(Self::handle_information_schema_routines_query(select, &db).await);
@@ -3054,9 +3063,8 @@ impl CatalogInterceptor {
             let mut query_rows = stmt.query([])?;
             while let Some(row) = query_rows.next()? {
                 let constraint_name: String = row.get(0)?;
-                let referenced_table_oid: i64 = row.get(1)?;
-                let referenced_table_oid_str = referenced_table_oid.to_string();
-                rows.push(vec![Some(constraint_name.into_bytes()), Some(referenced_table_oid_str.into_bytes())]);
+                let referenced_table_oid: String = row.get(1)?;  // OIDs are stored as TEXT in pg_constraint
+                rows.push(vec![Some(constraint_name.into_bytes()), Some(referenced_table_oid.into_bytes())]);
             }
             Ok(DbResponse {
                 columns: vec!["conname".to_string(), "confrelid".to_string()],
