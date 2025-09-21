@@ -107,9 +107,11 @@ impl PgAttributeHandler {
         
         if let Some(table_name) = filter_table {
             // Query specific table
-            add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices).await?;
+            debug!("PG_ATTRIBUTE: Filtering for specific table: {}", table_name);
+            add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices, true).await?;
         } else {
             // Query all tables
+            debug!("PG_ATTRIBUTE: No table filter found, querying all tables");
             let tables_response = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await?;
             debug!("Found {} user tables in sqlite_master", tables_response.rows.len());
             
@@ -117,7 +119,7 @@ impl PgAttributeHandler {
                 if let Some(Some(table_name_bytes)) = table_row.first() {
                     let table_name = String::from_utf8_lossy(table_name_bytes);
                     debug!("Found table in sqlite_master: {}", table_name);
-                    add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices).await?;
+                    add_table_attributes(&table_name, db, &mut rows, select, &column_mapping, &selected_indices, false).await?;
                 }
             }
             
@@ -151,14 +153,18 @@ async fn add_table_attributes(
     select: &Select,
     column_mapping: &HashMap<String, usize>,
     selected_indices: &[usize],
+    already_filtered_by_table: bool,
 ) -> Result<(), PgSqliteError> {
     let table_oid = generate_oid_from_name(table_name);
-    
+
     debug!("Getting column info for table: {}", table_name);
-    
+    println!("PG_ATTRIBUTE DEBUG: Getting column info for table: {}", table_name);
+
     // Get column information from PRAGMA
     let col_info_query = format!("PRAGMA table_info({table_name})");
+    println!("PG_ATTRIBUTE DEBUG: Running PRAGMA query: {}", col_info_query);
     let col_info = db.query(&col_info_query).await?;
+    println!("PG_ATTRIBUTE DEBUG: PRAGMA query returned {} rows", col_info.rows.len());
     
     debug!("PRAGMA table_info returned {} columns for table {}", col_info.rows.len(), table_name);
     
@@ -312,10 +318,20 @@ async fn add_table_attributes(
             // Add the default expression if available (non-standard pg_attribute extension)
             row_data.insert("adsrc".to_string(), default_expr.unwrap_or_else(|| "".to_string()));
             
-            // Evaluate WHERE clause if present
+            // Evaluate WHERE clause if present, but skip if we already filtered by table
+            // Since we extracted the table filter, we don't need to evaluate the complex WHERE clause again
             let include_row = if let Some(selection) = &select.selection {
-                
-                WhereEvaluator::evaluate(selection, &row_data, column_mapping)
+                if already_filtered_by_table {
+                    // We already filtered by table, so include all rows from this table
+                    println!("PG_ATTRIBUTE DEBUG: Skipping WHERE evaluation (already filtered by table)");
+                    true
+                } else {
+                    println!("PG_ATTRIBUTE DEBUG: Evaluating WHERE clause: {}", selection);
+                    println!("PG_ATTRIBUTE DEBUG: Row data keys: {:?}", row_data.keys().collect::<Vec<_>>());
+                    let result = WhereEvaluator::evaluate(selection, &row_data, column_mapping);
+                    println!("PG_ATTRIBUTE DEBUG: WHERE evaluation result: {}", result);
+                    result
+                }
             } else {
                 true
             };
@@ -338,8 +354,8 @@ async fn add_table_attributes(
                     Some(if notnull { b"t".to_vec() } else { b"f".to_vec() }),   // 12: attnotnull
                     Some(if has_default { b"t".to_vec() } else { b"f".to_vec() }), // 13: atthasdef
                     Some(b"f".to_vec()),                                // 14: atthasmissing
-                    Some(b"".to_vec()),                                 // 15: attidentity
-                    Some(b"".to_vec()),                                 // 16: attgenerated
+                    Some(attidentity.to_string().into_bytes()),         // 15: attidentity
+                    Some(attgenerated.to_string().into_bytes()),        // 16: attgenerated
                     Some(b"f".to_vec()),                                // 17: attisdropped
                     Some(b"t".to_vec()),                                // 18: attislocal
                     Some("0".to_string().into_bytes()),                    // 19: attinhcount
@@ -366,9 +382,20 @@ async fn add_table_attributes(
 
 fn extract_table_filter(select: &Select) -> Option<String> {
     // Look for WHERE attrelid = 'schema.table'::regclass or similar
-    if let Some(selection) = &select.selection
-        && let Expr::BinaryOp { left, op, right } = selection
-            && matches!(op, sqlparser::ast::BinaryOperator::Eq) {
+    // Also handle subquery pattern: WHERE attrelid = (SELECT oid FROM pg_class WHERE relname = 'table')
+    if let Some(selection) = &select.selection {
+        debug!("extract_table_filter: checking WHERE clause: {}", selection);
+        return extract_table_from_expr(selection);
+    }
+    debug!("extract_table_filter: no WHERE clause found");
+    println!("PG_ATTRIBUTE DEBUG: no WHERE clause found");
+    None
+}
+
+fn extract_table_from_expr(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::BinaryOp { left, op, right } => {
+            if matches!(op, sqlparser::ast::BinaryOperator::Eq) {
                 let is_attrelid = match left.as_ref() {
                     Expr::Identifier(ident) => ident.value.to_lowercase() == "attrelid",
                     Expr::CompoundIdentifier(parts) => {
@@ -376,19 +403,99 @@ fn extract_table_filter(select: &Select) -> Option<String> {
                     }
                     _ => false,
                 };
-                
+
+                // Also check for relname = 'table' patterns
+                let is_relname = match left.as_ref() {
+                    Expr::Identifier(ident) => ident.value.to_lowercase() == "relname",
+                    Expr::CompoundIdentifier(parts) => {
+                        parts.last().map(|p| p.value.to_lowercase() == "relname").unwrap_or(false)
+                    }
+                    _ => false,
+                };
+
                 if is_attrelid {
+                    debug!("extract_table_from_expr: found attrelid =, checking right side: {}", right);
+
                     // Extract table name from right side
                     if let Expr::Cast { expr, .. } = right.as_ref()
-                        && let Expr::Value(sqlparser::ast::ValueWithSpan { 
-                            value: SqlValue::SingleQuotedString(s), .. 
+                        && let Expr::Value(sqlparser::ast::ValueWithSpan {
+                            value: SqlValue::SingleQuotedString(s), ..
                         }) = expr.as_ref() {
                             // Remove schema prefix if present
                             let table_name = s.split('.').next_back().unwrap_or(s);
+                            debug!("extract_table_from_expr: found regclass cast table: {}", table_name);
                             return Some(table_name.to_string());
                         }
+
+                    // Handle subquery pattern: (SELECT oid FROM pg_class WHERE relname = 'table')
+                    if let Expr::Nested(subquery_expr) = right.as_ref() {
+                        debug!("extract_table_from_expr: found nested subquery: {}", subquery_expr);
+                        if let Expr::Subquery(subquery) = subquery_expr.as_ref() {
+                            if let Some(select) = subquery.body.as_select() {
+                                debug!("extract_table_from_expr: processing subquery SELECT");
+                                if let Some(subquery_where) = &select.selection {
+                                    return extract_table_from_expr(subquery_where);
+                                }
+                            }
+                        }
+                    }
+
+                    // Handle direct subquery pattern: (SELECT oid FROM pg_class WHERE relname = 'table')
+                    if let Expr::Subquery(subquery) = right.as_ref() {
+                        debug!("extract_table_from_expr: found direct subquery: {}", right);
+                        if let Some(select) = subquery.body.as_select() {
+                            debug!("extract_table_from_expr: processing direct subquery SELECT");
+                            if let Some(subquery_where) = &select.selection {
+                                return extract_table_from_expr(subquery_where);
+                            }
+                        }
+                    }
+
+                    // Handle string matching as fallback
+                    let where_str = format!("{}", expr);
+                    debug!("extract_table_from_expr: fallback string matching on: {}", where_str);
+                    if where_str.contains("relname") {
+                        // Look for pattern like: relname = 'table_name'
+                        if let Some(start) = where_str.find("relname = '") {
+                            let start_pos = start + "relname = '".len();
+                            if let Some(end_pos) = where_str[start_pos..].find('\'') {
+                                let table_name = &where_str[start_pos..start_pos + end_pos];
+                                debug!("extract_table_from_expr: found table via string matching: {}", table_name);
+                                return Some(table_name.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if is_relname {
+                    debug!("extract_table_from_expr: found relname =, checking right side: {}", right);
+                    // Extract table name from right side for relname = 'table' patterns
+                    if let Expr::Value(sqlparser::ast::ValueWithSpan {
+                        value: SqlValue::SingleQuotedString(s), ..
+                    }) = right.as_ref() {
+                        debug!("extract_table_from_expr: found table name: {}", s);
+                        return Some(s.clone());
+                    }
                 }
             }
+
+            // Check AND/OR clauses
+            if matches!(op, sqlparser::ast::BinaryOperator::And | sqlparser::ast::BinaryOperator::Or) {
+                if let Some(table) = extract_table_from_expr(left) {
+                    return Some(table);
+                }
+                if let Some(table) = extract_table_from_expr(right) {
+                    return Some(table);
+                }
+            }
+        }
+        Expr::Identifier(ident) if ident.value.to_lowercase() == "relname" => {
+            debug!("extract_table_from_expr: found relname identifier (should be in = clause)");
+        }
+        _ => {
+            debug!("extract_table_from_expr: no match for expression type: {:?}", expr);
+        }
+    }
     None
 }
 

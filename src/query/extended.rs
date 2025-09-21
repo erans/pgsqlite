@@ -90,6 +90,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        info!("PARSE: Starting parse for statement '{}', query: {}", name, query);
         // Fast path: Check if we already have this prepared statement
         // This avoids re-parsing the same query multiple times
         if !name.is_empty() {
@@ -98,6 +99,7 @@ impl ExtendedQueryHandler {
                 // Check if it's the same query
                 if existing.query == query && existing.param_types == param_types {
                     // Already parsed, just send ParseComplete
+                    info!("PARSE: Using cached statement '{}' with {} field_descriptions", name, existing.field_descriptions.len());
                     drop(statements);
                     framed.send(BackendMessage::ParseComplete).await
                         .map_err(PgSqliteError::Io)?;
@@ -508,9 +510,9 @@ impl ExtendedQueryHandler {
         
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
-        info!("Analyzing query '{}' for field descriptions", translated_for_analysis);
-        info!("Original query: {}", cleaned_query);
-        info!("Is simple param select: {}", is_simple_param_select);
+        info!("PARSE: Analyzing query '{}' for field descriptions", translated_for_analysis);
+        info!("PARSE: Original query: {}", cleaned_query);
+        info!("PARSE: Is simple param select: {}", is_simple_param_select);
         let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
@@ -519,7 +521,7 @@ impl ExtendedQueryHandler {
                cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
                cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_index") ||
                cleaned_query.contains("pg_depend") {
-                info!("Skipping field description for catalog query");
+                info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
                 Vec::new()
             } else {
                 // Try to get field descriptions
@@ -1903,12 +1905,38 @@ impl ExtendedQueryHandler {
             // Then send RowDescription or NoData
             if !stmt.field_descriptions.is_empty() {
                 info!("Sending RowDescription with {} fields in Describe", stmt.field_descriptions.len());
-                framed.send(BackendMessage::RowDescription(stmt.field_descriptions.clone())).await
+
+                // Fix field types for catalog queries before sending RowDescription
+                let mut corrected_fields = stmt.field_descriptions.clone();
+                if is_catalog_query || query.contains("pg_attribute") || query.contains("a.attnotnull") || query.contains("a.atthasdef") {
+                    for fd in &mut corrected_fields {
+                        let col_lower = fd.name.to_lowercase();
+                        match col_lower.as_str() {
+                            // Direct pg_attribute boolean columns
+                            "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing" | "attisdropped" | "attislocal" |
+                            // Common aliases for these columns in JOIN queries
+                            "not_null" | "has_default" | "is_not_null" | "has_def" => {
+                                info!("Correcting field '{}' from type_oid {} to Bool type_oid {}", fd.name, fd.type_oid, PgType::Bool.to_oid());
+                                fd.type_oid = PgType::Bool.to_oid();
+                            }
+                            "attidentity" | "attgenerated" | "attalign" | "attstorage" | "attcompression" => {
+                                info!("Correcting field '{}' from type_oid {} to Char type_oid {}", fd.name, fd.type_oid, PgType::Char.to_oid());
+                                fd.type_oid = PgType::Char.to_oid();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                for (i, fd) in corrected_fields.iter().enumerate() {
+                    info!("Field {}: name='{}', type_oid={}, table_oid={}", i, fd.name, fd.type_oid, fd.table_oid);
+                }
+                framed.send(BackendMessage::RowDescription(corrected_fields)).await
                     .map_err(PgSqliteError::Io)?;
             } else if is_catalog_query && query_starts_with_ignore_case(query, "SELECT") {
                 // For catalog SELECT queries, we need to provide field descriptions
                 // even though we skipped them during Parse
-                info!("Catalog query detected in Describe, generating field descriptions");
+                info!("Catalog query detected in Describe, generating field descriptions for: {}", query);
                 
                 // Parse the query to extract the selected columns (keep JSON path placeholders for now)
                 let field_descriptions = if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
@@ -4549,7 +4577,7 @@ impl ExtendedQueryHandler {
             let portal = portals.get(portal_name).unwrap();
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name).unwrap();
-            let field_types: Vec<i32> = if stmt.field_descriptions.is_empty() {
+            let mut field_types: Vec<i32> = if stmt.field_descriptions.is_empty() {
                 // Try to infer types - we need async for schema lookup, so collect field descriptions first
                 let mut field_types = Vec::new();
                 
@@ -4627,6 +4655,30 @@ impl ExtendedQueryHandler {
             } else {
                 stmt.field_descriptions.iter().map(|fd| fd.type_oid).collect()
             };
+
+            // Fix field types for catalog queries - both single table and JOINs
+            if query.contains("pg_attribute") || (query.contains("a.attnotnull") || query.contains("a.atthasdef")) {
+                for (i, col_name) in response.columns.iter().enumerate() {
+                    let col_lower = col_name.to_lowercase();
+                    match col_lower.as_str() {
+                        // Direct pg_attribute boolean columns
+                        "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing" | "attisdropped" | "attislocal" |
+                        // Common aliases for these columns in JOIN queries
+                        "not_null" | "has_default" | "is_not_null" | "has_def" => {
+                            if i < field_types.len() {
+                                field_types[i] = PgType::Bool.to_oid();
+                            }
+                        }
+                        "attidentity" | "attgenerated" | "attalign" | "attstorage" | "attcompression" => {
+                            if i < field_types.len() {
+                                field_types[i] = PgType::Char.to_oid();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             (portal.result_formats.clone(), field_types)
         };
         
@@ -4734,6 +4786,8 @@ impl ExtendedQueryHandler {
 
             // Convert row data based on result formats
             let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
+
+            // TODO: Fix boolean field type conversion for catalog queries
             if query.contains("int_array_with_nulls") {
                 println!("DEBUG: encoded_row has {} fields", encoded_row.len());
                 if let Some(first_field) = encoded_row.first() {
