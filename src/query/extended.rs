@@ -4519,7 +4519,39 @@ impl ExtendedQueryHandler {
                         type_oid
                     })
                     .collect::<Vec<_>>();
-                
+
+                // Fix field types for catalog queries - both single table and JOINs
+                let mut corrected_field_types = field_types;
+                let should_correct = query.contains("pg_attribute") || (query.contains("a.attnotnull") || query.contains("a.atthasdef"));
+                info!("EXECUTE_SELECT: Boolean type correction check - should_correct={}, query contains pg_attribute={}, query contains a.attnotnull={}",
+                      should_correct, query.contains("pg_attribute"), query.contains("a.attnotnull"));
+                if should_correct {
+                    for (i, col_name) in response.columns.iter().enumerate() {
+                        let col_lower = col_name.to_lowercase();
+                        match col_lower.as_str() {
+                            // Direct pg_attribute boolean columns
+                            "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing" | "attisdropped" | "attislocal" |
+                            // Common aliases for these columns in JOIN queries
+                            "not_null" | "has_default" | "is_not_null" | "has_def" => {
+                                if i < corrected_field_types.len() {
+                                    let old_type = corrected_field_types[i];
+                                    corrected_field_types[i] = 16; // PgType::Bool.to_oid()
+                                    info!("EXECUTE_SELECT: Corrected column '{}' type from {} to BOOL (16)", col_name, old_type);
+                                }
+                            }
+                            "attidentity" | "attgenerated" | "attalign" | "attstorage" | "attcompression" => {
+                                if i < corrected_field_types.len() {
+                                    let old_type = corrected_field_types[i];
+                                    corrected_field_types[i] = 18; // PgType::Char.to_oid()
+                                    info!("EXECUTE_SELECT: Corrected column '{}' type from {} to CHAR (18)", col_name, old_type);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let field_types = corrected_field_types;
+
                 let fields: Vec<FieldDescription> = {
                     let portals = session.portals.read().await;
                     let portal = portals.get(portal_name).unwrap();
