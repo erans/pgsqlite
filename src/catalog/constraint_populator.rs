@@ -156,8 +156,8 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                 eprintln!("  ⚠️ OID {} already exists for constraint: {}", constraint.oid, existing_name);
             }
 
-            eprintln!("💾 Inserting foreign key: oid={}, name={}, conrelid={}, confrelid={}, conkey={:?}, confkey={:?}",
-                     constraint.oid, constraint.name, table_oid, ref_table_oid, col_nums, "{1}");
+            eprintln!("💾 Inserting foreign key: oid={}, name={}, conrelid={}, confrelid={}, conkey={}, confkey={}",
+                     constraint.oid, constraint.name, table_oid, ref_table_oid, col_nums.join(","), "1");
             let result = conn.execute(
                 "INSERT OR IGNORE INTO pg_constraint (
                     oid, conname, contype, conrelid, confrelid, conkey, confkey,
@@ -169,8 +169,8 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                     constraint.contype,
                     table_oid,                               // conrelid as TEXT
                     ref_table_oid,                           // confrelid as TEXT (to match pg_class.oid)
-                    format!("{{{}}}", col_nums.join(",")),   // Use column numbers instead of names
-                    "{1}".to_string(), // Default to column 1 of referenced table
+                    col_nums.join(","),    // Column numbers as comma-separated list (no braces for LIKE pattern)
+                    "1".to_string(),       // Default to column 1 of referenced table
                     "a".to_string(),   // NO ACTION (default)
                     "a".to_string(),   // NO ACTION (default)
                     "s".to_string(),   // SIMPLE (default)
@@ -199,7 +199,7 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                     constraint.name,
                     constraint.contype,
                     table_oid,         // conrelid as TEXT
-                    format!("{{{}}}", col_nums.join(",")),   // Use column numbers instead of names
+                    col_nums.join(","),    // Column numbers as comma-separated list (no braces for LIKE pattern)
                     constraint.definition,
                     true,              // conislocal as boolean
                     true,              // convalidated as boolean

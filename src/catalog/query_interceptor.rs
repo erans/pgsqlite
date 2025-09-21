@@ -1470,12 +1470,25 @@ impl CatalogInterceptor {
         let mut cols = Vec::new();
         let mut indices = Vec::new();
         for item in &select.projection {
-            if let SelectItem::UnnamedExpr(Expr::Identifier(ident)) = item {
-                let col_name = ident.value.to_string();
-                if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                    cols.push(col_name);
-                    indices.push(idx);
+            match item {
+                SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
+                    let col_name = ident.value.to_string();
+                    if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                        cols.push(col_name);
+                        indices.push(idx);
+                    }
                 }
+                SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts)) => {
+                    // Handle compound identifiers like c.table_name
+                    if let Some(last_part) = parts.last() {
+                        let col_name = last_part.value.to_string();
+                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                            cols.push(col_name);
+                            indices.push(idx);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
         (cols, indices)
