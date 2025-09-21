@@ -113,25 +113,28 @@ To measure pgsqlite overhead compared to pure SQLite:
 
 ```bash
 # Run overhead comparison (pgsqlite vs pure SQLite)
-./run_overhead_comparison.sh
+poetry run python overhead_comparison.py
 
 # This will:
-# 1. Build pgsqlite in release mode
-# 2. Start pgsqlite server on port 45000
-# 3. Run identical operations on pure SQLite and pgsqlite
-# 4. Calculate and display overhead percentages
-# 5. Show real-world performance context
+# 1. Run identical operations on pure SQLite
+# 2. Run same operations on pgsqlite (requires server running on port 45000)
+# 3. Calculate and display overhead percentages
+# 4. Show real-world performance context
 ```
 
-**Manual overhead testing** for development/debugging:
+**Complete overhead testing workflow:**
 ```bash
-# Start pgsqlite server manually
+# 1. Build and start pgsqlite server
+cargo build --release
 ./target/release/pgsqlite --database test_overhead.db --port 45000 &
 
-# Run manual overhead test
-poetry run python manual_overhead_test.py
+# 2. Run comprehensive overhead analysis
+cd benchmarks && poetry run python overhead_comparison.py
 
-# This allows step-by-step overhead analysis and debugging
+# 3. Run individual driver tests for comparison
+../test_sqlite.py          # Pure SQLite baseline
+../test_pgsqlite_text.py   # pgsqlite text mode
+../test_pgsqlite_binary.py # pgsqlite binary mode
 ```
 
 You can also run individual driver benchmarks:
