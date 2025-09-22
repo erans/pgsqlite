@@ -53,9 +53,9 @@ async fn test_pg_size_pretty_kilobytes() {
         ("SELECT pg_size_pretty(10240)", "10 kB"),        // 10KB
         ("SELECT pg_size_pretty(15360)", "15 kB"),        // 15KB
         ("SELECT pg_size_pretty(512000)", "500 kB"),      // 500KB
-        ("SELECT pg_size_pretty(1048576)", "1048576 bytes"), // 1MB but less than 10MB
-        ("SELECT pg_size_pretty(5242880)", "5242880 bytes"), // 5MB but less than 10MB
-        ("SELECT pg_size_pretty(9437184)", "9437184 bytes"), // 9MB but less than 10MB
+        ("SELECT pg_size_pretty(1048576)", "1024 kB"), // 1MB = 1024 kB
+        ("SELECT pg_size_pretty(5242880)", "5120 kB"), // 5MB = 5120 kB
+        ("SELECT pg_size_pretty(9437184)", "9216 kB"), // 9MB = 9216 kB
     ];
 
     for (query, expected) in test_cases {
@@ -91,7 +91,7 @@ async fn test_pg_size_pretty_megabytes() {
         ("SELECT pg_size_pretty(10485760)", "10 MB"),      // 10MB
         ("SELECT pg_size_pretty(52428800)", "50 MB"),      // 50MB
         ("SELECT pg_size_pretty(524288000)", "500 MB"),    // 500MB
-        ("SELECT pg_size_pretty(1073741824)", "1073741824 bytes"), // 1GB but less than 10GB
+        ("SELECT pg_size_pretty(1073741824)", "1024 MB"), // 1GB = 1024 MB
     ];
 
     for (query, expected) in test_cases {
@@ -269,7 +269,7 @@ async fn test_pg_size_pretty_with_string_numbers() {
     let test_cases = vec![
         ("SELECT pg_size_pretty('1024')", "1024 bytes"),
         ("SELECT pg_size_pretty('10240')", "10 kB"),
-        ("SELECT pg_size_pretty('1048576')", "1048576 bytes"), // 1MB but less than 10MB
+        ("SELECT pg_size_pretty('1048576')", "1024 kB"), // 1MB = 1024 kB
         ("SELECT pg_size_pretty('10485760')", "10 MB"),
     ];
 

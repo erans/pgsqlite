@@ -475,7 +475,7 @@ fn format_size_pretty(mut size: i64) -> String {
 
     // PostgreSQL unit definitions
     const BYTES_LIMIT: u64 = 10 * 1024;  // 10240 bytes
-    const UNIT_LIMIT: u64 = 20 * 1024 - 1;  // 20479 (for kB, MB, GB, TB, PB)
+    const UNIT_LIMIT: u64 = 10 * 1024;  // 10240 (for kB, MB, GB, TB, PB)
 
     // Check if we should display as bytes
     if abs_size < BYTES_LIMIT {
