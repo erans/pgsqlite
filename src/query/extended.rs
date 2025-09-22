@@ -807,10 +807,10 @@ impl ExtendedQueryHandler {
                             if !response.rows.is_empty() {
                                 if let Some(value) = response.rows[0].get(i) {
                                     let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
-                                    // Special case: For system tables (__pgsqlite_*), default to TEXT
-                                    // to avoid incorrect type inference for metadata values
-                                    let inferred_type = if table_name.as_ref().map_or(false, |t| t.starts_with("__pgsqlite_")) {
-                                        info!("PARSE: Column '{}': system table, defaulting to TEXT type", col_name);
+                                    // Special case: For __pgsqlite_metadata.value column, always use TEXT
+                                    // to avoid incorrect type inference for metadata values like '25'
+                                    let inferred_type = if table_name.as_ref().map_or(false, |t| t == "__pgsqlite_metadata") && col_name == "value" {
+                                        info!("PARSE: Column 'value' in __pgsqlite_metadata: forcing TEXT type");
                                         PgType::Text.to_oid()
                                     } else {
                                         crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
@@ -4807,10 +4807,10 @@ impl ExtendedQueryHandler {
                         // Try to get type from value
                         let type_oid = if !response.rows.is_empty() {
                             if let Some(value) = response.rows[0].get(i) {
-                                // Special case: For system tables (__pgsqlite_*), default to TEXT
-                                // to avoid incorrect type inference for metadata values
-                                if table_name.as_ref().map_or(false, |t| t.starts_with("__pgsqlite_")) {
-                                    info!("EXECUTE: Column '{}': system table, defaulting to TEXT type", col_name);
+                                // Special case: For __pgsqlite_metadata.value column, always use TEXT
+                                // to avoid incorrect type inference for metadata values like '25'
+                                if table_name.as_ref().map_or(false, |t| t == "__pgsqlite_metadata") && col_name == "value" {
+                                    info!("EXECUTE: Column 'value' in __pgsqlite_metadata: forcing TEXT type");
                                     25 // TEXT
                                 } else {
                                     crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
