@@ -55,6 +55,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
            lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
+           lower_query.contains("pg_depend") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
