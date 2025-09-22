@@ -519,7 +519,7 @@ impl ExtendedQueryHandler {
             if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") ||
                cleaned_query.contains("pg_class") || cleaned_query.contains("pg_attribute") ||
                cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
-               cleaned_query.contains("pg_database") {
+               cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_database") {
                 info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
                 Vec::new()
             } else {

@@ -54,7 +54,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_enum") || lower_query.contains("pg_proc") ||
            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
-           lower_query.contains("pg_stats") ||
+           lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -703,8 +703,13 @@ impl CatalogInterceptor {
                 return Some(Ok(Self::handle_pg_database_query(select, &db).await));
             }
 
-            // Note: pg_index and pg_constraint are SQLite views that will be executed normally
-            // They don't need special interception since they exist in the database
+            // Handle pg_constraint queries
+            if table_name.contains("pg_constraint") || table_name.contains("pg_catalog.pg_constraint") {
+                return Some(crate::catalog::pg_constraint::PgConstraintHandler::handle_query(select, &db).await);
+            }
+
+            // Note: pg_index is a SQLite view that will be executed normally
+            // It doesn't need special interception since it exists in the database
         }
         println!("INTERCEPT: Reached end of intercept_query, returning None");
         None
