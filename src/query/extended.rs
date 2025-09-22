@@ -562,10 +562,12 @@ impl ExtendedQueryHandler {
                         // Pre-fetch schema types for all columns if we have a table name
                         let mut schema_types = std::collections::HashMap::new();
                         if let Some(ref table) = table_name {
+                            info!("PARSE: Fetching schema types for table '{}'", table);
                             // For aliased columns, try to find the source column
                             for col_name in &response.columns {
                                 // First try direct lookup
                                 if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
+                                    info!("PARSE: Found schema type for column '{}' in table '{}': {}", col_name, table, pg_type);
                                     schema_types.insert(col_name.clone(), pg_type);
                                 } else {
                                     // Parse the query to find the source column for this alias
@@ -769,6 +771,7 @@ impl ExtendedQueryHandler {
                             if let Some(pg_type) = schema_types.get(col_name) {
                                 // Use basic type OID mapping (enum checking would require async which isn't allowed in closure)
                                 let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                info!("PARSE: Column '{}': using schema type '{}' -> OID {}", col_name, pg_type, type_oid);
                                 inferred_types.push(type_oid);
                                 continue;
                             }
@@ -804,8 +807,15 @@ impl ExtendedQueryHandler {
                             if !response.rows.is_empty() {
                                 if let Some(value) = response.rows[0].get(i) {
                                     let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
-                                    let inferred_type = crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref());
-                                    info!("Column '{}': inferring type from value '{}' -> type OID {}", col_name, value_str, inferred_type);
+                                    // Special case: For system tables (__pgsqlite_*), default to TEXT
+                                    // to avoid incorrect type inference for metadata values
+                                    let inferred_type = if table_name.as_ref().map_or(false, |t| t.starts_with("__pgsqlite_")) {
+                                        info!("PARSE: Column '{}': system table, defaulting to TEXT type", col_name);
+                                        PgType::Text.to_oid()
+                                    } else {
+                                        crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                    };
+                                    info!("PARSE: Column '{}': inferring type from value '{}' -> type OID {} (should check schema first!)", col_name, value_str, inferred_type);
                                     inferred_types.push(inferred_type);
                                 } else {
                                     info!("Column '{}': NULL value, defaulting to text", col_name);
@@ -4429,6 +4439,7 @@ impl ExtendedQueryHandler {
         };
         
         if send_row_desc {
+            info!("EXECUTE: send_row_desc is true for query: {}", query);
             // Extract table name from query to look up schema
             let table_name = extract_table_name_from_select(query);
             
@@ -4754,6 +4765,7 @@ impl ExtendedQueryHandler {
                     // This is crucial for datetime types which are stored as INTEGER in SQLite
                     let mut found_type = false;
                     if let Some(ref table) = table_name {
+                        info!("EXECUTE: Looking up schema for column '{}' in table '{}'", col_name, table);
                         // Try to extract source table.column from alias
                         if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&portal.query, col_name) {
                             if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, &source_table, &source_col).await {
@@ -4795,7 +4807,14 @@ impl ExtendedQueryHandler {
                         // Try to get type from value
                         let type_oid = if !response.rows.is_empty() {
                             if let Some(value) = response.rows[0].get(i) {
-                                crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                // Special case: For system tables (__pgsqlite_*), default to TEXT
+                                // to avoid incorrect type inference for metadata values
+                                if table_name.as_ref().map_or(false, |t| t.starts_with("__pgsqlite_")) {
+                                    info!("EXECUTE: Column '{}': system table, defaulting to TEXT type", col_name);
+                                    25 // TEXT
+                                } else {
+                                    crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                }
                             } else {
                                 25 // text for NULL
                             }
