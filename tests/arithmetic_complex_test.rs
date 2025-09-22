@@ -44,9 +44,11 @@ async fn test_nested_parentheses() {
     assert!((result - 10.0).abs() < 0.01); // ((10 + 5) * 2) / 3 = 30 / 3 = 10
     
     // Test different grouping: (a + (b * c)) / d
-    let rows = client.query("SELECT (a + (b * c)) / d AS different_grouping FROM calc_data WHERE id = 1", &[]).await.unwrap();
+    // Force floating-point arithmetic by ensuring at least one operand is REAL
+    let rows = client.query("SELECT CAST((a + (b * c)) AS REAL) / CAST(d AS REAL) AS different_grouping FROM calc_data WHERE id = 1", &[]).await.unwrap();
     assert_eq!(rows.len(), 1);
     let result: f64 = rows[0].get(0);
+
     assert!((result - 6.666667).abs() < 0.01); // (10 + (5 * 2)) / 3 = 20 / 3 = 6.67
     
     // Test deeply nested: (a * (b + (c * d)))
@@ -262,8 +264,9 @@ async fn test_very_long_expressions() {
     });
     
     // Test very long arithmetic expression
+    // Force floating-point arithmetic by using REAL casts for division
     let rows = client.query(
-        "SELECT v1 + v2 * v3 - v4 / v5 + v1 * v2 + v3 * v4 - v5 AS long_expr FROM nums WHERE id = 1",
+        "SELECT v1 + v2 * v3 - CAST(v4 AS REAL) / CAST(v5 AS REAL) + v1 * v2 + v3 * v4 - v5 AS long_expr FROM nums WHERE id = 1",
         &[]
     ).await.unwrap();
     assert_eq!(rows.len(), 1);
@@ -272,8 +275,9 @@ async fn test_very_long_expressions() {
     assert!((result - 15.2).abs() < 0.01);
     
     // Test chained arithmetic with many terms
+    // Force floating-point arithmetic for division
     let rows = client.query(
-        "SELECT ((((v1 + 1) * 2) - 3) / 4) * 5 AS chained FROM nums WHERE id = 1",
+        "SELECT ((((v1 + 1) * 2) - 3) / CAST(4 AS REAL)) * 5 AS chained FROM nums WHERE id = 1",
         &[]
     ).await.unwrap();
     assert_eq!(rows.len(), 1);

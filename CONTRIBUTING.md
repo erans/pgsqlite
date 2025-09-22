@@ -93,12 +93,21 @@ Environment: Ubuntu 22.04, Rust 1.75, pgsqlite v0.1.0
 
 ### Before Submitting
 
+Follow this complete checklist to ensure code quality:
+
+- [ ] Run `cargo build` - no compilation errors
 - [ ] Run `cargo test` - all tests pass
+- [ ] Run `cargo clippy` - no warnings (use `cargo clippy --fix` for automatic fixes)
 - [ ] Run `cargo fmt` - code is formatted
-- [ ] Run `cargo clippy` - no warnings
 - [ ] Update documentation if needed
 - [ ] Add tests for new functionality
-- [ ] Update CHANGELOG.md if applicable
+- [ ] Update TODO.md if applicable (mark completed tasks, add new discoveries)
+
+**Pre-commit checklist**: Run ALL of these before committing:
+1. `cargo check` - No errors or warnings
+2. `cargo clippy` - Review and fix warnings where reasonable
+3. `cargo build` - Successful build
+4. `cargo test` - All tests pass
 
 ### PR Guidelines
 
@@ -141,6 +150,36 @@ When working on pgsqlite:
 - Prefer batch operations
 - Minimize allocations in hot paths
 - Profile before optimizing
+
+#### Performance Context
+pgsqlite adds ~360x overhead vs pure SQLite (~80ms vs 0.22ms per operation) in exchange for full PostgreSQL compatibility. This overhead is acceptable for most web applications where database operations represent 10-20% of total request time.
+
+#### Driver Performance Recommendations
+Based on comprehensive benchmarking (100 operations each):
+
+**For Read-Heavy Workloads** - Use psycopg3-binary:
+- SELECT: 0.452ms (best read performance)
+- Best for applications with frequent SELECT queries
+- 21.8x faster SELECT than psycopg2
+
+**For Write-Heavy Workloads** - Use psycopg2:
+- INSERT: 0.214ms (3.6x faster than psycopg3)
+- UPDATE/DELETE: ~0.06-0.09ms (2x faster than psycopg3)
+- Best for data ingestion and batch updates
+
+**For Balanced Workloads** - Use psycopg3-text:
+- Reasonable performance across all operations
+- Good middle ground for mixed usage patterns
+
+#### Optimization Guidelines
+- **Batch operations**: 10-76x speedup for bulk INSERT operations
+  - 10-row batches: ~11x faster than single-row INSERTs
+  - 100-row batches: ~51x faster
+  - 1000-row batches: ~76x faster
+- **Connection architecture**: Connection-per-session provides excellent isolation
+- **Ultra-fast path**: Optimized execution for simple SELECT queries
+- **Type efficiency**: Use native PostgreSQL types to reduce conversion overhead
+- **Protocol choice**: Consider workload pattern when selecting driver
 
 ### Error Handling
 

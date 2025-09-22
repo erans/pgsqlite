@@ -19,6 +19,8 @@ bitflags! {
         const DECIMAL = 0x40;
         const BATCH_DELETE = 0x80;
         const BATCH_UPDATE = 0x100;
+        const SESSION_IDENTIFIER = 0x200;
+        const CREATE_TABLE = 0x400;
     }
 }
 
@@ -107,6 +109,18 @@ impl<'a> UnifiedProcessor<'a> {
             translations.insert(TranslationFlags::DATETIME);
             complexity = ComplexityLevel::Complex;
         }
+
+        // Check for session identifiers that need function call conversion
+        if memchr::memmem::find(query_bytes, b"current_user").is_some() ||
+           memchr::memmem::find(query_bytes, b"CURRENT_USER").is_some() ||
+           memchr::memmem::find(query_bytes, b"session_user").is_some() ||
+           memchr::memmem::find(query_bytes, b"SESSION_USER").is_some() {
+            translations.insert(TranslationFlags::SESSION_IDENTIFIER);
+            complexity = ComplexityLevel::Moderate;
+        }
+
+        // Note: CREATE TABLE statements are handled directly in execute_with_session
+        // and don't need special translation flags in the unified processor
         
         // Check for datetime patterns in INSERT/UPDATE statements
         if (query_bytes.starts_with(b"INSERT") || query_bytes.starts_with(b"UPDATE"))
@@ -254,7 +268,11 @@ fn has_any_special_pattern_fast(bytes: &[u8]) -> bool {
     memchr::memmem::find(bytes, b"GROUP BY").is_some() ||
     memchr::memmem::find(bytes, b"HAVING").is_some() ||
     memchr::memmem::find(bytes, b"unnest").is_some() ||
-    memchr::memmem::find(bytes, b"UNNEST").is_some()
+    memchr::memmem::find(bytes, b"UNNEST").is_some() ||
+    memchr::memmem::find(bytes, b"current_user").is_some() ||
+    memchr::memmem::find(bytes, b"CURRENT_USER").is_some() ||
+    memchr::memmem::find(bytes, b"session_user").is_some() ||
+    memchr::memmem::find(bytes, b"SESSION_USER").is_some()
 }
 
 /// Check INSERT-specific patterns
@@ -372,7 +390,16 @@ fn process_complex_query<'a>(
         let translated = crate::translator::SchemaPrefixTranslator::translate_query(&result);
         result = Cow::Owned(translated);
     }
-    
+
+    // 1.5. Session identifier translation (add parentheses to current_user, session_user)
+    if processor.needs_translation(TranslationFlags::SESSION_IDENTIFIER) {
+        let translated = crate::translator::SessionIdentifierTranslator::translate_query(&result);
+        result = Cow::Owned(translated);
+    }
+
+    // Note: CREATE TABLE translation is now handled directly in execute_with_session
+    // to ensure proper metadata storage
+
     // 2. Numeric cast translation (must come before general cast)
     if processor.needs_translation(TranslationFlags::NUMERIC) {
         let translated = crate::translator::NumericCastTranslator::translate_query(&result, conn);

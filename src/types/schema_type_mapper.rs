@@ -74,6 +74,37 @@ impl SchemaTypeMapper {
     
     /// Map PostgreSQL type string to OID
     pub fn pg_type_string_to_oid(pg_type: &str) -> i32 {
+        // Handle array types first (before basic types)
+        if let Some(base_type) = pg_type.strip_suffix("[]") {
+            // Remove any parameters like (50) from VARCHAR(50)
+            let base_without_params = if let Some(paren_pos) = base_type.find('(') {
+                &base_type[..paren_pos]
+            } else {
+                base_type
+            };
+            return match base_without_params.to_lowercase().as_str() {
+                "boolean" | "bool" => 1000,       // BOOLEAN[]
+                "integer" | "int4" | "int" => 1007, // INTEGER[]
+                "bigint" | "int8" => 1016,        // BIGINT[]
+                "smallint" | "int2" => 1005,      // SMALLINT[]
+                "text" => 1009,                   // TEXT[]
+                "varchar" => 1015,                // VARCHAR[]
+                "real" | "float4" => 1021,        // REAL[]
+                "double precision" | "float8" => 1022, // FLOAT8[]
+                "numeric" | "decimal" => 1231,    // NUMERIC[]
+                "char" => 1002,                   // CHAR[]
+                "bytea" => 1001,                  // BYTEA[]
+                "date" => 1182,                   // DATE[]
+                "time" => 1183,                   // TIME[]
+                "timestamp" => 1115,              // TIMESTAMP[]
+                "timestamptz" => 1185,            // TIMESTAMPTZ[]
+                "timetz" => 1270,                 // TIMETZ[]
+                "interval" => 1187,               // INTERVAL[]
+                "uuid" => 2951,                   // UUID[]
+                _ => PgType::Text.to_oid(),       // Unknown array type, default to TEXT
+            };
+        }
+
         // Fast path for common exact matches (case-sensitive)
         match pg_type {
             "text" | "TEXT" => return PgType::Text.to_oid(),
@@ -232,8 +263,9 @@ impl SchemaTypeMapper {
     /// Infer type from string value
     fn infer_type_from_string(s: &str) -> i32 {
         // Check for boolean - only treat as bool if it's exactly these strings
-        if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") || 
-           s.eq_ignore_ascii_case("t") || s.eq_ignore_ascii_case("f") {
+        // Note: We don't treat single 't' or 'f' as boolean because PostgreSQL
+        // catalog tables use these for other purposes (e.g. prokind = 'f' for function)
+        if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") {
             return PgType::Bool.to_oid(); // bool
         }
         
@@ -303,7 +335,7 @@ impl SchemaTypeMapper {
         query: Option<&str>
     ) -> Option<i32> {
         let upper = function_name.to_uppercase();
-        
+
         // Handle aliased columns - if it's just a simple name, skip function detection
         // This prevents false positives for columns named "year_col", "hour_trunc", etc.
         if !function_name.contains('(') && !function_name.contains(' ') {

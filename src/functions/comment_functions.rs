@@ -210,7 +210,7 @@ mod tests {
         
         // Test with non-existent comment
         let query = "SELECT obj_description(99999, 'pg_class')";
-        let result = CommentFunctionHandler::process_comment_functions(&conn, &query).unwrap();
+        let result = CommentFunctionHandler::process_comment_functions(&conn, query).unwrap();
         assert_eq!(result, "SELECT NULL");
     }
     

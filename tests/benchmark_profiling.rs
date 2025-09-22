@@ -1,3 +1,5 @@
+#![allow(clippy::needless_range_loop)]
+
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

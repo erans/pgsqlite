@@ -1,4 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{criterion_group, criterion_main, Criterion};
+use std::hint::black_box;
 use pgsqlite::query::simple_query_detector::is_fast_path_simple_query;
 
 fn benchmark_simple_query_detection(c: &mut Criterion) {

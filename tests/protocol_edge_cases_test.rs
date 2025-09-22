@@ -414,9 +414,9 @@ async fn test_parameter_limit() {
     let mut placeholders = Vec::new();
     let mut param_refs: Vec<&(dyn tokio_postgres::types::ToSql + Sync)> = Vec::new();
     
-    for i in 0..101 {
+    for (i, param) in params.iter().enumerate().take(101) {
         placeholders.push(format!("${}", i + 1));
-        param_refs.push(&params[i]);
+        param_refs.push(param);
     }
     
     let query = format!(

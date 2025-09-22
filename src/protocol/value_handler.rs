@@ -132,6 +132,26 @@ impl ValueHandler {
 
         let pg_type = PgType::from_oid(pg_type_oid);
 
+        // Handle boolean values specially - convert "t"/"f" strings to proper boolean format
+        if pg_type_oid == PgType::Bool.to_oid() {
+            let bool_value = match text_data {
+                "t" | "true" | "TRUE" | "1" => true,
+                "f" | "false" | "FALSE" | "0" => false,
+                _ => return Err(io::Error::new(io::ErrorKind::InvalidData,
+                    format!("Invalid boolean value: {}", text_data))),
+            };
+
+            if binary_format {
+                // Use binary boolean encoding
+                let pg_data = crate::protocol::BinaryEncoder::encode_bool(bool_value);
+                return Ok(Some(MappedValue::Memory(pg_data)));
+            } else {
+                // Use text format
+                let pg_data = if bool_value { b"t".to_vec() } else { b"f".to_vec() };
+                return Ok(Some(MappedValue::Memory(pg_data)));
+            }
+        }
+
         // If the target is a numeric type, try to parse and re-serialize
         if !binary_format && pg_type.is_some() && pg_type.unwrap().is_numeric() {
             if let Ok(val) = text_data.parse::<i64>() {
@@ -464,9 +484,11 @@ mod tests {
     
     #[test]
     fn test_mmap_enabled_config() {
-        let mut config = ValueHandlerConfig::default();
-        config.enable_mmap = true;
-        config.large_value_threshold = 100; // Very small threshold for testing
+        let mut config = ValueHandlerConfig {
+            enable_mmap: true,
+            large_value_threshold: 100, // Very small threshold for testing
+            ..Default::default()
+        };
         config.mmap_config.min_size_for_mmap = 50;
         
         let handler = ValueHandler::with_config(config);

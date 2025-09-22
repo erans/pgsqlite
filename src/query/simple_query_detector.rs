@@ -234,6 +234,9 @@ pub fn is_fast_path_simple_query(query: &str) -> bool {
        memchr::memmem::find(query_bytes, b"AT TIME ZONE").is_some() ||
        memchr::memmem::find(query_bytes, b"NOW()").is_some() ||
        memchr::memmem::find(query_bytes, b"CURRENT_").is_some() ||
+       memchr::memmem::find(query_bytes, b"current_user").is_some() ||
+       memchr::memmem::find(query_bytes, b"session_user").is_some() ||
+       memchr::memmem::find(query_bytes, b"SESSION_USER").is_some() ||
        memchr::memmem::find(query_bytes, b"::NUMERIC").is_some() ||
        memchr::memmem::find(query_bytes, b"::DECIMAL").is_some() ||
        memchr::memmem::find(query_bytes, b"CAST").is_some() ||

@@ -19,7 +19,22 @@ lazy_static! {
         register_v10_typcategory_support(&mut registry);
         register_v11_fix_catalog_views(&mut registry);
         register_v12_comment_system(&mut registry);
-        
+        register_v13_pg_stat_views(&mut registry);
+        register_v14_information_schema_views(&mut registry);
+        register_v15_pg_depend_support(&mut registry);
+        register_v16_pg_proc_support(&mut registry);
+        register_v17_pg_description_support(&mut registry);
+        register_v18_pg_roles_user_support(&mut registry);
+        register_v19_pg_stats_support(&mut registry);
+        register_v20_information_schema_routines_support(&mut registry);
+        register_v21_information_schema_views_support(&mut registry);
+        register_v22_information_schema_referential_constraints_support(&mut registry);
+        register_v23_information_schema_check_constraints_support(&mut registry);
+        register_v24_pg_tablespace_support(&mut registry);
+        register_v25_information_schema_triggers_support(&mut registry);
+        register_v26_enhanced_pg_attribute_support(&mut registry);
+        register_v27_fix_pg_proc_types(&mut registry);
+
         registry
     };
 }
@@ -306,7 +321,14 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 -- pg_attribute view (column information)
                 CREATE VIEW IF NOT EXISTS pg_attribute AS
                 SELECT 
-                    CAST(oid_hash(m.name) AS TEXT) as attrelid,     -- table OID
+                    CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,     -- table OID
                     p.cid + 1 as attnum,                             -- column number (1-based)
                     p.name as attname,                               -- column name
                     CASE 
@@ -350,9 +372,16 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                 -- Enhanced pg_class view that works with JOINs
                 CREATE VIEW IF NOT EXISTS pg_class AS
                 SELECT 
-                    -- Generate stable OID from table name using hash function
+                    -- Generate stable OID from table name using SQLite built-in functions
                     -- Cast to TEXT to handle both numeric and string comparisons
-                    CAST(oid_hash(name) AS TEXT) as oid,
+                    CAST(
+                        (
+                            (unicode(substr(name, 1, 1)) * 1000000) +
+                            (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                            (unicode(substr(name || '  ', 3, 1)) * 100) +
+                            (length(name) * 7)
+                        ) % 1000000 + 16384
+                    AS TEXT) as oid,
                     name as relname,
                     2200 as relnamespace,  -- public schema
                     CASE 
@@ -371,7 +400,14 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                     CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
                     'f' as relisshared,
                     'p' as relpersistence,
-                    CAST(oid_hash(name || '_type') AS TEXT) as reltype,
+                    CAST(
+                        (
+                            (unicode(substr(name || '_type', 1, 1)) * 1000000) +
+                            (unicode(substr(name || '_type' || ' ', 2, 1)) * 10000) +
+                            (unicode(substr(name || '_type' || '  ', 3, 1)) * 100) +
+                            (length(name || '_type') * 7)
+                        ) % 1000000 + 16384
+                    AS TEXT) as reltype,
                     0 as reloftype,
                     0 as relnatts,
                     0 as relchecks,
@@ -407,7 +443,7 @@ fn register_v5_pg_catalog_tables(registry: &mut BTreeMap<u32, Migration>) {
                     contypid INTEGER DEFAULT 0,
                     conindid INTEGER DEFAULT 0,  -- index OID for unique/primary
                     conparentid INTEGER DEFAULT 0,
-                    confrelid INTEGER DEFAULT 0, -- referenced table for foreign keys
+                    confrelid TEXT DEFAULT '0', -- referenced table for foreign keys (TEXT to match pg_class.oid)
                     confupdtype CHAR(1) DEFAULT ' ',
                     confdeltype CHAR(1) DEFAULT ' ',
                     confmatchtype CHAR(1) DEFAULT ' ',
@@ -577,12 +613,8 @@ fn populate_catalog_tables(conn: &rusqlite::Connection) -> anyhow::Result<()> {
 
 // Helper functions for parsing and OID generation
 fn generate_table_oid(name: &str) -> i32 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    
-    let mut hasher = DefaultHasher::new();
-    name.hash(&mut hasher);
-    ((hasher.finish() & 0x7FFFFFFF) % 1000000 + 16384) as i32
+    use crate::utils::generate_oid_i32;
+    generate_oid_i32(name)
 }
 
 struct ConstraintInfo {
@@ -1486,7 +1518,14 @@ fn register_v11_fix_catalog_views(registry: &mut BTreeMap<u32, Migration>) {
             r#"
             CREATE VIEW IF NOT EXISTS pg_attribute AS
             SELECT 
-                CAST(oid_hash(m.name) AS TEXT) as attrelid,
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,
                 p.cid + 1 as attnum,
                 p.name as attname,
                 CASE 
@@ -1574,5 +1613,1250 @@ fn register_v12_comment_system(registry: &mut BTreeMap<u32, Migration>) {
             WHERE key = 'schema_version';
         "#)),
         dependencies: vec![11],
+    });
+}
+
+/// Version 13: PostgreSQL statistics and system views
+fn register_v13_pg_stat_views(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(13, Migration {
+        version: 13,
+        name: "pg_stat_views",
+        description: "Add minimal PostgreSQL statistics views, pg_database, and pg_foreign_data_wrapper for compatibility",
+        up: MigrationAction::Sql(r#"
+            -- Create pg_stat_activity view with minimal but essential columns
+            CREATE VIEW IF NOT EXISTS pg_stat_activity AS
+            SELECT
+                1 as datid,                                            -- Database OID
+                'main' as datname,                                     -- Database name (SQLite default)
+                1 as pid,                                              -- Process ID (static in SQLite)
+                NULL as leader_pid,                                    -- Parallel leader PID (not applicable)
+                10 as usesysid,                                        -- User OID (default owner)
+                'postgres' as usename,                                 -- Username (default)
+                'pgsqlite' as application_name,                        -- Application name
+                NULL as client_addr,                                   -- Client address (local)
+                NULL as client_hostname,                               -- Client hostname
+                NULL as client_port,                                   -- Client port
+                datetime('now') as backend_start,                      -- Backend start time
+                NULL as xact_start,                                    -- Transaction start
+                NULL as query_start,                                   -- Query start
+                datetime('now') as state_change,                       -- Last state change
+                NULL as wait_event_type,                               -- Wait event type
+                NULL as wait_event,                                    -- Wait event name
+                'idle' as state,                                       -- Current state
+                NULL as backend_xid,                                   -- Transaction ID
+                NULL as backend_xmin,                                  -- Transaction min ID
+                NULL as query_id,                                      -- Query identifier
+                '<IDLE>' as query,                                     -- Current query
+                'client backend' as backend_type;                      -- Backend type
+
+            -- Create pg_stat_database view with database-wide statistics
+            CREATE VIEW IF NOT EXISTS pg_stat_database AS
+            SELECT
+                1 as datid,                                            -- Database OID
+                'main' as datname,                                     -- Database name
+                1 as numbackends,                                      -- Number of backends
+                0 as xact_commit,                                      -- Committed transactions
+                0 as xact_rollback,                                    -- Rolled back transactions
+                0 as blks_read,                                        -- Blocks read
+                0 as blks_hit,                                         -- Blocks hit
+                0 as tup_returned,                                     -- Tuples returned
+                0 as tup_fetched,                                      -- Tuples fetched
+                0 as tup_inserted,                                     -- Tuples inserted
+                0 as tup_updated,                                      -- Tuples updated
+                0 as tup_deleted,                                      -- Tuples deleted
+                0 as conflicts,                                        -- Conflicts
+                0 as temp_files,                                       -- Temp files
+                0 as temp_bytes,                                       -- Temp bytes
+                0 as deadlocks,                                        -- Deadlocks
+                0 as checksum_failures,                                -- Checksum failures
+                NULL as checksum_last_failure,                         -- Last checksum failure
+                0 as blk_read_time,                                    -- Block read time
+                0 as blk_write_time,                                   -- Block write time
+                NULL as session_time,                                  -- Session time
+                NULL as active_time,                                   -- Active time
+                NULL as idle_in_transaction_time,                      -- Idle in transaction time
+                0 as sessions,                                         -- Sessions
+                0 as sessions_abandoned,                               -- Abandoned sessions
+                0 as sessions_fatal,                                   -- Fatal sessions
+                0 as sessions_killed,                                  -- Killed sessions
+                datetime('now') as stats_reset;                        -- Stats reset time
+
+            -- Create pg_stat_user_tables view with table access statistics
+            CREATE VIEW IF NOT EXISTS pg_stat_user_tables AS
+            SELECT
+                CAST(
+                    (
+                        (unicode(substr(name, 1, 1)) * 1000000) +
+                        (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '  ', 3, 1)) * 100) +
+                        (length(name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as relid,                 -- Table OID
+                'public' as schemaname,                                -- Schema name
+                name as relname,                                       -- Table name
+                0 as seq_scan,                                         -- Sequential scans
+                NULL as last_seq_scan,                                 -- Last sequential scan
+                0 as seq_tup_read,                                     -- Sequential tuples read
+                0 as idx_scan,                                         -- Index scans
+                NULL as last_idx_scan,                                 -- Last index scan
+                0 as idx_tup_fetch,                                    -- Index tuples fetched
+                0 as n_tup_ins,                                        -- Tuples inserted
+                0 as n_tup_upd,                                        -- Tuples updated
+                0 as n_tup_del,                                        -- Tuples deleted
+                0 as n_tup_hot_upd,                                    -- Hot updated tuples
+                0 as n_tup_newpage_upd,                                -- New page updated tuples
+                0 as n_live_tup,                                       -- Live tuples
+                0 as n_dead_tup,                                       -- Dead tuples
+                0 as n_mod_since_analyze,                              -- Modified since analyze
+                0 as n_ins_since_vacuum,                               -- Inserts since vacuum
+                NULL as last_vacuum,                                   -- Last vacuum
+                NULL as last_autovacuum,                               -- Last autovacuum
+                NULL as last_analyze,                                  -- Last analyze
+                NULL as last_autoanalyze,                              -- Last autoanalyze
+                0 as vacuum_count,                                     -- Vacuum count
+                0 as autovacuum_count,                                 -- Autovacuum count
+                0 as analyze_count,                                    -- Analyze count
+                0 as autoanalyze_count                                 -- Autoanalyze count
+            FROM sqlite_master
+            WHERE type = 'table'
+            AND name NOT LIKE '__pgsqlite_%'
+            AND name NOT LIKE 'sqlite_%';
+
+            -- Create pg_database view with database catalog information
+            CREATE VIEW IF NOT EXISTS pg_database AS
+            SELECT
+                1 as oid,                                              -- Database OID
+                'main' as datname,                                     -- Database name
+                10 as datdba,                                          -- Database owner OID
+                6 as encoding,                                         -- Encoding (UTF8)
+                'c' as datlocprovider,                                 -- Locale provider
+                false as datistemplate,                                -- Is template
+                true as datallowconn,                                  -- Allow connections
+                false as dathasloginevt,                               -- Has login events
+                -1 as datconnlimit,                                    -- Connection limit
+                1 as datfrozenxid,                                     -- Frozen transaction ID
+                1 as datminmxid,                                       -- Minimum multixact ID
+                1663 as dattablespace,                                 -- Default tablespace OID
+                'en_US.UTF-8' as datcollate,                           -- Collation
+                'en_US.UTF-8' as datctype,                             -- Character type
+                'en_US.UTF-8' as datlocale,                            -- Locale
+                NULL as daticurules,                                   -- ICU rules
+                NULL as datcollversion,                                -- Collation version
+                NULL as datacl;                                        -- Access control list
+
+            -- Create pg_foreign_data_wrapper view (empty but compatible)
+            CREATE VIEW IF NOT EXISTS pg_foreign_data_wrapper AS
+            SELECT
+                NULL as oid,                                           -- FDW OID
+                NULL as fdwname,                                       -- FDW name
+                NULL as fdwowner,                                      -- FDW owner OID
+                NULL as fdwhandler,                                    -- Handler function OID
+                NULL as fdwvalidator,                                  -- Validator function OID
+                NULL as fdwacl,                                        -- Access control list
+                NULL as fdwoptions                                     -- FDW options
+            WHERE 0 = 1;  -- Always empty (no FDWs in SQLite)
+
+            -- Additional statistics views commonly queried
+            CREATE VIEW IF NOT EXISTS pg_stat_all_tables AS
+            SELECT * FROM pg_stat_user_tables;
+
+            CREATE VIEW IF NOT EXISTS pg_stat_user_indexes AS
+            SELECT
+                NULL as relid,                                         -- Table OID
+                NULL as indexrelid,                                    -- Index OID
+                'public' as schemaname,                                -- Schema name
+                NULL as relname,                                       -- Table name
+                NULL as indexrelname,                                  -- Index name
+                0 as idx_scan,                                         -- Index scans
+                0 as idx_tup_read,                                     -- Index tuples read
+                0 as idx_tup_fetch                                     -- Index tuples fetched
+            WHERE 0 = 1;  -- Empty view
+
+            CREATE VIEW IF NOT EXISTS pg_stat_all_indexes AS
+            SELECT * FROM pg_stat_user_indexes;
+
+            -- Update schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '13', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove all the statistics views
+            DROP VIEW IF EXISTS pg_stat_activity;
+            DROP VIEW IF EXISTS pg_stat_database;
+            DROP VIEW IF EXISTS pg_stat_user_tables;
+            DROP VIEW IF EXISTS pg_stat_all_tables;
+            DROP VIEW IF EXISTS pg_stat_user_indexes;
+            DROP VIEW IF EXISTS pg_stat_all_indexes;
+            DROP VIEW IF EXISTS pg_database;
+            DROP VIEW IF EXISTS pg_foreign_data_wrapper;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '12', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![12],
+    });
+}
+
+/// Version 14: Information schema views as real SQLite views
+fn register_v14_information_schema_views(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(14, Migration {
+        version: 14,
+        name: "information_schema_views",
+        description: "Create information_schema views as real SQLite views to enable JOINs for ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create information_schema views as real SQLite views with underscores
+            // These can be JOINed and the interceptor will query them
+            // Use existing pg_* catalog tables for consistency
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_tables AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                relname as table_name,
+                CASE relkind
+                    WHEN 'r' THEN 'BASE TABLE'
+                    WHEN 'v' THEN 'VIEW'
+                    ELSE 'UNKNOWN'
+                END as table_type,
+                'YES' as is_insertable_into,
+                NULL as self_referencing_column_name,
+                NULL as reference_generation,
+                NULL as user_defined_type_catalog,
+                NULL as user_defined_type_schema,
+                NULL as user_defined_type_name,
+                'NO' as is_typed,
+                'NO' as commit_action
+            FROM pg_class
+            WHERE relkind IN ('r', 'v');
+            "#,
+
+            // Create information_schema.columns view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_columns AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                a.attname as column_name,
+                a.attnum as ordinal_position,
+                NULL as column_default,
+                CASE WHEN a.attnotnull = 't' THEN 'NO' ELSE 'YES' END as is_nullable,
+                CASE a.atttypid
+                    WHEN 23 THEN 'integer'
+                    WHEN 25 THEN 'text'
+                    WHEN 700 THEN 'real'
+                    WHEN 701 THEN 'double precision'
+                    WHEN 17 THEN 'bytea'
+                    WHEN 1043 THEN 'character varying'
+                    WHEN 1042 THEN 'character'
+                    WHEN 16 THEN 'boolean'
+                    WHEN 1082 THEN 'date'
+                    WHEN 1083 THEN 'time without time zone'
+                    WHEN 1114 THEN 'timestamp without time zone'
+                    WHEN 1184 THEN 'timestamp with time zone'
+                    WHEN 1700 THEN 'numeric'
+                    ELSE 'text'
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as domain_catalog,
+                NULL as domain_schema,
+                NULL as domain_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'NO' as is_self_referencing,
+                'NO' as is_identity,
+                NULL as identity_generation,
+                NULL as identity_start,
+                NULL as identity_increment,
+                NULL as identity_maximum,
+                NULL as identity_minimum,
+                NULL as identity_cycle,
+                'NO' as is_generated,
+                NULL as generation_expression,
+                'NO' as is_updatable
+            FROM pg_class c
+            JOIN pg_attribute a ON c.oid = a.attrelid
+            WHERE c.relkind = 'r'
+              AND a.attnum > 0;
+            "#,
+
+            // Create information_schema.key_column_usage view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_key_column_usage AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                a.attname as column_name,
+                a.attnum as ordinal_position,
+                NULL as position_in_unique_constraint
+            FROM pg_constraint con
+            JOIN pg_class c ON con.conrelid = c.oid
+            JOIN pg_attribute a ON c.oid = a.attrelid
+            WHERE con.contype IN ('p', 'u', 'f')
+              AND a.attnum > 0
+              AND (',' || con.conkey || ',') LIKE ('%,' || a.attnum || ',%');
+            "#,
+
+            // Create information_schema.table_constraints view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_table_constraints AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                CASE con.contype
+                    WHEN 'p' THEN 'PRIMARY KEY'
+                    WHEN 'u' THEN 'UNIQUE'
+                    WHEN 'f' THEN 'FOREIGN KEY'
+                    WHEN 'c' THEN 'CHECK'
+                    ELSE 'UNKNOWN'
+                END as constraint_type,
+                CASE WHEN con.condeferrable THEN 'YES' ELSE 'NO' END as is_deferrable,
+                CASE WHEN con.condeferred THEN 'YES' ELSE 'NO' END as initially_deferred,
+                CASE WHEN con.convalidated THEN 'YES' ELSE 'NO' END as enforced
+            FROM pg_constraint con
+            JOIN pg_class c ON con.conrelid = c.oid;
+            "#,
+
+            // Create information_schema.referential_constraints view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_referential_constraints AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                'main' as unique_constraint_catalog,
+                'public' as unique_constraint_schema,
+                ref_c.relname || '_pkey' as unique_constraint_name,
+                'NONE' as match_option,
+                CASE con.confupdtype
+                    WHEN 'a' THEN 'NO ACTION'
+                    WHEN 'r' THEN 'RESTRICT'
+                    WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL'
+                    WHEN 'd' THEN 'SET DEFAULT'
+                    ELSE 'NO ACTION'
+                END as update_rule,
+                CASE con.confdeltype
+                    WHEN 'a' THEN 'NO ACTION'
+                    WHEN 'r' THEN 'RESTRICT'
+                    WHEN 'c' THEN 'CASCADE'
+                    WHEN 'n' THEN 'SET NULL'
+                    WHEN 'd' THEN 'SET DEFAULT'
+                    ELSE 'NO ACTION'
+                END as delete_rule
+            FROM pg_constraint con
+            JOIN pg_class c ON con.conrelid = c.oid
+            LEFT JOIN pg_class ref_c ON con.confrelid = ref_c.oid
+            WHERE con.contype = 'f';
+            "#,
+
+            // Create information_schema.schemata view
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_schemata AS
+            SELECT
+                'main' as catalog_name,
+                'public' as schema_name,
+                'postgres' as schema_owner,
+                NULL as default_character_set_catalog,
+                NULL as default_character_set_schema,
+                NULL as default_character_set_name,
+                NULL as sql_path;
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '14', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove information_schema views
+            DROP VIEW IF EXISTS information_schema_tables;
+            DROP VIEW IF EXISTS information_schema_columns;
+            DROP VIEW IF EXISTS information_schema_key_column_usage;
+            DROP VIEW IF EXISTS information_schema_table_constraints;
+            DROP VIEW IF EXISTS information_schema_referential_constraints;
+            DROP VIEW IF EXISTS information_schema_schemata;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '13', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![13],
+    });
+}
+
+/// Version 15: pg_depend support for Rails sequence ownership detection
+fn register_v15_pg_depend_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(15, Migration {
+        version: 15,
+        name: "pg_depend_support",
+        description: "Add pg_depend view for Rails sequence ownership detection and ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_depend table for storing object dependencies
+            r#"
+            CREATE TABLE IF NOT EXISTS pg_depend (
+                classid TEXT NOT NULL,      -- OID of system catalog (e.g., '1259' for pg_class)
+                objid TEXT NOT NULL,        -- OID of dependent object
+                objsubid INTEGER NOT NULL,  -- Column number for table dependencies, 0 otherwise
+                refclassid TEXT NOT NULL,   -- OID of system catalog where referenced object is listed
+                refobjid TEXT NOT NULL,     -- OID of referenced object
+                refobjsubid INTEGER NOT NULL, -- Column number for referenced object
+                deptype CHAR(1) NOT NULL,   -- Dependency type: 'a' = automatic, 'n' = normal, etc.
+                PRIMARY KEY (classid, objid, objsubid, refclassid, refobjid, refobjsubid)
+            );
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '15', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_depend table
+            DROP TABLE IF EXISTS pg_depend;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '14', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![14],
+    });
+}
+
+/// Version 16: pg_proc support for function introspection and \df command
+fn register_v16_pg_proc_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(16, Migration {
+        version: 16,
+        name: "pg_proc_support",
+        description: "Add pg_proc view for function introspection, \\df command, and complete ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_proc view with essential function metadata
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_proc AS
+            SELECT
+                (16384 + row_number() OVER ()) as oid,          -- Unique OID starting from 16384
+                func_name as proname,                           -- Function name
+                11 as pronamespace,                             -- pg_catalog namespace
+                10 as proowner,                                 -- postgres user OID
+                12 as prolang,                                  -- SQL language OID
+                1 as procost,                                   -- Cost estimate
+                0 as prorows,                                   -- Estimated result rows
+                0 as provariadic,                               -- Variadic argument OID
+                0 as prosupport,                                -- Support function OID
+                CAST(func_kind AS TEXT) as prokind,             -- Function kind ('f', 'a', 'p')
+                CAST('f' AS TEXT) as prosecdef,                 -- Security definer
+                CAST('f' AS TEXT) as proleakproof,              -- Leak proof
+                CAST(func_strict AS TEXT) as proisstrict,       -- Strict (returns null on null input)
+                CAST(func_retset AS TEXT) as proretset,         -- Returns set
+                CAST(func_volatile AS TEXT) as provolatile,     -- Volatility ('i', 's', 'v')
+                CAST('s' AS TEXT) as proparallel,               -- Parallel safety
+                0 as pronargs,                                  -- Number of arguments (simplified)
+                0 as pronargdefaults,                           -- Number of default arguments
+                func_rettype as prorettype,                     -- Return type OID
+                '' as proargtypes,                              -- Argument types (simplified)
+                NULL as proallargtypes,                         -- All argument types
+                NULL as proargmodes,                            -- Argument modes
+                NULL as proargnames,                            -- Argument names
+                NULL as proargdefaults,                         -- Argument defaults
+                NULL as protrftypes,                            -- Transform types
+                '' as prosrc,                                   -- Function source
+                NULL as probin,                                 -- Object file
+                NULL as prosqlbody,                             -- SQL body
+                NULL as proconfig,                              -- Configuration
+                NULL as proacl                                  -- Access privileges
+            FROM (
+                -- String functions
+                SELECT 'length' as func_name, 'f' as func_kind, 't' as func_strict, 'f' as func_retset, 'i' as func_volatile, 23 as func_rettype
+                UNION ALL SELECT 'lower', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'upper', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'substr', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'replace', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'trim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'ltrim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'rtrim', 'f', 't', 'f', 'i', 25
+
+                -- Math functions
+                UNION ALL SELECT 'abs', 'f', 't', 'f', 'i', 23
+                UNION ALL SELECT 'round', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'ceil', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'floor', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'sqrt', 'f', 't', 'f', 'i', 701
+                UNION ALL SELECT 'power', 'f', 't', 'f', 'i', 701
+
+                -- Aggregate functions
+                UNION ALL SELECT 'count', 'a', 'f', 't', 'v', 20  -- bigint
+                UNION ALL SELECT 'sum', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'avg', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'max', 'a', 'f', 't', 'v', 2283  -- any
+                UNION ALL SELECT 'min', 'a', 'f', 't', 'v', 2283  -- any
+
+                -- Date/time functions
+                UNION ALL SELECT 'now', 'f', 'f', 'f', 'v', 1184  -- timestamptz
+                UNION ALL SELECT 'date', 'f', 't', 'f', 'i', 1082  -- date
+                UNION ALL SELECT 'extract', 'f', 't', 'f', 'i', 701  -- float8
+
+                -- JSON functions
+                UNION ALL SELECT 'json_agg', 'a', 'f', 't', 'v', 114     -- json
+                UNION ALL SELECT 'jsonb_agg', 'a', 'f', 't', 'v', 3802   -- jsonb
+                UNION ALL SELECT 'json_object_agg', 'a', 'f', 't', 'v', 114  -- json
+                UNION ALL SELECT 'json_extract', 'f', 't', 'f', 'i', 25   -- text
+                UNION ALL SELECT 'jsonb_set', 'f', 't', 'f', 'i', 3802    -- jsonb
+
+                -- Array functions
+                UNION ALL SELECT 'array_agg', 'a', 'f', 't', 'v', 2277    -- anyarray
+                UNION ALL SELECT 'unnest', 'f', 'f', 't', 'i', 2283       -- setof any
+                UNION ALL SELECT 'array_length', 'f', 't', 'f', 'i', 23   -- int4
+
+                -- UUID functions
+                UNION ALL SELECT 'uuid_generate_v4', 'f', 'f', 'f', 'v', 2950  -- uuid
+
+                -- System functions
+                UNION ALL SELECT 'version', 'f', 'f', 'f', 's', 25        -- text
+                UNION ALL SELECT 'current_database', 'f', 'f', 'f', 's', 19  -- name
+                UNION ALL SELECT 'current_user', 'f', 'f', 'f', 's', 19   -- name
+                UNION ALL SELECT 'pg_table_is_visible', 'f', 't', 'f', 's', 16  -- bool
+                UNION ALL SELECT 'format_type', 'f', 't', 'f', 'i', 25    -- text
+                UNION ALL SELECT 'pg_get_constraintdef', 'f', 't', 'f', 's', 25  -- text
+            );
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '16', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_proc view
+            DROP VIEW IF EXISTS pg_proc;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '15', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![15],
+    });
+}
+
+/// Version 17: pg_description support for object comments and documentation
+fn register_v17_pg_description_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(17, Migration {
+        version: 17,
+        name: "pg_description_support",
+        description: "Add pg_description view for object comments, table/column documentation, and complete ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_description view with object comment metadata
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_description AS
+            SELECT
+                objoid,
+                classoid,
+                objsubid,
+                description
+            FROM (
+                -- Table comments (objsubid = 0)
+                SELECT
+                    object_oid as objoid,
+                    1259 as classoid,                                  -- pg_class OID
+                    subobject_id as objsubid,                          -- 0 for table itself
+                    comment_text as description
+                FROM __pgsqlite_comments
+                WHERE catalog_name = 'pg_class' AND subobject_id = 0
+
+                UNION ALL
+
+                -- Column comments (objsubid = column number)
+                SELECT
+                    object_oid as objoid,
+                    1259 as classoid,                                  -- pg_class OID
+                    subobject_id as objsubid,                          -- Column number
+                    comment_text as description
+                FROM __pgsqlite_comments
+                WHERE catalog_name = 'pg_class' AND subobject_id > 0
+
+                UNION ALL
+
+                -- Function comments (objsubid = 0)
+                SELECT
+                    object_oid as objoid,
+                    1255 as classoid,                                  -- pg_proc OID
+                    subobject_id as objsubid,                          -- 0 for function itself
+                    comment_text as description
+                FROM __pgsqlite_comments
+                WHERE catalog_name = 'pg_proc'
+            )
+            WHERE description IS NOT NULL AND description != '';
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '17', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_description view
+            DROP VIEW IF EXISTS pg_description;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '16', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![16],
+    });
+}
+
+/// Version 18: Add pg_roles and pg_user support
+fn register_v18_pg_roles_user_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(18, Migration {
+        version: 18,
+        name: "pg_roles_user_support",
+        description: "Add PostgreSQL pg_roles and pg_user views for user and role management",
+        up: MigrationAction::SqlBatch(&[
+            // Create pg_roles view for role information
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_roles AS
+            SELECT
+                10 as oid,
+                'postgres' as rolname,
+                't' as rolsuper,
+                't' as rolinherit,
+                't' as rolcreaterole,
+                't' as rolcreatedb,
+                't' as rolcanlogin,
+                't' as rolreplication,
+                -1 as rolconnlimit,
+                '********' as rolpassword,
+                NULL as rolvaliduntil,
+                't' as rolbypassrls,
+                NULL as rolconfig
+            UNION ALL
+            SELECT
+                0 as oid,
+                'public' as rolname,
+                'f' as rolsuper,
+                't' as rolinherit,
+                'f' as rolcreaterole,
+                'f' as rolcreatedb,
+                'f' as rolcanlogin,
+                'f' as rolreplication,
+                -1 as rolconnlimit,
+                NULL as rolpassword,
+                NULL as rolvaliduntil,
+                'f' as rolbypassrls,
+                NULL as rolconfig
+            UNION ALL
+            SELECT
+                100 as oid,
+                'pgsqlite_user' as rolname,
+                't' as rolsuper,
+                't' as rolinherit,
+                't' as rolcreaterole,
+                't' as rolcreatedb,
+                't' as rolcanlogin,
+                'f' as rolreplication,
+                -1 as rolconnlimit,
+                '********' as rolpassword,
+                NULL as rolvaliduntil,
+                't' as rolbypassrls,
+                NULL as rolconfig;
+            "#,
+            // Create pg_user view for user information
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_user AS
+            SELECT
+                'postgres' as usename,
+                10 as usesysid,
+                't' as usecreatedb,
+                't' as usesuper,
+                't' as userepl,
+                't' as usebypassrls,
+                '********' as passwd,
+                NULL as valuntil,
+                NULL as useconfig
+            UNION ALL
+            SELECT
+                'pgsqlite_user' as usename,
+                100 as usesysid,
+                't' as usecreatedb,
+                't' as usesuper,
+                'f' as userepl,
+                't' as usebypassrls,
+                '********' as passwd,
+                NULL as valuntil,
+                NULL as useconfig;
+            "#,
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '18', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- Remove pg_roles and pg_user views
+            DROP VIEW IF EXISTS pg_roles;
+            DROP VIEW IF EXISTS pg_user;
+
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '17', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![17],
+    });
+}
+
+/// Version 19: Add pg_stats support for query optimization hints
+fn register_v19_pg_stats_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(19, Migration {
+        version: 19,
+        name: "pg_stats_support",
+        description: "Add PostgreSQL pg_stats view for query optimization and performance hints",
+        up: MigrationAction::SqlBatch(&[
+            // Note: pg_stats is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '19', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- pg_stats is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '18', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![18],
+    });
+}
+
+/// Version 20: Add information_schema.routines support for function metadata
+fn register_v20_information_schema_routines_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(20, Migration {
+        version: 20,
+        name: "information_schema_routines_support",
+        description: "Add PostgreSQL information_schema.routines view for function and procedure metadata",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.routines is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '20', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.routines is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '19', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![19],
+    });
+}
+
+/// Version 21: Add information_schema.views support for view metadata
+fn register_v21_information_schema_views_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(21, Migration {
+        version: 21,
+        name: "information_schema_views_support",
+        description: "Add PostgreSQL information_schema.views view for view metadata and introspection",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.views is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '21', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.views is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '20', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![20],
+    });
+}
+
+fn register_v22_information_schema_referential_constraints_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(22, Migration {
+        version: 22,
+        name: "information_schema_referential_constraints_support",
+        description: "Add PostgreSQL information_schema.referential_constraints view for foreign key constraint metadata and introspection",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.referential_constraints is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '22', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.referential_constraints is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '21', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![21],
+    });
+}
+
+/// Version 23: information_schema.check_constraints support
+fn register_v23_information_schema_check_constraints_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(23, Migration {
+        version: 23,
+        name: "information_schema_check_constraints",
+        description: "Add PostgreSQL information_schema.check_constraints view for check constraint metadata and introspection",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.check_constraints is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '23', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.check_constraints is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '22', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![22],
+    });
+}
+
+/// Version 24: pg_tablespace support
+fn register_v24_pg_tablespace_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(24, Migration {
+        version: 24,
+        name: "pg_tablespace_support",
+        description: "Add PostgreSQL pg_tablespace catalog support for tablespace introspection and ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Note: pg_tablespace is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '24', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- pg_tablespace is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '23', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![23],
+    });
+}
+
+/// Version 25: information_schema.triggers support
+fn register_v25_information_schema_triggers_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(25, Migration {
+        version: 25,
+        name: "information_schema_triggers_support",
+        description: "Add PostgreSQL information_schema.triggers support for trigger introspection and ORM compatibility",
+        up: MigrationAction::SqlBatch(&[
+            // Note: information_schema.triggers is handled by the catalog interceptor, no SQLite view needed
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '25', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::Sql(r#"
+            -- information_schema.triggers is handled by catalog interceptor, no view to remove
+            -- Restore schema version
+            UPDATE __pgsqlite_metadata
+            SET value = '24', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+        "#)),
+        dependencies: vec![24],
+    });
+}
+
+/// Version 26: Enhanced pg_attribute support with proper default and identity detection
+fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(26, Migration {
+        version: 26,
+        name: "enhanced_pg_attribute_support",
+        description: "Enhanced pg_attribute view with proper default and identity column detection for JOIN queries",
+        up: MigrationAction::SqlBatch(&[
+            // Drop existing views separately to ensure they're really gone
+            r#"DROP VIEW IF EXISTS pg_attribute"#,
+            r#"DROP VIEW IF EXISTS pg_class"#,
+
+            // Recreate pg_class with SQLite built-in functions for consistent OID generation
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_class AS
+            SELECT
+                -- Use SQLite built-in functions for consistent OID generation
+                CAST(
+                    (
+                        (unicode(substr(name, 1, 1)) * 1000000) +
+                        (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '  ', 3, 1)) * 100) +
+                        (length(name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as oid,
+                name as relname,
+                2200 as relnamespace,  -- public schema
+                CASE
+                    WHEN type = 'table' THEN 'r'
+                    WHEN type = 'view' THEN 'v'
+                    WHEN type = 'index' THEN 'i'
+                END as relkind,
+                10 as relowner,
+                CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                0 as relfilenode,
+                0 as reltablespace,
+                0 as relpages,
+                -1 as reltuples,
+                0 as relallvisible,
+                0 as reltoastrelid,
+                CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                'f' as relisshared,
+                'p' as relpersistence,
+                'h' as relkind_full,
+                't' as relispopulated,
+                'v' as relreplident,
+                't' as relispartition,
+                0 as relrewrite,
+                0 as relfrozenxid,
+                0 as relminmxid,
+                NULL as relacl,
+                NULL as reloptions,
+                NULL as relpartbound
+            FROM sqlite_master
+            WHERE type IN ('table', 'view', 'index')
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Create enhanced pg_attribute view with proper default and identity detection
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_attribute AS
+            SELECT
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,
+                p.cid + 1 as attnum,
+                p.name as attname,
+                CASE
+                    WHEN p.type LIKE '%INT%' THEN 23
+                    WHEN p.type = 'TEXT' THEN 25
+                    WHEN p.type = 'REAL' THEN 700
+                    WHEN p.type = 'BLOB' THEN 17
+                    WHEN p.type LIKE '%CHAR%' THEN 1043
+                    WHEN p.type = 'BOOLEAN' THEN 16
+                    WHEN p.type = 'DATE' THEN 1082
+                    WHEN p.type LIKE 'TIME%' THEN 1083
+                    WHEN p.type LIKE 'TIMESTAMP%' THEN 1114
+                    ELSE 25
+                END as atttypid,
+                -1 as attstattarget,
+                0 as attlen,
+                0 as attndims,
+                -1 as attcacheoff,
+                CASE WHEN p."notnull" = 1 THEN 't' ELSE 'f' END as attnotnull,
+
+                -- Enhanced default detection using pg_attrdef table
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1 FROM pg_attrdef def
+                        WHERE def.adrelid = CAST(
+                            (
+                                (unicode(substr(m.name, 1, 1)) * 1000000) +
+                                (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                                (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                                (length(m.name) * 7)
+                            ) % 1000000 + 16384
+                        AS TEXT)
+                        AND def.adnum = CAST(p.cid + 1 AS TEXT)
+                    ) THEN 't'
+                    ELSE 'f'
+                END as atthasdef,
+
+                'f' as atthasmissing,
+
+                -- Enhanced identity column detection for INTEGER PRIMARY KEY
+                CASE
+                    WHEN p.type LIKE '%INT%' AND p.pk = 1 THEN 'd'
+                    ELSE ''
+                END as attidentity,
+
+                '' as attgenerated,
+                'f' as attisdropped,
+                't' as attislocal,
+                0 as attinhcount,
+                0 as attcollation,
+                '' as attacl,
+                '' as attoptions,
+                '' as attfdwoptions,
+                '' as attmissingval
+            FROM pragma_table_info(m.name) p
+            JOIN sqlite_master m ON m.type = 'table'
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '26', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            // Drop enhanced view
+            r#"
+            DROP VIEW IF EXISTS pg_attribute;
+            "#,
+
+            // Restore original simple view
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_attribute AS
+            SELECT
+                CAST(
+                    (
+                        (unicode(substr(m.name, 1, 1)) * 1000000) +
+                        (unicode(substr(m.name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(m.name || '  ', 3, 1)) * 100) +
+                        (length(m.name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as attrelid,
+                p.cid + 1 as attnum,
+                p.name as attname,
+                CASE
+                    WHEN p.type LIKE '%INT%' THEN 23
+                    WHEN p.type = 'TEXT' THEN 25
+                    WHEN p.type = 'REAL' THEN 700
+                    WHEN p.type = 'BLOB' THEN 17
+                    WHEN p.type LIKE '%CHAR%' THEN 1043
+                    WHEN p.type = 'BOOLEAN' THEN 16
+                    WHEN p.type = 'DATE' THEN 1082
+                    WHEN p.type LIKE 'TIME%' THEN 1083
+                    WHEN p.type LIKE 'TIMESTAMP%' THEN 1114
+                    ELSE 25
+                END as atttypid,
+                -1 as attstattarget,
+                0 as attlen,
+                0 as attndims,
+                -1 as attcacheoff,
+                CASE WHEN p.type LIKE '%NOT NULL%' THEN 't' ELSE 'f' END as attnotnull,
+                'f' as atthasdef,
+                'f' as atthasmissing,
+                '' as attidentity,
+                '' as attgenerated,
+                't' as attisdropped,
+                't' as attislocal,
+                0 as attinhcount,
+                0 as attcollation,
+                '' as attacl,
+                '' as attoptions,
+                '' as attfdwoptions,
+                '' as attmissingval
+            FROM pragma_table_info(m.name) p
+            JOIN sqlite_master m ON m.type = 'table'
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Restore schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '25', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![25],
+    });
+}
+
+/// Version 27: Fix pg_proc column types
+fn register_v27_fix_pg_proc_types(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(27, Migration {
+        version: 27,
+        name: "fix_pg_proc_types",
+        description: "Fix pg_proc view column types to ensure proper text type inference",
+        up: MigrationAction::SqlBatch(&[
+            // Drop and recreate the view with proper type casting
+            r#"DROP VIEW IF EXISTS pg_proc;"#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_proc AS
+            SELECT
+                (16384 + row_number() OVER ()) as oid,          -- Unique OID starting from 16384
+                func_name as proname,                           -- Function name
+                11 as pronamespace,                             -- pg_catalog namespace
+                10 as proowner,                                 -- postgres user OID
+                12 as prolang,                                  -- SQL language OID
+                1 as procost,                                   -- Cost estimate
+                0 as prorows,                                   -- Estimated result rows
+                0 as provariadic,                               -- Variadic argument OID
+                0 as prosupport,                                -- Support function OID
+                CAST(func_kind AS TEXT) as prokind,             -- Function kind ('f', 'a', 'p')
+                CAST('f' AS TEXT) as prosecdef,                 -- Security definer
+                CAST('f' AS TEXT) as proleakproof,              -- Leak proof
+                CAST(func_strict AS TEXT) as proisstrict,       -- Strict (returns null on null input)
+                CAST(func_retset AS TEXT) as proretset,         -- Returns set
+                CAST(func_volatile AS TEXT) as provolatile,     -- Volatility ('i', 's', 'v')
+                CAST('s' AS TEXT) as proparallel,               -- Parallel safety
+                0 as pronargs,                                  -- Number of arguments (simplified)
+                0 as pronargdefaults,                           -- Number of default arguments
+                func_rettype as prorettype,                     -- Return type OID
+                '' as proargtypes,                              -- Argument types (simplified)
+                NULL as proallargtypes,                         -- All argument types
+                NULL as proargmodes,                            -- Argument modes
+                NULL as proargnames,                            -- Argument names
+                NULL as proargdefaults,                         -- Default expressions
+                NULL as protrftypes,                            -- Transform types
+                '' as prosrc,                                   -- Source code
+                NULL as probin,                                 -- Binary location
+                NULL as prosqlbody,                             -- SQL body
+                NULL as proconfig,                              -- Configuration
+                NULL as proacl                                  -- Access privileges
+            FROM (
+                -- String functions
+                SELECT 'length' as func_name, 'f' as func_kind, 't' as func_strict, 'f' as func_retset, 'i' as func_volatile, 23 as func_rettype
+                UNION ALL SELECT 'lower', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'upper', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'substr', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'replace', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'trim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'ltrim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'rtrim', 'f', 't', 'f', 'i', 25
+
+                -- Math functions
+                UNION ALL SELECT 'abs', 'f', 't', 'f', 'i', 23
+                UNION ALL SELECT 'round', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'ceil', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'floor', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'sqrt', 'f', 't', 'f', 'i', 701
+                UNION ALL SELECT 'power', 'f', 't', 'f', 'i', 701
+
+                -- Aggregate functions
+                UNION ALL SELECT 'count', 'a', 'f', 't', 'v', 20  -- bigint
+                UNION ALL SELECT 'sum', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'avg', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'max', 'a', 'f', 't', 'v', 2283  -- any
+                UNION ALL SELECT 'min', 'a', 'f', 't', 'v', 2283  -- any
+
+                -- Date/time functions
+                UNION ALL SELECT 'now', 'f', 'f', 'f', 'v', 1184  -- timestamptz
+                UNION ALL SELECT 'date', 'f', 't', 'f', 'i', 1082  -- date
+                UNION ALL SELECT 'extract', 'f', 't', 'f', 'i', 701  -- float8
+
+                -- JSON functions
+                UNION ALL SELECT 'json_agg', 'a', 'f', 't', 'v', 114     -- json
+                UNION ALL SELECT 'jsonb_agg', 'a', 'f', 't', 'v', 3802   -- jsonb
+                UNION ALL SELECT 'json_object_agg', 'a', 'f', 't', 'v', 114  -- json
+                UNION ALL SELECT 'json_extract', 'f', 't', 'f', 'i', 25   -- text
+                UNION ALL SELECT 'jsonb_set', 'f', 't', 'f', 'i', 3802    -- jsonb
+
+                -- Array functions
+                UNION ALL SELECT 'array_agg', 'a', 'f', 't', 'v', 2277    -- anyarray
+                UNION ALL SELECT 'unnest', 'f', 'f', 't', 'i', 2283       -- setof any
+                UNION ALL SELECT 'array_length', 'f', 't', 'f', 'i', 23   -- int4
+
+                -- UUID functions
+                UNION ALL SELECT 'uuid_generate_v4', 'f', 'f', 'f', 'v', 2950  -- uuid
+
+                -- System functions
+                UNION ALL SELECT 'version', 'f', 'f', 'f', 's', 25         -- text
+                UNION ALL SELECT 'current_database', 'f', 'f', 'f', 's', 19  -- name
+                UNION ALL SELECT 'current_user', 'f', 'f', 'f', 's', 19      -- name
+                UNION ALL SELECT 'session_user', 'f', 'f', 'f', 's', 19      -- name
+                UNION ALL SELECT 'current_schema', 'f', 'f', 'f', 's', 19    -- name
+
+                -- PostgreSQL system functions
+                UNION ALL SELECT 'pg_has_role', 'f', 'f', 'f', 's', 16       -- boolean
+                UNION ALL SELECT 'has_table_privilege', 'f', 'f', 'f', 's', 16  -- boolean
+
+                -- Full-text search
+                UNION ALL SELECT 'to_tsvector', 'f', 't', 'f', 'i', 3614     -- tsvector
+                UNION ALL SELECT 'to_tsquery', 'f', 't', 'f', 'i', 3615      -- tsquery
+                UNION ALL SELECT 'plainto_tsquery', 'f', 't', 'f', 'i', 3615 -- tsquery
+            );
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '27', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            // Restore previous version
+            r#"DROP VIEW IF EXISTS pg_proc;"#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '26', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![26],
     });
 }

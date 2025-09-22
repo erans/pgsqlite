@@ -90,6 +90,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        info!("PARSE: Starting parse for statement '{}', query: {}", name, query);
         // Fast path: Check if we already have this prepared statement
         // This avoids re-parsing the same query multiple times
         if !name.is_empty() {
@@ -98,6 +99,7 @@ impl ExtendedQueryHandler {
                 // Check if it's the same query
                 if existing.query == query && existing.param_types == param_types {
                     // Already parsed, just send ParseComplete
+                    info!("PARSE: Using cached statement '{}' with {} field_descriptions", name, existing.field_descriptions.len());
                     drop(statements);
                     framed.send(BackendMessage::ParseComplete).await
                         .map_err(PgSqliteError::Io)?;
@@ -398,6 +400,7 @@ impl ExtendedQueryHandler {
         
         // Pre-translate the query first so we can analyze the translated version
         #[cfg(feature = "unified_processor")]
+        #[allow(unused_mut)]
         let mut translated_for_analysis = {
             // Use unified processor for translation - it handles ALL translations
             db.with_session_connection(&session.id, |conn| {
@@ -423,6 +426,7 @@ impl ExtendedQueryHandler {
         }
         
         // Translate datetime functions if needed and capture metadata
+        #[allow(unused_mut)]
         let mut translation_metadata = crate::translator::TranslationMetadata::new();
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::DateTimeTranslator::needs_translation(&translated_for_analysis) {
@@ -506,16 +510,18 @@ impl ExtendedQueryHandler {
         
         // For now, we'll just analyze the query to get field descriptions
         // In a real implementation, we'd parse the SQL and validate it
-        info!("Analyzing query '{}' for field descriptions", translated_for_analysis);
-        info!("Original query: {}", cleaned_query);
-        info!("Is simple param select: {}", is_simple_param_select);
+        info!("PARSE: Analyzing query '{}' for field descriptions", translated_for_analysis);
+        info!("PARSE: Original query: {}", cleaned_query);
+        info!("PARSE: Is simple param select: {}", is_simple_param_select);
         let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
-            if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") || 
+            if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") ||
                cleaned_query.contains("pg_class") || cleaned_query.contains("pg_attribute") ||
-               cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") {
-                info!("Skipping field description for catalog query");
+               cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
+               cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_depend") ||
+               cleaned_query.contains("pg_database") {
+                info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
                 Vec::new()
             } else {
                 // Try to get field descriptions
@@ -556,10 +562,12 @@ impl ExtendedQueryHandler {
                         // Pre-fetch schema types for all columns if we have a table name
                         let mut schema_types = std::collections::HashMap::new();
                         if let Some(ref table) = table_name {
+                            info!("PARSE: Fetching schema types for table '{}'", table);
                             // For aliased columns, try to find the source column
                             for col_name in &response.columns {
                                 // First try direct lookup
                                 if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
+                                    info!("PARSE: Found schema type for column '{}' in table '{}': {}", col_name, table, pg_type);
                                     schema_types.insert(col_name.clone(), pg_type);
                                 } else {
                                     // Parse the query to find the source column for this alias
@@ -646,6 +654,7 @@ impl ExtendedQueryHandler {
                         let mut inferred_types = Vec::new();
                         
                         for (i, col_name) in response.columns.iter().enumerate() {
+                            info!("PARSE: Processing column {}: '{}'", i, col_name);
                             let inferred_type = {
                                 // First priority: Check if this column has an explicit cast
                                 if let Some(cast_type) = cast_info.get(&i) {
@@ -763,6 +772,7 @@ impl ExtendedQueryHandler {
                             if let Some(pg_type) = schema_types.get(col_name) {
                                 // Use basic type OID mapping (enum checking would require async which isn't allowed in closure)
                                 let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                info!("PARSE: Column '{}': using schema type '{}' -> OID {}", col_name, pg_type, type_oid);
                                 inferred_types.push(type_oid);
                                 continue;
                             }
@@ -773,6 +783,13 @@ impl ExtendedQueryHandler {
                                 info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
                                 inferred_types.push(oid);
                                 continue;  // Important: continue here to prevent value-based inference from overriding
+                            }
+
+                            // Special case for COUNT(*) which might have a different column name
+                            if col_lower == "count(*)" || col_lower == "count" {
+                                info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
+                                inferred_types.push(PgType::Int8.to_oid());
+                                continue;
                             }
                             
                             // Check if this looks like a numeric result column based on the translated query
@@ -798,8 +815,15 @@ impl ExtendedQueryHandler {
                             if !response.rows.is_empty() {
                                 if let Some(value) = response.rows[0].get(i) {
                                     let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
-                                    let inferred_type = crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref());
-                                    info!("Column '{}': inferring type from value '{}' -> type OID {}", col_name, value_str, inferred_type);
+                                    // Special case: For __pgsqlite_metadata.value column, always use TEXT
+                                    // to avoid incorrect type inference for metadata values like '25'
+                                    let inferred_type = if table_name.as_ref().map_or(false, |t| t == "__pgsqlite_metadata") && col_name == "value" {
+                                        info!("PARSE: Column 'value' in __pgsqlite_metadata: forcing TEXT type");
+                                        PgType::Text.to_oid()
+                                    } else {
+                                        crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                    };
+                                    info!("PARSE: Column '{}': inferring type from value '{}' -> type OID {} (should check schema first!)", col_name, value_str, inferred_type);
                                     inferred_types.push(inferred_type);
                                 } else {
                                     info!("Column '{}': NULL value, defaulting to text", col_name);
@@ -951,7 +975,7 @@ impl ExtendedQueryHandler {
         let translated_query = Some(translated_for_analysis);
         
         let stmt = PreparedStatement {
-            query: cleaned_query.clone(),
+            query: query.clone(), // Store original query instead of cleaned_query
             translated_query,
             param_types: actual_param_types.clone(),
             param_formats: vec![0; actual_param_types.len()], // Default to text format
@@ -1211,7 +1235,8 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        
+        println!("EXTENDED: handle_execute called for portal: '{}'", portal);
+
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
             let portals = session.portals.read().await;
@@ -1820,7 +1845,9 @@ impl ExtendedQueryHandler {
         
         
         // Debug: Check if this is a catalog query
-        if final_query.contains("pg_catalog") || final_query.contains("pg_type") {
+        if final_query.contains("pg_catalog") || final_query.contains("pg_type") ||
+           final_query.contains("pg_constraint") || final_query.contains("pg_index") ||
+           final_query.contains("pg_depend") {
             info!("Detected catalog query in extended protocol: {}", final_query);
         }
         
@@ -1887,19 +1914,47 @@ impl ExtendedQueryHandler {
             
             // Check if this is a catalog query that needs special handling
             let query = &stmt.query;
-            let is_catalog_query = query.contains("pg_catalog") || query.contains("pg_type") || 
-                                   query.contains("pg_namespace") || query.contains("pg_class") || 
-                                   query.contains("pg_attribute");
+            let is_catalog_query = query.contains("pg_catalog") || query.contains("pg_type") ||
+                                   query.contains("pg_namespace") || query.contains("pg_class") ||
+                                   query.contains("pg_attribute") || query.contains("pg_constraint") ||
+                                   query.contains("pg_index") || query.contains("pg_depend") ||
+                                   query.contains("pg_database") || query.contains("information_schema");
             
             // Then send RowDescription or NoData
             if !stmt.field_descriptions.is_empty() {
                 info!("Sending RowDescription with {} fields in Describe", stmt.field_descriptions.len());
-                framed.send(BackendMessage::RowDescription(stmt.field_descriptions.clone())).await
+
+                // Fix field types for catalog queries before sending RowDescription
+                let mut corrected_fields = stmt.field_descriptions.clone();
+                if is_catalog_query || query.contains("pg_attribute") || query.contains("a.attnotnull") || query.contains("a.atthasdef") {
+                    for fd in &mut corrected_fields {
+                        let col_lower = fd.name.to_lowercase();
+                        match col_lower.as_str() {
+                            // Direct pg_attribute boolean columns
+                            "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing" | "attisdropped" | "attislocal" |
+                            // Common aliases for these columns in JOIN queries
+                            "not_null" | "has_default" | "is_not_null" | "has_def" => {
+                                info!("Correcting field '{}' from type_oid {} to Bool type_oid {}", fd.name, fd.type_oid, PgType::Bool.to_oid());
+                                fd.type_oid = PgType::Bool.to_oid();
+                            }
+                            "attidentity" | "attgenerated" | "attalign" | "attstorage" | "attcompression" => {
+                                info!("Correcting field '{}' from type_oid {} to Char type_oid {}", fd.name, fd.type_oid, PgType::Char.to_oid());
+                                fd.type_oid = PgType::Char.to_oid();
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                for (i, fd) in corrected_fields.iter().enumerate() {
+                    info!("Field {}: name='{}', type_oid={}, table_oid={}", i, fd.name, fd.type_oid, fd.table_oid);
+                }
+                framed.send(BackendMessage::RowDescription(corrected_fields)).await
                     .map_err(PgSqliteError::Io)?;
             } else if is_catalog_query && query_starts_with_ignore_case(query, "SELECT") {
                 // For catalog SELECT queries, we need to provide field descriptions
                 // even though we skipped them during Parse
-                info!("Catalog query detected in Describe, generating field descriptions");
+                info!("Catalog query detected in Describe, generating field descriptions for: {}", query);
                 
                 // Parse the query to extract the selected columns (keep JSON path placeholders for now)
                 let field_descriptions = if let Ok(parsed) = sqlparser::parser::Parser::parse_sql(
@@ -1917,7 +1972,46 @@ impl ExtendedQueryHandler {
                             if is_select_star {
                                 // For SELECT *, we need to determine which catalog table is being queried
                                 // and return all its columns
-                                if query.contains("pg_class") {
+                                if query.contains("pg_database") {
+                                    info!("DESCRIBE: Generating field descriptions for pg_database SELECT *");
+                                    println!("DEBUG: pg_database field descriptions being generated");
+                                    // Return all pg_database columns
+                                    let all_columns = vec![
+                                        ("oid", PgType::Int4.to_oid()),
+                                        ("datname", PgType::Text.to_oid()),
+                                        ("datdba", PgType::Int4.to_oid()),
+                                        ("encoding", PgType::Int4.to_oid()),
+                                        ("datlocprovider", PgType::Text.to_oid()),
+                                        ("datistemplate", PgType::Text.to_oid()),   // Using Text since we return 'f'/'t'
+                                        ("datallowconn", PgType::Text.to_oid()),    // Using Text since we return 'f'/'t'
+                                        ("dathasloginevt", PgType::Text.to_oid()),  // Using Text since we return 'f'/'t'
+                                        ("datconnlimit", PgType::Int4.to_oid()),
+                                        ("datfrozenxid", PgType::Text.to_oid()),
+                                        ("datminmxid", PgType::Text.to_oid()),
+                                        ("dattablespace", PgType::Int4.to_oid()),
+                                        ("datcollate", PgType::Text.to_oid()),
+                                        ("datctype", PgType::Text.to_oid()),
+                                        ("datlocale", PgType::Text.to_oid()),
+                                        ("daticurules", PgType::Text.to_oid()),
+                                        ("datcollversion", PgType::Text.to_oid()),
+                                        ("datacl", PgType::Text.to_oid()),
+                                    ];
+
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        if i == 5 {
+                                            println!("DEBUG: pg_database column 5 ({}): type_oid = {}", name, oid);
+                                        }
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("pg_class") {
                                     // Return all pg_class columns (33 total in current PostgreSQL)
                                     const OID_TYPE: i32 = 26;
                                     const XID_TYPE: i32 = 28;
@@ -2005,6 +2099,229 @@ impl ExtendedQueryHandler {
                                         ("attmissingval", PgType::Text.to_oid()), // Simplified
                                     ];
                                     
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("pg_constraint") {
+                                    // Return all pg_constraint columns
+                                    let all_columns = vec![
+                                        ("oid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("conname", PgType::Text.to_oid()),
+                                        ("connamespace", PgType::Text.to_oid()), // Returned as text for now
+                                        ("contype", PgType::Char.to_oid()),
+                                        ("condeferrable", PgType::Bool.to_oid()),
+                                        ("condeferred", PgType::Bool.to_oid()),
+                                        ("convalidated", PgType::Bool.to_oid()),
+                                        ("conrelid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("contypid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("conindid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("conparentid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("confrelid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("confupdtype", PgType::Char.to_oid()),
+                                        ("confdeltype", PgType::Char.to_oid()),
+                                        ("confmatchtype", PgType::Char.to_oid()),
+                                        ("conislocal", PgType::Bool.to_oid()),
+                                        ("coninhcount", PgType::Int4.to_oid()),
+                                        ("connoinherit", PgType::Bool.to_oid()),
+                                        ("conkey", PgType::Text.to_oid()), // Simplified - actually int2[]
+                                        ("confkey", PgType::Text.to_oid()), // Simplified - actually int2[]
+                                        ("conpfeqop", PgType::Text.to_oid()), // Simplified - actually oid[]
+                                        ("conppeqop", PgType::Text.to_oid()), // Simplified - actually oid[]
+                                        ("conffeqop", PgType::Text.to_oid()), // Simplified - actually oid[]
+                                        ("confdelsetcols", PgType::Text.to_oid()), // Simplified - actually int2[]
+                                        ("conexclop", PgType::Text.to_oid()), // Simplified - actually oid[]
+                                        ("conbin", PgType::Text.to_oid()), // Simplified - actually pg_node_tree
+                                    ];
+
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("pg_depend") {
+                                    // Return all pg_depend columns
+                                    let all_columns = vec![
+                                        ("classid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("objid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("objsubid", PgType::Int4.to_oid()),
+                                        ("refclassid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("refobjid", PgType::Text.to_oid()), // Returned as text for now
+                                        ("refobjsubid", PgType::Int4.to_oid()),
+                                        ("deptype", PgType::Char.to_oid()),
+                                    ];
+
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("information_schema.schemata") {
+                                    // Return all information_schema.schemata columns
+                                    let all_columns = vec![
+                                        ("catalog_name", PgType::Text.to_oid()),
+                                        ("schema_name", PgType::Text.to_oid()),
+                                        ("schema_owner", PgType::Text.to_oid()),
+                                        ("default_character_set_catalog", PgType::Text.to_oid()),
+                                        ("default_character_set_schema", PgType::Text.to_oid()),
+                                        ("default_character_set_name", PgType::Text.to_oid()),
+                                        ("sql_path", PgType::Text.to_oid()),
+                                    ];
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("information_schema.tables") {
+                                    // Return all information_schema.tables columns
+                                    let all_columns = vec![
+                                        ("table_catalog", PgType::Text.to_oid()),
+                                        ("table_schema", PgType::Text.to_oid()),
+                                        ("table_name", PgType::Text.to_oid()),
+                                        ("table_type", PgType::Text.to_oid()),
+                                        ("self_referencing_column_name", PgType::Text.to_oid()),
+                                        ("reference_generation", PgType::Text.to_oid()),
+                                        ("user_defined_type_catalog", PgType::Text.to_oid()),
+                                        ("user_defined_type_schema", PgType::Text.to_oid()),
+                                        ("user_defined_type_name", PgType::Text.to_oid()),
+                                        ("is_insertable_into", PgType::Text.to_oid()),
+                                        ("is_typed", PgType::Text.to_oid()),
+                                        ("commit_action", PgType::Text.to_oid()),
+                                    ];
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("information_schema.columns") {
+                                    // Return all information_schema.columns columns (44 total)
+                                    let all_columns = vec![
+                                        ("table_catalog", PgType::Text.to_oid()),
+                                        ("table_schema", PgType::Text.to_oid()),
+                                        ("table_name", PgType::Text.to_oid()),
+                                        ("column_name", PgType::Text.to_oid()),
+                                        ("ordinal_position", PgType::Int4.to_oid()),
+                                        ("column_default", PgType::Text.to_oid()),
+                                        ("is_nullable", PgType::Text.to_oid()),
+                                        ("data_type", PgType::Text.to_oid()),
+                                        ("character_maximum_length", PgType::Int4.to_oid()),
+                                        ("character_octet_length", PgType::Int4.to_oid()),
+                                        ("numeric_precision", PgType::Int4.to_oid()),
+                                        ("numeric_precision_radix", PgType::Int4.to_oid()),
+                                        ("numeric_scale", PgType::Int4.to_oid()),
+                                        ("datetime_precision", PgType::Int4.to_oid()),
+                                        ("interval_type", PgType::Text.to_oid()),
+                                        ("interval_precision", PgType::Int4.to_oid()),
+                                        ("character_set_catalog", PgType::Text.to_oid()),
+                                        ("character_set_schema", PgType::Text.to_oid()),
+                                        ("character_set_name", PgType::Text.to_oid()),
+                                        ("collation_catalog", PgType::Text.to_oid()),
+                                        ("collation_schema", PgType::Text.to_oid()),
+                                        ("collation_name", PgType::Text.to_oid()),
+                                        ("domain_catalog", PgType::Text.to_oid()),
+                                        ("domain_schema", PgType::Text.to_oid()),
+                                        ("domain_name", PgType::Text.to_oid()),
+                                        ("udt_catalog", PgType::Text.to_oid()),
+                                        ("udt_schema", PgType::Text.to_oid()),
+                                        ("udt_name", PgType::Text.to_oid()),
+                                        ("scope_catalog", PgType::Text.to_oid()),
+                                        ("scope_schema", PgType::Text.to_oid()),
+                                        ("scope_name", PgType::Text.to_oid()),
+                                        ("maximum_cardinality", PgType::Int4.to_oid()),
+                                        ("dtd_identifier", PgType::Text.to_oid()),
+                                        ("is_self_referencing", PgType::Text.to_oid()),
+                                        ("is_identity", PgType::Text.to_oid()),
+                                        ("identity_generation", PgType::Text.to_oid()),
+                                        ("identity_start", PgType::Text.to_oid()),
+                                        ("identity_increment", PgType::Text.to_oid()),
+                                        ("identity_maximum", PgType::Text.to_oid()),
+                                        ("identity_minimum", PgType::Text.to_oid()),
+                                        ("identity_cycle", PgType::Text.to_oid()),
+                                        ("is_generated", PgType::Text.to_oid()),
+                                        ("generation_expression", PgType::Text.to_oid()),
+                                        ("is_updatable", PgType::Text.to_oid()),
+                                    ];
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("information_schema.key_column_usage") {
+                                    // Return all information_schema.key_column_usage columns (9 total)
+                                    let all_columns = vec![
+                                        ("constraint_catalog", PgType::Text.to_oid()),
+                                        ("constraint_schema", PgType::Text.to_oid()),
+                                        ("constraint_name", PgType::Text.to_oid()),
+                                        ("table_catalog", PgType::Text.to_oid()),
+                                        ("table_schema", PgType::Text.to_oid()),
+                                        ("table_name", PgType::Text.to_oid()),
+                                        ("column_name", PgType::Text.to_oid()),
+                                        ("ordinal_position", PgType::Int4.to_oid()),
+                                        ("position_in_unique_constraint", PgType::Int4.to_oid()),
+                                    ];
+                                    for (i, (name, oid)) in all_columns.into_iter().enumerate() {
+                                        fields.push(FieldDescription {
+                                            name: name.to_string(),
+                                            table_oid: 0,
+                                            column_id: (i + 1) as i16,
+                                            type_oid: oid,
+                                            type_size: -1,
+                                            type_modifier: -1,
+                                            format: 0,
+                                        });
+                                    }
+                                } else if query.contains("information_schema.table_constraints") {
+                                    // Return all information_schema.table_constraints columns
+                                    let all_columns = vec![
+                                        ("constraint_catalog", PgType::Text.to_oid()),
+                                        ("constraint_schema", PgType::Text.to_oid()),
+                                        ("constraint_name", PgType::Text.to_oid()),
+                                        ("table_catalog", PgType::Text.to_oid()),
+                                        ("table_schema", PgType::Text.to_oid()),
+                                        ("table_name", PgType::Text.to_oid()),
+                                        ("constraint_type", PgType::Text.to_oid()),
+                                        ("is_deferrable", PgType::Text.to_oid()),
+                                        ("initially_deferred", PgType::Text.to_oid()),
+                                        ("enforced", PgType::Text.to_oid()),
+                                        ("nulls_distinct", PgType::Text.to_oid()),
+                                    ];
                                     for (i, (name, oid)) in all_columns.into_iter().enumerate() {
                                         fields.push(FieldDescription {
                                             name: name.to_string(),
@@ -2213,6 +2530,7 @@ impl ExtendedQueryHandler {
         Ok(())
     }
     
+    #[allow(clippy::too_many_arguments)]
     async fn try_execute_fast_path_with_params<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         db: &Arc<DbHandler>,
@@ -2420,11 +2738,17 @@ impl ExtendedQueryHandler {
         let needs_binary_encoding = !result_formats.is_empty() && 
             result_formats.contains(&1);
         
-        if needs_binary_encoding && field_types.is_some() {
-            let types = field_types.unwrap();
-            for row in response.rows {
-                let encoded_row = Self::encode_row(&row, result_formats, types)?;
-                framed.send(BackendMessage::DataRow(encoded_row)).await?;
+        if needs_binary_encoding {
+            if let Some(types) = field_types {
+                for row in response.rows {
+                    let encoded_row = Self::encode_row(&row, result_formats, types)?;
+                    framed.send(BackendMessage::DataRow(encoded_row)).await?;
+                }
+            } else {
+                // Send as-is (text format) if no types available
+                for row in response.rows {
+                    framed.send(BackendMessage::DataRow(row)).await?;
+                }
             }
         } else {
             // Send as-is (text format)
@@ -2497,10 +2821,10 @@ impl ExtendedQueryHandler {
             })
             .unwrap_or(false);
         
-        if needs_conversion && field_types.is_some() {
-            let types = field_types.unwrap();
-            // Send DataRows with timestamp conversion
-            for row in response.rows {
+        if needs_conversion {
+            if let Some(types) = field_types {
+                // Send DataRows with timestamp conversion
+                for row in response.rows {
                 let mut converted_row = Vec::new();
                 for (i, cell) in row.iter().enumerate() {
                     let type_oid = types.get(i).copied().unwrap_or(25);
@@ -2560,6 +2884,7 @@ impl ExtendedQueryHandler {
                 }
                 framed.send(BackendMessage::DataRow(converted_row)).await?;
             }
+            }
         } else {
             // No conversion needed, but still need to apply binary encoding if requested
             // Check if binary format is requested
@@ -2567,12 +2892,18 @@ impl ExtendedQueryHandler {
                 (result_formats.len() == 1 && result_formats[0] == 1 || 
                  result_formats.contains(&1));
             
-            if needs_binary_encoding && field_types.is_some() {
-                // Apply binary encoding to results
-                let types = field_types.unwrap();
-                for row in response.rows {
-                    let encoded_row = Self::encode_row(&row, result_formats, types)?;
-                    framed.send(BackendMessage::DataRow(encoded_row)).await?;
+            if needs_binary_encoding {
+                if let Some(types) = field_types {
+                    // Apply binary encoding to results
+                    for row in response.rows {
+                        let encoded_row = Self::encode_row(&row, result_formats, types)?;
+                        framed.send(BackendMessage::DataRow(encoded_row)).await?;
+                    }
+                } else {
+                    // Send as-is (text format) if no types available
+                    for row in response.rows {
+                        framed.send(BackendMessage::DataRow(row)).await?;
+                    }
                 }
             } else {
                 // Send as-is (text format)
@@ -2990,8 +3321,21 @@ impl ExtendedQueryHandler {
         const TEXT_ARRAY_TYPE: i32 = 1009;
         const PG_NODE_TREE_TYPE: i32 = 194;
         
-        // Determine which catalog table based on query
-        if query.contains("pg_class") {
+        // Determine which catalog table based on column name patterns first, then query content
+        // First check if this is a pg_attribute column (regardless of what tables are in the query)
+        if column_name.starts_with("att") ||
+           ["not_null", "has_default", "is_not_null", "has_def"].contains(&column_name) {
+            match column_name {
+                "attrelid" | "atttypid" | "attcollation" => OID_TYPE,
+                "attname" | "attacl" | "attoptions" | "attfdwoptions" | "attmissingval" => PgType::Text.to_oid(),
+                "attstattarget" | "attndims" | "attcacheoff" | "atttypmod" | "attinhcount" => PgType::Int4.to_oid(),
+                "attlen" | "attnum" => PgType::Int2.to_oid(),
+                "attbyval" | "attnotnull" | "atthasdef" | "atthasmissing" | "attisdropped" | "attislocal" |
+                "not_null" | "has_default" | "is_not_null" | "has_def" => PgType::Bool.to_oid(),
+                "attalign" | "attstorage" | "attcompression" | "attidentity" | "attgenerated" => PgType::Char.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("pg_class") {
             match column_name {
                 "oid" | "relnamespace" | "reltype" | "reloftype" | "relowner" | "relam" | "relfilenode" | 
                 "reltablespace" | "reltoastrelid" | "relrewrite" => OID_TYPE,
@@ -3007,16 +3351,6 @@ impl ExtendedQueryHandler {
                 "relacl" => ACLITEM_ARRAY_TYPE,
                 "reloptions" => TEXT_ARRAY_TYPE,
                 "relpartbound" => PG_NODE_TREE_TYPE,
-                _ => PgType::Text.to_oid(),
-            }
-        } else if query.contains("pg_attribute") {
-            match column_name {
-                "attrelid" | "atttypid" | "attcollation" => OID_TYPE,
-                "attname" | "attacl" | "attoptions" | "attfdwoptions" | "attmissingval" => PgType::Text.to_oid(),
-                "attstattarget" | "attndims" | "attcacheoff" | "atttypmod" | "attinhcount" => PgType::Int4.to_oid(),
-                "attlen" | "attnum" => PgType::Int2.to_oid(),
-                "attbyval" | "attnotnull" | "atthasdef" | "atthasmissing" | "attisdropped" | "attislocal" => PgType::Bool.to_oid(),
-                "attalign" | "attstorage" | "attcompression" | "attidentity" | "attgenerated" => PgType::Char.to_oid(),
                 _ => PgType::Text.to_oid(),
             }
         } else if query.contains("pg_type") {
@@ -3035,6 +3369,60 @@ impl ExtendedQueryHandler {
             match column_name {
                 "oid" | "nspowner" => OID_TYPE,
                 "nspname" | "nspacl" => PgType::Text.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("pg_index") {
+            match column_name {
+                "indexrelid" | "indrelid" => OID_TYPE,
+                "indnatts" | "indnkeyatts" => PgType::Int4.to_oid(),
+                "indisunique" | "indisprimary" | "indisexclusion" | "indimmediate" |
+                "indisclustered" | "indisvalid" | "indcheckxmin" | "indisready" |
+                "indislive" | "indisreplident" => PgType::Bool.to_oid(),
+                "indkey" | "indcollation" | "indclass" | "indoption" | "indexprs" | "indpred" => PgType::Text.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("pg_constraint") {
+            match column_name {
+                "conname" => PgType::Text.to_oid(),
+                "contype" | "confupdtype" | "confdeltype" | "confmatchtype" => PgType::Char.to_oid(),
+                "condeferrable" | "condeferred" | "convalidated" | "conislocal" | "connoinherit" => PgType::Bool.to_oid(),
+                "coninhcount" => PgType::Int4.to_oid(),
+                // For now, return OID columns as Text since the handler returns string representations
+                // This can be improved later to return proper OID binary format
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("pg_depend") {
+            match column_name {
+                "objsubid" | "refobjsubid" => PgType::Int4.to_oid(),
+                "deptype" => PgType::Char.to_oid(),
+                // For now, return OID columns as Text since the handler returns string representations
+                // This can be improved later to return proper OID binary format
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("pg_database") {
+            match column_name {
+                "oid" => PgType::Int4.to_oid(),
+                "datname" => PgType::Text.to_oid(),
+                "datdba" => PgType::Int4.to_oid(),
+                "encoding" => PgType::Int4.to_oid(),
+                "datlocprovider" => PgType::Text.to_oid(),
+                "datistemplate" | "datallowconn" | "dathasloginevt" => PgType::Text.to_oid(), // Text because we return 'f'/'t'
+                "datconnlimit" => PgType::Int4.to_oid(),
+                "dattablespace" => PgType::Int4.to_oid(),
+                "datfrozenxid" | "datminmxid" | "datcollate" | "datctype" |
+                "datlocale" | "daticurules" | "datcollversion" | "datacl" => PgType::Text.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("information_schema.columns") {
+            match column_name {
+                "ordinal_position" | "character_maximum_length" | "character_octet_length" |
+                "numeric_precision" | "numeric_precision_radix" | "numeric_scale" |
+                "datetime_precision" | "interval_precision" | "maximum_cardinality" => PgType::Int4.to_oid(),
+                _ => PgType::Text.to_oid(),
+            }
+        } else if query.contains("information_schema.key_column_usage") {
+            match column_name {
+                "ordinal_position" | "position_in_unique_constraint" => PgType::Int4.to_oid(),
                 _ => PgType::Text.to_oid(),
             }
         } else {
@@ -3359,12 +3747,20 @@ impl ExtendedQueryHandler {
         result_formats: &[i16],
         field_types: &[i32],
     ) -> Result<Vec<Option<Vec<u8>>>, PgSqliteError> {
-        
+        info!("encode_row called with {} fields, {} result_formats, {} field_types",
+              row.len(), result_formats.len(), field_types.len());
+        info!("  result_formats: {:?}", result_formats);
+        info!("  field_types: {:?}", field_types);
+
         // Log the first few values for debugging
         for (i, value) in row.iter().take(3).enumerate() {
             if let Some(bytes) = value {
                 if let Ok(s) = std::str::from_utf8(bytes) {
                     debug!("  Field {}: '{}' (type OID {})", i, s, field_types.get(i).unwrap_or(&0));
+                    // Extra debug for array types
+                    if field_types.get(i).copied().unwrap_or(0) == 1007 {
+                        info!("  DEBUG: Encoding INT4Array field {} with value '{}'", i, s);
+                    }
                 } else {
                     debug!("  Field {}: <binary data> (type OID {})", i, field_types.get(i).unwrap_or(&0));
                 }
@@ -3490,10 +3886,110 @@ impl ExtendedQueryHandler {
                                     Some(bytes.clone())
                                 }
                             }
-                            // NOTE: Array type handling removed because:
-                            // 1. Arrays are stored as JSON strings in SQLite
-                            // 2. We return them as TEXT type to clients
-                            // 3. Binary array encoding is not implemented
+                            // Array types - now with binary support
+                            t if t == PgType::BoolArray.to_oid() => {
+                                // bool[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::Int2Array.to_oid() => {
+                                // int2[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::Int4Array.to_oid() => {
+                                // int4[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    info!("DEBUG: Calling encode_value for INT4Array with value: '{}'", s);
+                                    let encoded_result = crate::protocol::binary::BinaryEncoder::encode_value(
+                                        &rusqlite::types::Value::Text(s.clone()), type_oid, true
+                                    );
+                                    if let Some(ref binary_data) = encoded_result {
+                                        info!("DEBUG: Successfully encoded INT4Array to {} bytes", binary_data.len());
+                                        Some(binary_data.clone())
+                                    } else {
+                                        info!("DEBUG: Failed to encode INT4Array, falling back to text");
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    info!("DEBUG: INT4Array data is not valid UTF-8");
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::Int8Array.to_oid() => {
+                                // int8[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::Float4Array.to_oid() => {
+                                // float4[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::Float8Array.to_oid() => {
+                                // float8[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::TextArray.to_oid() || t == PgType::VarcharArray.to_oid() || t == PgType::CharArray.to_oid() => {
+                                // text[]/varchar[]/char[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
+                            t if t == PgType::NumericArray.to_oid() => {
+                                // numeric[] - encode JSON array to binary format
+                                if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                    if let Some(binary_data) = crate::protocol::binary::BinaryEncoder::encode_value(&rusqlite::types::Value::Text(s), type_oid, true) {
+                                        Some(binary_data)
+                                    } else {
+                                        Some(bytes.clone())
+                                    }
+                                } else {
+                                    Some(bytes.clone())
+                                }
+                            }
                             t if t == PgType::Uuid.to_oid() => {
                                 // uuid - convert text to binary (16 bytes)
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
@@ -3873,28 +4369,48 @@ impl ExtendedQueryHandler {
     {
         // Check if this is a catalog query first
         info!("execute_select: Checking if query is catalog query: {}", query);
+        if query.contains("int_array_with_nulls") {
+            info!("DEBUG: execute_select called with array null query: {}", query);
+        }
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
             info!("execute_select: Query intercepted by catalog handler");
+            println!("EXTENDED: Got catalog result, about to unwrap");
             let mut catalog_response = catalog_result?;
+            println!("EXTENDED: Unwrapped catalog result, columns: {}, rows: {}", catalog_response.columns.len(), catalog_response.rows.len());
             
             // For catalog queries with binary result formats, we need to ensure the data
             // is in the correct format for binary encoding
             let portals = session.portals.read().await;
             let portal = portals.get(portal_name).unwrap();
             let has_binary_format = portal.result_formats.contains(&1);
+            println!("EXTENDED: result_formats = {:?}, has_binary_format = {}", portal.result_formats, has_binary_format);
             drop(portals);
             
-            if has_binary_format && query.contains("pg_attribute") {
-                info!("Converting catalog text data for binary encoding");
-                // pg_attribute specific handling - ensure numeric columns are properly formatted
-                for row in &mut catalog_response.rows {
-                    // attnum is at index 5
-                    if row.len() > 5
-                        && let Some(Some(attnum_bytes)) = row.get_mut(5)
-                            && let Ok(attnum_str) = String::from_utf8(attnum_bytes.clone()) {
-                                // Ensure it's just the numeric value without extra formatting
-                                *attnum_bytes = attnum_str.trim().as_bytes().to_vec();
-                            }
+            if has_binary_format {
+                if query.contains("pg_attribute") {
+                    info!("Converting catalog text data for binary encoding");
+                    // pg_attribute specific handling - ensure numeric columns are properly formatted
+                    for row in &mut catalog_response.rows {
+                        // attnum is at index 5
+                        if row.len() > 5
+                            && let Some(Some(attnum_bytes)) = row.get_mut(5)
+                                && let Ok(attnum_str) = String::from_utf8(attnum_bytes.clone()) {
+                                    // Ensure it's just the numeric value without extra formatting
+                                    *attnum_bytes = attnum_str.trim().as_bytes().to_vec();
+                                }
+                    }
+                } else if query.contains("pg_database") {
+                    info!("Converting pg_database boolean data for binary encoding");
+                    // pg_database has boolean columns that need special handling
+                    // They're stored as 'f'/'t' but need to be converted for binary format
+                    // No conversion needed here - the binary encoder will handle 'f'/'t' for Bool type
+                    println!("EXTENDED: pg_database binary format - boolean columns will be handled by encoder");
+                } else if query.contains("information_schema") {
+                    info!("Converting information_schema text data for binary encoding");
+                    // For information_schema queries, the data is already in text format
+                    // which is what binary encoding expects for text columns
+                    // No additional conversion needed - the binary encoder will handle it
+                    println!("EXTENDED: information_schema binary format - no conversion needed");
                 }
             }
             
@@ -3904,7 +4420,10 @@ impl ExtendedQueryHandler {
             let cached_conn = Self::get_or_cache_connection(session, db).await;
             db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
         };
-        
+
+        println!("EXTENDED: About to process response, columns: {}, rows: {}", response.columns.len(), response.rows.len());
+        println!("EXTENDED: Query contains 'int_array_with_nulls': {}", query.contains("int_array_with_nulls"));
+
         // Check if we need to send RowDescription
         // We send it if:
         // 1. The prepared statement had no field descriptions (wasn't Described or Describe sent NoData)
@@ -3927,6 +4446,7 @@ impl ExtendedQueryHandler {
             needs_row_desc
         };
         
+        info!("EXECUTE: send_row_desc = {} for query: {}", send_row_desc, query);
         if send_row_desc {
             // Extract table name from query to look up schema
             let table_name = extract_table_name_from_select(query);
@@ -4009,6 +4529,11 @@ impl ExtendedQueryHandler {
                 
                 // Perform async lookups for aggregate functions
                 let mut aggregate_types = std::collections::HashMap::new();
+
+                // Pre-compile regex patterns to avoid recompilation in loop
+                let max_regex = regex::Regex::new(r"\(\s*SELECT\s+MAX\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)").ok();
+                let min_regex = regex::Regex::new(r"\(\s*SELECT\s+MIN\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)").ok();
+
                 for (idx, col_name) in async_lookups_needed {
                     // Extract the aggregate function and column
                     let col_lower = col_name.to_lowercase();
@@ -4017,7 +4542,7 @@ impl ExtendedQueryHandler {
                     let mut lookup_table = table_name.clone();
                     
                     // Look for scalar subquery pattern: (SELECT MAX(col) FROM table)
-                    if let Ok(re) = regex::Regex::new(r"\(\s*SELECT\s+MAX\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)")
+                    if let Some(re) = &max_regex
                         && let Some(captures) = re.captures(query)
                             && let Some(table_match) = captures.get(2) {
                                 lookup_table = Some(table_match.as_str().to_string());
@@ -4038,7 +4563,7 @@ impl ExtendedQueryHandler {
                             }
                     
                     // Also check for MIN
-                    if let Ok(re) = regex::Regex::new(r"\(\s*SELECT\s+MIN\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)")
+                    if let Some(re) = &min_regex
                         && let Some(captures) = re.captures(query)
                             && let Some(table_match) = captures.get(2) {
                                 lookup_table = Some(table_match.as_str().to_string());
@@ -4137,7 +4662,39 @@ impl ExtendedQueryHandler {
                         type_oid
                     })
                     .collect::<Vec<_>>();
-                
+
+                // Fix field types for catalog queries - both single table and JOINs
+                let mut corrected_field_types = field_types;
+                let should_correct = query.contains("pg_attribute") || (query.contains("a.attnotnull") || query.contains("a.atthasdef"));
+                info!("EXECUTE_SELECT: Boolean type correction check - should_correct={}, query contains pg_attribute={}, query contains a.attnotnull={}",
+                      should_correct, query.contains("pg_attribute"), query.contains("a.attnotnull"));
+                if should_correct {
+                    for (i, col_name) in response.columns.iter().enumerate() {
+                        let col_lower = col_name.to_lowercase();
+                        match col_lower.as_str() {
+                            // Direct pg_attribute boolean columns
+                            "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing" | "attisdropped" | "attislocal" |
+                            // Common aliases for these columns in JOIN queries
+                            "not_null" | "has_default" | "is_not_null" | "has_def" => {
+                                if i < corrected_field_types.len() {
+                                    let old_type = corrected_field_types[i];
+                                    corrected_field_types[i] = 16; // PgType::Bool.to_oid()
+                                    info!("EXECUTE_SELECT: Corrected column '{}' type from {} to BOOL (16)", col_name, old_type);
+                                }
+                            }
+                            "attidentity" | "attgenerated" | "attalign" | "attstorage" | "attcompression" => {
+                                if i < corrected_field_types.len() {
+                                    let old_type = corrected_field_types[i];
+                                    corrected_field_types[i] = 18; // PgType::Char.to_oid()
+                                    info!("EXECUTE_SELECT: Corrected column '{}' type from {} to CHAR (18)", col_name, old_type);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                let field_types = corrected_field_types;
+
                 let fields: Vec<FieldDescription> = {
                     let portals = session.portals.read().await;
                     let portal = portals.get(portal_name).unwrap();
@@ -4195,7 +4752,7 @@ impl ExtendedQueryHandler {
             let portal = portals.get(portal_name).unwrap();
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&portal.statement_name).unwrap();
-            let field_types: Vec<i32> = if stmt.field_descriptions.is_empty() {
+            let mut field_types: Vec<i32> = if stmt.field_descriptions.is_empty() {
                 // Try to infer types - we need async for schema lookup, so collect field descriptions first
                 let mut field_types = Vec::new();
                 
@@ -4203,6 +4760,7 @@ impl ExtendedQueryHandler {
                 let table_name = extract_table_name_from_select(&portal.query);
                 
                 for (i, col_name) in response.columns.iter().enumerate() {
+                    info!("EXECUTE: Processing column {}: '{}'", i, col_name);
                     // Check for aggregate functions first
                     let col_lower = col_name.to_lowercase();
                     
@@ -4211,11 +4769,19 @@ impl ExtendedQueryHandler {
                         field_types.push(oid);
                         continue;
                     }
+
+                    // Special case for COUNT(*) which might have a different column name
+                    if col_lower == "count(*)" || col_lower == "count" {
+                        info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
+                        field_types.push(PgType::Int8.to_oid());
+                        continue;
+                    }
                     
                     // Try schema-based type inference ALWAYS (not just for empty result sets)
                     // This is crucial for datetime types which are stored as INTEGER in SQLite
                     let mut found_type = false;
                     if let Some(ref table) = table_name {
+                        info!("EXECUTE: Looking up schema for column '{}' in table '{}'", col_name, table);
                         // Try to extract source table.column from alias
                         if let Some((source_table, source_col)) = Self::extract_source_table_column_for_alias(&portal.query, col_name) {
                             if let Ok(Some(pg_type_str)) = db.get_schema_type_with_session(&session.id, &source_table, &source_col).await {
@@ -4257,7 +4823,14 @@ impl ExtendedQueryHandler {
                         // Try to get type from value
                         let type_oid = if !response.rows.is_empty() {
                             if let Some(value) = response.rows[0].get(i) {
-                                crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                // Special case: For __pgsqlite_metadata.value column, always use TEXT
+                                // to avoid incorrect type inference for metadata values like '25'
+                                if table_name.as_ref().map_or(false, |t| t == "__pgsqlite_metadata") && col_name == "value" {
+                                    info!("EXECUTE: Column 'value' in __pgsqlite_metadata: forcing TEXT type");
+                                    25 // TEXT
+                                } else {
+                                    crate::types::SchemaTypeMapper::infer_type_from_value(value.as_deref())
+                                }
                             } else {
                                 25 // text for NULL
                             }
@@ -4273,6 +4846,30 @@ impl ExtendedQueryHandler {
             } else {
                 stmt.field_descriptions.iter().map(|fd| fd.type_oid).collect()
             };
+
+            // Fix field types for catalog queries - both single table and JOINs
+            if query.contains("pg_attribute") || (query.contains("a.attnotnull") || query.contains("a.atthasdef")) {
+                for (i, col_name) in response.columns.iter().enumerate() {
+                    let col_lower = col_name.to_lowercase();
+                    match col_lower.as_str() {
+                        // Direct pg_attribute boolean columns
+                        "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing" | "attisdropped" | "attislocal" |
+                        // Common aliases for these columns in JOIN queries
+                        "not_null" | "has_default" | "is_not_null" | "has_def" => {
+                            if i < field_types.len() {
+                                field_types[i] = PgType::Bool.to_oid();
+                            }
+                        }
+                        "attidentity" | "attgenerated" | "attalign" | "attstorage" | "attcompression" => {
+                            if i < field_types.len() {
+                                field_types[i] = PgType::Char.to_oid();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
             (portal.result_formats.clone(), field_types)
         };
         
@@ -4354,10 +4951,44 @@ impl ExtendedQueryHandler {
                 }
             }
         }
-        
-        for row in rows_to_send {
+
+        if query.contains("int_array_with_nulls") {
+            println!("DEBUG: About to process {} rows for array query", rows_to_send.len());
+            println!("DEBUG: field_types = {:?}", field_types);
+            println!("DEBUG: result_formats = {:?}", result_formats);
+        }
+
+        for (row_idx, row) in rows_to_send.into_iter().enumerate() {
+            // Debug: Log the raw data being retrieved
+            if query.contains("int_array_with_nulls") {
+                info!("DEBUG: Processing row {} for array query", row_idx);
+                info!("DEBUG: field_types length: {}, contents: {:?}", field_types.len(), field_types);
+                info!("DEBUG: result_formats length: {}, contents: {:?}", result_formats.len(), result_formats);
+                for (col_idx, col_data) in row.iter().enumerate() {
+                    if let Some(data) = col_data {
+                        let data_str = String::from_utf8_lossy(data);
+                        info!("  Column {}: '{}' (type OID: {})", col_idx, data_str,
+                              field_types.get(col_idx).copied().unwrap_or(25));
+                    } else {
+                        info!("  Column {}: NULL", col_idx);
+                    }
+                }
+            }
+
             // Convert row data based on result formats
             let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
+
+            // TODO: Fix boolean field type conversion for catalog queries
+            if query.contains("int_array_with_nulls") {
+                println!("DEBUG: encoded_row has {} fields", encoded_row.len());
+                if let Some(first_field) = encoded_row.first() {
+                    if let Some(data) = first_field {
+                        println!("DEBUG: First field has {} bytes, hex: {:02x?}", data.len(), &data[..std::cmp::min(50, data.len())]);
+                    } else {
+                        println!("DEBUG: First field is NULL");
+                    }
+                }
+            }
             framed.send(BackendMessage::DataRow(encoded_row)).await
                 .map_err(PgSqliteError::Io)?;
         }
@@ -4940,11 +5571,26 @@ impl ExtendedQueryHandler {
                     }
                 }
             }
-            
+
+            // Populate PostgreSQL catalog tables with constraint information
+            if let Some(table_name) = extract_table_name_from_create(query) {
+                db.with_session_connection(&session.id, |conn| {
+                    // Populate pg_constraint, pg_attrdef, and pg_index tables
+                    info!("Extended: About to populate constraints for table: {}", table_name);
+                    if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                        // Log the error but don't fail the CREATE TABLE operation
+                        warn!("Failed to populate constraints for table {}: {}", table_name, e);
+                    } else {
+                        debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                    }
+                    Ok(())
+                }).await?;
+            }
+
             // Send CommandComplete and return
             framed.send(BackendMessage::CommandComplete { tag: "CREATE TABLE".to_string() }).await
                 .map_err(PgSqliteError::Io)?;
-            
+
             return Ok(());
         };
         

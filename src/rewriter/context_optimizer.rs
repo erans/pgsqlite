@@ -212,9 +212,10 @@ mod tests {
         let mut optimizer = ContextOptimizer::new(300); // 5 minutes TTL
         
         let context1 = optimizer.get_or_create_context("query1", || {
-            let mut ctx = QueryContext::default();
-            ctx.default_table = Some("table1".to_string());
-            ctx
+            QueryContext {
+                default_table: Some("table1".to_string()),
+                ..Default::default()
+            }
         });
         
         let context2 = optimizer.get_or_create_context("query1", || {
@@ -250,12 +251,16 @@ mod tests {
     fn test_nested_context_optimization() {
         let mut optimizer = ContextOptimizer::new(300);
         
-        let mut outer = QueryContext::default();
-        outer.default_table = Some("outer_table".to_string());
+        let mut outer = QueryContext {
+            default_table: Some("outer_table".to_string()),
+            ..Default::default()
+        };
         outer.table_aliases.insert("o".to_string(), "outer_table".to_string());
         
-        let mut inner = QueryContext::default();
-        inner.default_table = Some("inner_table".to_string());
+        let mut inner = QueryContext {
+            default_table: Some("inner_table".to_string()),
+            ..Default::default()
+        };
         inner.table_aliases.insert("i".to_string(), "inner_table".to_string());
         
         let optimized = optimizer.optimize_nested_context(&outer, vec![inner]);

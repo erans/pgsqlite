@@ -21,12 +21,11 @@ async fn test_simple_set_timezone() {
     
     let mut found_timezone = false;
     for msg in results {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            if let Some(tz) = row.get(0) {
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg
+            && let Some(tz) = row.get(0) {
                 assert_eq!(tz, "UTC");
                 found_timezone = true;
             }
-        }
     }
     assert!(found_timezone, "Should have found timezone value");
 }

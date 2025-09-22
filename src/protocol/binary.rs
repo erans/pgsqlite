@@ -4,6 +4,7 @@ use rust_decimal::prelude::*;
 use std::convert::TryInto;
 use std::str::FromStr;
 use crate::types::{PgType, DecimalHandler};
+use tracing::debug;
 
 /// Binary format encoders for PostgreSQL types
 pub struct BinaryEncoder;
@@ -122,7 +123,87 @@ impl BinaryEncoder {
         
         Ok(cents_i64.to_be_bytes().to_vec())
     }
-    
+
+    /// Convert PostgreSQL text array format to JSON format
+    /// PostgreSQL format: {1,2,3} or {"a","b","c"}
+    /// JSON format: [1,2,3] or ["a","b","c"]
+    fn pg_array_to_json(pg_array: &str) -> Result<String, String> {
+        let trimmed = pg_array.trim();
+
+        // If it's already JSON format, return as-is
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            return Ok(trimmed.to_string());
+        }
+
+        // Must be PostgreSQL format
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+            return Err(format!("Invalid array format: {}", pg_array));
+        }
+
+        // Extract the content between { and }
+        let inner = &trimmed[1..trimmed.len()-1];
+
+        // Handle empty array
+        if inner.is_empty() {
+            return Ok("[]".to_string());
+        }
+
+        let mut json_elements = Vec::new();
+        let mut current = String::new();
+        let mut in_quotes = false;
+        let mut escape_next = false;
+
+        for ch in inner.chars() {
+            if escape_next {
+                current.push(ch);
+                escape_next = false;
+                continue;
+            }
+
+            if ch == '\\' && in_quotes {
+                escape_next = true;
+                current.push(ch);
+                continue;
+            }
+
+            if ch == '"' {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            } else if ch == ',' && !in_quotes {
+                // End of element
+                let elem = current.trim();
+                if elem == "NULL" {
+                    json_elements.push("null".to_string());
+                } else if elem.starts_with('"') && elem.ends_with('"') {
+                    // Already quoted string
+                    json_elements.push(elem.to_string());
+                } else {
+                    // Numeric or boolean value
+                    json_elements.push(elem.to_string());
+                }
+                current.clear();
+            } else {
+                current.push(ch);
+            }
+        }
+
+        // Handle last element
+        if !current.is_empty() {
+            let elem = current.trim();
+            if elem == "NULL" {
+                json_elements.push("null".to_string());
+            } else if elem.starts_with('"') && elem.ends_with('"') {
+                // Already quoted string
+                json_elements.push(elem.to_string());
+            } else {
+                // Numeric or boolean value
+                json_elements.push(elem.to_string());
+            }
+        }
+
+        Ok(format!("[{}]", json_elements.join(",")))
+    }
+
     /// Encode an array value
     /// PostgreSQL array binary format:
     /// - ndim (i32): number of dimensions
@@ -134,16 +215,22 @@ impl BinaryEncoder {
     /// - NULL bitmap (optional): bit array indicating NULL positions
     /// - Elements: each prefixed with length (i32), -1 for NULL
     pub fn encode_array(
-        json_array_str: &str,
+        array_str: &str,
         elem_type_oid: i32,
     ) -> Result<Vec<u8>, String> {
+        debug!("encode_array called with: '{}', type_oid: {}", array_str, elem_type_oid);
+
+        // Convert PostgreSQL format to JSON if needed
+        let json_str = Self::pg_array_to_json(array_str)?;
+        debug!("After conversion to JSON: '{}'", json_str);
+
         // Parse JSON array
-        let array: serde_json::Value = serde_json::from_str(json_array_str)
+        let array: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| format!("Invalid JSON array: {e}"))?;
-        
+
         let elements = array.as_array()
             .ok_or_else(|| "Not a JSON array".to_string())?;
-        
+
         if elements.is_empty() {
             // Empty array
             let mut result = Vec::new();
@@ -152,92 +239,106 @@ impl BinaryEncoder {
             result.extend_from_slice(&elem_type_oid.to_be_bytes()); // elemtype
             return Ok(result);
         }
-        
+
         // Check for NULLs
         let has_nulls = elements.iter().any(|e| e.is_null());
+        debug!("Array has {} elements, has_nulls: {}", elements.len(), has_nulls);
         
         let mut result = Vec::new();
         
         // Header
         result.extend_from_slice(&1i32.to_be_bytes()); // ndim = 1 (1D array)
-        result.extend_from_slice(&(if has_nulls { 1i32 } else { 0i32 }).to_be_bytes()); // dataoffset placeholder
+
+        // flags field: 1 if array has nulls, 0 otherwise (PostgreSQL binary protocol format)
+        // Note: This is NOT dataoffset! The binary protocol uses a simple flag.
+        result.extend_from_slice(&(if has_nulls { 1i32 } else { 0i32 }).to_be_bytes());
         result.extend_from_slice(&elem_type_oid.to_be_bytes()); // elemtype
-        
+
         // Dimension info
         result.extend_from_slice(&(elements.len() as i32).to_be_bytes()); // dim_size
         result.extend_from_slice(&1i32.to_be_bytes()); // lower_bound = 1
-        
-        // NULL bitmap if needed
-        let bitmap_start = result.len();
-        if has_nulls {
-            // Create bitmap (1 bit per element, padded to byte boundary)
-            let bitmap_bytes = elements.len().div_ceil(8);
-            let mut bitmap = vec![0u8; bitmap_bytes];
-            
-            for (i, elem) in elements.iter().enumerate() {
-                if !elem.is_null() {
-                    let byte_idx = i / 8;
-                    let bit_idx = i % 8;
-                    bitmap[byte_idx] |= 1 << (7 - bit_idx);
-                }
-            }
-            
-            result.extend_from_slice(&bitmap);
-        }
-        
-        // Update dataoffset if we have nulls
-        if has_nulls {
-            let dataoffset = (bitmap_start + elements.len().div_ceil(8)) as i32;
-            result[4..8].copy_from_slice(&dataoffset.to_be_bytes());
-        }
+
+        // Note: PostgreSQL binary protocol does NOT include a NULL bitmap
+        // Instead, NULL values are indicated by -1 length in the data section
         
         // Encode elements
-        for elem in elements {
+        for (idx, elem) in elements.iter().enumerate() {
             if elem.is_null() {
-                // NULL element
+                debug!("Element {} is NULL, adding -1 length marker", idx);
+                // NULL elements always use -1 length marker in data section
                 result.extend_from_slice(&(-1i32).to_be_bytes());
-            } else {
-                // Encode element based on type
-                let elem_bytes = match elem_type_oid {
-                    t if t == PgType::Int4.to_oid() => {
-                        elem.as_i64()
-                            .and_then(|v| v.try_into().ok())
-                            .map(|v: i32| v.to_be_bytes().to_vec())
+                continue;
+            }
+
+            // Encode element based on type
+            let elem_bytes = match elem_type_oid {
+                t if t == PgType::Int4.to_oid() => {
+                    elem.as_i64()
+                        .and_then(|v| v.try_into().ok())
+                        .map(|v: i32| v.to_be_bytes().to_vec())
+                }
+                t if t == PgType::Int8.to_oid() => {
+                    elem.as_i64()
+                        .map(|v| v.to_be_bytes().to_vec())
+                }
+                t if t == PgType::Int2.to_oid() => {
+                    elem.as_i64()
+                        .and_then(|v| v.try_into().ok())
+                        .map(|v: i16| v.to_be_bytes().to_vec())
+                }
+                t if t == PgType::Float4.to_oid() => {
+                    elem.as_f64()
+                        .map(|v| (v as f32).to_be_bytes().to_vec())
+                }
+                t if t == PgType::Float8.to_oid() => {
+                    elem.as_f64()
+                        .map(|v| v.to_be_bytes().to_vec())
+                }
+                t if t == PgType::Bool.to_oid() => {
+                    elem.as_bool()
+                        .map(|v| vec![if v { 1 } else { 0 }])
+                }
+                t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
+                    elem.as_str()
+                        .map(|s| s.as_bytes().to_vec())
+                }
+                t if t == PgType::Numeric.to_oid() => {
+                    // Handle NUMERIC type - use string representation and encode as PostgreSQL NUMERIC binary format
+                    let numeric_str = if let Some(f) = elem.as_f64() {
+                        f.to_string()
+                    } else if let Some(s) = elem.as_str() {
+                        s.to_string()
+                    } else {
+                        elem.to_string()
+                    };
+                    // Parse string as Decimal and encode
+                    match Decimal::from_str(&numeric_str) {
+                        Ok(decimal) => Some(Self::encode_numeric(&decimal)),
+                        Err(_) => None,
                     }
-                    t if t == PgType::Int8.to_oid() => {
-                        elem.as_i64()
-                            .map(|v| v.to_be_bytes().to_vec())
-                    }
-                    t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
-                        elem.as_str()
-                            .map(|s| s.as_bytes().to_vec())
-                    }
-                    t if t == PgType::Float8.to_oid() => {
-                        elem.as_f64()
-                            .map(|v| v.to_be_bytes().to_vec())
-                    }
-                    t if t == PgType::Bool.to_oid() => {
-                        elem.as_bool()
-                            .map(|v| vec![if v { 1 } else { 0 }])
-                    }
-                    _ => {
-                        // Fall back to string representation
-                        Some(elem.to_string().into_bytes())
-                    }
-                };
-                
-                match elem_bytes {
-                    Some(bytes) => {
-                        result.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
-                        result.extend_from_slice(&bytes);
-                    }
-                    None => {
-                        return Err(format!("Cannot encode array element: {elem:?}"));
-                    }
+                }
+                _ => {
+                    // Fall back to string representation
+                    Some(elem.to_string().into_bytes())
+                }
+            };
+
+            match elem_bytes {
+                Some(bytes) => {
+                    debug!("Element {} encoded to {} bytes", idx, bytes.len());
+                    // In PostgreSQL binary array format, ALL elements have a 4-byte length prefix
+                    // This is different from individual value encoding where fixed-length types don't have prefixes
+                    result.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+                    result.extend_from_slice(&bytes);
+                }
+                None => {
+                    return Err(format!("Cannot encode array element: {elem:?}"));
                 }
             }
         }
-        
+
+        debug!("Total encoded array size: {} bytes", result.len());
+
         Ok(result)
     }
     
@@ -925,11 +1026,26 @@ impl BinaryEncoder {
                 }
             }
             // Array types
+            t if t == PgType::Int2Array.to_oid() => {
+                // INT2 array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        Self::encode_array(s, PgType::Int2.to_oid()).ok()
+                    }
+                    _ => None,
+                }
+            }
             t if t == PgType::Int4Array.to_oid() => {
                 // INT4 array
                 match value {
                     rusqlite::types::Value::Text(s) => {
-                        Self::encode_array(s, PgType::Int4.to_oid()).ok()
+                        debug!("encode_value: Int4Array with text value: '{}'", s);
+                        let result = Self::encode_array(s, PgType::Int4.to_oid());
+                        match &result {
+                            Ok(data) => debug!("encode_value: Int4Array encoded to {} bytes", data.len()),
+                            Err(e) => debug!("encode_value: Int4Array encoding failed: {}", e),
+                        }
+                        result.ok()
                     }
                     _ => None,
                 }
@@ -952,6 +1068,33 @@ impl BinaryEncoder {
                     _ => None,
                 }
             }
+            t if t == PgType::VarcharArray.to_oid() => {
+                // VARCHAR array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        Self::encode_array(s, PgType::Varchar.to_oid()).ok()
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::CharArray.to_oid() => {
+                // CHAR array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        Self::encode_array(s, PgType::Char.to_oid()).ok()
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::Float4Array.to_oid() => {
+                // FLOAT4 array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        Self::encode_array(s, PgType::Float4.to_oid()).ok()
+                    }
+                    _ => None,
+                }
+            }
             t if t == PgType::Float8Array.to_oid() => {
                 // FLOAT8 array
                 match value {
@@ -966,6 +1109,15 @@ impl BinaryEncoder {
                 match value {
                     rusqlite::types::Value::Text(s) => {
                         Self::encode_array(s, PgType::Bool.to_oid()).ok()
+                    }
+                    _ => None,
+                }
+            }
+            t if t == PgType::NumericArray.to_oid() => {
+                // NUMERIC array
+                match value {
+                    rusqlite::types::Value::Text(s) => {
+                        Self::encode_array(s, PgType::Numeric.to_oid()).ok()
                     }
                     _ => None,
                 }
@@ -1268,7 +1420,7 @@ mod tests {
         let empty = BinaryEncoder::encode_array("[]", PgType::Int4.to_oid()).unwrap();
         assert_eq!(empty.len(), 12); // 3 * 4 bytes for header
         assert_eq!(&empty[0..4], &0i32.to_be_bytes()); // ndim = 0
-        
+
         // Test simple int array
         let int_array = BinaryEncoder::encode_array("[1, 2, 3]", PgType::Int4.to_oid()).unwrap();
         // Verify header
@@ -1278,18 +1430,49 @@ mod tests {
         assert_eq!(i32::from_be_bytes(int_array[12..16].try_into().unwrap()), 3); // dim size
         assert_eq!(i32::from_be_bytes(int_array[16..20].try_into().unwrap()), 1); // lower bound
         
-        // Test array with nulls
+        // Test array with nulls - this is the critical test
         let null_array = BinaryEncoder::encode_array("[1, null, 3]", PgType::Int4.to_oid()).unwrap();
+        println!("NULL array encoded to {} bytes", null_array.len());
+        println!("Hex: {:02x?}", null_array);
+
+        // Check header (PostgreSQL binary protocol format)
         assert_eq!(i32::from_be_bytes(null_array[0..4].try_into().unwrap()), 1); // ndim = 1
-        assert!(i32::from_be_bytes(null_array[4..8].try_into().unwrap()) > 0); // has nulls
+        let has_nulls_flag = i32::from_be_bytes(null_array[4..8].try_into().unwrap());
+        assert_eq!(has_nulls_flag, 1, "has_nulls flag should be 1 for arrays with NULLs");
+        assert_eq!(i32::from_be_bytes(null_array[8..12].try_into().unwrap()), PgType::Int4.to_oid());
+        assert_eq!(i32::from_be_bytes(null_array[12..16].try_into().unwrap()), 3); // dim size = 3
+        assert_eq!(i32::from_be_bytes(null_array[16..20].try_into().unwrap()), 1); // lower bound = 1
+
+        // Note: PostgreSQL binary protocol does NOT include a NULL bitmap
+        // NULLs are indicated by -1 length in the data section
+
+        // Check elements starting at byte 20
+        // Element 0: value = 1
+        assert_eq!(i32::from_be_bytes(null_array[20..24].try_into().unwrap()), 4); // length = 4
+        assert_eq!(i32::from_be_bytes(null_array[24..28].try_into().unwrap()), 1); // value = 1
+
+        // Element 1: NULL
+        assert_eq!(i32::from_be_bytes(null_array[28..32].try_into().unwrap()), -1); // length = -1 for NULL
+
+        // Element 2: value = 3
+        assert_eq!(i32::from_be_bytes(null_array[32..36].try_into().unwrap()), 4); // length = 4
+        assert_eq!(i32::from_be_bytes(null_array[36..40].try_into().unwrap()), 3); // value = 3
+
+        // Total size should be 40 bytes (no NULL bitmap in binary protocol)
+        assert_eq!(null_array.len(), 40, "Array with 3 INT4 elements (1 NULL) should be 40 bytes");
         
         // Test text array
         let text_array = BinaryEncoder::encode_array(r#"["hello", "world"]"#, PgType::Text.to_oid()).unwrap();
         assert_eq!(i32::from_be_bytes(text_array[8..12].try_into().unwrap()), PgType::Text.to_oid());
-        
+
         // Test bool array
         let bool_array = BinaryEncoder::encode_array("[true, false, true]", PgType::Bool.to_oid()).unwrap();
         assert_eq!(i32::from_be_bytes(bool_array[8..12].try_into().unwrap()), PgType::Bool.to_oid());
+
+        // Test PostgreSQL format conversion
+        let pg_array = BinaryEncoder::encode_array("{1,NULL,3}", PgType::Int4.to_oid()).unwrap();
+        println!("PG format array encoded to {} bytes", pg_array.len());
+        assert_eq!(pg_array.len(), 40, "PG format should also encode to 40 bytes (binary protocol format)");
     }
     
     #[test]

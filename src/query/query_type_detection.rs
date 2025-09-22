@@ -65,9 +65,8 @@ impl QueryTypeDetector {
         }
         
         // Fall back to eq_ignore_ascii_case for less common or mixed case patterns
-        if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("WITH") {
-            QueryType::Select
-        } else if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("SELECT") {
+        if (trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("WITH")) ||
+           (trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("SELECT")) {
             QueryType::Select
         } else if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("INSERT") {
             QueryType::Insert
@@ -132,15 +131,11 @@ impl QueryTypeDetector {
         }
         
         // Fallback for mixed case
-        if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("CREATE") {
-            true
-        } else if trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("DROP") {
-            true
-        } else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ALTER") {
-            true
-        } else if trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("COMMENT") {
-            true
-        } else { trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("TRUNCATE") }
+        (trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("CREATE")) ||
+        (trimmed.len() >= 4 && trimmed[..4].eq_ignore_ascii_case("DROP")) ||
+        (trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("ALTER")) ||
+        (trimmed.len() >= 7 && trimmed[..7].eq_ignore_ascii_case("COMMENT")) ||
+        (trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("TRUNCATE"))
     }
     
     /// Check if query is DML with optimized comparison

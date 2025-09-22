@@ -3,13 +3,14 @@ use uuid::Uuid;
 use rusqlite::OptionalExtension;
 use crate::cache::SchemaCache;
 use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
-use crate::query::{QueryTypeDetector, QueryType, process_query};
+use crate::query::{QueryTypeDetector, QueryType, process_query, executor::extract_table_name_from_create};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
 use crate::session::ConnectionManager;
+use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
-use tracing::debug;
+use tracing::{debug, info, error};
 
 /// Database response structure
 #[derive(Debug)]
@@ -18,6 +19,9 @@ pub struct DbResponse {
     pub rows: Vec<Vec<Option<Vec<u8>>>>,
     pub rows_affected: usize,
 }
+
+/// Type alias for database result rows to simplify complex type signatures
+pub type DbRows = Vec<Vec<Option<Vec<u8>>>>;
 
 /// Thread-safe database handler using per-session connections
 /// 
@@ -29,7 +33,7 @@ pub struct DbHandler {
     schema_cache: Arc<SchemaCache>,
     string_validator: Arc<StringConstraintValidator>,
     statement_cache_optimizer: Arc<StatementCacheOptimizer>,
-    db_path: String,
+    pub(crate) db_path: String,
 }
 
 impl DbHandler {
@@ -353,6 +357,132 @@ impl DbHandler {
     
     /// Query without session (uses temporary connection)
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Check for pg_stats queries first - they should be intercepted regardless of database type
+        let lower_query = query.to_lowercase();
+        if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+
+            // For aggregate queries (COUNT, AVG, etc), we need to materialize pg_stats as a temp table
+            // and run the query against it
+            if lower_query.contains("count(") || lower_query.contains("avg(") ||
+               lower_query.contains("sum(") || lower_query.contains("max(") ||
+               lower_query.contains("min(") {
+                // Create a temporary connection and materialize pg_stats data
+                let temp_conn = rusqlite::Connection::open_in_memory().map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Failed to create temp connection: {e}"))
+                    )
+                })?;
+
+                // Create temp table with pg_stats schema
+                temp_conn.execute("
+                    CREATE TEMP TABLE pg_stats (
+                        schemaname TEXT,
+                        tablename TEXT,
+                        attname TEXT,
+                        inherited TEXT,
+                        null_frac TEXT,
+                        n_distinct TEXT,
+                        most_common_vals TEXT,
+                        most_common_freqs TEXT,
+                        histogram_bounds TEXT,
+                        correlation TEXT,
+                        most_common_elems TEXT,
+                        most_common_elem_freqs TEXT,
+                        elem_count_histogram TEXT
+                    )
+                ", []).ok();
+
+                // Get pg_stats data and insert into temp table
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_stats");
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            if let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
+                                // Insert the data into temp table
+                                for row in &stats_data.rows {
+                                    let mut values = Vec::new();
+                                    for col in row {
+                                        if let Some(bytes) = col {
+                                            values.push(String::from_utf8_lossy(bytes).to_string());
+                                        } else {
+                                            values.push("".to_string());
+                                        }
+                                    }
+                                    // Pad with empty values if needed
+                                    while values.len() < 13 {
+                                        values.push("".to_string());
+                                    }
+
+                                    temp_conn.execute(
+                                        "INSERT INTO pg_stats VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                        rusqlite::params![
+                                            values[0], values[1], values[2], values[3], values[4],
+                                            values[5], values[6], values[7], values[8], values[9],
+                                            values[10], values[11], values[12]
+                                        ]
+                                    ).ok();
+                                }
+
+                                // Now execute the original query against the temp table
+                                let mut stmt = temp_conn.prepare(query)?;
+                                let column_count = stmt.column_count();
+                                let mut columns = Vec::with_capacity(column_count);
+                                for i in 0..column_count {
+                                    columns.push(stmt.column_name(i)?.to_string());
+                                }
+
+                                let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                                    let mut row_data = Vec::with_capacity(column_count);
+                                    for i in 0..column_count {
+                                        let value: Option<rusqlite::types::Value> = row.get(i)?;
+                                        row_data.push(match value {
+                                            Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                            Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                            Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                            Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                            Some(rusqlite::types::Value::Null) | None => None,
+                                        });
+                                    }
+                                    Ok(row_data)
+                                })?.collect();
+
+                                return Ok(DbResponse {
+                                    columns,
+                                    rows: rows?,
+                                    rows_affected: 0,
+                                });
+                            }
+                        }
+            } else {
+                // For non-aggregate queries, use the direct handler
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            match PgStatsHandler::handle_query(select, self).await {
+                                Ok(response) => return Ok(response),
+                                Err(_) => {
+                                    // Fallback to empty response
+                                    return Ok(DbResponse {
+                                        columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                        rows: vec![],
+                                        rows_affected: 0,
+                                    });
+                                }
+                            }
+                        }
+            }
+
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
         // Check if it's any form of memory database (including named shared memory)
         if self.db_path == ":memory:" || self.db_path.contains("mode=memory") {
             // For memory databases, use a temporary session connection
@@ -425,6 +555,8 @@ impl DbHandler {
         // Check if this is a catalog query that should be intercepted
         // We need to do this before applying translations
         let lower_query = query.to_lowercase();
+
+        // We'll rewrite the query just before execution if needed
         
         // Handle special system function queries
         if lower_query.trim() == "select current_user()" {
@@ -434,17 +566,214 @@ impl DbHandler {
                 rows_affected: 1,
             });
         }
-        
-        if lower_query.contains("information_schema") || lower_query.contains("pg_catalog") || 
+
+        // Handle pg_tablespace queries
+        if lower_query.contains("pg_tablespace") || lower_query.contains("pg_catalog.pg_tablespace") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_tablespace_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["oid".to_string(), "spcname".to_string(), "spcowner".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_stats queries
+        if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        match PgStatsHandler::handle_query(select, self).await {
+                            Ok(response) => return Ok(response),
+                            Err(_) => {
+                                // Fallback to empty response
+                                return Ok(DbResponse {
+                                    columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                    rows: vec![],
+                                    rows_affected: 0,
+                                });
+                            }
+                        }
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.routines queries first
+        if lower_query.contains("information_schema.routines") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.triggers queries
+        if lower_query.contains("information_schema.triggers") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_triggers_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["trigger_catalog".to_string(), "trigger_schema".to_string(), "trigger_name".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.referential_constraints queries
+        if lower_query.contains("information_schema.referential_constraints") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_referential_constraints_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["constraint_name".to_string(), "constraint_catalog".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.check_constraints queries
+        if lower_query.contains("information_schema.check_constraints") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_check_constraints_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["constraint_catalog".to_string(), "constraint_schema".to_string(), "constraint_name".to_string(), "check_clause".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.views queries
+        if lower_query.contains("information_schema.views") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_views_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["table_name".to_string(), "view_definition".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        if (lower_query.contains("pg_catalog") ||
            lower_query.contains("pg_type") || lower_query.contains("pg_class") ||
-           lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") {
+           lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") ||
+           lower_query.contains("pg_stats") || lower_query.contains("pg_roles") ||
+           lower_query.contains("pg_user")) &&
+           !lower_query.contains("information_schema") {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
             if lower_query.contains("information_schema.tables") {
                 return self.handle_information_schema_tables_query(query, session_id).await;
             }
-            
+
+            if lower_query.contains("information_schema.columns") {
+                // Use the catalog interceptor for columns queries with session-based execution
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["table_name".to_string(), "column_name".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
+            if lower_query.contains("information_schema.key_column_usage") {
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_key_column_usage_query(select, self, session_id).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "column_name".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
+            if lower_query.contains("information_schema.table_constraints") {
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_table_constraints_query(select, self, session_id).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "constraint_type".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
+            if lower_query.contains("information_schema.routines") {
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
             // Handle SQLAlchemy table existence check with a simpler query
             if lower_query.contains("pg_class.relname") && 
                lower_query.contains("pg_namespace") && 
@@ -503,10 +832,11 @@ impl DbHandler {
     
     /// Query with session-specific connection
     pub async fn query_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        eprintln!("🔍 query_with_session called with query: {}", query);
         // Check if this is a catalog query that should be intercepted
         // We need to do this before applying translations
         let lower_query = query.to_lowercase();
-        
+
         // Handle special system function queries
         if lower_query.trim() == "select current_user()" {
             return Ok(DbResponse {
@@ -515,17 +845,343 @@ impl DbHandler {
                 rows_affected: 1,
             });
         }
-        
-        if lower_query.contains("information_schema") || lower_query.contains("pg_catalog") || 
+
+        // Handle pg_tablespace queries
+        if lower_query.contains("pg_tablespace") || lower_query.contains("pg_catalog.pg_tablespace") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_tablespace_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["oid".to_string(), "spcname".to_string(), "spcowner".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_stats queries
+        if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+
+            // For aggregate queries (COUNT, AVG, etc), we need to materialize pg_stats as a temp table
+            // and run the query against it
+            if lower_query.contains("count(") || lower_query.contains("avg(") ||
+               lower_query.contains("sum(") || lower_query.contains("max(") ||
+               lower_query.contains("min(") {
+                // Use the session connection to create a temp table
+                let result = self.connection_manager.execute_with_session(session_id, |conn| {
+                    // Create temp table with pg_stats schema
+                    conn.execute("
+                        CREATE TEMP TABLE IF NOT EXISTS pg_stats (
+                            schemaname TEXT,
+                            tablename TEXT,
+                            attname TEXT,
+                            inherited TEXT,
+                            null_frac TEXT,
+                            n_distinct TEXT,
+                            most_common_vals TEXT,
+                            most_common_freqs TEXT,
+                            histogram_bounds TEXT,
+                            correlation TEXT,
+                            most_common_elems TEXT,
+                            most_common_elem_freqs TEXT,
+                            elem_count_histogram TEXT
+                        )
+                    ", [])?;
+
+                    // Clear existing data
+                    conn.execute("DELETE FROM pg_stats", [])?;
+
+                    Ok(())
+                });
+
+                if result.is_ok() {
+                    // Get pg_stats data
+                    let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_stats");
+                    if let Ok(mut statements) = parsed_query
+                        && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                            && let Some(select) = query_ast.body.as_select() {
+                                if let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
+                                    // Insert the data into temp table
+                                    for row in &stats_data.rows {
+                                        let mut values = Vec::new();
+                                        for col in row {
+                                            if let Some(bytes) = col {
+                                                values.push(String::from_utf8_lossy(bytes).to_string());
+                                            } else {
+                                                values.push("".to_string());
+                                            }
+                                        }
+                                        // Pad with empty values if needed
+                                        while values.len() < 13 {
+                                            values.push("".to_string());
+                                        }
+
+                                        self.connection_manager.execute_with_session(session_id, |conn| {
+                                            conn.execute(
+                                                "INSERT INTO pg_stats VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                                rusqlite::params![
+                                                    &values[0], &values[1], &values[2], &values[3], &values[4],
+                                                    &values[5], &values[6], &values[7], &values[8], &values[9],
+                                                    &values[10], &values[11], &values[12]
+                                                ]
+                                            )?;
+                                            Ok(())
+                                        }).ok();
+                                    }
+
+                                    // Now execute the original query against the temp table
+                                    return self.connection_manager.execute_with_session(session_id, |conn| {
+                                        let processed_query = process_query(query, conn, &self.schema_cache)?;
+                                        let mut stmt = conn.prepare(&processed_query)?;
+                                        let column_count = stmt.column_count();
+                                        let mut columns = Vec::with_capacity(column_count);
+                                        for i in 0..column_count {
+                                            columns.push(stmt.column_name(i)?.to_string());
+                                        }
+
+                                        let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                                            let mut row_data = Vec::with_capacity(column_count);
+                                            for i in 0..column_count {
+                                                let value: Option<rusqlite::types::Value> = row.get(i)?;
+                                                row_data.push(match value {
+                                                    Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                                    Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                                    Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                                    Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                                    Some(rusqlite::types::Value::Null) | None => None,
+                                                });
+                                            }
+                                            Ok(row_data)
+                                        })?.collect();
+
+                                        Ok(DbResponse {
+                                            columns,
+                                            rows: rows?,
+                                            rows_affected: 0,
+                                        })
+                                    });
+                                }
+                            }
+                }
+            } else {
+                // For non-aggregate queries, use the direct handler
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            match PgStatsHandler::handle_query(select, self).await {
+                                Ok(response) => return Ok(response),
+                                Err(_) => {
+                                    // Fallback to empty response
+                                    return Ok(DbResponse {
+                                        columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                        rows: vec![],
+                                        rows_affected: 0,
+                                    });
+                                }
+                            }
+                        }
+            }
+
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.routines queries first
+        if lower_query.contains("information_schema.routines") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.triggers queries
+        if lower_query.contains("information_schema.triggers") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_triggers_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["trigger_catalog".to_string(), "trigger_schema".to_string(), "trigger_name".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.referential_constraints queries
+        if lower_query.contains("information_schema.referential_constraints") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_referential_constraints_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["constraint_name".to_string(), "constraint_catalog".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.check_constraints queries
+        if lower_query.contains("information_schema.check_constraints") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_check_constraints_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["constraint_catalog".to_string(), "constraint_schema".to_string(), "constraint_name".to_string(), "check_clause".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle information_schema.views queries
+        if lower_query.contains("information_schema.views") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return CatalogInterceptor::handle_information_schema_views_query_with_session(select, self, session_id).await;
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["table_name".to_string(), "view_definition".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_stats queries directly (simplified approach)
+        if lower_query.contains("pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                && let Some(select) = query_ast.body.as_select() {
+                match PgStatsHandler::handle_query(select, self).await {
+                    Ok(response) => return Ok(response),
+                    Err(_) => {
+                        // Fallback to empty response
+                        return Ok(DbResponse {
+                            columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                            rows: vec![],
+                            rows_affected: 0,
+                        });
+                    }
+                }
+            }
+        }
+
+        if (lower_query.contains("pg_catalog") ||
            lower_query.contains("pg_type") || lower_query.contains("pg_class") ||
-           lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") {
+           lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") ||
+           lower_query.contains("pg_stats") || lower_query.contains("pg_roles") ||
+           lower_query.contains("pg_user")) &&
+           !lower_query.contains("information_schema") {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
             if lower_query.contains("information_schema.tables") {
                 return self.handle_information_schema_tables_query(query, session_id).await;
             }
-            
+
+            if lower_query.contains("information_schema.columns") {
+                // Use the catalog interceptor for columns queries with session-based execution
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["table_name".to_string(), "column_name".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
+            if lower_query.contains("information_schema.key_column_usage") {
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_key_column_usage_query(select, self, session_id).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "column_name".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
+            if lower_query.contains("information_schema.table_constraints") {
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_table_constraints_query(select, self, session_id).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "constraint_type".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
+            if lower_query.contains("information_schema.routines") {
+                use crate::catalog::query_interceptor::CatalogInterceptor;
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
+                        }
+                // Fallback to empty response if parsing fails
+                return Ok(DbResponse {
+                    columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                });
+            }
+
             // Handle SQLAlchemy table existence check with a simpler query
             if lower_query.contains("pg_class.relname") && 
                lower_query.contains("pg_namespace") && 
@@ -538,10 +1194,17 @@ impl DbHandler {
             // For other pg_catalog queries, let them go through LazyQueryProcessor
             // which will strip the schema prefix and allow them to query the views
         }
-        
-        self.connection_manager.execute_with_session(session_id, |conn| {
+
+        // Rewrite information_schema queries to use real SQLite views
+        let rewritten_query = if lower_query.contains("information_schema") {
+            self.rewrite_information_schema_query(query)
+        } else {
+            query.to_string()
+        };
+
+        self.connection_manager.execute_with_session(session_id, move |conn| {
             // Process query with fast path optimization
-            let processed_query = process_query(query, conn, &self.schema_cache)?;
+            let processed_query = process_query(&rewritten_query, conn, &self.schema_cache)?;
             
             let mut stmt = conn.prepare(&processed_query)?;
             let column_count = stmt.column_count();
@@ -601,15 +1264,150 @@ impl DbHandler {
             self.remove_session_connection(&temp_session);
             Ok(result)
         } else {
-            let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
-            
+            let mut conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+
             // Register functions on the temporary connection
             crate::functions::register_all_functions(&conn)?;
-            
-            // Process query with fast path optimization
-            let processed_query = process_query(query, &conn, &self.schema_cache)?;
-            
+
+            // Handle COMMENT DDL statements
+            if CommentDdlHandler::is_comment_ddl(query) {
+                return match CommentDdlHandler::handle_comment_ddl(&mut conn, query) {
+                    Ok(()) => Ok(DbResponse {
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected: 0,
+                    }),
+                    Err(PgSqliteError::Sqlite(e)) => Err(e),
+                    Err(PgSqliteError::Protocol(msg)) => Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(msg)
+                    )),
+                    Err(_) => Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some("Comment operation failed".to_string())
+                    )),
+                };
+            }
+
+            // Check if this is a CREATE TABLE statement that needs special handling
+            let (processed_query, type_mappings) =
+                if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+                    eprintln!("🔨 Processing CREATE TABLE statement in query_with_session...");
+                    // Use CREATE TABLE translator with full metadata capture
+                    use crate::translator::CreateTableTranslator;
+                    match CreateTableTranslator::translate_with_connection_full(query, Some(&conn)) {
+                        Ok(result) => {
+                            debug!("CREATE TABLE translated with {} type mappings", result.type_mappings.len());
+                            (result.sql, result.type_mappings)
+                        }
+                        Err(e) => {
+                            return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("CREATE TABLE translation failed: {}", e))
+                            ));
+                        }
+                    }
+                } else {
+                    // Process query with fast path optimization for non-CREATE TABLE statements
+                    let processed = process_query(query, &conn, &self.schema_cache)?;
+                    (processed, std::collections::HashMap::new())
+                };
+
             let rows_affected = conn.execute(&processed_query, [])?;
+
+            // Handle CREATE TABLE metadata storage and constraints
+            if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
+                && let Some(table_name) = extract_table_name_from_create(query) {
+
+                // Store type mappings in schema metadata table
+                debug!("CREATE TABLE metadata storage: {} type mappings found", type_mappings.len());
+                if !type_mappings.is_empty() {
+                    // Initialize the metadata table if it doesn't exist
+                    let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        pg_type TEXT NOT NULL,
+                        sqlite_type TEXT NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_query, []) {
+                        debug!("Failed to create __pgsqlite_schema table: {}", e);
+                    }
+
+                    // Initialize numeric constraints table if it doesn't exist
+                    let init_numeric_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        precision INTEGER NOT NULL,
+                        scale INTEGER NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_numeric_query, []) {
+                        debug!("Failed to create __pgsqlite_numeric_constraints table: {}", e);
+                    }
+
+                    // Store each type mapping
+                    for (full_column, type_mapping) in &type_mappings {
+                        // Split table.column format
+                        let parts: Vec<&str> = full_column.split('.').collect();
+                        if parts.len() == 2 && parts[0] == table_name {
+                            let insert_query = format!(
+                                "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
+                                table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
+                            );
+
+                            if let Err(e) = conn.execute(&insert_query, []) {
+                                debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e);
+                            } else {
+                                debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type);
+                            }
+
+                            // Store numeric constraints if present
+                            debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
+                            if let Some(modifier) = type_mapping.type_modifier {
+                                // Extract base type without parameters
+                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                    type_mapping.pg_type[..paren_pos].trim()
+                                } else {
+                                    &type_mapping.pg_type
+                                };
+                                let pg_type_lower = base_type.to_lowercase();
+
+                                if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                                    // Decode precision and scale from modifier
+                                    let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                                    let precision = (tmp_typmod >> 16) & 0xFFFF;
+                                    let scale = tmp_typmod & 0xFFFF;
+
+                                    let constraint_query = format!(
+                                        "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) VALUES ('{}', '{}', {}, {})",
+                                        table_name, parts[1], precision, scale
+                                    );
+
+                                    if let Err(e) = conn.execute(&constraint_query, []) {
+                                        debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                    } else {
+                                        debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Populate constraints for CREATE TABLE statements
+                eprintln!("🔍 About to populate constraints for table: {}", table_name);
+                info!("About to populate constraints for table: {}", table_name);
+                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
+                    // Log the error but don't fail the CREATE TABLE operation
+                    error!("Failed to populate constraints for table {}: {}", table_name, e);
+                } else {
+                    info!("Successfully populated constraint catalog tables for table: {}", table_name);
+                }
+            }
+
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],
@@ -620,18 +1418,43 @@ impl DbHandler {
     
     /// Execute with session-specific connection (with optional cached connection)
     pub async fn execute_with_session_cached(
-        &self, 
-        query: &str, 
+        &self,
+        query: &str,
         session_id: &Uuid,
         cached_conn: Option<&Arc<parking_lot::Mutex<rusqlite::Connection>>>
     ) -> Result<DbResponse, PgSqliteError> {
+        eprintln!("🗂️ execute_with_session_cached called, cached_conn: {}", cached_conn.is_some());
         match cached_conn {
             Some(conn) => {
                 self.connection_manager.execute_with_cached_connection(conn, |conn| {
                     // Process query with fast path optimization
                     let processed_query = process_query(query, conn, &self.schema_cache)?;
-                    
+
                     let rows_affected = conn.execute(&processed_query, [])?;
+
+                    // Handle CREATE TABLE metadata storage
+                    if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
+                        && let Some(table_name) = extract_table_name_from_create(query) {
+                            // Get type mappings from CREATE TABLE translator
+                            use crate::translator::CreateTableTranslator;
+                            if let Ok(result) = CreateTableTranslator::translate_with_connection_full(query, Some(conn)) {
+                                if !result.type_mappings.is_empty() {
+                                    // Store type mappings and numeric constraints
+                                    if let Err(e) = self.store_create_table_metadata(conn, &table_name, &result.type_mappings) {
+                                        debug!("Failed to store CREATE TABLE metadata: {}", e);
+                                    }
+                                }
+
+                                // Populate constraints for CREATE TABLE statements
+                                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                                    // Log the error but don't fail the CREATE TABLE operation
+                                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                                } else {
+                                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                                }
+                            }
+                        }
+
                     Ok(DbResponse {
                         columns: vec![],
                         rows: vec![],
@@ -648,11 +1471,147 @@ impl DbHandler {
     
     /// Execute with session-specific connection
     pub async fn execute_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Handle COMMENT DDL statements (need mutable connection)
+        if CommentDdlHandler::is_comment_ddl(query) {
+            return self.connection_manager.execute_with_session_mut(session_id, |conn| {
+                match CommentDdlHandler::handle_comment_ddl(conn, query) {
+                    Ok(()) => Ok(DbResponse {
+                        columns: vec![],
+                        rows: vec![],
+                        rows_affected: 0,
+                    }),
+                    Err(PgSqliteError::Sqlite(e)) => Err(e),
+                    Err(PgSqliteError::Protocol(msg)) => Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(msg)
+                    )),
+                    Err(_) => Err(rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some("Comment operation failed".to_string())
+                    )),
+                }
+            });
+        }
+
         self.connection_manager.execute_with_session(session_id, |conn| {
-            // Process query with fast path optimization
-            let processed_query = process_query(query, conn, &self.schema_cache)?;
-            
+            // Check if this is a CREATE TABLE statement that needs special handling
+            let (processed_query, type_mappings, _array_columns, _enum_columns) =
+                if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+                    debug!("Processing CREATE TABLE statement with translation...");
+                    // Use CREATE TABLE translator with full metadata capture
+                    use crate::translator::CreateTableTranslator;
+                    match CreateTableTranslator::translate_with_connection_full(query, Some(conn)) {
+                        Ok(result) => {
+                            debug!("CREATE TABLE translated with {} type mappings and {} array columns",
+                                result.type_mappings.len(), result.array_columns.len());
+                            (result.sql, result.type_mappings, result.array_columns, result.enum_columns)
+                        }
+                        Err(e) => {
+                            return Err(rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                Some(format!("CREATE TABLE translation failed: {}", e))
+                            ));
+                        }
+                    }
+                } else {
+                    // Process query with fast path optimization for non-CREATE TABLE statements
+                    let processed = process_query(query, conn, &self.schema_cache)?;
+                    (processed, std::collections::HashMap::new(), Vec::new(), Vec::new())
+                };
+
             let rows_affected = conn.execute(&processed_query, [])?;
+
+            // Handle CREATE TABLE metadata storage and constraints
+            if query.trim_start().to_uppercase().starts_with("CREATE TABLE")
+                && let Some(table_name) = extract_table_name_from_create(query) {
+
+                // Store type mappings in schema metadata table
+                debug!("CREATE TABLE metadata storage: {} type mappings found", type_mappings.len());
+                if !type_mappings.is_empty() {
+                    // Initialize the metadata table if it doesn't exist
+                    let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        pg_type TEXT NOT NULL,
+                        sqlite_type TEXT NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_query, []) {
+                        debug!("Failed to create __pgsqlite_schema table: {}", e);
+                    }
+
+                    // Initialize numeric constraints table if it doesn't exist
+                    let init_numeric_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+                        table_name TEXT NOT NULL,
+                        column_name TEXT NOT NULL,
+                        precision INTEGER NOT NULL,
+                        scale INTEGER NOT NULL,
+                        PRIMARY KEY (table_name, column_name)
+                    )";
+
+                    if let Err(e) = conn.execute(init_numeric_query, []) {
+                        debug!("Failed to create __pgsqlite_numeric_constraints table: {}", e);
+                    }
+
+                    // Store each type mapping
+                    for (full_column, type_mapping) in &type_mappings {
+                        // Split table.column format
+                        let parts: Vec<&str> = full_column.split('.').collect();
+                        if parts.len() == 2 && parts[0] == table_name {
+                            let insert_query = format!(
+                                "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
+                                table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
+                            );
+
+                            if let Err(e) = conn.execute(&insert_query, []) {
+                                debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e);
+                            } else {
+                                debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type);
+                            }
+
+                            // Store numeric constraints if present
+                            debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
+                            if let Some(modifier) = type_mapping.type_modifier {
+                                // Extract base type without parameters
+                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                    type_mapping.pg_type[..paren_pos].trim()
+                                } else {
+                                    &type_mapping.pg_type
+                                };
+                                let pg_type_lower = base_type.to_lowercase();
+
+                                if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                                    // Decode precision and scale from modifier
+                                    let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                                    let precision = (tmp_typmod >> 16) & 0xFFFF;
+                                    let scale = tmp_typmod & 0xFFFF;
+
+                                    let constraint_query = format!(
+                                        "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) VALUES ('{}', '{}', {}, {})",
+                                        table_name, parts[1], precision, scale
+                                    );
+
+                                    if let Err(e) = conn.execute(&constraint_query, []) {
+                                        debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                                    } else {
+                                        debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Populate constraints for CREATE TABLE statements
+                if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(conn, &table_name) {
+                    // Log the error but don't fail the CREATE TABLE operation
+                    debug!("Failed to populate constraints for table {}: {}", table_name, e);
+                } else {
+                    debug!("Successfully populated constraint catalog tables for table: {}", table_name);
+                }
+            }
+
             Ok(DbResponse {
                 columns: vec![],
                 rows: vec![],
@@ -1185,7 +2144,9 @@ impl DbHandler {
             })
         })
     }
-    
+
+
+
     /// Handle SQLAlchemy table existence check query
     /// This optimizes the complex JOIN query by doing a simple table lookup
     async fn handle_table_existence_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
@@ -1222,6 +2183,99 @@ impl DbHandler {
                 rows_affected: 0,
             })
         })
+    }
+
+    /// Store CREATE TABLE metadata including type mappings and numeric constraints
+    fn store_create_table_metadata(
+        &self,
+        conn: &rusqlite::Connection,
+        table_name: &str,
+        type_mappings: &std::collections::HashMap<String, crate::metadata::TypeMapping>
+    ) -> Result<(), rusqlite::Error> {
+        debug!("Storing CREATE TABLE metadata: {} type mappings found", type_mappings.len());
+
+        // Initialize the metadata table if it doesn't exist
+        let init_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_schema (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            pg_type TEXT NOT NULL,
+            sqlite_type TEXT NOT NULL,
+            PRIMARY KEY (table_name, column_name)
+        )";
+
+        conn.execute(init_query, [])?;
+
+        // Initialize numeric constraints table if it doesn't exist
+        let init_numeric_query = "CREATE TABLE IF NOT EXISTS __pgsqlite_numeric_constraints (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            precision INTEGER NOT NULL,
+            scale INTEGER NOT NULL,
+            PRIMARY KEY (table_name, column_name)
+        )";
+
+        conn.execute(init_numeric_query, [])?;
+
+        // Store each type mapping
+        for (full_column, type_mapping) in type_mappings {
+            // Split table.column format
+            let parts: Vec<&str> = full_column.split('.').collect();
+            if parts.len() == 2 && parts[0] == table_name {
+                let insert_query = format!(
+                    "INSERT OR REPLACE INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type) VALUES ('{}', '{}', '{}', '{}')",
+                    table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type
+                );
+
+                if let Err(e) = conn.execute(&insert_query, []) {
+                    debug!("Failed to store metadata for {}.{}: {}", table_name, parts[1], e);
+                } else {
+                    debug!("Stored metadata: {}.{} -> {} ({})", table_name, parts[1], type_mapping.pg_type, type_mapping.sqlite_type);
+                }
+
+                // Store numeric constraints if present
+                debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
+                if let Some(modifier) = type_mapping.type_modifier {
+                    // Extract base type without parameters
+                    let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                        type_mapping.pg_type[..paren_pos].trim()
+                    } else {
+                        &type_mapping.pg_type
+                    };
+                    let pg_type_lower = base_type.to_lowercase();
+
+                    if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
+                        // Decode precision and scale from modifier
+                        let tmp_typmod = modifier - 4; // Remove VARHDRSZ
+                        let precision = (tmp_typmod >> 16) & 0xFFFF;
+                        let scale = tmp_typmod & 0xFFFF;
+
+                        let constraint_query = format!(
+                            "INSERT OR REPLACE INTO __pgsqlite_numeric_constraints (table_name, column_name, precision, scale) VALUES ('{}', '{}', {}, {})",
+                            table_name, parts[1], precision, scale
+                        );
+
+                        if let Err(e) = conn.execute(&constraint_query, []) {
+                            debug!("Failed to store numeric constraint for {}.{}: {}", table_name, parts[1], e);
+                        } else {
+                            debug!("Stored numeric constraint: {}.{} precision={} scale={}", table_name, parts[1], precision, scale);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rewrite information_schema queries to use real SQLite views
+    fn rewrite_information_schema_query(&self, query: &str) -> String {
+        query
+            .replace("information_schema.tables", "information_schema_tables")
+            .replace("information_schema.columns", "information_schema_columns")
+            .replace("information_schema.key_column_usage", "information_schema_key_column_usage")
+            .replace("information_schema.table_constraints", "information_schema_table_constraints")
+            .replace("information_schema.referential_constraints", "information_schema_referential_constraints")
+            .replace("information_schema.schemata", "information_schema_schemata")
     }
 }
 

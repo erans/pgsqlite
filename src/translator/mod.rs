@@ -27,6 +27,7 @@ mod query_analyzer;
 mod function_parentheses_translator;
 mod catalog_function_translator;
 mod pg_table_is_visible_translator;
+mod session_identifier_translator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;
@@ -55,3 +56,4 @@ pub use query_analyzer::{QueryAnalyzer, TranslationFlags};
 pub use function_parentheses_translator::FunctionParenthesesTranslator;
 pub use catalog_function_translator::CatalogFunctionTranslator;
 pub use pg_table_is_visible_translator::PgTableIsVisibleTranslator;
+pub use session_identifier_translator::SessionIdentifierTranslator;

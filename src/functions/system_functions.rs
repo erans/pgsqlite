@@ -184,17 +184,67 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
-    // pg_has_role(user, role, privilege) - Check if user has role privilege
+    // pg_has_role(role, privilege) - Check if current user has role privilege (2-parameter version)
+    conn.create_scalar_function(
+        "pg_has_role",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let role: String = ctx.get(0)?;
+            let privilege: String = ctx.get(1)?;
+
+            // Validate privilege type
+            let privilege_upper = privilege.to_uppercase();
+            if !matches!(privilege_upper.as_str(), "MEMBER" | "USAGE" | "SET") {
+                return Err(rusqlite::Error::UserFunctionError(
+                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                ));
+            }
+
+            // In SQLite, simulate reasonable PostgreSQL role behavior
+            // Most common roles that ORMs check for
+            match role.as_str() {
+                "pg_read_all_data" | "pg_read_all_settings" | "pg_monitor" => Ok(1i32), // true
+                "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => Ok(0i32), // false - security-sensitive
+                _ => Ok(1i32), // Default: assume user has access for compatibility
+            }
+        },
+    )?;
+
+    // pg_has_role(user, role, privilege) - Check if specified user has role privilege (3-parameter version)
     conn.create_scalar_function(
         "pg_has_role",
         3,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let _user: String = ctx.get(0)?;
-            let _role: String = ctx.get(1)?;
-            let _privilege: String = ctx.get(2)?;
-            // In SQLite, always return true for compatibility
-            Ok(1i32) // true in SQLite boolean representation
+            let user: String = ctx.get(0)?;
+            let role: String = ctx.get(1)?;
+            let privilege: String = ctx.get(2)?;
+
+            // Validate privilege type
+            let privilege_upper = privilege.to_uppercase();
+            if !matches!(privilege_upper.as_str(), "MEMBER" | "USAGE" | "SET") {
+                return Err(rusqlite::Error::UserFunctionError(
+                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                ));
+            }
+
+            // In SQLite, simulate reasonable PostgreSQL role behavior
+            // Check for common system users that might have restricted access
+            if user == "public" {
+                // Public role has limited access to sensitive roles
+                match role.as_str() {
+                    "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => Ok(0i32), // false
+                    _ => Ok(1i32), // true for most roles
+                }
+            } else {
+                // Regular users: check role type
+                match role.as_str() {
+                    "pg_read_all_data" | "pg_read_all_settings" | "pg_monitor" => Ok(1i32), // true
+                    "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => Ok(0i32), // false - security-sensitive
+                    _ => Ok(1i32), // Default: assume user has access for compatibility
+                }
+            }
         },
     )?;
     
@@ -226,17 +276,95 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
-    // has_table_privilege(user, table, privilege) - Check table privilege
+    // has_table_privilege(table, privilege) - Check if current user has table privilege (2-parameter version)
+    conn.create_scalar_function(
+        "has_table_privilege",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let table: String = ctx.get(0)?;
+            let privilege: String = ctx.get(1)?;
+
+            // Validate privilege type
+            let privilege_upper = privilege.to_uppercase();
+            if !matches!(privilege_upper.as_str(),
+                "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" |
+                "REFERENCES" | "TRIGGER" | "MAINTAIN" | "ALL" | "ALL PRIVILEGES") {
+                return Err(rusqlite::Error::UserFunctionError(
+                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                ));
+            }
+
+            // In SQLite, simulate table access control
+            // System catalog tables should be readable but not writable
+            if table.starts_with("pg_") || table.starts_with("information_schema.") || table.starts_with("information_schema_") {
+                match privilege_upper.as_str() {
+                    "SELECT" => Ok(1i32), // true - can read system catalogs
+                    "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" => Ok(0i32), // false - cannot modify system catalogs
+                    "REFERENCES" | "TRIGGER" => Ok(0i32), // false - cannot create references/triggers on system tables
+                    "MAINTAIN" => Ok(0i32), // false - cannot maintain system tables
+                    "ALL" | "ALL PRIVILEGES" => Ok(0i32), // false - no full privileges on system tables
+                    _ => Ok(0i32), // false by default for system tables
+                }
+            } else {
+                // Regular user tables - grant all privileges for compatibility
+                Ok(1i32) // true
+            }
+        },
+    )?;
+
+    // has_table_privilege(user, table, privilege) - Check if specified user has table privilege (3-parameter version)
     conn.create_scalar_function(
         "has_table_privilege",
         3,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let _user: String = ctx.get(0)?;
-            let _table: String = ctx.get(1)?;
-            let _privilege: String = ctx.get(2)?;
-            // In SQLite, always return true for compatibility
-            Ok(1i32) // true
+            let user: String = ctx.get(0)?;
+            let table: String = ctx.get(1)?;
+            let privilege: String = ctx.get(2)?;
+
+            // Validate privilege type
+            let privilege_upper = privilege.to_uppercase();
+            if !matches!(privilege_upper.as_str(),
+                "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" |
+                "REFERENCES" | "TRIGGER" | "MAINTAIN" | "ALL" | "ALL PRIVILEGES") {
+                return Err(rusqlite::Error::UserFunctionError(
+                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                ));
+            }
+
+            // In SQLite, simulate table access control based on user and table
+            if user == "public" {
+                // Public role has limited access
+                if table.starts_with("pg_") || table.starts_with("information_schema.") || table.starts_with("information_schema_") {
+                    match privilege_upper.as_str() {
+                        "SELECT" => Ok(1i32), // true - public can read most system catalogs
+                        _ => Ok(0i32), // false - public cannot modify system catalogs
+                    }
+                } else {
+                    // Public access to user tables depends on privilege
+                    match privilege_upper.as_str() {
+                        "SELECT" => Ok(1i32), // true - public can typically read user tables
+                        "INSERT" | "UPDATE" | "DELETE" => Ok(0i32), // false - public typically cannot modify
+                        _ => Ok(0i32), // false by default for public
+                    }
+                }
+            } else {
+                // Regular users
+                if table.starts_with("pg_") || table.starts_with("information_schema.") || table.starts_with("information_schema_") {
+                    match privilege_upper.as_str() {
+                        "SELECT" => Ok(1i32), // true - users can read system catalogs
+                        "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" => Ok(0i32), // false - cannot modify system catalogs
+                        "REFERENCES" | "TRIGGER" => Ok(0i32), // false - cannot create references/triggers on system tables
+                        "MAINTAIN" => Ok(0i32), // false - cannot maintain system tables
+                        "ALL" | "ALL PRIVILEGES" => Ok(0i32), // false - no full privileges on system tables
+                        _ => Ok(0i32), // false by default for system tables
+                    }
+                } else {
+                    // Regular user tables - grant all privileges for compatibility
+                    Ok(1i32) // true
+                }
+            }
         },
     )?;
     
@@ -296,9 +424,95 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(Option::<String>::None)
         },
     )?;
-    
+
+    // pg_size_pretty(size_in_bytes) - Format size in bytes as human-readable string
+    conn.create_scalar_function(
+        "pg_size_pretty",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Try to get the value as either i64 or string that can be parsed
+            let size_bytes = match ctx.get_raw(0).data_type() {
+                rusqlite::types::Type::Integer => ctx.get::<i64>(0)?,
+                rusqlite::types::Type::Text => {
+                    let text: String = ctx.get(0)?;
+                    match text.parse::<i64>() {
+                        Ok(value) => value,
+                        Err(_) => return Ok(Option::<String>::None), // Return NULL for invalid strings
+                    }
+                }
+                rusqlite::types::Type::Null => {
+                    return Ok(Option::<String>::None);
+                }
+                _ => {
+                    return Err(rusqlite::Error::UserFunctionError("Invalid size type".into()));
+                }
+            };
+
+            Ok(Some(format_size_pretty(size_bytes)))
+        },
+    )?;
+
+    // pg_size_pretty() - No argument version returns NULL
+    conn.create_scalar_function(
+        "pg_size_pretty",
+        0,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |_ctx| {
+            Ok(Option::<String>::None)
+        },
+    )?;
+
     debug!("System functions registered successfully");
     Ok(())
+}
+
+/// Format size in bytes as human-readable string using PostgreSQL's algorithm
+/// Uses binary prefixes: 1 kB = 1024 bytes, 1 MB = 1024² bytes, etc.
+/// Based on PostgreSQL source code in src/backend/utils/adt/dbsize.c
+fn format_size_pretty(mut size: i64) -> String {
+    let abs_size = size.unsigned_abs();
+
+    // PostgreSQL unit definitions
+    const BYTES_LIMIT: u64 = 10 * 1024;  // 10240 bytes
+    const UNIT_LIMIT: u64 = 10 * 1024;  // 10240 (for kB, MB, GB, TB, PB)
+
+    // Check if we should display as bytes
+    if abs_size < BYTES_LIMIT {
+        return format!("{} bytes", size);
+    }
+
+    // Convert to kB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_kb = size.unsigned_abs();
+    if abs_size_kb < UNIT_LIMIT {
+        return format!("{} kB", size);
+    }
+
+    // Convert to MB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_mb = size.unsigned_abs();
+    if abs_size_mb < UNIT_LIMIT {
+        return format!("{} MB", size);
+    }
+
+    // Convert to GB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_gb = size.unsigned_abs();
+    if abs_size_gb < UNIT_LIMIT {
+        return format!("{} GB", size);
+    }
+
+    // Convert to TB and check limit
+    size = (size + 512) / 1024; // Half-rounded division
+    let abs_size_tb = size.unsigned_abs();
+    if abs_size_tb < UNIT_LIMIT {
+        return format!("{} TB", size);
+    }
+
+    // Convert to PB (final unit)
+    size = (size + 512) / 1024; // Half-rounded division
+    format!("{} PB", size)
 }
 
 #[cfg(test)]
@@ -364,38 +578,108 @@ mod tests {
     fn test_privilege_functions() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        // Test pg_has_role
-        let has_role: i32 = conn.query_row(
-            "SELECT pg_has_role('postgres', 'pg_read_all_data', 'USAGE')", 
-            [], 
+
+        // Test pg_has_role - 2 parameter version (current user)
+        let has_role_2p: i32 = conn.query_row(
+            "SELECT pg_has_role('pg_read_all_data', 'USAGE')",
+            [],
             |row| row.get(0)
         ).unwrap();
-        assert_eq!(has_role, 1); // true
-        
+        assert_eq!(has_role_2p, 1); // true
+
+        // Test pg_has_role - 3 parameter version
+        let has_role_3p: i32 = conn.query_row(
+            "SELECT pg_has_role('postgres', 'pg_read_all_data', 'USAGE')",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(has_role_3p, 1); // true
+
+        // Test pg_has_role - security-sensitive role should return false
+        let has_sensitive_role: i32 = conn.query_row(
+            "SELECT pg_has_role('pg_read_server_files', 'USAGE')",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(has_sensitive_role, 0); // false
+
         // Test has_database_privilege
         let has_db_priv: i32 = conn.query_row(
-            "SELECT has_database_privilege('postgres', 'main', 'CREATE')", 
-            [], 
+            "SELECT has_database_privilege('postgres', 'main', 'CREATE')",
+            [],
             |row| row.get(0)
         ).unwrap();
         assert_eq!(has_db_priv, 1); // true
-        
+
         // Test has_schema_privilege
         let has_schema_priv: i32 = conn.query_row(
-            "SELECT has_schema_privilege('postgres', 'public', 'CREATE')", 
-            [], 
+            "SELECT has_schema_privilege('postgres', 'public', 'CREATE')",
+            [],
             |row| row.get(0)
         ).unwrap();
         assert_eq!(has_schema_priv, 1); // true
-        
-        // Test has_table_privilege
-        let has_table_priv: i32 = conn.query_row(
-            "SELECT has_table_privilege('postgres', 'pg_class', 'SELECT')", 
-            [], 
+
+        // Test has_table_privilege - 2 parameter version (current user)
+        let has_table_priv_2p: i32 = conn.query_row(
+            "SELECT has_table_privilege('pg_class', 'SELECT')",
+            [],
             |row| row.get(0)
         ).unwrap();
-        assert_eq!(has_table_priv, 1); // true
+        assert_eq!(has_table_priv_2p, 1); // true - can read system catalogs
+
+        // Test has_table_privilege - 3 parameter version
+        let has_table_priv_3p: i32 = conn.query_row(
+            "SELECT has_table_privilege('postgres', 'pg_class', 'SELECT')",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(has_table_priv_3p, 1); // true
+
+        // Test has_table_privilege - should deny INSERT on system tables
+        let has_table_insert: i32 = conn.query_row(
+            "SELECT has_table_privilege('pg_class', 'INSERT')",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(has_table_insert, 0); // false - cannot insert into system catalogs
+
+        // Test has_table_privilege - should allow operations on user tables
+        let has_user_table_priv: i32 = conn.query_row(
+            "SELECT has_table_privilege('user_table', 'INSERT')",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(has_user_table_priv, 1); // true - can modify user tables
+
+        // Test has_table_privilege - public user with limited access
+        let has_public_insert: i32 = conn.query_row(
+            "SELECT has_table_privilege('public', 'user_table', 'INSERT')",
+            [],
+            |row| row.get(0)
+        ).unwrap();
+        assert_eq!(has_public_insert, 0); // false - public cannot insert into user tables
+    }
+
+    #[test]
+    fn test_privilege_functions_error_handling() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_system_functions(&conn).unwrap();
+
+        // Test pg_has_role with invalid privilege
+        let result = conn.query_row(
+            "SELECT pg_has_role('pg_read_all_data', 'INVALID')",
+            [],
+            |row| row.get::<_, i32>(0)
+        );
+        assert!(result.is_err()); // Should fail with invalid privilege
+
+        // Test has_table_privilege with invalid privilege
+        let result = conn.query_row(
+            "SELECT has_table_privilege('test_table', 'INVALID')",
+            [],
+            |row| row.get::<_, i32>(0)
+        );
+        assert!(result.is_err()); // Should fail with invalid privilege
     }
     
     #[test]

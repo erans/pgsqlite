@@ -19,6 +19,20 @@ pub fn process_query(
     conn: &Connection,
     schema_cache: &SchemaCache,
 ) -> Result<String, rusqlite::Error> {
+    // Handle CREATE TABLE statements first - they need special translation regardless of processor type
+    if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+        use crate::translator::CreateTableTranslator;
+        match CreateTableTranslator::translate_with_connection(query, Some(conn)) {
+            Ok((translated, _type_mappings)) => {
+                debug!("CREATE TABLE translated in process_query: {}", translated);
+                return Ok(translated);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to translate CREATE TABLE in process_query: {}", e);
+                // Fall through to normal processing
+            }
+        }
+    }
     #[cfg(feature = "unified_processor")]
     {
         // New unified processor - returns Cow to avoid allocations

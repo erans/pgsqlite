@@ -10,6 +10,7 @@ async fn profile_protocol_overhead() {
     println!("\n=== Detailed Protocol Overhead Analysis ===");
     
     // Start server with detailed logging
+    #[allow(clippy::zombie_processes)]
     let mut server = start_server();
     thread::sleep(Duration::from_secs(2));
     

@@ -161,9 +161,8 @@ impl<'a> ExpressionTypeResolver<'a> {
                     }
                 }
             }
-            TableFactor::Derived { subquery, alias, .. } => {
+            TableFactor::Derived { subquery, alias: Some(alias), .. } => {
                 // Handle subqueries by analyzing their projection
-                if let Some(alias) = alias {
                     let alias_name = alias.name.value.clone();
                     let mut column_types = Vec::new();
                     
@@ -199,7 +198,6 @@ impl<'a> ExpressionTypeResolver<'a> {
                     if context.default_table.is_none() {
                         context.default_table = Some(alias_name);
                     }
-                }
             }
             _ => {}
         }
