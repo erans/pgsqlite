@@ -263,8 +263,9 @@ impl SchemaTypeMapper {
     /// Infer type from string value
     fn infer_type_from_string(s: &str) -> i32 {
         // Check for boolean - only treat as bool if it's exactly these strings
-        if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") || 
-           s.eq_ignore_ascii_case("t") || s.eq_ignore_ascii_case("f") {
+        // Note: We don't treat single 't' or 'f' as boolean because PostgreSQL
+        // catalog tables use these for other purposes (e.g. prokind = 'f' for function)
+        if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") {
             return PgType::Bool.to_oid(); // bool
         }
         

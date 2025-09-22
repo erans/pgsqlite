@@ -33,6 +33,7 @@ lazy_static! {
         register_v24_pg_tablespace_support(&mut registry);
         register_v25_information_schema_triggers_support(&mut registry);
         register_v26_enhanced_pg_attribute_support(&mut registry);
+        register_v27_fix_pg_proc_types(&mut registry);
 
         registry
     };
@@ -2078,13 +2079,13 @@ fn register_v16_pg_proc_support(registry: &mut BTreeMap<u32, Migration>) {
                 0 as prorows,                                   -- Estimated result rows
                 0 as provariadic,                               -- Variadic argument OID
                 0 as prosupport,                                -- Support function OID
-                func_kind as prokind,                           -- Function kind ('f', 'a', 'p')
-                'f' as prosecdef,                               -- Security definer
-                'f' as proleakproof,                            -- Leak proof
-                func_strict as proisstrict,                     -- Strict (returns null on null input)
-                func_retset as proretset,                       -- Returns set
-                func_volatile as provolatile,                   -- Volatility ('i', 's', 'v')
-                's' as proparallel,                             -- Parallel safety
+                CAST(func_kind AS TEXT) as prokind,             -- Function kind ('f', 'a', 'p')
+                CAST('f' AS TEXT) as prosecdef,                 -- Security definer
+                CAST('f' AS TEXT) as proleakproof,              -- Leak proof
+                CAST(func_strict AS TEXT) as proisstrict,       -- Strict (returns null on null input)
+                CAST(func_retset AS TEXT) as proretset,         -- Returns set
+                CAST(func_volatile AS TEXT) as provolatile,     -- Volatility ('i', 's', 'v')
+                CAST('s' AS TEXT) as proparallel,               -- Parallel safety
                 0 as pronargs,                                  -- Number of arguments (simplified)
                 0 as pronargdefaults,                           -- Number of default arguments
                 func_rettype as prorettype,                     -- Return type OID
@@ -2729,5 +2730,133 @@ fn register_v26_enhanced_pg_attribute_support(registry: &mut BTreeMap<u32, Migra
             "#,
         ])),
         dependencies: vec![25],
+    });
+}
+
+/// Version 27: Fix pg_proc column types
+fn register_v27_fix_pg_proc_types(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(27, Migration {
+        version: 27,
+        name: "fix_pg_proc_types",
+        description: "Fix pg_proc view column types to ensure proper text type inference",
+        up: MigrationAction::SqlBatch(&[
+            // Drop and recreate the view with proper type casting
+            r#"DROP VIEW IF EXISTS pg_proc;"#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_proc AS
+            SELECT
+                (16384 + row_number() OVER ()) as oid,          -- Unique OID starting from 16384
+                func_name as proname,                           -- Function name
+                11 as pronamespace,                             -- pg_catalog namespace
+                10 as proowner,                                 -- postgres user OID
+                12 as prolang,                                  -- SQL language OID
+                1 as procost,                                   -- Cost estimate
+                0 as prorows,                                   -- Estimated result rows
+                0 as provariadic,                               -- Variadic argument OID
+                0 as prosupport,                                -- Support function OID
+                CAST(func_kind AS TEXT) as prokind,             -- Function kind ('f', 'a', 'p')
+                CAST('f' AS TEXT) as prosecdef,                 -- Security definer
+                CAST('f' AS TEXT) as proleakproof,              -- Leak proof
+                CAST(func_strict AS TEXT) as proisstrict,       -- Strict (returns null on null input)
+                CAST(func_retset AS TEXT) as proretset,         -- Returns set
+                CAST(func_volatile AS TEXT) as provolatile,     -- Volatility ('i', 's', 'v')
+                CAST('s' AS TEXT) as proparallel,               -- Parallel safety
+                0 as pronargs,                                  -- Number of arguments (simplified)
+                0 as pronargdefaults,                           -- Number of default arguments
+                func_rettype as prorettype,                     -- Return type OID
+                '' as proargtypes,                              -- Argument types (simplified)
+                NULL as proallargtypes,                         -- All argument types
+                NULL as proargmodes,                            -- Argument modes
+                NULL as proargnames,                            -- Argument names
+                NULL as proargdefaults,                         -- Default expressions
+                NULL as protrftypes,                            -- Transform types
+                '' as prosrc,                                   -- Source code
+                NULL as probin,                                 -- Binary location
+                NULL as prosqlbody,                             -- SQL body
+                NULL as proconfig,                              -- Configuration
+                NULL as proacl                                  -- Access privileges
+            FROM (
+                -- String functions
+                SELECT 'length' as func_name, 'f' as func_kind, 't' as func_strict, 'f' as func_retset, 'i' as func_volatile, 23 as func_rettype
+                UNION ALL SELECT 'lower', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'upper', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'substr', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'replace', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'trim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'ltrim', 'f', 't', 'f', 'i', 25
+                UNION ALL SELECT 'rtrim', 'f', 't', 'f', 'i', 25
+
+                -- Math functions
+                UNION ALL SELECT 'abs', 'f', 't', 'f', 'i', 23
+                UNION ALL SELECT 'round', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'ceil', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'floor', 'f', 't', 'f', 'i', 1700
+                UNION ALL SELECT 'sqrt', 'f', 't', 'f', 'i', 701
+                UNION ALL SELECT 'power', 'f', 't', 'f', 'i', 701
+
+                -- Aggregate functions
+                UNION ALL SELECT 'count', 'a', 'f', 't', 'v', 20  -- bigint
+                UNION ALL SELECT 'sum', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'avg', 'a', 'f', 't', 'v', 1700  -- numeric
+                UNION ALL SELECT 'max', 'a', 'f', 't', 'v', 2283  -- any
+                UNION ALL SELECT 'min', 'a', 'f', 't', 'v', 2283  -- any
+
+                -- Date/time functions
+                UNION ALL SELECT 'now', 'f', 'f', 'f', 'v', 1184  -- timestamptz
+                UNION ALL SELECT 'date', 'f', 't', 'f', 'i', 1082  -- date
+                UNION ALL SELECT 'extract', 'f', 't', 'f', 'i', 701  -- float8
+
+                -- JSON functions
+                UNION ALL SELECT 'json_agg', 'a', 'f', 't', 'v', 114     -- json
+                UNION ALL SELECT 'jsonb_agg', 'a', 'f', 't', 'v', 3802   -- jsonb
+                UNION ALL SELECT 'json_object_agg', 'a', 'f', 't', 'v', 114  -- json
+                UNION ALL SELECT 'json_extract', 'f', 't', 'f', 'i', 25   -- text
+                UNION ALL SELECT 'jsonb_set', 'f', 't', 'f', 'i', 3802    -- jsonb
+
+                -- Array functions
+                UNION ALL SELECT 'array_agg', 'a', 'f', 't', 'v', 2277    -- anyarray
+                UNION ALL SELECT 'unnest', 'f', 'f', 't', 'i', 2283       -- setof any
+                UNION ALL SELECT 'array_length', 'f', 't', 'f', 'i', 23   -- int4
+
+                -- UUID functions
+                UNION ALL SELECT 'uuid_generate_v4', 'f', 'f', 'f', 'v', 2950  -- uuid
+
+                -- System functions
+                UNION ALL SELECT 'version', 'f', 'f', 'f', 's', 25         -- text
+                UNION ALL SELECT 'current_database', 'f', 'f', 'f', 's', 19  -- name
+                UNION ALL SELECT 'current_user', 'f', 'f', 'f', 's', 19      -- name
+                UNION ALL SELECT 'session_user', 'f', 'f', 'f', 's', 19      -- name
+                UNION ALL SELECT 'current_schema', 'f', 'f', 'f', 's', 19    -- name
+
+                -- PostgreSQL system functions
+                UNION ALL SELECT 'pg_has_role', 'f', 'f', 'f', 's', 16       -- boolean
+                UNION ALL SELECT 'has_table_privilege', 'f', 'f', 'f', 's', 16  -- boolean
+
+                -- Full-text search
+                UNION ALL SELECT 'to_tsvector', 'f', 't', 'f', 'i', 3614     -- tsvector
+                UNION ALL SELECT 'to_tsquery', 'f', 't', 'f', 'i', 3615      -- tsquery
+                UNION ALL SELECT 'plainto_tsquery', 'f', 't', 'f', 'i', 3615 -- tsquery
+            );
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '27', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            // Restore previous version
+            r#"DROP VIEW IF EXISTS pg_proc;"#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '26', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![26],
     });
 }

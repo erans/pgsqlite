@@ -116,8 +116,8 @@ async fn test_pg_proc_psql_df_compatibility() {
     for row in &rows {
         let proname: String = row.get(0);
         let prokind: String = row.get(1);
-        let prorettype: String = row.get(2);
-        println!("Function: {} (kind: {}, return type: {})", proname, prokind, prorettype);
+        let prorettype: i32 = row.get(2);  // OID of return type
+        println!("Function: {} (kind: {}, return type OID: {})", proname, prokind, prorettype);
     }
 
     println!("✅ Found {} functions in \\df-style query", rows.len());
