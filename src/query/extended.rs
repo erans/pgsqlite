@@ -519,8 +519,7 @@ impl ExtendedQueryHandler {
             if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") ||
                cleaned_query.contains("pg_class") || cleaned_query.contains("pg_attribute") ||
                cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
-               cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_index") ||
-               cleaned_query.contains("pg_depend") || cleaned_query.contains("pg_database") {
+               cleaned_query.contains("pg_database") {
                 info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
                 Vec::new()
             } else {
@@ -654,6 +653,7 @@ impl ExtendedQueryHandler {
                         let mut inferred_types = Vec::new();
                         
                         for (i, col_name) in response.columns.iter().enumerate() {
+                            info!("PARSE: Processing column {}: '{}'", i, col_name);
                             let inferred_type = {
                                 // First priority: Check if this column has an explicit cast
                                 if let Some(cast_type) = cast_info.get(&i) {
@@ -782,6 +782,13 @@ impl ExtendedQueryHandler {
                                 info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
                                 inferred_types.push(oid);
                                 continue;  // Important: continue here to prevent value-based inference from overriding
+                            }
+
+                            // Special case for COUNT(*) which might have a different column name
+                            if col_lower == "count(*)" || col_lower == "count" {
+                                info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
+                                inferred_types.push(PgType::Int8.to_oid());
+                                continue;
                             }
                             
                             // Check if this looks like a numeric result column based on the translated query
@@ -4438,8 +4445,8 @@ impl ExtendedQueryHandler {
             needs_row_desc
         };
         
+        info!("EXECUTE: send_row_desc = {} for query: {}", send_row_desc, query);
         if send_row_desc {
-            info!("EXECUTE: send_row_desc is true for query: {}", query);
             // Extract table name from query to look up schema
             let table_name = extract_table_name_from_select(query);
             
@@ -4752,12 +4759,20 @@ impl ExtendedQueryHandler {
                 let table_name = extract_table_name_from_select(&portal.query);
                 
                 for (i, col_name) in response.columns.iter().enumerate() {
+                    info!("EXECUTE: Processing column {}: '{}'", i, col_name);
                     // Check for aggregate functions first
                     let col_lower = col_name.to_lowercase();
                     
                     if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&portal.query)) {
                         info!("Column '{}' is aggregate function with type OID {} (field_types)", col_name, oid);
                         field_types.push(oid);
+                        continue;
+                    }
+
+                    // Special case for COUNT(*) which might have a different column name
+                    if col_lower == "count(*)" || col_lower == "count" {
+                        info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
+                        field_types.push(PgType::Int8.to_oid());
                         continue;
                     }
                     

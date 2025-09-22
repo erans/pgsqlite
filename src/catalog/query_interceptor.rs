@@ -702,6 +702,9 @@ impl CatalogInterceptor {
             if table_name.contains("pg_database") || table_name.contains("pg_catalog.pg_database") {
                 return Some(Ok(Self::handle_pg_database_query(select, &db).await));
             }
+
+            // Note: pg_index and pg_constraint are SQLite views that will be executed normally
+            // They don't need special interception since they exist in the database
         }
         println!("INTERCEPT: Reached end of intercept_query, returning None");
         None

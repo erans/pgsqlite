@@ -334,7 +334,7 @@ impl SchemaTypeMapper {
         query: Option<&str>
     ) -> Option<i32> {
         let upper = function_name.to_uppercase();
-        
+
         // Handle aliased columns - if it's just a simple name, skip function detection
         // This prevents false positives for columns named "year_col", "hour_trunc", etc.
         if !function_name.contains('(') && !function_name.contains(' ') {
