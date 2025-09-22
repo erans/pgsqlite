@@ -361,22 +361,120 @@ impl DbHandler {
         let lower_query = query.to_lowercase();
         if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        match PgStatsHandler::handle_query(select, self).await {
-                            Ok(response) => return Ok(response),
-                            Err(_) => {
-                                // Fallback to empty response
+
+            // For aggregate queries (COUNT, AVG, etc), we need to materialize pg_stats as a temp table
+            // and run the query against it
+            if lower_query.contains("count(") || lower_query.contains("avg(") ||
+               lower_query.contains("sum(") || lower_query.contains("max(") ||
+               lower_query.contains("min(") {
+                // Create a temporary connection and materialize pg_stats data
+                let temp_conn = rusqlite::Connection::open_in_memory().map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Failed to create temp connection: {e}"))
+                    )
+                })?;
+
+                // Create temp table with pg_stats schema
+                temp_conn.execute("
+                    CREATE TEMP TABLE pg_stats (
+                        schemaname TEXT,
+                        tablename TEXT,
+                        attname TEXT,
+                        inherited TEXT,
+                        null_frac TEXT,
+                        n_distinct TEXT,
+                        most_common_vals TEXT,
+                        most_common_freqs TEXT,
+                        histogram_bounds TEXT,
+                        correlation TEXT,
+                        most_common_elems TEXT,
+                        most_common_elem_freqs TEXT,
+                        elem_count_histogram TEXT
+                    )
+                ", []).ok();
+
+                // Get pg_stats data and insert into temp table
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_stats");
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            if let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
+                                // Insert the data into temp table
+                                for row in &stats_data.rows {
+                                    let mut values = Vec::new();
+                                    for col in row {
+                                        if let Some(bytes) = col {
+                                            values.push(String::from_utf8_lossy(bytes).to_string());
+                                        } else {
+                                            values.push("".to_string());
+                                        }
+                                    }
+                                    // Pad with empty values if needed
+                                    while values.len() < 13 {
+                                        values.push("".to_string());
+                                    }
+
+                                    temp_conn.execute(
+                                        "INSERT INTO pg_stats VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                        rusqlite::params![
+                                            values[0], values[1], values[2], values[3], values[4],
+                                            values[5], values[6], values[7], values[8], values[9],
+                                            values[10], values[11], values[12]
+                                        ]
+                                    ).ok();
+                                }
+
+                                // Now execute the original query against the temp table
+                                let mut stmt = temp_conn.prepare(query)?;
+                                let column_count = stmt.column_count();
+                                let mut columns = Vec::with_capacity(column_count);
+                                for i in 0..column_count {
+                                    columns.push(stmt.column_name(i)?.to_string());
+                                }
+
+                                let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                                    let mut row_data = Vec::with_capacity(column_count);
+                                    for i in 0..column_count {
+                                        let value: Option<rusqlite::types::Value> = row.get(i)?;
+                                        row_data.push(match value {
+                                            Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                            Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                            Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                            Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                            Some(rusqlite::types::Value::Null) | None => None,
+                                        });
+                                    }
+                                    Ok(row_data)
+                                })?.collect();
+
                                 return Ok(DbResponse {
-                                    columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
-                                    rows: vec![],
+                                    columns,
+                                    rows: rows?,
                                     rows_affected: 0,
                                 });
                             }
                         }
-                    }
+            } else {
+                // For non-aggregate queries, use the direct handler
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            match PgStatsHandler::handle_query(select, self).await {
+                                Ok(response) => return Ok(response),
+                                Err(_) => {
+                                    // Fallback to empty response
+                                    return Ok(DbResponse {
+                                        columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                        rows: vec![],
+                                        rows_affected: 0,
+                                    });
+                                }
+                            }
+                        }
+            }
+
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
@@ -768,22 +866,128 @@ impl DbHandler {
         // Handle pg_stats queries
         if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        match PgStatsHandler::handle_query(select, self).await {
-                            Ok(response) => return Ok(response),
-                            Err(_) => {
-                                // Fallback to empty response
-                                return Ok(DbResponse {
-                                    columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
-                                    rows: vec![],
-                                    rows_affected: 0,
-                                });
+
+            // For aggregate queries (COUNT, AVG, etc), we need to materialize pg_stats as a temp table
+            // and run the query against it
+            if lower_query.contains("count(") || lower_query.contains("avg(") ||
+               lower_query.contains("sum(") || lower_query.contains("max(") ||
+               lower_query.contains("min(") {
+                // Use the session connection to create a temp table
+                let result = self.connection_manager.execute_with_session(session_id, |conn| {
+                    // Create temp table with pg_stats schema
+                    conn.execute("
+                        CREATE TEMP TABLE IF NOT EXISTS pg_stats (
+                            schemaname TEXT,
+                            tablename TEXT,
+                            attname TEXT,
+                            inherited TEXT,
+                            null_frac TEXT,
+                            n_distinct TEXT,
+                            most_common_vals TEXT,
+                            most_common_freqs TEXT,
+                            histogram_bounds TEXT,
+                            correlation TEXT,
+                            most_common_elems TEXT,
+                            most_common_elem_freqs TEXT,
+                            elem_count_histogram TEXT
+                        )
+                    ", [])?;
+
+                    // Clear existing data
+                    conn.execute("DELETE FROM pg_stats", [])?;
+
+                    Ok(())
+                });
+
+                if result.is_ok() {
+                    // Get pg_stats data
+                    let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_stats");
+                    if let Ok(mut statements) = parsed_query
+                        && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                            && let Some(select) = query_ast.body.as_select() {
+                                if let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
+                                    // Insert the data into temp table
+                                    for row in &stats_data.rows {
+                                        let mut values = Vec::new();
+                                        for col in row {
+                                            if let Some(bytes) = col {
+                                                values.push(String::from_utf8_lossy(bytes).to_string());
+                                            } else {
+                                                values.push("".to_string());
+                                            }
+                                        }
+                                        // Pad with empty values if needed
+                                        while values.len() < 13 {
+                                            values.push("".to_string());
+                                        }
+
+                                        self.connection_manager.execute_with_session(session_id, |conn| {
+                                            conn.execute(
+                                                "INSERT INTO pg_stats VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                                rusqlite::params![
+                                                    &values[0], &values[1], &values[2], &values[3], &values[4],
+                                                    &values[5], &values[6], &values[7], &values[8], &values[9],
+                                                    &values[10], &values[11], &values[12]
+                                                ]
+                                            )?;
+                                            Ok(())
+                                        }).ok();
+                                    }
+
+                                    // Now execute the original query against the temp table
+                                    return self.connection_manager.execute_with_session(session_id, |conn| {
+                                        let processed_query = process_query(query, conn, &self.schema_cache)?;
+                                        let mut stmt = conn.prepare(&processed_query)?;
+                                        let column_count = stmt.column_count();
+                                        let mut columns = Vec::with_capacity(column_count);
+                                        for i in 0..column_count {
+                                            columns.push(stmt.column_name(i)?.to_string());
+                                        }
+
+                                        let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
+                                            let mut row_data = Vec::with_capacity(column_count);
+                                            for i in 0..column_count {
+                                                let value: Option<rusqlite::types::Value> = row.get(i)?;
+                                                row_data.push(match value {
+                                                    Some(rusqlite::types::Value::Text(s)) => Some(s.into_bytes()),
+                                                    Some(rusqlite::types::Value::Integer(i)) => Some(i.to_string().into_bytes()),
+                                                    Some(rusqlite::types::Value::Real(f)) => Some(f.to_string().into_bytes()),
+                                                    Some(rusqlite::types::Value::Blob(b)) => Some(b),
+                                                    Some(rusqlite::types::Value::Null) | None => None,
+                                                });
+                                            }
+                                            Ok(row_data)
+                                        })?.collect();
+
+                                        Ok(DbResponse {
+                                            columns,
+                                            rows: rows?,
+                                            rows_affected: 0,
+                                        })
+                                    });
+                                }
+                            }
+                }
+            } else {
+                // For non-aggregate queries, use the direct handler
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            match PgStatsHandler::handle_query(select, self).await {
+                                Ok(response) => return Ok(response),
+                                Err(_) => {
+                                    // Fallback to empty response
+                                    return Ok(DbResponse {
+                                        columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                        rows: vec![],
+                                        rows_affected: 0,
+                                    });
+                                }
                             }
                         }
-                    }
+            }
+
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
