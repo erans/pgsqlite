@@ -13,6 +13,7 @@ impl PgStatsHandler {
         db: &DbHandler,
     ) -> Result<DbResponse, PgSqliteError> {
         debug!("Handling pg_stats query");
+        eprintln!("🔍 PgStatsHandler::handle_query called");
 
         // Define all available columns for PostgreSQL pg_stats view
         let all_columns = vec![
@@ -36,6 +37,7 @@ impl PgStatsHandler {
 
         // Build statistics from actual SQLite tables
         let stats = Self::get_table_statistics(db).await?;
+        eprintln!("🔍 Generated {} statistics rows", stats.len());
 
         // Apply WHERE clause filtering if present
         let filtered_stats = if let Some(where_clause) = &select.selection {
@@ -89,6 +91,15 @@ impl PgStatsHandler {
                     selected.extend_from_slice(all_columns);
                     break;
                 }
+                SelectItem::UnnamedExpr(Expr::Function(_)) => {
+                    // For functions like COUNT(*), we need to return a placeholder column
+                    // The actual function will be handled differently
+                    selected.push("count".to_string());
+                }
+                SelectItem::ExprWithAlias { expr: Expr::Function(_), alias } => {
+                    // For aliased functions
+                    selected.push(alias.value.clone());
+                }
                 _ => {}
             }
         }
@@ -141,25 +152,21 @@ impl PgStatsHandler {
     async fn get_all_tables(db: &DbHandler) -> Result<Vec<String>, PgSqliteError> {
         let mut tables = Vec::new();
 
-        // Use get_mut_connection to avoid recursion
-        match db.get_mut_connection() {
-            Ok(conn) => {
-                let query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'";
+        // Create a temporary connection to read the tables
+        // This is safe because we're just reading metadata, not user data
+        let conn = rusqlite::Connection::open(&db.db_path).map_err(PgSqliteError::Sqlite)?;
 
-                let mut stmt = conn.prepare(query).map_err(PgSqliteError::Sqlite)?;
-                let rows = stmt.query_map([], |row| {
-                    row.get::<_, String>(0)
-                }).map_err(PgSqliteError::Sqlite)?;
+        let query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'";
 
-                debug!("get_all_tables direct query");
-                for table_name in rows.flatten() {
-                    debug!("Found table: {}", table_name);
-                    tables.push(table_name);
-                }
-            }
-            Err(e) => {
-                debug!("No database connection available: {:?}", e);
-            }
+        let mut stmt = conn.prepare(query).map_err(PgSqliteError::Sqlite)?;
+        let rows = stmt.query_map([], |row| {
+            row.get::<_, String>(0)
+        }).map_err(PgSqliteError::Sqlite)?;
+
+        debug!("get_all_tables direct query");
+        for table_name in rows.flatten() {
+            debug!("Found table: {}", table_name);
+            tables.push(table_name);
         }
 
         Ok(tables)
@@ -168,25 +175,21 @@ impl PgStatsHandler {
     async fn get_table_columns(db: &DbHandler, table_name: &str) -> Result<Vec<ColumnInfo>, PgSqliteError> {
         let mut columns = Vec::new();
 
-        // Use get_mut_connection to avoid recursion
-        match db.get_mut_connection() {
-            Ok(conn) => {
-                let query = format!("PRAGMA table_info({})", table_name);
+        // Create a temporary connection to read the columns
+        // This is safe because we're just reading metadata, not user data
+        let conn = rusqlite::Connection::open(&db.db_path).map_err(PgSqliteError::Sqlite)?;
 
-                let mut stmt = conn.prepare(&query).map_err(PgSqliteError::Sqlite)?;
-                let rows = stmt.query_map([], |row| {
-                    let name: String = row.get(1)?;
-                    let data_type: String = row.get(2)?;
-                    Ok(ColumnInfo { name, data_type })
-                }).map_err(PgSqliteError::Sqlite)?;
+        let query = format!("PRAGMA table_info({})", table_name);
 
-                for column_info in rows.flatten() {
-                    columns.push(column_info);
-                }
-            }
-            Err(e) => {
-                debug!("No database connection available for table {}: {:?}", table_name, e);
-            }
+        let mut stmt = conn.prepare(&query).map_err(PgSqliteError::Sqlite)?;
+        let rows = stmt.query_map([], |row| {
+            let name: String = row.get(1)?;
+            let data_type: String = row.get(2)?;
+            Ok(ColumnInfo { name, data_type })
+        }).map_err(PgSqliteError::Sqlite)?;
+
+        for column_info in rows.flatten() {
+            columns.push(column_info);
         }
 
         Ok(columns)

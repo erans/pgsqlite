@@ -33,7 +33,7 @@ pub struct DbHandler {
     schema_cache: Arc<SchemaCache>,
     string_validator: Arc<StringConstraintValidator>,
     statement_cache_optimizer: Arc<StatementCacheOptimizer>,
-    db_path: String,
+    pub(crate) db_path: String,
 }
 
 impl DbHandler {
@@ -357,6 +357,34 @@ impl DbHandler {
     
     /// Query without session (uses temporary connection)
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
+        // Check for pg_stats queries first - they should be intercepted regardless of database type
+        let lower_query = query.to_lowercase();
+        if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        match PgStatsHandler::handle_query(select, self).await {
+                            Ok(response) => return Ok(response),
+                            Err(_) => {
+                                // Fallback to empty response
+                                return Ok(DbResponse {
+                                    columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                    rows: vec![],
+                                    rows_affected: 0,
+                                });
+                            }
+                        }
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
         // Check if it's any form of memory database (including named shared memory)
         if self.db_path == ":memory:" || self.db_path.contains("mode=memory") {
             // For memory databases, use a temporary session connection
@@ -453,6 +481,33 @@ impl DbHandler {
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["oid".to_string(), "spcname".to_string(), "spcowner".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_stats queries
+        if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        match PgStatsHandler::handle_query(select, self).await {
+                            Ok(response) => return Ok(response),
+                            Err(_) => {
+                                // Fallback to empty response
+                                return Ok(DbResponse {
+                                    columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                    rows: vec![],
+                                    rows_affected: 0,
+                                });
+                            }
+                        }
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
                 rows: vec![],
                 rows_affected: 0,
             });
@@ -705,6 +760,33 @@ impl DbHandler {
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["oid".to_string(), "spcname".to_string(), "spcowner".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_stats queries
+        if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
+            use crate::catalog::pg_stats::PgStatsHandler;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        match PgStatsHandler::handle_query(select, self).await {
+                            Ok(response) => return Ok(response),
+                            Err(_) => {
+                                // Fallback to empty response
+                                return Ok(DbResponse {
+                                    columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                                    rows: vec![],
+                                    rows_affected: 0,
+                                });
+                            }
+                        }
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
                 rows: vec![],
                 rows_affected: 0,
             });
