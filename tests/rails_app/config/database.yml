@@ -1,0 +1,20 @@
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  host: localhost
+  port: 5433
+  username: postgres
+  password:
+
+development:
+  <<: *default
+  database: rails_bookstore_development
+
+test:
+  <<: *default
+  database: rails_bookstore_test
+
+production:
+  <<: *default
+  database: rails_bookstore_production

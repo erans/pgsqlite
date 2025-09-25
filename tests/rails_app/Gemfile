@@ -1,0 +1,23 @@
+source 'https://rubygems.org'
+git_source(:github) { |repo| "https://github.com/#{repo}.git" }
+
+ruby '3.2.0'
+
+gem 'rails', '~> 7.1.0'
+gem 'pg', '~> 1.1'
+gem 'puma', '~> 6.0'
+gem 'bootsnap', '>= 1.4.4', require: false
+gem 'rack-cors'
+
+# PostgreSQL-specific gems
+gem 'store_attribute'     # JSON column helpers
+
+group :development, :test do
+  gem 'byebug', platforms: [:mri, :mingw, :x64_mingw]
+  gem 'faker'
+end
+
+group :development do
+  gem 'listen', '~> 3.3'
+  gem 'spring'
+end
