@@ -37,8 +37,8 @@ jobs:
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: release-binary
-        path: target/release/pgsqlite
+        name: target-directory
+        path: target/
         retention-days: 1
 
   test:
@@ -67,8 +67,8 @@ jobs:
     - name: Download build artifacts
       uses: actions/download-artifact@v4
       with:
-        name: release-binary
-        path: target/release/
+        name: target-directory
+        path: .
     - name: Make binary executable
       run: chmod +x target/release/pgsqlite
     - name: Run unit tests
