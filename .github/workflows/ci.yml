@@ -33,7 +33,7 @@ jobs:
         # Build only in release mode to save space
         cargo build --release --verbose
       env:
-        CARGO_BUILD_JOBS: 3
+        CARGO_BUILD_JOBS: 4
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
@@ -74,9 +74,9 @@ jobs:
     - name: Run unit tests
       run: |
         # Run tests with minimal parallelism
-        cargo test --release --verbose --jobs 3
+        cargo test --release --verbose --jobs 4
       env:
-        CARGO_BUILD_JOBS: 3
+        CARGO_BUILD_JOBS: 4
     - name: Install bc (for test timing calculations)
       run: sudo apt-get install -y bc
     - name: Run integration tests - TCP with SSL
