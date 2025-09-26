@@ -10,40 +10,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - name: Setup Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: 'stable'
-    - name: Setup Rust cache
-      uses: Swatinem/rust-cache@v2
-      with:
-        # Cache key differentiation
-        key: "v1-build"
-        cache-directories: |
-          ~/.cargo/registry/index/
-          ~/.cargo/registry/cache/
-          ~/.cargo/git/db/
-          target/
-    - name: Build release
-      run: |
-        # Build only in release mode to save space
-        cargo build --release --verbose
-      env:
-        CARGO_BUILD_JOBS: 8
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: target-directory
-        path: target/
-        retention-days: 1
-
   test:
     runs-on: ubuntu-latest
-    needs: build
     steps:
     - uses: actions/checkout@v4
     - name: Setup Rust
@@ -54,7 +22,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         # Cache key differentiation
-        key: "v1-test"
+        key: "v1-single"
         cache-directories: |
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
@@ -64,17 +32,32 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y postgresql-client
-    - name: Download build artifacts
-      uses: actions/download-artifact@v4
-      with:
-        name: target-directory
-        path: target
-    - name: Make binary executable
-      run: chmod +x target/release/pgsqlite
-    - name: Run unit tests
+    - name: Build and test with disk cleanup
       run: |
-        # Run tests with minimal parallelism
+        # Build release
+        echo "Building release binary..."
+        cargo build --release --verbose
+
+        # Clean up debug artifacts immediately after build
+        echo "Cleaning up debug artifacts to save disk space..."
+        rm -rf target/debug/
+        find target/ -name "*.d" -delete
+        find target/ -name "*.o" -delete
+        find target/release/deps/ -type f ! -name "*.rlib" -delete 2>/dev/null || true
+
+        # Show disk usage
+        df -h
+
+        # Run unit tests
+        echo "Running unit tests..."
         cargo test --release --verbose --jobs 8
+
+        # Clean up test artifacts
+        echo "Cleaning up test artifacts..."
+        find target/ -name "*-*" -type f -path "*/deps/*" -delete 2>/dev/null || true
+
+        # Show disk usage after tests
+        df -h
       env:
         CARGO_BUILD_JOBS: 8
     - name: Install bc (for test timing calculations)
