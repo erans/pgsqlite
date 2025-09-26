@@ -35,25 +35,14 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y postgresql-client
-    - name: Free disk space
-      run: |
-        # Free up disk space before building
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
-        df -h
     - name: Build and test
       run: |
-        # Set minimal profile for faster compilation and less disk usage
-        export CARGO_PROFILE_DEV_DEBUG=0
-        export CARGO_PROFILE_TEST_DEBUG=0
-        # Build and test in one step to avoid duplicate compilation
-        cargo test --release --verbose
+        # Build and test in release mode to save disk space
+        # Use fewer parallel jobs to reduce memory pressure
+        cargo test --release --verbose --jobs 1
       env:
-        # Reduce parallel jobs to save memory and disk space
-        CARGO_BUILD_JOBS: 2
+        # Limit parallel compilation to reduce disk usage
+        CARGO_BUILD_JOBS: 1
     - name: Install bc (for test timing calculations)
       run: sudo apt-get install -y bc
     - name: Run integration tests - TCP with SSL
