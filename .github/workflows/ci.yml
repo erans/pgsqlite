@@ -38,8 +38,8 @@ jobs:
       run: |
         rm -rf target/debug/ || true
         df -h
-    - name: Run unit tests
-      run: cargo test --release --verbose -- --skip benchmark_baseline
+    - name: Run unit tests (excluding benchmark tests)
+      run: cargo test --release --verbose --lib
     - name: Install bc (for test timing calculations)
       run: sudo apt-get install -y bc
     - name: Run integration tests - TCP with SSL
