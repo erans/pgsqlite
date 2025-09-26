@@ -22,7 +22,7 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         # Cache key differentiation
-        key: "v1-single"
+        key: "v1-test"
         cache-directories: |
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
@@ -32,32 +32,16 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y postgresql-client
-    - name: Build and test with disk cleanup
+    - name: Build release
+      run: cargo build --release --verbose
+      env:
+        CARGO_BUILD_JOBS: 8
+    - name: Clean debug artifacts to save space
       run: |
-        # Build release
-        echo "Building release binary..."
-        cargo build --release --verbose
-
-        # Clean up debug artifacts immediately after build
-        echo "Cleaning up debug artifacts to save disk space..."
-        rm -rf target/debug/
-        find target/ -name "*.d" -delete
-        find target/ -name "*.o" -delete
-        find target/release/deps/ -type f ! -name "*.rlib" -delete 2>/dev/null || true
-
-        # Show disk usage
+        rm -rf target/debug/ || true
         df -h
-
-        # Run unit tests
-        echo "Running unit tests..."
-        cargo test --release --verbose --jobs 8
-
-        # Clean up test artifacts
-        echo "Cleaning up test artifacts..."
-        find target/ -name "*-*" -type f -path "*/deps/*" -delete 2>/dev/null || true
-
-        # Show disk usage after tests
-        df -h
+    - name: Run unit tests
+      run: cargo test --release --verbose --jobs 8
       env:
         CARGO_BUILD_JOBS: 8
     - name: Install bc (for test timing calculations)
