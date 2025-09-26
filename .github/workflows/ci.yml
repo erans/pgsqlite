@@ -34,16 +34,12 @@ jobs:
         sudo apt-get install -y postgresql-client
     - name: Build release
       run: cargo build --release --verbose
-      env:
-        CARGO_BUILD_JOBS: 8
     - name: Clean debug artifacts to save space
       run: |
         rm -rf target/debug/ || true
         df -h
     - name: Run unit tests
-      run: cargo test --release --verbose --jobs 8 -- --skip benchmark_baseline
-      env:
-        CARGO_BUILD_JOBS: 8
+      run: cargo test --release --verbose -- --skip benchmark_baseline
     - name: Install bc (for test timing calculations)
       run: sudo apt-get install -y bc
     - name: Run integration tests - TCP with SSL
