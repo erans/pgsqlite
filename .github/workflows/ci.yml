@@ -11,9 +11,7 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v4
     - name: Setup Rust
@@ -24,8 +22,39 @@ jobs:
       uses: Swatinem/rust-cache@v2
       with:
         # Cache key differentiation
-        key: "v1-rust"
-        # Clean cache if it gets too large
+        key: "v1-build"
+        cache-directories: |
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          target/
+    - name: Build release
+      run: |
+        # Build only in release mode to save space
+        cargo build --release --verbose
+      env:
+        CARGO_BUILD_JOBS: 1
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-binary
+        path: target/release/pgsqlite
+        retention-days: 1
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: 'stable'
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        # Cache key differentiation
+        key: "v1-test"
         cache-directories: |
           ~/.cargo/registry/index/
           ~/.cargo/registry/cache/
@@ -35,13 +64,18 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y postgresql-client
-    - name: Build and test
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: release-binary
+        path: target/release/
+    - name: Make binary executable
+      run: chmod +x target/release/pgsqlite
+    - name: Run unit tests
       run: |
-        # Build and test in release mode to save disk space
-        # Use fewer parallel jobs to reduce memory pressure
+        # Run tests with minimal parallelism
         cargo test --release --verbose --jobs 1
       env:
-        # Limit parallel compilation to reduce disk usage
         CARGO_BUILD_JOBS: 1
     - name: Install bc (for test timing calculations)
       run: sudo apt-get install -y bc
