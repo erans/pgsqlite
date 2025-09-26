@@ -69,6 +69,8 @@ jobs:
       with:
         name: target-directory
         path: .
+    - name: List downloaded files
+      run: find . -name "pgsqlite" -type f
     - name: Make binary executable
       run: chmod +x target/release/pgsqlite
     - name: Run unit tests
