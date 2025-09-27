@@ -16,8 +16,6 @@ pub struct ConnectionManager {
     db_path: String,
     /// Configuration
     config: Arc<Config>,
-    /// Maximum number of connections allowed
-    max_connections: usize,
 }
 
 impl ConnectionManager {
@@ -26,7 +24,6 @@ impl ConnectionManager {
             connections: Arc::new(RwLock::new(HashMap::new())),
             db_path,
             config,
-            max_connections: 100, // TODO: Make configurable
         }
     }
     
@@ -35,9 +32,9 @@ impl ConnectionManager {
         let mut connections = self.connections.write();
         
         // Check connection limit
-        if connections.len() >= self.max_connections {
+        if connections.len() >= self.config.max_connections {
             return Err(PgSqliteError::Protocol(
-                format!("Maximum connection limit ({}) reached", self.max_connections)
+                format!("Maximum connection limit ({}) reached", self.config.max_connections)
             ));
         }
         

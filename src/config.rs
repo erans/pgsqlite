@@ -29,6 +29,9 @@ pub struct Config {
     #[arg(long, env = "PGSQLITE_USE_POOLING", help = "Enable connection pooling with read/write separation")]
     pub use_pooling: bool,
 
+    #[arg(long, default_value = "100", env = "PGSQLITE_MAX_CONNECTIONS", help = "Maximum number of concurrent connections allowed")]
+    pub max_connections: usize,
+
     #[arg(long, default_value = "8", env = "PGSQLITE_POOL_SIZE", help = "Number of connections in the read-only connection pool")]
     pub pool_size: usize,
 

@@ -95,6 +95,10 @@ impl MappedValue {
         
         // Memory map the file
         let file = temp_file.reopen()?;
+        // Safety: This is safe because:
+        // 1. The file is freshly created and written with valid data
+        // 2. memmap2::Mmap::map() handles the OS-level memory mapping safely
+        // 3. The file descriptor remains valid for the lifetime of the mapping
         let mmap = unsafe { Mmap::map(&file)? };
         
         debug!("Created memory-mapped value: {} bytes", data.len());

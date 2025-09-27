@@ -4,7 +4,13 @@ use rust_decimal::prelude::*;
 use std::convert::TryInto;
 use std::str::FromStr;
 use crate::types::{PgType, DecimalHandler};
+use crate::PgSqliteError;
 use tracing::debug;
+
+/// Security limits for input validation
+const MAX_ARRAY_SIZE: usize = 1_000_000; // Maximum elements in an array
+const MAX_STRING_LENGTH: usize = 64 * 1024 * 1024; // 64MB max string length
+const MAX_JSON_DEPTH: usize = 64; // Maximum nesting depth for JSON
 
 /// Binary format encoders for PostgreSQL types
 pub struct BinaryEncoder;
@@ -68,37 +74,88 @@ impl BinaryEncoder {
     
     /// Encode a UUID value (OID 2950)
     /// Binary format is 16 bytes raw UUID
-    pub fn encode_uuid(uuid_str: &str) -> Result<Vec<u8>, String> {
-        // Remove hyphens and validate length
+    pub fn encode_uuid(uuid_str: &str) -> Result<Vec<u8>, PgSqliteError> {
+        // Input validation
+        if uuid_str.len() > 128 {
+            return Err(PgSqliteError::InvalidParameter("UUID string too long".to_string()));
+        }
+
+        // Remove hyphens and validate format
         let hex_str = uuid_str.replace('-', "");
         if hex_str.len() != 32 {
-            return Err("Invalid UUID format".to_string());
+            return Err(PgSqliteError::InvalidParameter("Invalid UUID format: must be 32 hex characters".to_string()));
         }
-        
-        // Convert hex string to bytes
+
+        // Validate all characters are hex before processing
+        if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(PgSqliteError::InvalidParameter("Invalid UUID: contains non-hex characters".to_string()));
+        }
+
+        // Convert hex string to bytes with bounds checking
         let mut bytes = Vec::with_capacity(16);
+        let hex_chars: Vec<char> = hex_str.chars().collect();
+
         for i in (0..32).step_by(2) {
-            let byte = u8::from_str_radix(&hex_str[i..i+2], 16)
-                .map_err(|_| "Invalid UUID hex characters")?;
+            // Safe indexing - we've validated length is exactly 32
+            let hex_pair: String = [hex_chars[i], hex_chars[i + 1]].iter().collect();
+            let byte = u8::from_str_radix(&hex_pair, 16)
+                .map_err(|_| PgSqliteError::InvalidParameter("Invalid UUID hex characters".to_string()))?;
             bytes.push(byte);
         }
-        
+
         Ok(bytes)
     }
     
+    /// Validate JSON string depth and structure
+    fn validate_json_security(json_str: &str) -> Result<(), PgSqliteError> {
+        // Length check
+        if json_str.len() > MAX_STRING_LENGTH {
+            return Err(PgSqliteError::InvalidParameter(
+                format!("JSON string too long: {} bytes (max: {})", json_str.len(), MAX_STRING_LENGTH)
+            ));
+        }
+
+        // Basic depth check by counting braces and brackets
+        let mut depth = 0;
+        let mut max_depth = 0;
+
+        for ch in json_str.chars() {
+            match ch {
+                '{' | '[' => {
+                    depth += 1;
+                    max_depth = max_depth.max(depth);
+                    if max_depth > MAX_JSON_DEPTH {
+                        return Err(PgSqliteError::InvalidParameter(
+                            format!("JSON nesting too deep: {} levels (max: {})", max_depth, MAX_JSON_DEPTH)
+                        ));
+                    }
+                }
+                '}' | ']' => {
+                    depth = depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
     /// Encode JSON value (OID 114)
     /// Binary format is the same as text for JSON
-    pub fn encode_json(json_str: &str) -> Vec<u8> {
-        json_str.as_bytes().to_vec()
+    pub fn encode_json(json_str: &str) -> Result<Vec<u8>, PgSqliteError> {
+        Self::validate_json_security(json_str)?;
+        Ok(json_str.as_bytes().to_vec())
     }
-    
+
     /// Encode JSONB value (OID 3802)
     /// Binary format has a 1-byte version header
-    pub fn encode_jsonb(json_str: &str) -> Vec<u8> {
+    pub fn encode_jsonb(json_str: &str) -> Result<Vec<u8>, PgSqliteError> {
+        Self::validate_json_security(json_str)?;
+
         let mut result = Vec::with_capacity(json_str.len() + 1);
         result.push(1); // JSONB version 1
         result.extend_from_slice(json_str.as_bytes());
-        result
+        Ok(result)
     }
     
     /// Encode MONEY value (OID 790)
@@ -217,19 +274,37 @@ impl BinaryEncoder {
     pub fn encode_array(
         array_str: &str,
         elem_type_oid: i32,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<Vec<u8>, PgSqliteError> {
+        // Input validation
+        if array_str.len() > MAX_STRING_LENGTH {
+            return Err(PgSqliteError::InvalidParameter(
+                format!("Array string too long: {} bytes (max: {})", array_str.len(), MAX_STRING_LENGTH)
+            ));
+        }
+
         debug!("encode_array called with: '{}', type_oid: {}", array_str, elem_type_oid);
 
         // Convert PostgreSQL format to JSON if needed
-        let json_str = Self::pg_array_to_json(array_str)?;
+        let json_str = Self::pg_array_to_json(array_str)
+            .map_err(|e| PgSqliteError::Protocol(format!("Array format conversion failed: {}", e)))?;
         debug!("After conversion to JSON: '{}'", json_str);
+
+        // Additional JSON validation
+        Self::validate_json_security(&json_str)?;
 
         // Parse JSON array
         let array: serde_json::Value = serde_json::from_str(&json_str)
-            .map_err(|e| format!("Invalid JSON array: {e}"))?;
+            .map_err(|e| PgSqliteError::InvalidParameter(format!("Invalid JSON array: {e}")))?;
 
         let elements = array.as_array()
-            .ok_or_else(|| "Not a JSON array".to_string())?;
+            .ok_or_else(|| PgSqliteError::InvalidParameter("Not a JSON array".to_string()))?;
+
+        // Array size validation
+        if elements.len() > MAX_ARRAY_SIZE {
+            return Err(PgSqliteError::InvalidParameter(
+                format!("Array too large: {} elements (max: {})", elements.len(), MAX_ARRAY_SIZE)
+            ));
+        }
 
         if elements.is_empty() {
             // Empty array
@@ -332,7 +407,7 @@ impl BinaryEncoder {
                     result.extend_from_slice(&bytes);
                 }
                 None => {
-                    return Err(format!("Cannot encode array element: {elem:?}"));
+                    return Err(PgSqliteError::InvalidParameter(format!("Cannot encode array element: {elem:?}")));
                 }
             }
         }
@@ -1005,14 +1080,14 @@ impl BinaryEncoder {
             t if t == PgType::Json.to_oid() => {
                 // JSON - same as text in binary format
                 match value {
-                    rusqlite::types::Value::Text(s) => Some(Self::encode_json(s)),
+                    rusqlite::types::Value::Text(s) => Self::encode_json(s).ok(),
                     _ => None,
                 }
             }
             t if t == PgType::Jsonb.to_oid() => {
                 // JSONB - with version header
                 match value {
-                    rusqlite::types::Value::Text(s) => Some(Self::encode_jsonb(s)),
+                    rusqlite::types::Value::Text(s) => Self::encode_jsonb(s).ok(),
                     _ => None,
                 }
             }
@@ -1380,11 +1455,11 @@ mod tests {
         let json_str = r#"{"key": "value"}"#;
         
         // JSON encoding - same as text
-        let json_encoded = BinaryEncoder::encode_json(json_str);
+        let json_encoded = BinaryEncoder::encode_json(json_str).unwrap();
         assert_eq!(json_encoded, json_str.as_bytes());
-        
+
         // JSONB encoding - with version header
-        let jsonb_encoded = BinaryEncoder::encode_jsonb(json_str);
+        let jsonb_encoded = BinaryEncoder::encode_jsonb(json_str).unwrap();
         assert_eq!(jsonb_encoded[0], 1); // version
         assert_eq!(&jsonb_encoded[1..], json_str.as_bytes());
     }
@@ -1601,5 +1676,71 @@ mod tests {
         expected3[2] = 0x0d;
         expected3[3] = 0xb8;
         assert_eq!(addr3, expected3);
+    }
+
+    #[test]
+    fn test_security_validation_uuid() {
+        // Test UUID input validation
+        assert!(BinaryEncoder::encode_uuid("").is_err());
+        assert!(BinaryEncoder::encode_uuid("too-short").is_err());
+        assert!(BinaryEncoder::encode_uuid("550e8400-e29b-41d4-a716-446655440000g").is_err()); // invalid hex
+        assert!(BinaryEncoder::encode_uuid(&"x".repeat(129)).is_err()); // too long
+
+        // Valid UUID should work
+        assert!(BinaryEncoder::encode_uuid("550e8400-e29b-41d4-a716-446655440000").is_ok());
+    }
+
+    #[test]
+    fn test_security_validation_json() {
+        // Test JSON depth validation
+        let deep_json = "[".repeat(MAX_JSON_DEPTH + 1) + &"]".repeat(MAX_JSON_DEPTH + 1);
+        assert!(BinaryEncoder::encode_json(&deep_json).is_err());
+
+        // Test JSON length validation
+        let long_json = "\"".to_string() + &"x".repeat(MAX_STRING_LENGTH) + "\"";
+        assert!(BinaryEncoder::encode_json(&long_json).is_err());
+
+        // Valid JSON should work
+        assert!(BinaryEncoder::encode_json(r#"{"valid": "json"}"#).is_ok());
+        assert!(BinaryEncoder::encode_jsonb(r#"{"valid": "json"}"#).is_ok());
+    }
+
+    #[test]
+    fn test_security_validation_arrays() {
+        // Test array size validation - create oversized array
+        let large_array = "[".to_string() + &(0..MAX_ARRAY_SIZE + 1)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",") + "]";
+        assert!(BinaryEncoder::encode_array(&large_array, PgType::Int4.to_oid()).is_err());
+
+        // Test array string length validation
+        let long_array_string = "x".repeat(MAX_STRING_LENGTH + 1);
+        assert!(BinaryEncoder::encode_array(&long_array_string, PgType::Text.to_oid()).is_err());
+
+        // Valid small array should work
+        assert!(BinaryEncoder::encode_array("[1,2,3]", PgType::Int4.to_oid()).is_ok());
+    }
+
+    #[test]
+    fn test_malicious_input_resistance() {
+        // Test potential attack vectors
+
+        // Unicode normalization attacks in UUID
+        let unicode_uuid = "550e8400-e29b-41d4-a716-4466554400\u{200D}00"; // Zero-width joiner
+        assert!(BinaryEncoder::encode_uuid(unicode_uuid).is_err());
+
+        // Null byte injection in JSON
+        let null_json = "{\"key\": \"value\0injection\"}";
+        // Should still work as JSON can contain null bytes, but will be validated
+        let result = BinaryEncoder::encode_json(null_json);
+        if result.is_ok() {
+            // Ensure the null byte is preserved
+            assert!(result.unwrap().contains(&0u8));
+        }
+
+        // Extremely nested JSON object
+        let nested_obj = "{".repeat(MAX_JSON_DEPTH + 1) + &"}".repeat(MAX_JSON_DEPTH + 1);
+        assert!(BinaryEncoder::encode_json(&nested_obj).is_err());
     }
 }

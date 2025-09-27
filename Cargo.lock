@@ -115,6 +115,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b0674a1ddeecb70197781e945de4b3b8ffb61fa939a5597bcf48503737663100"
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+
+[[package]]
 name = "arraydeque"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1251,6 +1257,7 @@ name = "pgsqlite"
 version = "0.0.17"
 dependencies = [
  "anyhow",
+ "arbitrary",
  "async-trait",
  "bitflags",
  "byteorder",
@@ -2035,6 +2042,7 @@ checksum = "07c5f081b292a3d19637f0b32a79e28ff14a9fd23ef47bd7fce08ff5de221eca"
 dependencies = [
  "log",
  "recursive",
+ "serde",
 ]
 
 [[package]]

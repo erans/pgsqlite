@@ -1,8 +1,11 @@
 use std::sync::Arc;
 use uuid::Uuid;
 use rusqlite::OptionalExtension;
+use regex::Regex;
+use once_cell::sync::Lazy;
 use crate::cache::SchemaCache;
 use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
+use crate::error_message;
 use crate::query::{QueryTypeDetector, QueryType, process_query, executor::extract_table_name_from_create};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
@@ -10,7 +13,25 @@ use crate::validator::StringConstraintValidator;
 use crate::session::ConnectionManager;
 use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
-use tracing::{debug, info, error};
+use crate::security::{events, SqlInjectionDetector};
+use tracing::{debug, info, error, warn};
+
+/// Security limits for query validation
+const MAX_QUERY_LENGTH: usize = 1_000_000; // 1MB max query length
+const MAX_QUERY_DEPTH: usize = 100; // Maximum nesting depth for subqueries
+
+// Regex patterns used in database handler
+static FROM_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
+    Regex::new(r"(?i)FROM\s+(\w+)")
+});
+
+static DML_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
+    Regex::new(r"(?i)(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)")
+});
+
+static RELNAME_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
+    Regex::new(r"relname\s*=\s*'([^']+)'")
+});
 
 /// Database response structure
 #[derive(Debug)]
@@ -33,10 +54,224 @@ pub struct DbHandler {
     schema_cache: Arc<SchemaCache>,
     string_validator: Arc<StringConstraintValidator>,
     statement_cache_optimizer: Arc<StatementCacheOptimizer>,
+    sql_injection_detector: Arc<SqlInjectionDetector>,
     pub(crate) db_path: String,
 }
 
 impl DbHandler {
+    /// Validate SQL query for security concerns using advanced AST-based detection
+    fn validate_sql_security(&self, query: &str) -> Result<(), PgSqliteError> {
+        // Use the advanced SQL injection detector
+        let _analysis = self.sql_injection_detector.analyze_query(query)?;
+        Ok(())
+    }
+
+    /// Legacy pattern-based validation (kept for backward compatibility)
+    fn validate_sql_security_legacy(query: &str) -> Result<(), PgSqliteError> {
+        // Length validation
+        if query.len() > MAX_QUERY_LENGTH {
+            warn!("Rejected oversized query: {} bytes", query.len());
+            return Err(PgSqliteError::InvalidParameter(
+                format!("Query too long: {} bytes (max: {})", query.len(), MAX_QUERY_LENGTH)
+            ));
+        }
+
+        // Basic depth analysis by counting parentheses nesting
+        let mut paren_depth = 0;
+        let mut max_depth = 0;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut escape_next = false;
+
+        for ch in query.chars() {
+            if escape_next {
+                escape_next = false;
+                continue;
+            }
+
+            let in_string = in_single_quote || in_double_quote;
+
+            match ch {
+                '\\' if in_string => escape_next = true,
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                '(' if !in_string => {
+                    paren_depth += 1;
+                    max_depth = max_depth.max(paren_depth);
+                    if max_depth > MAX_QUERY_DEPTH {
+                        warn!("Rejected deeply nested query: {} levels", max_depth);
+                        return Err(PgSqliteError::InvalidParameter(
+                            format!("Query nesting too deep: {} levels (max: {})", max_depth, MAX_QUERY_DEPTH)
+                        ));
+                    }
+                }
+                ')' if !in_string => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+        }
+
+        // Check for suspicious patterns that might indicate SQL injection attempts
+        // First check in the full query for quote-based injection patterns
+        let query_upper = query.to_uppercase();
+        let quote_injection_patterns = [
+            "'; DROP",
+            "\"; DROP",
+            "'; DELETE",
+            "\"; DELETE",
+            "'; INSERT",
+            "\"; INSERT",
+            "'; UPDATE",
+            "\"; UPDATE",
+            "\"1\"=\"1\"",
+            "'1'='1'",
+            "\" OR \"",
+            "' OR '",
+        ];
+
+        for pattern in &quote_injection_patterns {
+            if query_upper.contains(pattern) {
+                warn!("Rejected query with quote injection pattern: {}", pattern);
+
+                // Log SQL injection attempt
+                events::sql_injection_attempt(None, None, query, pattern);
+
+                return Err(PgSqliteError::InvalidParameter(
+                    error_message!("Query contains potentially malicious quote injection pattern").into_owned()
+                ));
+            }
+        }
+
+        // Then check for other patterns outside of quoted strings
+        let query_no_strings = Self::remove_quoted_strings(query);
+        let query_no_strings_upper = query_no_strings.to_uppercase();
+
+        let suspicious_patterns = [
+            "OR 1=1",
+            "OR 1 = 1",
+            "AND 1=1",
+            "AND 1 = 1",
+            "UNION SELECT PASSWORD",
+            "UNION SELECT * FROM",
+            "EXEC(",
+            "EXECUTE(",
+            "SP_EXECUTESQL",
+            "XP_CMDSHELL",
+        ];
+
+        for pattern in &suspicious_patterns {
+            if query_no_strings_upper.contains(pattern) {
+                warn!("Rejected query with suspicious pattern: {}", pattern);
+
+                // Log SQL injection attempt
+                events::sql_injection_attempt(None, None, query, pattern);
+
+                return Err(PgSqliteError::InvalidParameter(
+                    error_message!("Query contains potentially malicious pattern").into_owned()
+                ));
+            }
+        }
+
+        // Check for multiple statements with dangerous operations
+        let statement_count = query.matches(';').count();
+        if statement_count > 0 {
+            // If there are multiple statements, check for dangerous combinations
+            let dangerous_multi_statement_patterns = [
+                "; DROP",
+                "; DELETE",
+                "; INSERT",
+                "; UPDATE",
+                "; CREATE",
+                "; ALTER",
+                "; EXEC",
+            ];
+
+            for pattern in &dangerous_multi_statement_patterns {
+                if query_upper.contains(pattern) {
+                    warn!("Rejected query with dangerous multi-statement pattern: {}", pattern);
+
+                    // Log SQL injection attempt
+                    events::sql_injection_attempt(None, None, query, pattern);
+
+                    return Err(PgSqliteError::InvalidParameter(
+                        error_message!("Query contains dangerous multi-statement pattern").into_owned()
+                    ));
+                }
+            }
+        }
+
+        // Check for excessive semicolon statements (potential SQL injection)
+        if statement_count > 2 {
+            warn!("Rejected query with excessive statements: {} semicolons", statement_count);
+            return Err(PgSqliteError::InvalidParameter(
+                format!("Too many statements in query: {} (max: 2)", statement_count)
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Remove quoted string literals to avoid false positives in pattern detection
+    fn remove_quoted_strings(query: &str) -> String {
+        let mut result = String::with_capacity(query.len());
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let mut i = 0;
+        let chars: Vec<char> = query.chars().collect();
+
+        while i < chars.len() {
+            let ch = chars[i];
+
+            match ch {
+                '\'' if !in_double_quote => {
+                    // Check if this quote is escaped
+                    let mut escape_count = 0;
+                    let mut j = i;
+                    while j > 0 && chars[j - 1] == '\\' {
+                        escape_count += 1;
+                        j -= 1;
+                    }
+                    // If odd number of backslashes, the quote is escaped
+                    if escape_count % 2 == 0 {
+                        in_single_quote = !in_single_quote;
+                        if !in_single_quote {
+                            result.push(' '); // Replace string content with space
+                        }
+                    } else if !in_single_quote {
+                        result.push(ch); // Escaped quote outside of string
+                    }
+                }
+                '"' if !in_single_quote => {
+                    // Check if this quote is escaped
+                    let mut escape_count = 0;
+                    let mut j = i;
+                    while j > 0 && chars[j - 1] == '\\' {
+                        escape_count += 1;
+                        j -= 1;
+                    }
+                    // If odd number of backslashes, the quote is escaped
+                    if escape_count % 2 == 0 {
+                        in_double_quote = !in_double_quote;
+                        if !in_double_quote {
+                            result.push(' '); // Replace string content with space
+                        }
+                    } else if !in_double_quote {
+                        result.push(ch); // Escaped quote outside of string
+                    }
+                }
+                _ => {
+                    if !in_single_quote && !in_double_quote {
+                        result.push(ch);
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        result
+    }
+
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
         Self::new_with_config(db_path, &Config::load())
     }
@@ -70,6 +305,7 @@ impl DbHandler {
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
             string_validator: Arc::new(StringConstraintValidator::new()),
             statement_cache_optimizer,
+            sql_injection_detector: Arc::new(SqlInjectionDetector::new()),
             db_path: db_path.to_string(),
         })
     }
@@ -239,6 +475,8 @@ impl DbHandler {
         params: &[Option<Vec<u8>>],
         session_id: &Uuid
     ) -> Result<DbResponse, PgSqliteError> {
+        // Validate SQL security first
+        self.validate_sql_security(query)?;
         debug!("execute_with_params called with query: {}", query);
         debug!("execute_with_params params count: {}", params.len());
         let result = self.connection_manager.execute_with_session(session_id, |conn| {
@@ -1367,12 +1605,17 @@ impl DbHandler {
                             // Store numeric constraints if present
                             debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
                             if let Some(modifier) = type_mapping.type_modifier {
-                                // Extract base type without parameters
-                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                // Extract base type without parameters and array notation
+                                let mut base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
                                     type_mapping.pg_type[..paren_pos].trim()
                                 } else {
                                     &type_mapping.pg_type
                                 };
+
+                                // Handle array types by removing [] suffix
+                                if let Some(bracket_pos) = base_type.find('[') {
+                                    base_type = &base_type[..bracket_pos];
+                                }
                                 let pg_type_lower = base_type.to_lowercase();
 
                                 if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
@@ -1471,6 +1714,8 @@ impl DbHandler {
     
     /// Execute with session-specific connection
     pub async fn execute_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        // Validate SQL security first
+        self.validate_sql_security(query)?;
         // Handle COMMENT DDL statements (need mutable connection)
         if CommentDdlHandler::is_comment_ddl(query) {
             return self.connection_manager.execute_with_session_mut(session_id, |conn| {
@@ -1573,12 +1818,17 @@ impl DbHandler {
                             // Store numeric constraints if present
                             debug!("Checking for numeric constraints: pg_type={}, modifier={:?}", type_mapping.pg_type, type_mapping.type_modifier);
                             if let Some(modifier) = type_mapping.type_modifier {
-                                // Extract base type without parameters
-                                let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                                // Extract base type without parameters and array notation
+                                let mut base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
                                     type_mapping.pg_type[..paren_pos].trim()
                                 } else {
                                     &type_mapping.pg_type
                                 };
+
+                                // Handle array types by removing [] suffix
+                                if let Some(bracket_pos) = base_type.find('[') {
+                                    base_type = &base_type[..bracket_pos];
+                                }
                                 let pg_type_lower = base_type.to_lowercase();
 
                                 if pg_type_lower == "numeric" || pg_type_lower == "decimal" {
@@ -1778,7 +2028,10 @@ impl DbHandler {
                     let mut datetime_columns = std::collections::HashMap::new();
                     
                     // Try to extract table name from query for schema lookup
-                    let table_name = regex::Regex::new(r"(?i)FROM\s+(\w+)").unwrap().captures(query).map(|captures| captures[1].to_string());
+                    let table_name = FROM_TABLE_REGEX.as_ref()
+                        .ok()
+                        .and_then(|regex| regex.captures(query))
+                        .map(|captures| captures[1].to_string());
                     
                     
                     // Look up column types for datetime conversion
@@ -1873,7 +2126,10 @@ impl DbHandler {
                         let mut datetime_columns = std::collections::HashMap::new();
                         
                         // Try to extract table name from query for schema lookup (INSERT/UPDATE/DELETE)
-                        let table_name = regex::Regex::new(r"(?i)(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(\w+)").unwrap().captures(query).map(|captures| captures[1].to_string());
+                        let table_name = DML_TABLE_REGEX.as_ref()
+                            .ok()
+                            .and_then(|regex| regex.captures(query))
+                            .map(|captures| captures[1].to_string());
                         
                         // Look up column types for datetime conversion
                         if let Some(ref table) = table_name {
@@ -2152,7 +2408,9 @@ impl DbHandler {
     async fn handle_table_existence_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
         // Extract table name from the query
         // Look for patterns like "relname = 'table_name'" or "relname = $1"
-        let table_name = if let Some(captures) = regex::Regex::new(r"relname\s*=\s*'([^']+)'").unwrap().captures(query) {
+        let table_name = if let Some(captures) = RELNAME_REGEX.as_ref()
+            .ok()
+            .and_then(|regex| regex.captures(query)) {
             captures[1].to_string()
         } else {
             // For parameterized queries, we need to look at the actual parameters
@@ -2319,4 +2577,61 @@ pub fn rewrite_query_for_decimal(query: &str, conn: &rusqlite::Connection) -> Re
     let rewritten = statements[0].to_string();
     tracing::debug!("Decimal rewriter output: {}", rewritten);
     Ok(rewritten)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sql_security_validation() {
+        let db_path = "/tmp/test_security.db";
+        let _ = std::fs::remove_file(db_path); // Clean up
+        let handler = DbHandler::new(db_path).unwrap();
+
+        // Test legitimate queries should pass
+        assert!(handler.validate_sql_security("SELECT * FROM users WHERE id = 1").is_ok());
+        assert!(handler.validate_sql_security("INSERT INTO users (name) VALUES (\"test\")").is_ok());
+
+        // Test multi-statement query should fail
+        let multi_statement = "SELECT 1; SELECT 2; SELECT 3; SELECT 4";
+        assert!(handler.validate_sql_security(&multi_statement).is_err());
+    }
+
+    #[test]
+    fn test_sql_injection_patterns() {
+        let db_path = "/tmp/test_injection.db";
+        let _ = std::fs::remove_file(db_path); // Clean up
+        let handler = DbHandler::new(db_path).unwrap();
+
+        // Test common SQL injection patterns should be rejected
+        let injection_attempts = [
+            "SELECT * FROM users WHERE id = 1 OR 1=1",
+            "SELECT * FROM users\"; DROP TABLE users; --",
+            "SELECT * FROM users WHERE name = \"test\" OR \"1\"=\"1\"",
+            "EXEC(\"DROP TABLE users\")",
+            "SELECT * FROM users WHERE id = 1 AND 1=1",
+        ];
+
+        for injection in &injection_attempts {
+            let result = handler.validate_sql_security(injection);
+            assert!(result.is_err(), "Should reject injection: {}", injection);
+        }
+    }
+
+    #[test]
+    fn test_sql_injection_resistance_edge_cases() {
+        let db_path = "/tmp/test_edge_cases.db";
+        let _ = std::fs::remove_file(db_path); // Clean up
+        let handler = DbHandler::new(db_path).unwrap();
+
+        // Test edge cases that should still work
+        assert!(handler.validate_sql_security("SELECT \"OR 1=1\" AS text").is_ok()); // In string literal
+
+        // Test legitimate UNION queries should work (when not excessive)
+        assert!(handler.validate_sql_security("SELECT a FROM t1 UNION SELECT b FROM t2").is_ok());
+
+        // Test string escaping
+        assert!(handler.validate_sql_security("SELECT \"it\\\"s fine\" FROM users").is_ok());
+    }
 }

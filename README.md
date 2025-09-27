@@ -185,6 +185,18 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **CREATE INDEX with Operator Classes**: Support for PostgreSQL operator classes like `varchar_pattern_ops`, `text_pattern_ops` (mapped to SQLite `COLLATE BINARY` for pattern matching optimization)
 - **psql Compatibility**: Enhanced psql support with `\d`, `\dt`, and `\d tablename` commands fully working
 
+### Security Features
+
+- **Advanced SQL Injection Protection**: AST-based SQL parsing with fallback pattern detection
+  - Detects tautology attacks (e.g., `1=1`, `'a'='a'`)
+  - Prevents dangerous function execution (`exec`, `xp_cmdshell`)
+  - Blocks suspicious UNION operations with sensitive tables
+  - Limits multi-statement execution
+- **Security Audit Logging**: Comprehensive audit trail with configurable severity filtering
+- **Rate Limiting**: Built-in DoS protection with circuit breaker pattern
+- **Input Validation**: Protocol-level validation for all client inputs
+- **Memory Safety**: Rust's ownership system prevents buffer overflows and memory corruption
+
 ### Limitations
 
 - ❌ Stored procedures and custom functions
@@ -260,14 +272,72 @@ pgsqlite --database mydb.db
 
 Connection pooling automatically routes SELECT queries to the read pool while directing write operations (INSERT/UPDATE/DELETE) to the primary connection for consistency.
 
+## Security Configuration
+
+### SQL Injection Protection
+
+pgsqlite includes enterprise-grade SQL injection protection that's enabled by default:
+
+```bash
+# Protection is always active, but can be monitored via audit logging
+PGSQLITE_AUDIT_ENABLED=true \
+PGSQLITE_AUDIT_LOG_QUERIES=true \
+pgsqlite --database mydb.db
+```
+
+The protection system uses:
+- **AST-based analysis**: Parses SQL using PostgreSQL dialect for accurate threat detection
+- **Pattern matching**: Fallback detection for malformed queries
+- **Configurable limits**: Control statement counts, nesting depth, and UNION operations
+
+### Security Audit Logging
+
+Track security events and potential threats:
+
+```bash
+# Enable comprehensive security auditing
+PGSQLITE_AUDIT_ENABLED=true \
+PGSQLITE_AUDIT_SEVERITY=info \
+PGSQLITE_AUDIT_LOG_AUTH=true \
+PGSQLITE_AUDIT_LOG_QUERIES=true \
+PGSQLITE_AUDIT_LOG_ERRORS=true \
+pgsqlite --database mydb.db
+```
+
+Audit events include:
+- Authentication attempts (success/failure)
+- SQL injection attempts with detailed analysis
+- Permission violations
+- Rate limit violations
+- System errors and anomalies
+
+### Rate Limiting & DoS Protection
+
+Built-in rate limiting prevents abuse:
+
+```bash
+# Configure rate limiting (default: 1000 req/sec per client)
+PGSQLITE_RATE_LIMIT_REQUESTS=1000 \
+PGSQLITE_RATE_LIMIT_WINDOW=1 \
+PGSQLITE_CIRCUIT_BREAKER_THRESHOLD=0.5 \
+pgsqlite --database mydb.db
+```
+
+Features:
+- Per-client IP rate limiting
+- Circuit breaker pattern for failing clients
+- Automatic recovery after cooldown periods
+- Memory-efficient sliding window algorithm
+
 ## Advanced Topics
 
+- **[Security Guide](docs/security.md)**: Comprehensive security architecture and configuration
 - **[Schema Migrations](docs/migrations.md)**: Automatic migration system for pgsqlite metadata
 - **[SSL/TLS Setup](docs/ssl-setup.md)**: Secure connections configuration
 - **[Unix Sockets](docs/unix-sockets.md)**: Lower latency local connections
 - **[Performance Tuning](docs/performance-tuning.md)**: Cache configuration and optimization
 - **[Architecture Overview](docs/architecture.md)**: How pgsqlite works internally
-- **[Array Support](docs/array-support.md)**: Comprehensive guide to PostgreSQL arrays  
+- **[Array Support](docs/array-support.md)**: Comprehensive guide to PostgreSQL arrays
 - **[JSON/JSONB Support](docs/json-support.md)**: Comprehensive guide to JSON functionality
 - **[Full-Text Search](docs/fts_implementation_plan.md)**: PostgreSQL FTS implementation details
 - **[Future Features](docs/future-features.md)**: Roadmap for enhanced SQLite capabilities

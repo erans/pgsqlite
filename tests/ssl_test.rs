@@ -20,6 +20,7 @@ mod tests {
             no_tcp: false,
             socket_dir: "/tmp".to_string(),
             use_pooling: false,
+            max_connections: 100,
             pool_size: 8,
             pool_connection_timeout_seconds: 30,
             pool_idle_timeout_seconds: 300,
@@ -94,6 +95,7 @@ mod tests {
             no_tcp: false,
             socket_dir: "/tmp".to_string(),
             use_pooling: false,
+            max_connections: 100,
             pool_size: 8,
             pool_connection_timeout_seconds: 30,
             pool_idle_timeout_seconds: 300,
@@ -175,6 +177,7 @@ mod tests {
             no_tcp: true, // TCP disabled, only Unix sockets
             socket_dir: "/tmp".to_string(),
             use_pooling: false,
+            max_connections: 100,
             pool_size: 8,
             pool_connection_timeout_seconds: 30,
             pool_idle_timeout_seconds: 300,

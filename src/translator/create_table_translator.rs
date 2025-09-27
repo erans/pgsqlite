@@ -2,14 +2,14 @@ use regex::Regex;
 use std::collections::HashMap;
 use crate::metadata::{TypeMapping, EnumMetadata};
 use crate::types::TypeMapper;
+use crate::PgSqliteError;
 use rusqlite::Connection;
-use std::cell::RefCell;
 use once_cell::sync::Lazy;
 
 // Pre-compiled regex patterns
-static CREATE_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+static CREATE_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
     // Updated regex to handle quoted table names like "django_migrations"
-    Regex::new(r#"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|(\w+))\s*\((.*)\)"#).unwrap()
+    Regex::new(r#"(?is)CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|(\w+))\s*\((.*)\)"#)
 });
 
 #[derive(Debug)]
@@ -20,9 +20,11 @@ pub struct CreateTableResult {
     pub array_columns: Vec<(String, String, i32)>, // (column_name, element_type, dimensions)
 }
 
-thread_local! {
-    static ENUM_COLUMNS: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
-    static ARRAY_COLUMNS: RefCell<Vec<(String, String, i32)>> = const { RefCell::new(Vec::new()) };
+/// Context for tracking columns during translation
+#[derive(Default)]
+pub struct CreateTableContext {
+    enum_columns: Vec<(String, String)>,
+    array_columns: Vec<(String, String, i32)>,
 }
 
 pub struct CreateTableTranslator;
@@ -30,61 +32,68 @@ pub struct CreateTableTranslator;
 #[allow(unused_variables)]
 impl CreateTableTranslator {
     /// Translate PostgreSQL CREATE TABLE statement to SQLite
-    pub fn translate(pg_sql: &str) -> Result<(String, HashMap<String, TypeMapping>), String> {
+    pub fn translate(pg_sql: &str) -> Result<(String, HashMap<String, TypeMapping>), PgSqliteError> {
         Self::translate_with_connection(pg_sql, None)
     }
-    
+
     /// Translate PostgreSQL CREATE TABLE statement to SQLite with connection for ENUM support
     pub fn translate_with_connection(
-        pg_sql: &str, 
+        pg_sql: &str,
         conn: Option<&Connection>
-    ) -> Result<(String, HashMap<String, TypeMapping>), String> {
+    ) -> Result<(String, HashMap<String, TypeMapping>), PgSqliteError> {
         let result = Self::translate_with_connection_full(pg_sql, conn)?;
         Ok((result.sql, result.type_mappings))
     }
-    
+
     /// Translate PostgreSQL CREATE TABLE statement to SQLite with full result including ENUM columns
     pub fn translate_with_connection_full(
         pg_sql: &str,
         conn: Option<&Connection>
-    ) -> Result<CreateTableResult, String> {
+    ) -> Result<CreateTableResult, PgSqliteError> {
         let mut type_mapping = HashMap::new();
 
-        // Clear enum and array columns trackers
-        ENUM_COLUMNS.with(|ec| ec.borrow_mut().clear());
-        ARRAY_COLUMNS.with(|ac| ac.borrow_mut().clear());
+        // Create context for tracking columns
+        let mut context = CreateTableContext::default();
 
         // Basic regex to match CREATE TABLE - use DOTALL flag to match newlines
-        if let Some(captures) = CREATE_TABLE_REGEX.captures(pg_sql) {
+        let regex = CREATE_TABLE_REGEX.as_ref()
+            .map_err(|e| PgSqliteError::Protocol(format!("Regex compilation error: {}", e)))?;
+        if let Some(captures) = regex.captures(pg_sql) {
             // Handle both quoted and unquoted table names
-            let table_name = captures.get(1)  // quoted name
-                .or_else(|| captures.get(2))  // unquoted name
-                .unwrap().as_str();
-            let columns_str = captures.get(3).unwrap().as_str();  // columns are now in capture group 3
-            
+            let (table_name, table_name_for_output) = if let Some(quoted) = captures.get(1) {
+                // quoted name - preserve quotes in output
+                (quoted.as_str(), format!("\"{}\"", quoted.as_str()))
+            } else if let Some(unquoted) = captures.get(2) {
+                // unquoted name - use as-is
+                let name = unquoted.as_str();
+                (name, name.to_string())
+            } else {
+                return Err(PgSqliteError::Protocol("Could not extract table name".to_string()));
+            };
+            let columns_str = captures.get(3)
+                .ok_or_else(|| PgSqliteError::Protocol("Could not extract column definitions".to_string()))?
+                .as_str();
+
             // Parse columns
             let sqlite_columns = Self::parse_and_translate_columns(
-                columns_str, 
-                table_name, 
+                columns_str,
+                table_name,
                 &mut type_mapping,
+                &mut context,
                 conn
             )?;
-            
+
             // No CHECK constraints to add anymore
             let final_columns = sqlite_columns;
-            
+
             // Reconstruct CREATE TABLE
-            let sqlite_sql = format!("CREATE TABLE {table_name} ({final_columns})");
-            
-            // Collect enum and array columns
-            let enum_columns = ENUM_COLUMNS.with(|ec| ec.borrow().clone());
-            let array_columns = ARRAY_COLUMNS.with(|ac| ac.borrow().clone());
+            let sqlite_sql = format!("CREATE TABLE {} ({})", table_name_for_output, final_columns);
             
             Ok(CreateTableResult {
                 sql: sqlite_sql,
                 type_mappings: type_mapping,
-                enum_columns,
-                array_columns,
+                enum_columns: context.enum_columns,
+                array_columns: context.array_columns,
             })
         } else {
             // Not a CREATE TABLE statement, return as-is
@@ -101,8 +110,9 @@ impl CreateTableTranslator {
         columns_str: &str,
         table_name: &str,
         type_mapping: &mut HashMap<String, TypeMapping>,
+        context: &mut CreateTableContext,
         conn: Option<&Connection>
-    ) -> Result<String, String> {
+    ) -> Result<String, PgSqliteError> {
         let mut sqlite_columns = Vec::new();
         let mut paren_depth = 0;
         let mut current_column = String::new();
@@ -154,6 +164,7 @@ impl CreateTableTranslator {
                 &column_def,
                 table_name,
                 type_mapping,
+                context,
                 conn
             )?;
             sqlite_columns.push(translated);
@@ -194,8 +205,9 @@ impl CreateTableTranslator {
         column_def: &str,
         table_name: &str,
         type_mapping: &mut HashMap<String, TypeMapping>,
+        context: &mut CreateTableContext,
         conn: Option<&Connection>
-    ) -> Result<String, String> {
+    ) -> Result<String, PgSqliteError> {
         // Handle constraints (PRIMARY KEY, FOREIGN KEY, etc.)
         if column_def.to_uppercase().starts_with("PRIMARY KEY") 
             || column_def.to_uppercase().starts_with("FOREIGN KEY")
@@ -294,13 +306,11 @@ impl CreateTableTranslator {
             let sqlite_type = "TEXT".to_string();
             
             // Store array column info for later metadata insertion
-            ARRAY_COLUMNS.with(|ac| {
-                ac.borrow_mut().push((
-                    column_name.to_string(), 
-                    element_type.to_lowercase(), 
-                    dimensions
-                ));
-            });
+            context.array_columns.push((
+                column_name.to_string(),
+                element_type.to_lowercase(),
+                dimensions
+            ));
             
             // Note: We don't add JSON validation constraints for arrays because:
             // 1. PostgreSQL array syntax {1,2,3} is not valid JSON
@@ -319,9 +329,10 @@ impl CreateTableTranslator {
                     let sqlite_type = "TEXT".to_string();
                     
                     // Store enum column info for later trigger creation
-                    ENUM_COLUMNS.with(|ec| {
-                        ec.borrow_mut().push((column_name.to_string(), pg_type.to_lowercase().to_string()));
-                    });
+                    context.enum_columns.push((
+                        column_name.to_string(),
+                        pg_type.to_lowercase().to_string()
+                    ));
                     
                     (sqlite_type, pg_type.to_lowercase())
                 }

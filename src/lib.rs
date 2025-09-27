@@ -17,6 +17,7 @@ pub mod error;
 pub mod validator;
 pub mod optimization;
 pub mod utils;
+pub mod security;
 #[macro_use]
 pub mod profiling;
 

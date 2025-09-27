@@ -119,6 +119,17 @@ When modifying `__pgsqlite_*` tables:
 - **SSL/TLS**: Use `--ssl` flag or `PGSQLITE_SSL=true`
 - **psql Compatibility**: \d commands work via catalog tables
 
+### Security Features
+- **Advanced SQL Injection Protection**: AST-based detection with fallback pattern matching
+  - Tautology detection (1=1, 'a'='a' patterns)
+  - Dangerous function blocking (exec, xp_cmdshell, eval)
+  - Union-based attack prevention with sensitive table detection
+  - Multi-statement attack limitation
+- **Security Audit Logging**: Comprehensive audit trail with structured JSON events
+- **Rate Limiting & DoS Protection**: Per-client rate limiting with circuit breaker pattern
+- **Memory Safety**: Rust ownership system prevents buffer overflows and memory corruption
+- **Input Validation**: Protocol-level validation for all client inputs
+
 ## ORM Framework Compatibility
 
 **Full ORM compatibility** achieved with comprehensive PostgreSQL catalog support:

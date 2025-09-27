@@ -17,8 +17,9 @@ use tokio_rustls::TlsAcceptor;
 use pgsqlite::config::Config;
 use pgsqlite::protocol::{
     AuthenticationMessage, BackendMessage, ErrorResponse, FrontendMessage, PostgresCodec,
-    TransactionStatus,
+    TransactionStatus, check_global_rate_limit, record_global_failure,
 };
+use pgsqlite::security::events;
 use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
 use pgsqlite::session::{DbHandler, SessionState};
 use pgsqlite::ssl::CertificateManager;
@@ -237,12 +238,30 @@ async fn handle_tcp_connection(
     tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     info!("Handling TCP connection from {}", addr);
-    
+
+    // Check rate limiting before processing the connection
+    if let Err(e) = check_global_rate_limit(Some(addr.ip())) {
+        info!("Rate limit exceeded for {}: {}", addr, e);
+
+        // Log security event for rate limiting
+        events::connection_rejected(addr.ip(), &format!("Rate limit exceeded: {}", e));
+
+        // Close connection immediately without sending response to avoid DDoS amplification
+        return Ok(());
+    }
+
     // Disable Nagle's algorithm for lower latency
     stream.set_nodelay(true)?;
-    
+
     // Always handle potential SSL requests, even if SSL is disabled
-    handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor).await
+    match handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor).await {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Record failure for circuit breaker
+            record_global_failure();
+            Err(e)
+        }
+    }
 }
 
 async fn handle_ssl_negotiation(
@@ -271,7 +290,10 @@ async fn handle_ssl_negotiation(
             // Perform TLS handshake
             let tls_stream = tls_acceptor.accept(stream).await?;
             info!("SSL connection established with {}", addr);
-            
+
+            // Log successful SSL connection
+            events::connection_accepted(addr.ip(), true);
+
             // Handle the connection with TLS
             handle_connection_generic(tls_stream, &addr.to_string(), db_handler).await
         } else {
@@ -280,6 +302,9 @@ async fn handle_ssl_negotiation(
             stream.flush().await?;
             info!("Rejected SSL request from {} (SSL disabled)", addr);
             
+            // Log non-SSL connection acceptance
+            events::connection_accepted(addr.ip(), false);
+
             // Continue with non-SSL connection
             handle_connection_generic(stream, &addr.to_string(), db_handler).await
         }
@@ -288,6 +313,9 @@ async fn handle_ssl_negotiation(
         // Create a new buffer with the data we already read
         let initial_data = BytesMut::from(&buf[..]);
         
+        // Log non-SSL connection acceptance
+        events::connection_accepted(addr.ip(), false);
+
         // Create a custom stream that will first return our buffered data
         let stream_with_buffer = StreamWithBuffer::new(stream, initial_data);
         handle_connection_generic(stream_with_buffer, &addr.to_string(), db_handler).await
@@ -339,7 +367,7 @@ where
         }
     }
 
-    let session = Arc::new(SessionState::new(database, user));
+    let session = Arc::new(SessionState::new(database.clone(), user.clone()));
     let session_id = session.id;
 
     // Set the database handler for this session for proper lifecycle management
@@ -360,6 +388,11 @@ where
     framed
         .send(BackendMessage::Authentication(AuthenticationMessage::Ok))
         .await?;
+
+    // Log successful authentication
+    if let Ok(client_ip) = connection_info.parse::<std::net::IpAddr>() {
+        events::authentication_success(client_ip, &user, &database);
+    }
 
     // Send parameter status messages
     for (key, value) in session.parameters.read().await.iter() {
@@ -393,6 +426,26 @@ where
         match msg? {
             FrontendMessage::Query(sql) => {
                 debug!("Received query from {}: {}", connection_info, sql);
+
+                // Check rate limiting for queries (separate from connection rate limiting)
+                if let Err(e) = check_global_rate_limit(None) {
+                    error!("Query rate limit exceeded for {}: {}", connection_info, e);
+                    let err = ErrorResponse::new(
+                        "ERROR".to_string(),
+                        "53300".to_string(), // PostgreSQL error code for too many connections
+                        "Rate limit exceeded".to_string(),
+                    );
+                    framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+
+                    // Send ReadyForQuery after error
+                    framed
+                        .send(BackendMessage::ReadyForQuery {
+                            status: *session.transaction_status.read().await,
+                        })
+                        .await?;
+                    framed.flush().await?;
+                    continue;
+                }
 
                 // Execute the query
                 match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, None).await {
@@ -432,6 +485,19 @@ where
                 param_types,
             } => {
                 info!("Received Parse from {}: query={}, name={}", connection_info, query, name);
+
+                // Check rate limiting for extended protocol operations
+                if let Err(e) = check_global_rate_limit(None) {
+                    error!("Parse rate limit exceeded for {}: {}", connection_info, e);
+                    let err = ErrorResponse::new(
+                        "ERROR".to_string(),
+                        "53300".to_string(),
+                        "Rate limit exceeded".to_string(),
+                    );
+                    framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                    continue;
+                }
+
                 match ExtendedQueryHandler::handle_parse(
                     &mut framed,
                     &db_handler,

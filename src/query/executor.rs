@@ -6,17 +6,21 @@ use crate::cache::{RowDescriptionKey, GLOBAL_ROW_DESCRIPTION_CACHE};
 use crate::metadata::EnumTriggers;
 use crate::PgSqliteError;
 use crate::query::join_type_inference::build_column_to_table_mapping;
+use crate::optimization::string_utils::{global_string_optimizer, StringOptimized};
+use crate::error_message;
 use tokio_util::codec::Framed;
 use futures::SinkExt;
 use tokio::io::AsyncWriteExt;
 use tracing::{info, debug};
 use std::sync::Arc;
+use std::borrow::Cow;
 use rusqlite::params;
 use serde_json;
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use once_cell::sync::Lazy;
 use uuid::Uuid;
+use regex::Regex;
 
 /// Combined schema information for a table
 #[derive(Clone)]
@@ -28,8 +32,27 @@ struct TableSchemaInfo {
 }
 
 /// Cache for table schema information to avoid repeated database queries
-static TABLE_SCHEMA_CACHE: Lazy<RwLock<HashMap<String, TableSchemaInfo>>> = 
+static TABLE_SCHEMA_CACHE: Lazy<RwLock<HashMap<String, TableSchemaInfo>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Regex pattern for DROP TABLE statements
+static DROP_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
+    Regex::new(r"(?i)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)")
+});
+
+/// Invalidate cached schema information for a table
+fn invalidate_table_schema_cache(table_name: &str) {
+    let mut cache = TABLE_SCHEMA_CACHE.write();
+    cache.remove(table_name);
+    debug!("Invalidated schema cache for table: {}", table_name);
+}
+
+/// Invalidate all cached schema information
+pub fn invalidate_all_schema_cache() {
+    let mut cache = TABLE_SCHEMA_CACHE.write();
+    cache.clear();
+    debug!("Invalidated all schema cache");
+}
 
 /// Get all schema information for a table in one query
 async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id: &Uuid) -> TableSchemaInfo {
@@ -101,27 +124,16 @@ async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id
     // Cache the result
     {
         let mut cache = TABLE_SCHEMA_CACHE.write();
-        cache.insert(table_name.to_string(), schema_info.clone());
+        cache.insert(table_name.to_optimized_string().into_owned(), schema_info.clone());
     }
     
     schema_info
 }
 
 
-/// Create a command complete tag with optimized static strings for common cases
-fn create_command_tag(operation: &str, rows_affected: usize) -> String {
-    match (operation, rows_affected) {
-        // Optimized static strings for most common cases (0/1 rows affected)
-        ("INSERT", 0) => "INSERT 0 0".to_string(),
-        ("INSERT", 1) => "INSERT 0 1".to_string(),
-        ("UPDATE", 0) => "UPDATE 0".to_string(),
-        ("UPDATE", 1) => "UPDATE 1".to_string(),
-        ("DELETE", 0) => "DELETE 0".to_string(),
-        ("DELETE", 1) => "DELETE 1".to_string(),
-        // Format for all other cases
-        ("INSERT", n) => format!("INSERT 0 {n}"),
-        (op, n) => format!("{op} {n}"),
-    }
+/// Create a command complete tag with optimized Cow<str> for minimal allocations
+fn create_command_tag(operation: &str, rows_affected: usize) -> Cow<'static, str> {
+    global_string_optimizer().get_command_tag(operation, rows_affected as u32)
 }
 
 pub struct QueryExecutor;
@@ -168,7 +180,7 @@ impl QueryExecutor {
         
         // Check if query is empty after comment stripping
         if query_to_execute.is_empty() {
-            return Err(PgSqliteError::Protocol("Empty query".to_string()));
+            return Err(PgSqliteError::Protocol(error_message!("Empty query").into_owned()));
         }
         
         // Handle PostgreSQL DEALLOCATE commands (used for prepared statement cleanup)
@@ -176,7 +188,7 @@ impl QueryExecutor {
         if query_upper.starts_with("DEALLOCATE") {
             debug!("DEALLOCATE command - treating as successful no-op (SQLite manages prepared statements automatically)");
             // Send CommandComplete for successful DEALLOCATE
-            let msg = BackendMessage::CommandComplete { tag: "DEALLOCATE".to_string() };
+            let msg = BackendMessage::CommandComplete { tag: error_message!("DEALLOCATE").into_owned() };
             framed.send(msg).await.map_err(PgSqliteError::Io)?;
             return Ok(());
         }
@@ -208,7 +220,7 @@ impl QueryExecutor {
             if statements.is_empty() {
                 debug!("Empty query (just semicolon) - treating as successful no-op");
                 // Send CommandComplete for successful empty query
-                let msg = BackendMessage::CommandComplete { tag: "SELECT 0".to_string() };
+                let msg = BackendMessage::CommandComplete { tag: global_string_optimizer().get_command_tag("SELECT", 0).into_owned() };
                 framed.send(msg).await.map_err(PgSqliteError::Io)?;
                 return Ok(());
             }
@@ -552,7 +564,7 @@ impl QueryExecutor {
                     }
                     
                     // Send command complete
-                    let tag = create_command_tag("SELECT", response.rows_affected);
+                    let tag = create_command_tag("SELECT", response.rows_affected).into_owned();
                     framed.send(BackendMessage::CommandComplete { tag }).await
                         .map_err(PgSqliteError::Io)?;
                     
@@ -1434,7 +1446,7 @@ impl QueryExecutor {
         }
         
         // Send CommandComplete with optimized tag creation
-        let tag = create_command_tag("SELECT", row_count);
+        let tag = create_command_tag("SELECT", row_count).into_owned();
         framed.send(BackendMessage::CommandComplete { tag }).await
             .map_err(PgSqliteError::Io)?;
         
@@ -1588,8 +1600,8 @@ impl QueryExecutor {
             QueryType::Update => create_command_tag("UPDATE", response.rows_affected),
             QueryType::Delete => create_command_tag("DELETE", response.rows_affected),
             _ => create_command_tag("OK", response.rows_affected),
-        };
-        
+        }.into_owned();
+
         framed.send(BackendMessage::CommandComplete { tag }).await
             .map_err(PgSqliteError::Io)?;
         
@@ -1878,8 +1890,9 @@ impl QueryExecutor {
         
         let table_name_to_clean = if is_drop_table {
             // Extract table name from DROP TABLE statement
-            let drop_table_pattern = regex::Regex::new(r"(?i)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)").unwrap();
-            drop_table_pattern.captures(query)
+            DROP_TABLE_REGEX.as_ref()
+                .ok()
+                .and_then(|regex| regex.captures(query))
                 .and_then(|caps| caps.get(1))
                 .map(|m| m.as_str().to_string())
         } else {
@@ -1890,8 +1903,11 @@ impl QueryExecutor {
         let cached_conn = Self::get_or_cache_connection(session, db).await;
         db.execute_with_session_cached(&translated_query, &session.id, cached_conn.as_ref()).await?;
         
-        // If this was a DROP TABLE, clean up enum usage records
+        // If this was a DROP TABLE, clean up enum usage records and invalidate cache
         if let Some(table_name) = table_name_to_clean {
+            // Invalidate schema cache for the dropped table
+            invalidate_table_schema_cache(&table_name);
+
             db.with_session_connection_mut(&session.id, |conn| {
                 use crate::metadata::EnumTriggers;
                 EnumTriggers::clean_enum_usage_for_table(conn, &table_name)
@@ -1941,12 +1957,17 @@ impl QueryExecutor {
                         
                         // Store string constraints if present
                         if let Some(modifier) = type_mapping.type_modifier {
-                            // Extract base type without parameters
-                            let base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
+                            // Extract base type without parameters and array notation
+                            let mut base_type = if let Some(paren_pos) = type_mapping.pg_type.find('(') {
                                 type_mapping.pg_type[..paren_pos].trim()
                             } else {
                                 &type_mapping.pg_type
                             };
+
+                            // Handle array types by removing [] suffix
+                            if let Some(bracket_pos) = base_type.find('[') {
+                                base_type = &base_type[..bracket_pos];
+                            }
                             let pg_type_lower = base_type.to_lowercase();
                             debug!("Processing type mapping: {}.{} -> {} (base_type: {}, modifier: {})",
                                 table_name, parts[1], type_mapping.pg_type, base_type, modifier);
@@ -2054,13 +2075,16 @@ impl QueryExecutor {
                         Ok(())
                     }).await?;
                 }
-                
+
+                // Invalidate schema cache for the created table to ensure fresh schema data
+                invalidate_table_schema_cache(&table_name);
+
                 // Numeric validation is now handled at the application layer in execute_dml
                 // No need for triggers anymore
-                
+
                 // Datetime conversion is now handled by InsertTranslator and value converters
                 // No need for triggers anymore
-                
+
             }
         }
 
@@ -2078,6 +2102,13 @@ impl QueryExecutor {
             }).await?;
         }
         
+        // Handle cache invalidation for ALTER operations
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Alter) {
+            // For ALTER operations, we invalidate all schema cache since determining
+            // which specific table was altered would require complex parsing
+            invalidate_all_schema_cache();
+        }
+
         let tag = match QueryTypeDetector::detect_query_type(query) {
             QueryType::Create => {
                 let after_create = query.trim_start()[6..].trim_start();
@@ -2477,11 +2508,13 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
     
     // debug!("extract_table_name_from_select called with query: {}", query);
     
-    static FROM_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
-        Regex::new(r"(?i)\bFROM\s+([^\s,;()]+)").unwrap()
+    static FROM_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
+        Regex::new(r"(?i)\bFROM\s+([^\s,;()]+)")
     });
     
-    if let Some(captures) = FROM_TABLE_REGEX.captures(query)
+    if let Some(captures) = FROM_TABLE_REGEX.as_ref()
+        .ok()
+        .and_then(|regex| regex.captures(query))
         && let Some(table_match) = captures.get(1) {
             let table_name = table_match.as_str().trim();
             

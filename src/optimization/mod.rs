@@ -11,6 +11,7 @@ use crate::PgSqliteError;
 
 pub mod statement_cache_optimizer;
 pub mod read_only_optimizer;
+pub mod string_utils;
 
 use read_only_optimizer::ReadOnlyOptimizer;
 
