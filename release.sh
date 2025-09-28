@@ -56,8 +56,8 @@ fi
 echo
 echo -e "${GREEN}=== Step 1: Bumping version ===${NC}"
 
-# Use Claude Code to bump version (non-interactive mode)
-echo "Bump the version in Cargo.toml from $CURRENT_VERSION to $NEW_VERSION. Only update the version field, nothing else." | npx @anthropic-ai/claude-code
+# Bump version in Cargo.toml using sed
+sed -i "s/^version = \"$CURRENT_VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
 
 # Check if version was updated
 NEW_VERSION_CHECK=$(get_current_version)
@@ -105,31 +105,18 @@ fi
 # Create temporary file for release notes
 TEMP_FILE=$(mktemp)
 
-# Use Claude Code to generate release notes (non-interactive mode)
-cat << EOF | npx @anthropic-ai/claude-code > "$TEMP_FILE"
-Generate release notes in markdown format for version $NEW_VERSION ($VERSION_NAME) of pgsqlite. Include the following sections:
-
+# Generate basic release notes
+cat << EOF > "$TEMP_FILE"
 ## Release Notes for v$NEW_VERSION - $VERSION_NAME
 
 ### Summary
-Brief overview of this release
+Release $NEW_VERSION of pgsqlite
 
-### New Features
-List of new features added
+### Changes
+$(git log --oneline $RANGE | sed 's/^/- /')
 
-### Improvements
-Performance improvements and enhancements
-
-### Bug Fixes
-List of bugs fixed
-
-### Breaking Changes
-Any breaking changes (if applicable)
-
-Base the release notes on these commits:
-$(git log --oneline $RANGE)
-
-Output only the markdown content, no explanations.
+### Commits included in this release:
+$(git log --pretty=format:"- %h %s" $RANGE)
 EOF
 
 echo
