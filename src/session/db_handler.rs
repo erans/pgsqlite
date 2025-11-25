@@ -839,6 +839,23 @@ impl DbHandler {
             });
         }
 
+        // Handle pg_replication_slots queries (always empty - SQLite has no replication)
+        if lower_query.contains("pg_replication_slots") || lower_query.contains("pg_catalog.pg_replication_slots") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_replication_slots_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["slot_name".to_string(), "plugin".to_string(), "slot_type".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
         // Handle pg_stats queries
         if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;
@@ -1130,6 +1147,23 @@ impl DbHandler {
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["oid".to_string(), "collname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_replication_slots queries (always empty - SQLite has no replication)
+        if lower_query.contains("pg_replication_slots") || lower_query.contains("pg_catalog.pg_replication_slots") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_replication_slots_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["slot_name".to_string(), "plugin".to_string(), "slot_type".to_string()],
                 rows: vec![],
                 rows_affected: 0,
             });

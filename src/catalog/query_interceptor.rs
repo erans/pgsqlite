@@ -57,6 +57,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
            lower_query.contains("pg_depend") ||
            lower_query.contains("pg_collation") ||
+           lower_query.contains("pg_replication_slots") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -519,6 +520,11 @@ impl CatalogInterceptor {
             // Handle pg_collation queries
             if table_name.contains("pg_collation") || table_name.contains("pg_catalog.pg_collation") {
                 return Some(Ok(Self::handle_pg_collation_query(select)));
+            }
+
+            // Handle pg_replication_slots queries (always empty - SQLite has no replication)
+            if table_name.contains("pg_replication_slots") || table_name.contains("pg_catalog.pg_replication_slots") {
+                return Some(Ok(Self::handle_pg_replication_slots_query(select)));
             }
 
             // Handle pg_class queries
@@ -1156,6 +1162,36 @@ impl CatalogInterceptor {
             _ => {}
         }
         None
+    }
+
+    pub fn handle_pg_replication_slots_query(select: &Select) -> DbResponse {
+        let all_columns = vec![
+            "slot_name".to_string(),
+            "plugin".to_string(),
+            "slot_type".to_string(),
+            "datoid".to_string(),
+            "database".to_string(),
+            "temporary".to_string(),
+            "active".to_string(),
+            "active_pid".to_string(),
+            "xmin".to_string(),
+            "catalog_xmin".to_string(),
+            "restart_lsn".to_string(),
+            "confirmed_flush_lsn".to_string(),
+            "wal_status".to_string(),
+            "safe_wal_size".to_string(),
+            "two_phase".to_string(),
+            "conflicting".to_string(),
+        ];
+
+        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+
+        // Always return empty - SQLite has no replication
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![],
+            rows_affected: 0,
+        }
     }
 
     fn handle_pg_type_join_query(select: &Select) -> DbResponse {
