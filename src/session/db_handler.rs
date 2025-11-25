@@ -873,6 +873,23 @@ impl DbHandler {
             });
         }
 
+        // Handle pg_statistic queries (always empty - internal stats table)
+        if lower_query.contains("pg_statistic") || lower_query.contains("pg_catalog.pg_statistic") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_statistic_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["starelid".to_string(), "staattnum".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
         // Handle pg_stats queries
         if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;
@@ -1198,6 +1215,23 @@ impl DbHandler {
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["dbid".to_string(), "classid".to_string(), "objid".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_statistic queries (always empty - internal stats table)
+        if lower_query.contains("pg_statistic") || lower_query.contains("pg_catalog.pg_statistic") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_pg_statistic_query(select));
+                    }
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["starelid".to_string(), "staattnum".to_string()],
                 rows: vec![],
                 rows_affected: 0,
             });

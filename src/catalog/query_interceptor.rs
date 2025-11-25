@@ -59,6 +59,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_collation") ||
            lower_query.contains("pg_replication_slots") ||
            lower_query.contains("pg_shdepend") ||
+           lower_query.contains("pg_statistic") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -531,6 +532,11 @@ impl CatalogInterceptor {
             // Handle pg_shdepend queries (always empty - SQLite has no shared dependencies)
             if table_name.contains("pg_shdepend") || table_name.contains("pg_catalog.pg_shdepend") {
                 return Some(Ok(Self::handle_pg_shdepend_query(select)));
+            }
+
+            // Handle pg_statistic queries (always empty - internal stats table)
+            if table_name.contains("pg_statistic") || table_name.contains("pg_catalog.pg_statistic") {
+                return Some(Ok(Self::handle_pg_statistic_query(select)));
             }
 
             // Handle pg_class queries
@@ -1214,6 +1220,51 @@ impl CatalogInterceptor {
         let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Always return empty - SQLite has no shared dependencies
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![],
+            rows_affected: 0,
+        }
+    }
+
+    pub fn handle_pg_statistic_query(select: &Select) -> DbResponse {
+        let all_columns = vec![
+            "starelid".to_string(),
+            "staattnum".to_string(),
+            "stainherit".to_string(),
+            "stanullfrac".to_string(),
+            "stawidth".to_string(),
+            "stadistinct".to_string(),
+            "stakind1".to_string(),
+            "stakind2".to_string(),
+            "stakind3".to_string(),
+            "stakind4".to_string(),
+            "stakind5".to_string(),
+            "staop1".to_string(),
+            "staop2".to_string(),
+            "staop3".to_string(),
+            "staop4".to_string(),
+            "staop5".to_string(),
+            "stacoll1".to_string(),
+            "stacoll2".to_string(),
+            "stacoll3".to_string(),
+            "stacoll4".to_string(),
+            "stacoll5".to_string(),
+            "stanumbers1".to_string(),
+            "stanumbers2".to_string(),
+            "stanumbers3".to_string(),
+            "stanumbers4".to_string(),
+            "stanumbers5".to_string(),
+            "stavalues1".to_string(),
+            "stavalues2".to_string(),
+            "stavalues3".to_string(),
+            "stavalues4".to_string(),
+            "stavalues5".to_string(),
+        ];
+
+        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+
+        // Always return empty - internal stats table, use pg_stats view instead
         DbResponse {
             columns: selected_columns,
             rows: vec![],
