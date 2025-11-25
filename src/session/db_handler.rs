@@ -597,6 +597,112 @@ impl DbHandler {
     pub async fn query(&self, query: &str) -> Result<DbResponse, rusqlite::Error> {
         // Check for pg_stats queries first - they should be intercepted regardless of database type
         let lower_query = query.to_lowercase();
+
+        // Handle pg_sequence queries
+        if lower_query.contains("pg_sequence") || lower_query.contains("pg_catalog.pg_sequence") {
+            use crate::catalog::pg_sequence::PgSequenceHandler;
+
+            // For aggregate queries (COUNT, AVG, etc), we need to materialize pg_sequence as a temp table
+            // and run the query against it
+            if lower_query.contains("count(") || lower_query.contains("avg(") ||
+               lower_query.contains("sum(") || lower_query.contains("max(") ||
+               lower_query.contains("min(") {
+                // Create a temporary connection and materialize pg_sequence data
+                let temp_conn = rusqlite::Connection::open_in_memory().map_err(|e| {
+                    rusqlite::Error::SqliteFailure(
+                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                        Some(format!("Failed to create temp connection: {e}"))
+                    )
+                })?;
+
+                // Create temp table with pg_sequence schema
+                temp_conn.execute("
+                    CREATE TEMP TABLE pg_sequence (
+                        seqrelid INTEGER,
+                        seqtypid INTEGER,
+                        seqstart BIGINT,
+                        seqincrement BIGINT,
+                        seqmax BIGINT,
+                        seqmin BIGINT,
+                        seqcache BIGINT,
+                        seqcycle BOOLEAN
+                    )
+                ", []).ok();
+
+                // Get pg_sequence data and insert into temp table
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_sequence");
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            if let Ok(sequence_data) = PgSequenceHandler::handle_query(select, self).await {
+                                // Insert the data into temp table
+                                for row in &sequence_data.rows {
+                                    let mut values = Vec::new();
+                                    for col in row {
+                                        if let Some(bytes) = col {
+                                            values.push(String::from_utf8_lossy(bytes).to_string());
+                                        } else {
+                                            values.push(String::new());
+                                        }
+                                    }
+
+                                    let insert_sql = format!(
+                                        "INSERT INTO pg_sequence VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+                                        values[0], values[1], values[2], values[3],
+                                        values[4], values[5], values[6], if values[7] == "t" { "1" } else { "0" }
+                                    );
+                                    temp_conn.execute(&insert_sql, []).ok();
+                                }
+                            }
+                        }
+
+                // Now execute the actual query against the temp table
+                let mut stmt = temp_conn.prepare(query)?;
+                let column_count = stmt.column_count();
+                let mut columns = Vec::new();
+                for i in 0..column_count {
+                    columns.push(stmt.column_name(i)?.to_string());
+                }
+
+                let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
+                    let mut values = Vec::new();
+                    for i in 0..column_count {
+                        // Try different types since COUNT returns integer
+                        if let Ok(int_val) = row.get::<_, i64>(i) {
+                            values.push(Some(int_val.to_string().into_bytes()));
+                        } else if let Ok(Some(string_val)) = row.get::<_, Option<String>>(i) {
+                            values.push(Some(string_val.into_bytes()));
+                        } else {
+                            values.push(None);
+                        }
+                    }
+                    Ok(values)
+                })?.collect();
+
+                return match rows_result {
+                    Ok(rows) => {
+                        let rows_affected = rows.len();
+                        Ok(DbResponse {
+                            columns,
+                            rows,
+                            rows_affected,
+                        })
+                    }
+                    Err(e) => Err(e),
+                };
+            } else {
+                // For simple SELECT queries, handle directly via PgSequenceHandler
+                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+                if let Ok(mut statements) = parsed_query
+                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                        && let Some(select) = query_ast.body.as_select() {
+                            if let Ok(response) = PgSequenceHandler::handle_query(select, self).await {
+                                return Ok(response);
+                            }
+                        }
+            }
+        }
+
         if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;
 
@@ -716,6 +822,35 @@ impl DbHandler {
             // Fallback to empty response if parsing fails
             return Ok(DbResponse {
                 columns: vec!["schemaname".to_string(), "tablename".to_string(), "attname".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            });
+        }
+
+        // Handle pg_settings queries
+        if lower_query.contains("pg_settings") || lower_query.contains("pg_catalog.pg_settings") {
+            use crate::catalog::pg_settings::PgSettingsHandler;
+
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        match PgSettingsHandler::handle_query(select) {
+                            Ok(response) => return Ok(response),
+                            Err(_) => {
+                                // Fallback to empty response
+                                return Ok(DbResponse {
+                                    columns: vec!["name".to_string(), "setting".to_string()],
+                                    rows: vec![],
+                                    rows_affected: 0,
+                                });
+                            }
+                        }
+                    }
+
+            // Fallback to empty response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["name".to_string(), "setting".to_string()],
                 rows: vec![],
                 rows_affected: 0,
             });
