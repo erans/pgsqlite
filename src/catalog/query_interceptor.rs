@@ -8,7 +8,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -55,7 +55,8 @@ impl CatalogInterceptor {
            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
            lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
-           lower_query.contains("pg_depend") ||
+           lower_query.contains("pg_depend") || lower_query.contains("pg_sequence") ||
+           lower_query.contains("pg_trigger") ||
            lower_query.contains("pg_collation") ||
            lower_query.contains("pg_replication_slots") ||
            lower_query.contains("pg_shdepend") ||
@@ -633,6 +634,33 @@ impl CatalogInterceptor {
                     },
                     Err(_) => {
                         // PgStatsHandler error
+                        None
+                    },
+                };
+            }
+
+            // Handle pg_sequence queries
+            if table_name.contains("pg_sequence") || table_name.contains("pg_catalog.pg_sequence") {
+                info!("Routing to PgSequenceHandler for table: {}", table_name);
+                return match PgSequenceHandler::handle_query(select, &db).await {
+                    Ok(response) => {
+                        debug!("PgSequenceHandler returned {} rows", response.rows.len());
+                        Some(Ok(response))
+                    },
+                    Err(_) => {
+                        None
+                    },
+                };
+            }
+
+            if table_name.contains("pg_trigger") || table_name.contains("pg_catalog.pg_trigger") {
+                info!("Routing to PgTriggerHandler for table: {}", table_name);
+                return match PgTriggerHandler::handle_query(select, &db).await {
+                    Ok(response) => {
+                        debug!("PgTriggerHandler returned {} rows", response.rows.len());
+                        Some(Ok(response))
+                    },
+                    Err(_) => {
                         None
                     },
                 };

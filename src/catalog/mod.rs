@@ -10,6 +10,8 @@ pub mod pg_description;
 pub mod pg_roles;
 pub mod pg_user;
 pub mod pg_stats;
+pub mod pg_sequence;
+pub mod pg_trigger;
 pub mod system_functions;
 pub mod where_evaluator;
 pub mod constraint_populator;
