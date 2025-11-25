@@ -58,6 +58,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_depend") ||
            lower_query.contains("pg_collation") ||
            lower_query.contains("pg_replication_slots") ||
+           lower_query.contains("pg_shdepend") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -525,6 +526,11 @@ impl CatalogInterceptor {
             // Handle pg_replication_slots queries (always empty - SQLite has no replication)
             if table_name.contains("pg_replication_slots") || table_name.contains("pg_catalog.pg_replication_slots") {
                 return Some(Ok(Self::handle_pg_replication_slots_query(select)));
+            }
+
+            // Handle pg_shdepend queries (always empty - SQLite has no shared dependencies)
+            if table_name.contains("pg_shdepend") || table_name.contains("pg_catalog.pg_shdepend") {
+                return Some(Ok(Self::handle_pg_shdepend_query(select)));
             }
 
             // Handle pg_class queries
@@ -1187,6 +1193,27 @@ impl CatalogInterceptor {
         let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Always return empty - SQLite has no replication
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![],
+            rows_affected: 0,
+        }
+    }
+
+    pub fn handle_pg_shdepend_query(select: &Select) -> DbResponse {
+        let all_columns = vec![
+            "dbid".to_string(),
+            "classid".to_string(),
+            "objid".to_string(),
+            "objsubid".to_string(),
+            "refclassid".to_string(),
+            "refobjid".to_string(),
+            "deptype".to_string(),
+        ];
+
+        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+
+        // Always return empty - SQLite has no shared dependencies
         DbResponse {
             columns: selected_columns,
             rows: vec![],
