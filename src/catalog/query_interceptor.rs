@@ -56,6 +56,7 @@ impl CatalogInterceptor {
            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
            lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
            lower_query.contains("pg_depend") ||
+           lower_query.contains("pg_collation") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -513,6 +514,11 @@ impl CatalogInterceptor {
             // Handle pg_tablespace queries
             if table_name.contains("pg_tablespace") || table_name.contains("pg_catalog.pg_tablespace") {
                 return Some(Ok(Self::handle_pg_tablespace_query(select)));
+            }
+
+            // Handle pg_collation queries
+            if table_name.contains("pg_collation") || table_name.contains("pg_catalog.pg_collation") {
+                return Some(Ok(Self::handle_pg_collation_query(select)));
             }
 
             // Handle pg_class queries
@@ -1061,6 +1067,95 @@ impl CatalogInterceptor {
             rows,
             rows_affected,
         }
+    }
+
+    pub fn handle_pg_collation_query(select: &Select) -> DbResponse {
+        // Define pg_collation columns (PostgreSQL standard)
+        let all_columns = vec![
+            "oid".to_string(),
+            "collname".to_string(),
+            "collnamespace".to_string(),
+            "collowner".to_string(),
+            "collprovider".to_string(),
+            "collisdeterministic".to_string(),
+            "collencoding".to_string(),
+            "collcollate".to_string(),
+            "collctype".to_string(),
+            "colliculocale".to_string(),
+            "collicurules".to_string(),
+            "collversion".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Define standard collations
+        let collations = vec![
+            ("100", "default", "11", "10", "d", "t", "-1", "", "", "", "", ""),
+            ("950", "C", "11", "10", "c", "t", "-1", "C", "C", "", "", ""),
+            ("951", "POSIX", "11", "10", "c", "t", "-1", "POSIX", "POSIX", "", "", ""),
+        ];
+
+        // Check for WHERE clause filtering by collname
+        let name_filter = if let Some(ref where_clause) = select.selection {
+            Self::extract_collation_name_filter(where_clause)
+        } else {
+            None
+        };
+
+        let mut rows = Vec::new();
+        for (oid, collname, collnamespace, collowner, collprovider, collisdeterministic,
+             collencoding, collcollate, collctype, colliculocale, collicurules, collversion) in collations {
+
+            // Apply name filter if present
+            if let Some(ref filter) = name_filter {
+                if collname != filter {
+                    continue;
+                }
+            }
+
+            let full_row: Vec<Option<Vec<u8>>> = vec![
+                Some(oid.to_string().into_bytes()),
+                Some(collname.to_string().into_bytes()),
+                Some(collnamespace.to_string().into_bytes()),
+                Some(collowner.to_string().into_bytes()),
+                Some(collprovider.to_string().into_bytes()),
+                Some(collisdeterministic.to_string().into_bytes()),
+                Some(collencoding.to_string().into_bytes()),
+                if collcollate.is_empty() { None } else { Some(collcollate.to_string().into_bytes()) },
+                if collctype.is_empty() { None } else { Some(collctype.to_string().into_bytes()) },
+                if colliculocale.is_empty() { None } else { Some(colliculocale.to_string().into_bytes()) },
+                if collicurules.is_empty() { None } else { Some(collicurules.to_string().into_bytes()) },
+                if collversion.is_empty() { None } else { Some(collversion.to_string().into_bytes()) },
+            ];
+
+            let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                .map(|&idx| full_row[idx].clone())
+                .collect();
+            rows.push(projected_row);
+        }
+
+        let rows_affected = rows.len();
+        DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected,
+        }
+    }
+
+    fn extract_collation_name_filter(where_clause: &Expr) -> Option<String> {
+        match where_clause {
+            Expr::BinaryOp { left, op, right } => {
+                if let (Expr::Identifier(ident), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
+                    (left.as_ref(), op, right.as_ref())
+                    && ident.value.to_lowercase() == "collname"
+                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                            return Some(value.clone());
+                        }
+            }
+            _ => {}
+        }
+        None
     }
 
     fn handle_pg_type_join_query(select: &Select) -> DbResponse {
