@@ -492,10 +492,7 @@ impl SecurityAuditLogger {
             event.client_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "unknown".to_string()),
             event.message
         );
-
-        // Update alerting stats
-        let mut stats = self.stats.write();
-        stats.alerts_triggered += 1;
+        // Note: alerts_triggered is already counted in update_stats()
     }
 
     /// Buffer management for batching
