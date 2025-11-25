@@ -8,7 +8,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, pg_settings::PgSettingsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -55,7 +55,12 @@ impl CatalogInterceptor {
            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
            lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
-           lower_query.contains("pg_depend") ||
+           lower_query.contains("pg_depend") || lower_query.contains("pg_sequence") ||
+           lower_query.contains("pg_trigger") || lower_query.contains("pg_settings") ||
+           lower_query.contains("pg_collation") ||
+           lower_query.contains("pg_replication_slots") ||
+           lower_query.contains("pg_shdepend") ||
+           lower_query.contains("pg_statistic") ||
            lower_query.contains("information_schema") ||
            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
            lower_query.contains("pg_foreign_data_wrapper");
@@ -515,6 +520,26 @@ impl CatalogInterceptor {
                 return Some(Ok(Self::handle_pg_tablespace_query(select)));
             }
 
+            // Handle pg_collation queries
+            if table_name.contains("pg_collation") || table_name.contains("pg_catalog.pg_collation") {
+                return Some(Ok(Self::handle_pg_collation_query(select)));
+            }
+
+            // Handle pg_replication_slots queries (always empty - SQLite has no replication)
+            if table_name.contains("pg_replication_slots") || table_name.contains("pg_catalog.pg_replication_slots") {
+                return Some(Ok(Self::handle_pg_replication_slots_query(select)));
+            }
+
+            // Handle pg_shdepend queries (always empty - SQLite has no shared dependencies)
+            if table_name.contains("pg_shdepend") || table_name.contains("pg_catalog.pg_shdepend") {
+                return Some(Ok(Self::handle_pg_shdepend_query(select)));
+            }
+
+            // Handle pg_statistic queries (always empty - internal stats table)
+            if table_name.contains("pg_statistic") || table_name.contains("pg_catalog.pg_statistic") {
+                return Some(Ok(Self::handle_pg_statistic_query(select)));
+            }
+
             // Handle pg_class queries
             if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
                 return Some(PgClassHandler::handle_query(select, &db).await);
@@ -609,6 +634,46 @@ impl CatalogInterceptor {
                     },
                     Err(_) => {
                         // PgStatsHandler error
+                        None
+                    },
+                };
+            }
+
+            // Handle pg_sequence queries
+            if table_name.contains("pg_sequence") || table_name.contains("pg_catalog.pg_sequence") {
+                info!("Routing to PgSequenceHandler for table: {}", table_name);
+                return match PgSequenceHandler::handle_query(select, &db).await {
+                    Ok(response) => {
+                        debug!("PgSequenceHandler returned {} rows", response.rows.len());
+                        Some(Ok(response))
+                    },
+                    Err(_) => {
+                        None
+                    },
+                };
+            }
+
+            if table_name.contains("pg_trigger") || table_name.contains("pg_catalog.pg_trigger") {
+                info!("Routing to PgTriggerHandler for table: {}", table_name);
+                return match PgTriggerHandler::handle_query(select, &db).await {
+                    Ok(response) => {
+                        debug!("PgTriggerHandler returned {} rows", response.rows.len());
+                        Some(Ok(response))
+                    },
+                    Err(_) => {
+                        None
+                    },
+                };
+            }
+
+            if table_name.contains("pg_settings") || table_name.contains("pg_catalog.pg_settings") {
+                info!("Routing to PgSettingsHandler for table: {}", table_name);
+                return match PgSettingsHandler::handle_query(select) {
+                    Ok(response) => {
+                        debug!("PgSettingsHandler returned {} rows", response.rows.len());
+                        Some(Ok(response))
+                    },
+                    Err(_) => {
                         None
                     },
                 };
@@ -1060,6 +1125,191 @@ impl CatalogInterceptor {
             columns,
             rows,
             rows_affected,
+        }
+    }
+
+    pub fn handle_pg_collation_query(select: &Select) -> DbResponse {
+        // Define pg_collation columns (PostgreSQL standard)
+        let all_columns = vec![
+            "oid".to_string(),
+            "collname".to_string(),
+            "collnamespace".to_string(),
+            "collowner".to_string(),
+            "collprovider".to_string(),
+            "collisdeterministic".to_string(),
+            "collencoding".to_string(),
+            "collcollate".to_string(),
+            "collctype".to_string(),
+            "colliculocale".to_string(),
+            "collicurules".to_string(),
+            "collversion".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Define standard collations
+        let collations = vec![
+            ("100", "default", "11", "10", "d", "t", "-1", "", "", "", "", ""),
+            ("950", "C", "11", "10", "c", "t", "-1", "C", "C", "", "", ""),
+            ("951", "POSIX", "11", "10", "c", "t", "-1", "POSIX", "POSIX", "", "", ""),
+        ];
+
+        // Check for WHERE clause filtering by collname
+        let name_filter = if let Some(ref where_clause) = select.selection {
+            Self::extract_collation_name_filter(where_clause)
+        } else {
+            None
+        };
+
+        let mut rows = Vec::new();
+        for (oid, collname, collnamespace, collowner, collprovider, collisdeterministic,
+             collencoding, collcollate, collctype, colliculocale, collicurules, collversion) in collations {
+
+            // Apply name filter if present
+            if let Some(ref filter) = name_filter {
+                if collname != filter {
+                    continue;
+                }
+            }
+
+            let full_row: Vec<Option<Vec<u8>>> = vec![
+                Some(oid.to_string().into_bytes()),
+                Some(collname.to_string().into_bytes()),
+                Some(collnamespace.to_string().into_bytes()),
+                Some(collowner.to_string().into_bytes()),
+                Some(collprovider.to_string().into_bytes()),
+                Some(collisdeterministic.to_string().into_bytes()),
+                Some(collencoding.to_string().into_bytes()),
+                if collcollate.is_empty() { None } else { Some(collcollate.to_string().into_bytes()) },
+                if collctype.is_empty() { None } else { Some(collctype.to_string().into_bytes()) },
+                if colliculocale.is_empty() { None } else { Some(colliculocale.to_string().into_bytes()) },
+                if collicurules.is_empty() { None } else { Some(collicurules.to_string().into_bytes()) },
+                if collversion.is_empty() { None } else { Some(collversion.to_string().into_bytes()) },
+            ];
+
+            let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                .map(|&idx| full_row[idx].clone())
+                .collect();
+            rows.push(projected_row);
+        }
+
+        let rows_affected = rows.len();
+        DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected,
+        }
+    }
+
+    fn extract_collation_name_filter(where_clause: &Expr) -> Option<String> {
+        match where_clause {
+            Expr::BinaryOp { left, op, right } => {
+                if let (Expr::Identifier(ident), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
+                    (left.as_ref(), op, right.as_ref())
+                    && ident.value.to_lowercase() == "collname"
+                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                            return Some(value.clone());
+                        }
+            }
+            _ => {}
+        }
+        None
+    }
+
+    pub fn handle_pg_replication_slots_query(select: &Select) -> DbResponse {
+        let all_columns = vec![
+            "slot_name".to_string(),
+            "plugin".to_string(),
+            "slot_type".to_string(),
+            "datoid".to_string(),
+            "database".to_string(),
+            "temporary".to_string(),
+            "active".to_string(),
+            "active_pid".to_string(),
+            "xmin".to_string(),
+            "catalog_xmin".to_string(),
+            "restart_lsn".to_string(),
+            "confirmed_flush_lsn".to_string(),
+            "wal_status".to_string(),
+            "safe_wal_size".to_string(),
+            "two_phase".to_string(),
+            "conflicting".to_string(),
+        ];
+
+        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+
+        // Always return empty - SQLite has no replication
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![],
+            rows_affected: 0,
+        }
+    }
+
+    pub fn handle_pg_shdepend_query(select: &Select) -> DbResponse {
+        let all_columns = vec![
+            "dbid".to_string(),
+            "classid".to_string(),
+            "objid".to_string(),
+            "objsubid".to_string(),
+            "refclassid".to_string(),
+            "refobjid".to_string(),
+            "deptype".to_string(),
+        ];
+
+        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+
+        // Always return empty - SQLite has no shared dependencies
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![],
+            rows_affected: 0,
+        }
+    }
+
+    pub fn handle_pg_statistic_query(select: &Select) -> DbResponse {
+        let all_columns = vec![
+            "starelid".to_string(),
+            "staattnum".to_string(),
+            "stainherit".to_string(),
+            "stanullfrac".to_string(),
+            "stawidth".to_string(),
+            "stadistinct".to_string(),
+            "stakind1".to_string(),
+            "stakind2".to_string(),
+            "stakind3".to_string(),
+            "stakind4".to_string(),
+            "stakind5".to_string(),
+            "staop1".to_string(),
+            "staop2".to_string(),
+            "staop3".to_string(),
+            "staop4".to_string(),
+            "staop5".to_string(),
+            "stacoll1".to_string(),
+            "stacoll2".to_string(),
+            "stacoll3".to_string(),
+            "stacoll4".to_string(),
+            "stacoll5".to_string(),
+            "stanumbers1".to_string(),
+            "stanumbers2".to_string(),
+            "stanumbers3".to_string(),
+            "stanumbers4".to_string(),
+            "stanumbers5".to_string(),
+            "stavalues1".to_string(),
+            "stavalues2".to_string(),
+            "stavalues3".to_string(),
+            "stavalues4".to_string(),
+            "stavalues5".to_string(),
+        ];
+
+        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+
+        // Always return empty - internal stats table, use pg_stats view instead
+        DbResponse {
+            columns: selected_columns,
+            rows: vec![],
+            rows_affected: 0,
         }
     }
 
