@@ -1,0 +1,39 @@
+# Git files
+.git
+.gitignore
+
+# Rust build artifacts
+target/
+Cargo.lock
+
+# Documentation
+README.md
+CLAUDE.md
+CONTRIBUTING.md
+
+# Test files
+tests/
+benches/
+benchmarks/
+
+# CI/CD
+.github/
+.github-actions/
+
+# Development files
+.env.example
+release.sh
+run_all_driver_tests.sh
+
+# Python test files
+test_pgsqlite_binary.py
+test_pgsqlite_text.py
+test_sqlite.py
+
+# Temporary files
+*.tmp
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db

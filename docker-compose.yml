@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  pgsqlite:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: v0.0.18
+    platform: linux/arm64
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./data:/data
+    environment:
+      - PGSQLITE_DATABASE=/data/database.db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "timeout", "5", "bash", "-c", "</dev/tcp/localhost/5432"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
