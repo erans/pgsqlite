@@ -13,7 +13,7 @@ CONTRIBUTING.md
 
 # Test files
 tests/
-benches/
+
 benchmarks/
 
 # CI/CD
