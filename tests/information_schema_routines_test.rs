@@ -347,3 +347,43 @@ async fn test_information_schema_routines_specific_function_details() {
         println!("✅ {} function details correct", func_name);
     }
 }
+
+#[tokio::test]
+async fn test_information_schema_routines_contains_pg16_probe_functions() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("test_routines_pg16_probes.db");
+    let db_handler = Arc::new(DbHandler::new(db_path.to_str().unwrap()).unwrap());
+
+    let session_id = Uuid::new_v4();
+    db_handler.create_session_connection(session_id).await.unwrap();
+
+    let result = db_handler
+        .query_with_session(
+            "SELECT routine_name FROM information_schema.routines WHERE routine_name IN ('current_setting', 'current_database', 'current_schema', 'current_schemas') ORDER BY routine_name",
+            &session_id,
+        )
+        .await
+        .unwrap();
+
+    let names: Vec<String> = result
+        .rows
+        .iter()
+        .filter_map(|row| {
+            row.get(0)
+                .and_then(|v| v.as_ref())
+                .and_then(|b| String::from_utf8(b.clone()).ok())
+        })
+        .collect();
+
+    for expected in [
+        "current_database",
+        "current_schema",
+        "current_schemas",
+        "current_setting",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "Expected routine {expected} in information_schema.routines; got {names:?}"
+        );
+    }
+}

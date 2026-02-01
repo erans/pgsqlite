@@ -159,6 +159,30 @@ impl PgProcHandler {
             ("version", "11", "25", "f", "s", false, false),      // version() -> text
             ("current_database", "11", "19", "f", "s", false, false), // current_database() -> name
             ("current_user", "11", "19", "f", "s", false, false), // current_user -> name
+
+            // PG16-era common introspection/system functions
+            ("current_setting", "11", "25", "f", "s", false, false), // current_setting(text[, bool]) -> text
+            ("current_schema", "11", "19", "f", "s", false, false),  // current_schema() -> name
+            ("current_schemas", "11", "1003", "f", "s", false, true), // current_schemas(bool) -> setof name[] (approx)
+            ("session_user", "11", "19", "f", "s", false, false), // session_user -> name
+            ("user", "11", "19", "f", "s", false, false),         // user -> name
+            ("pg_backend_pid", "11", "23", "f", "v", false, false), // pg_backend_pid() -> int4
+            ("pg_is_in_recovery", "11", "16", "f", "s", false, false), // pg_is_in_recovery() -> bool
+            ("pg_postmaster_start_time", "11", "1184", "f", "s", false, false), // pg_postmaster_start_time() -> timestamptz
+            ("pg_conf_load_time", "11", "1184", "f", "s", false, false), // pg_conf_load_time() -> timestamptz
+            ("pg_database_size", "11", "20", "f", "s", false, false), // pg_database_size(name) -> int8
+            ("inet_client_addr", "11", "869", "f", "s", false, false), // inet_client_addr() -> inet
+            ("inet_client_port", "11", "23", "f", "s", false, false), // inet_client_port() -> int4
+            ("inet_server_addr", "11", "869", "f", "s", false, false), // inet_server_addr() -> inet
+            ("inet_server_port", "11", "23", "f", "s", false, false), // inet_server_port() -> int4
+            ("pg_has_role", "11", "16", "f", "s", false, false), // pg_has_role(...) -> bool
+            ("has_database_privilege", "11", "16", "f", "s", false, false), // has_database_privilege(...) -> bool
+            ("has_schema_privilege", "11", "16", "f", "s", false, false), // has_schema_privilege(...) -> bool
+            ("has_table_privilege", "11", "16", "f", "s", false, false), // has_table_privilege(...) -> bool
+            ("pg_get_userbyid", "11", "19", "f", "s", false, false), // pg_get_userbyid(oid) -> name
+            ("obj_description", "11", "25", "f", "s", false, false), // obj_description(...) -> text
+            ("col_description", "11", "25", "f", "s", false, false), // col_description(oid, int4) -> text
+            ("pg_size_pretty", "11", "25", "f", "s", false, false), // pg_size_pretty(int8) -> text
         ];
 
         for (i, (name, namespace, return_type, kind, volatility, is_strict, returns_set)) in sql_functions.iter().enumerate() {

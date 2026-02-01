@@ -66,6 +66,61 @@ async fn test_pg_proc_basic() {
 }
 
 #[tokio::test]
+async fn test_pg_proc_contains_pg16_probe_functions() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("test_pg_proc_pg16_probes.db");
+    let db_handler = Arc::new(DbHandler::new(db_path.to_str().unwrap()).unwrap());
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        while let Ok((stream, client_addr)) = listener.accept().await {
+            let db_clone = db_handler.clone();
+            tokio::spawn(async move {
+                if let Err(e) = handle_test_connection_with_pool(stream, client_addr, db_clone).await {
+                    eprintln!("Connection error: {}", e);
+                }
+            });
+        }
+    });
+
+    let (client, connection) = tokio_postgres::connect(
+        &format!("host=127.0.0.1 port={} user=postgres dbname=test", addr.port()),
+        NoTls,
+    )
+    .await
+    .unwrap();
+
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    let rows = client
+        .query(
+            "SELECT proname FROM pg_proc WHERE proname IN ('current_setting', 'current_database', 'current_schema', 'current_schemas') ORDER BY proname",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let names: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
+    for expected in [
+        "current_database",
+        "current_schema",
+        "current_schemas",
+        "current_setting",
+    ] {
+        assert!(
+            names.iter().any(|n| n == expected),
+            "Expected function {expected} in pg_proc; got {names:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_pg_proc_psql_df_compatibility() {
     // Create a temporary database
     let temp_dir = tempfile::tempdir().unwrap();
