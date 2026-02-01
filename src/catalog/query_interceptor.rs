@@ -145,21 +145,20 @@ impl CatalogInterceptor {
                                             Ok(response) => return Some(Ok(response)),
                                             Err(e) => return Some(Err(PgSqliteError::Sqlite(e))),
                                         }
-                                    } else {
-                                        // Re-parse the processed query to continue with catalog handling
-                                        match Parser::parse_sql(&dialect, &processed_sql) {
-                                            Ok(mut new_statements) => {
-                                                if new_statements.len() == 1
-                                                    && let Statement::Query(new_query) = &mut new_statements[0] {
-                                                        // Replace the current query with the processed one
-                                                        *query_stmt = new_query.clone();
-                                                        // Continue to the catalog handling below
-                                                    }
-                                            }
-                                            Err(e) => {
-                                                // Failed to re-parse processed query
-                                                return Some(Err(PgSqliteError::Protocol(format!("Failed to parse processed query: {e}"))));
-                                            }
+                                    }
+                                    // Re-parse the processed query to continue with catalog handling
+                                    match Parser::parse_sql(&dialect, &processed_sql) {
+                                        Ok(mut new_statements) => {
+                                            if new_statements.len() == 1
+                                                && let Statement::Query(new_query) = &mut new_statements[0] {
+                                                    // Replace the current query with the processed one
+                                                    *query_stmt = new_query.clone();
+                                                    // Continue to the catalog handling below
+                                                }
+                                        }
+                                        Err(e) => {
+                                            // Failed to re-parse processed query
+                                            return Some(Err(PgSqliteError::Protocol(format!("Failed to parse processed query: {e}"))));
                                         }
                                     }
                                 }
@@ -327,15 +326,14 @@ impl CatalogInterceptor {
                                                 rows_affected: 1,
                                             };
                                             return Some(db_response);
-                                        } else {
-                                            debug!("Table {} does not exist", table_name_str);
-                                            let db_response = DbResponse {
-                                                columns: vec!["relname".to_string()],
-                                                rows: vec![],
-                                                rows_affected: 0,
-                                            };
-                                            return Some(db_response);
                                         }
+                                        debug!("Table {} does not exist", table_name_str);
+                                        let db_response = DbResponse {
+                                            columns: vec!["relname".to_string()],
+                                            rows: vec![],
+                                            rows_affected: 0,
+                                        };
+                                        return Some(db_response);
                                     }
                                     Err(_) => {
                                         // Error checking table existence
@@ -676,36 +674,32 @@ impl CatalogInterceptor {
             if table_name.contains("information_schema.columns") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_columns_query_with_session(select, &db, &session_state.id).await);
-                } else {
-                    return None;
                 }
+                return None;
             }
 
             // Handle information_schema.key_column_usage queries
             if table_name.contains("information_schema.key_column_usage") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_key_column_usage_query(select, &db, &session_state.id).await);
-                } else {
-                    return None;
                 }
+                return None;
             }
 
             // Handle information_schema.table_constraints queries
             if table_name.contains("information_schema.table_constraints") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_table_constraints_query(select, &db, &session_state.id).await);
-                } else {
-                    return None;
                 }
+                return None;
             }
 
             // Handle information_schema.referential_constraints queries
             if table_name.contains("information_schema.referential_constraints") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_referential_constraints_query_with_session(select, &db, &session_state.id).await);
-                } else {
-                    return None;
                 }
+                return None;
             }
 
             // Handle information_schema.routines queries

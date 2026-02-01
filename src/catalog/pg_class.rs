@@ -369,5 +369,5 @@ fn generate_oid_from_name(name: &str) -> u32 {
     for byte in name.bytes() {
         hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
     }
-    16384 + (hash % 1000000)
+    16384 + (hash % 1_000_000)
 }

@@ -93,7 +93,7 @@ fn generate_table_oid(name: &str) -> String {
     let char3 = chars.get(2).copied().unwrap_or(' ') as u32;
     let length = name.len() as u32;
 
-    let oid = ((char1 * 1000000) + (char2 * 10000) + (char3 * 100) + (length * 7)) % 1000000 + 16384;
+    let oid = ((char1 * 1_000_000) + (char2 * 10000) + (char3 * 100) + (length * 7)) % 1_000_000 + 16384;
     oid.to_string()
 }
 
@@ -104,8 +104,8 @@ fn generate_constraint_oid(name: &str, contype: &str) -> String {
     let unique_name = format!("{}_{}", name, contype);
     // Use a different offset range for constraints to avoid collision with tables
     let base_oid = generate_oid(&unique_name);
-    // Offset by 500000 to put constraints in a different range
-    let final_oid = base_oid + 500000;
+    // Offset by 500_000 to put constraints in a different range
+    let final_oid = base_oid + 500_000;
     debug!(
         "OID generation: name={} contype={} base_oid={} final_oid={}",
         name,

@@ -458,7 +458,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
     if sql_upper.contains("PRIMARY KEY") {
         let mut hasher = DefaultHasher::new();
         format!("{table_name}_pkey").hash(&mut hasher);
-        let pkey_oid = hasher.finish() as i64 & 0x7FFFFFFF; // Keep it positive
+        let pkey_oid = hasher.finish() as i64 & 0x7FFF_FFFF; // Keep it positive
         
         if pkey_oid == target_oid {
             // Extract PRIMARY KEY definition
@@ -485,7 +485,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
             
             let mut hasher = DefaultHasher::new();
             format!("{table_name}_fkey_{fkey_count}").hash(&mut hasher);
-            let fkey_oid = hasher.finish() as i64 & 0x7FFFFFFF;
+            let fkey_oid = hasher.finish() as i64 & 0x7FFF_FFFF;
             
             if fkey_oid == target_oid {
                 // Extract FOREIGN KEY definition
@@ -533,7 +533,7 @@ fn extract_constraint_by_oid(create_sql: &str, target_oid: i64, table_name: &str
             
             let mut hasher = DefaultHasher::new();
             format!("{table_name}_check_{check_count}").hash(&mut hasher);
-            let check_oid = hasher.finish() as i64 & 0x7FFFFFFF;
+            let check_oid = hasher.finish() as i64 & 0x7FFF_FFFF;
             
             if check_oid == target_oid {
                 // Extract CHECK definition
