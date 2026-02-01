@@ -1,5 +1,6 @@
 use rusqlite::{Connection, Result};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::time;
@@ -131,8 +132,8 @@ impl SqlitePool {
         
         // Pre-create initial connections (half of max)
         let initial_connections = (max_connections / 2).max(1);
-        let mut conns = pool.connections.lock().unwrap();
-        let mut stats = pool.stats.lock().unwrap();
+        let mut conns = pool.connections.lock();
+        let mut stats = pool.stats.lock();
         for _ in 0..initial_connections {
             let conn = pool.create_connection()?;
             conns.push(PoolConnection::new(conn));
@@ -192,21 +193,8 @@ impl SqlitePool {
             
             debug!("Running background health check on connection pool");
             
-            let mut conns = match self.connections.lock() {
-                Ok(guard) => guard,
-                Err(e) => {
-                    error!("Failed to acquire connection pool lock for health check: {}", e);
-                    continue;
-                }
-            };
-            
-            let mut stats = match self.stats.lock() {
-                Ok(guard) => guard,
-                Err(e) => {
-                    error!("Failed to acquire stats lock for health check: {}", e);
-                    continue;
-                }
-            };
+            let mut conns = self.connections.lock();
+            let mut stats = self.stats.lock();
             
             let mut to_remove = Vec::new();
             
@@ -262,7 +250,7 @@ impl SqlitePool {
     }
 
     pub fn get_stats(&self) -> PoolStats {
-        let stats = self.stats.lock().unwrap();
+        let stats = self.stats.lock();
         stats.clone()
     }
 
@@ -280,8 +268,8 @@ impl SqlitePool {
         let permit = self.semaphore.clone().acquire_owned().await.unwrap();
         
         let pool_conn = {
-            let mut conns = self.connections.lock().unwrap();
-            let mut stats = self.stats.lock().unwrap();
+            let mut conns = self.connections.lock();
+            let mut stats = self.stats.lock();
             
             match conns.pop() {
                 Some(mut pc) => {
@@ -302,7 +290,7 @@ impl SqlitePool {
             None => {
                 // Create new connection if pool is empty
                 let new_conn = self.create_connection()?;
-                let mut stats = self.stats.lock().unwrap();
+                let mut stats = self.stats.lock();
                 stats.connections_created += 1;
                 stats.total_connections += 1;
                 new_conn
@@ -342,8 +330,8 @@ impl std::ops::DerefMut for PooledConnection {
 impl Drop for PooledConnection {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
-            let mut conns = self.pool.lock().unwrap();
-            let mut stats = self.stats.lock().unwrap();
+            let mut conns = self.pool.lock();
+            let mut stats = self.stats.lock();
             
             // Return connection to pool wrapped in PoolConnection
             conns.push(PoolConnection::new(conn));
