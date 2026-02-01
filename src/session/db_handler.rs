@@ -483,16 +483,15 @@ impl DbHandler {
                     }
                     Err(e) => Err(e),
                 };
-            } else {
-                // For simple SELECT queries, handle directly via PgSequenceHandler
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select()
-                            && let Ok(response) = PgSequenceHandler::handle_query(select, self).await {
-                                return Ok(response);
-                            }
             }
+            // For simple SELECT queries, handle directly via PgSequenceHandler
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select()
+                        && let Ok(response) = PgSequenceHandler::handle_query(select, self).await {
+                            return Ok(response);
+                        }
         }
 
         if lower_query.contains("pg_stats") || lower_query.contains("pg_catalog.pg_stats") {
