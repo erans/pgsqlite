@@ -21,7 +21,7 @@ use pgsqlite::protocol::{
 };
 use pgsqlite::security::events;
 use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
-use pgsqlite::session::{DbHandler, SessionState};
+use pgsqlite::session::{SessionState, get_or_create_handler};
 use pgsqlite::ssl::CertificateManager;
 use pgsqlite::migration::MigrationRunner;
 use pgsqlite::system_db::SystemDb;
@@ -424,10 +424,8 @@ where
         }
     };
 
-    let db_handler = Arc::new(
-        DbHandler::new_with_config(&db_path, &config)
-            .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
-    );
+    let db_handler = get_or_create_handler(&db_path, &config)
+        .map_err(|e| anyhow::anyhow!("Failed to get database handler: {}", e))?;
 
     // Set the database handler for this session for proper lifecycle management
     session.set_db_handler(db_handler.clone()).await;

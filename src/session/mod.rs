@@ -2,6 +2,7 @@
 pub mod state;
 pub mod pool;
 pub mod db_handler;
+pub mod db_handler_registry;
 pub mod read_only_handler;
 pub mod query_router;
 pub mod portal_manager;
@@ -17,3 +18,4 @@ pub use query_router::{QueryRouter, QueryRoute, QueryType, RouterError, RouterSt
 pub use portal_manager::{PortalManager, PortalExecutor, ManagedPortal, PortalExecutionState, CachedQueryResult};
 pub use connection_manager::ConnectionManager;
 pub use thread_local_cache::ThreadLocalConnectionCache;
+pub use db_handler_registry::get_or_create_handler;
