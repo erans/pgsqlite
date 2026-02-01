@@ -48,7 +48,11 @@ cargo build --release
 
 1. **Start pgsqlite with a SQLite database:**
 ```bash
-# Use an existing SQLite database
+# Recommended: directory-based layout (per-database files)
+# - connecting to database "mydb" will use ./data/mydb.db
+pgsqlite --database ./data
+
+# Legacy: single database file (ignores database name in client connection)
 pgsqlite --database ./my-database.db
 
 # Or start with an in-memory database for testing
@@ -135,7 +139,8 @@ const client = new Client({
 ```bash
 # Basic options
 pgsqlite \
-  --database <path>     # SQLite database file (default: sqlite.db)
+  --database <path>     # Database data directory (recommended) or a single .db file path (legacy) (default: ./data)
+  --default-database <name>  # Default database name when client doesn't specify one (default: main)
   --port <port>         # PostgreSQL port (default: 5432)
   --in-memory           # Use in-memory database
 

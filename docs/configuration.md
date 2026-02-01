@@ -17,7 +17,8 @@ pgsqlite can be configured through:
 | Option | CLI Flag | Environment Variable | Default | Description |
 |--------|----------|---------------------|---------|-------------|
 | Port | `--port`, `-p` | `PGSQLITE_PORT` | `5432` | PostgreSQL port to listen on |
-| Database | `--database`, `-d` | `PGSQLITE_DATABASE` | `sqlite.db` | Path to SQLite database file |
+| Database | `--database`, `-d` | `PGSQLITE_DATABASE` | `./data` | Database data directory (recommended) or a single `.db` file path (legacy) |
+| Default Database | `--default-database` | `PGSQLITE_DEFAULT_DATABASE` | `main` | Default database name used when client doesn't specify one |
 | Log Level | `--log-level` | `PGSQLITE_LOG_LEVEL` | `info` | Logging level (error, warn, info, debug, trace) |
 | In-Memory | `--in-memory` | `PGSQLITE_IN_MEMORY` | `false` | Use in-memory SQLite database |
 | Socket Directory | `--socket-dir` | `PGSQLITE_SOCKET_DIR` | `/tmp` | Directory for Unix domain socket |
@@ -132,7 +133,8 @@ pgsqlite --socket-dir /var/run/pgsqlite --no-tcp
 ```bash
 # Basic configuration
 export PGSQLITE_PORT=5433
-export PGSQLITE_DATABASE=/data/myapp.db
+export PGSQLITE_DATABASE=/data
+export PGSQLITE_DEFAULT_DATABASE=myapp
 export PGSQLITE_LOG_LEVEL=debug
 
 # Enable SSL with custom certificates

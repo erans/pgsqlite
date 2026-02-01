@@ -301,7 +301,8 @@ Benefits:
 # Production configuration example
 
 # Core settings
-export PGSQLITE_DATABASE="/secure/path/database.db"
+export PGSQLITE_DATABASE="/secure/path/data"
+export PGSQLITE_DEFAULT_DATABASE="database"
 export PGSQLITE_BIND_ADDRESS="127.0.0.1"  # Local only
 export PGSQLITE_PORT=5432
 
