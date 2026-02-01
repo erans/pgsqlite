@@ -571,10 +571,9 @@ impl CastTranslator {
                 if paren_depth > 0 {
                     paren_depth -= 1;
                     continue;
-                } else {
-                    // Unmatched closing paren - end of type
-                    return i;
                 }
+                // Unmatched closing paren - end of type
+                return i;
             }
 
             // If we're not inside parentheses, type name ends at these characters
