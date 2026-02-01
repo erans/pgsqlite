@@ -1235,7 +1235,7 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        println!("EXTENDED: handle_execute called for portal: '{}'", portal);
+        debug!("handle_execute called for portal '{}'", portal);
 
         // Get the portal
         let (query, translated_query, bound_values, param_formats, result_formats, statement_name, inferred_param_types) = {
@@ -1974,7 +1974,6 @@ impl ExtendedQueryHandler {
                                 // and return all its columns
                                 if query.contains("pg_database") {
                                     info!("DESCRIBE: Generating field descriptions for pg_database SELECT *");
-                                    println!("DEBUG: pg_database field descriptions being generated");
                                     // Return all pg_database columns
                                     let all_columns = vec![
                                         ("oid", PgType::Int4.to_oid()),
@@ -1998,9 +1997,6 @@ impl ExtendedQueryHandler {
                                     ];
 
                                     for (i, (name, oid)) in all_columns.into_iter().enumerate() {
-                                        if i == 5 {
-                                            println!("DEBUG: pg_database column 5 ({}): type_oid = {}", name, oid);
-                                        }
                                         fields.push(FieldDescription {
                                             name: name.to_string(),
                                             table_oid: 0,
@@ -4294,21 +4290,17 @@ impl ExtendedQueryHandler {
                             // Timestamp types - convert from INTEGER microseconds to formatted string
                             t if t == PgType::Timestamp.to_oid() || t == PgType::Timestamptz.to_oid() => {
                                 if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                    eprintln!("🕐 TIMESTAMP conversion: Processing value: '{}'", s);
                                     // Check if this is already an integer (microseconds since epoch)
                                     if let Ok(micros) = s.parse::<i64>() {
                                         // Convert microseconds to formatted timestamp
                                         use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                         let formatted = format_microseconds_to_timestamp(micros);
-                                        eprintln!("🕐 TIMESTAMP conversion: {} -> {}", micros, formatted);
                                         Some(formatted.into_bytes())
                                     } else {
-                                        eprintln!("🕐 TIMESTAMP value is not an integer, keeping as-is: '{}'", s);
                                         // Already formatted or invalid, keep as-is
                                         Some(bytes.clone())
                                     }
                                 } else {
-                                    eprintln!("🕐 TIMESTAMP value is not UTF-8, keeping as-is");
                                     Some(bytes.clone())
                                 }
                             }
@@ -4374,16 +4366,13 @@ impl ExtendedQueryHandler {
         }
         let response = if let Some(catalog_result) = CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
             info!("execute_select: Query intercepted by catalog handler");
-            println!("EXTENDED: Got catalog result, about to unwrap");
             let mut catalog_response = catalog_result?;
-            println!("EXTENDED: Unwrapped catalog result, columns: {}, rows: {}", catalog_response.columns.len(), catalog_response.rows.len());
             
             // For catalog queries with binary result formats, we need to ensure the data
             // is in the correct format for binary encoding
             let portals = session.portals.read().await;
             let portal = portals.get(portal_name).unwrap();
             let has_binary_format = portal.result_formats.contains(&1);
-            println!("EXTENDED: result_formats = {:?}, has_binary_format = {}", portal.result_formats, has_binary_format);
             drop(portals);
             
             if has_binary_format {
@@ -4404,13 +4393,11 @@ impl ExtendedQueryHandler {
                     // pg_database has boolean columns that need special handling
                     // They're stored as 'f'/'t' but need to be converted for binary format
                     // No conversion needed here - the binary encoder will handle 'f'/'t' for Bool type
-                    println!("EXTENDED: pg_database binary format - boolean columns will be handled by encoder");
                 } else if query.contains("information_schema") {
                     info!("Converting information_schema text data for binary encoding");
                     // For information_schema queries, the data is already in text format
                     // which is what binary encoding expects for text columns
                     // No additional conversion needed - the binary encoder will handle it
-                    println!("EXTENDED: information_schema binary format - no conversion needed");
                 }
             }
             
@@ -4421,8 +4408,11 @@ impl ExtendedQueryHandler {
             db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
         };
 
-        println!("EXTENDED: About to process response, columns: {}, rows: {}", response.columns.len(), response.rows.len());
-        println!("EXTENDED: Query contains 'int_array_with_nulls': {}", query.contains("int_array_with_nulls"));
+        debug!(
+            "About to process response (columns={}, rows={})",
+            response.columns.len(),
+            response.rows.len()
+        );
 
         // Check if we need to send RowDescription
         // We send it if:
@@ -4952,12 +4942,6 @@ impl ExtendedQueryHandler {
             }
         }
 
-        if query.contains("int_array_with_nulls") {
-            println!("DEBUG: About to process {} rows for array query", rows_to_send.len());
-            println!("DEBUG: field_types = {:?}", field_types);
-            println!("DEBUG: result_formats = {:?}", result_formats);
-        }
-
         for (row_idx, row) in rows_to_send.into_iter().enumerate() {
             // Debug: Log the raw data being retrieved
             if query.contains("int_array_with_nulls") {
@@ -4979,16 +4963,6 @@ impl ExtendedQueryHandler {
             let encoded_row = Self::encode_row(&row, &result_formats, &field_types)?;
 
             // TODO: Fix boolean field type conversion for catalog queries
-            if query.contains("int_array_with_nulls") {
-                println!("DEBUG: encoded_row has {} fields", encoded_row.len());
-                if let Some(first_field) = encoded_row.first() {
-                    if let Some(data) = first_field {
-                        println!("DEBUG: First field has {} bytes, hex: {:02x?}", data.len(), &data[..std::cmp::min(50, data.len())]);
-                    } else {
-                        println!("DEBUG: First field is NULL");
-                    }
-                }
-            }
             framed.send(BackendMessage::DataRow(encoded_row)).await
                 .map_err(PgSqliteError::Io)?;
         }
@@ -5799,6 +5773,24 @@ impl ExtendedQueryHandler {
             
             if found_type {
                 continue;
+            }
+
+            // Handle common Postgres pattern: column = ANY($n)
+            // Prisma uses this for schema/namespace filtering and passes a text[] value.
+            {
+                let any_pattern = format!(r"(?i)\bany\s*\(\s*\${i}\s*\)");
+                if let Ok(any_regex) = regex::Regex::new(&any_pattern) {
+                    if any_regex.is_match(query) {
+                        param_types.push(PgType::TextArray.to_oid());
+                        info!(
+                            "Detected ANY(${}) usage; defaulting parameter {} type to TEXT[] (OID {})",
+                            i,
+                            i,
+                            PgType::TextArray.to_oid()
+                        );
+                        continue;
+                    }
+                }
             }
             
             // If no explicit cast, try to infer from column comparisons

@@ -206,10 +206,8 @@ impl<'a> LazyQueryProcessor<'a> {
         
         // Step 4: Cast translation if needed (after numeric cast translation)
         if self.needs_cast_translation {
-            // Debug enum cast issue
-            if current_query.contains("casted_status") {
-                eprintln!("DEBUG LazyQueryProcessor: Processing cast translation");
-                eprintln!("  Current query: {current_query}");
+            if cfg!(debug_assertions) && current_query.contains("casted_status") {
+                tracing::debug!("LazyQueryProcessor: processing cast translation for casted_status");
             }
             
             // Check translation cache first
@@ -232,9 +230,8 @@ impl<'a> LazyQueryProcessor<'a> {
                 current_query = Cow::Owned(translated);
             }
             
-            // Debug enum cast issue
-            if self.original_query.contains("casted_status") {
-                eprintln!("  After cast translation: {current_query}");
+            if cfg!(debug_assertions) && self.original_query.contains("casted_status") {
+                tracing::debug!("LazyQueryProcessor: completed cast translation for casted_status");
             }
         }
         
@@ -369,4 +366,3 @@ fn extract_insert_table_name(query: &str) -> Option<String> {
 fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, rusqlite::Error> {
     crate::session::db_handler::rewrite_query_for_decimal(query, conn)
 }
-

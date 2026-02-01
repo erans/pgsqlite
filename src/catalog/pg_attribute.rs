@@ -158,13 +158,10 @@ async fn add_table_attributes(
     let table_oid = generate_oid_from_name(table_name);
 
     debug!("Getting column info for table: {}", table_name);
-    println!("PG_ATTRIBUTE DEBUG: Getting column info for table: {}", table_name);
 
     // Get column information from PRAGMA
     let col_info_query = format!("PRAGMA table_info({table_name})");
-    println!("PG_ATTRIBUTE DEBUG: Running PRAGMA query: {}", col_info_query);
     let col_info = db.query(&col_info_query).await?;
-    println!("PG_ATTRIBUTE DEBUG: PRAGMA query returned {} rows", col_info.rows.len());
     
     debug!("PRAGMA table_info returned {} columns for table {}", col_info.rows.len(), table_name);
     
@@ -323,13 +320,13 @@ async fn add_table_attributes(
             let include_row = if let Some(selection) = &select.selection {
                 if already_filtered_by_table {
                     // We already filtered by table, so include all rows from this table
-                    println!("PG_ATTRIBUTE DEBUG: Skipping WHERE evaluation (already filtered by table)");
+                    debug!("Skipping WHERE evaluation (already filtered by table)");
                     true
                 } else {
-                    println!("PG_ATTRIBUTE DEBUG: Evaluating WHERE clause: {}", selection);
-                    println!("PG_ATTRIBUTE DEBUG: Row data keys: {:?}", row_data.keys().collect::<Vec<_>>());
                     let result = WhereEvaluator::evaluate(selection, &row_data, column_mapping);
-                    println!("PG_ATTRIBUTE DEBUG: WHERE evaluation result: {}", result);
+                    debug!("Evaluating WHERE clause: {}", selection);
+                    debug!("Row data keys: {:?}", row_data.keys().collect::<Vec<_>>());
+                    debug!("WHERE evaluation result: {}", result);
                     result
                 }
             } else {
@@ -388,7 +385,6 @@ fn extract_table_filter(select: &Select) -> Option<String> {
         return extract_table_from_expr(selection);
     }
     debug!("extract_table_filter: no WHERE clause found");
-    println!("PG_ATTRIBUTE DEBUG: no WHERE clause found");
     None
 }
 

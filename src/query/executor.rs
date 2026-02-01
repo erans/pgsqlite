@@ -171,7 +171,7 @@ impl QueryExecutor {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
     {
-        println!("EXECUTOR: execute_query called with: '{}'", query);
+        debug!("execute_query called (len={} chars)", query.len());
         // Executing query
         
         // Strip SQL comments first to avoid parsing issues
@@ -419,13 +419,6 @@ impl QueryExecutor {
                                     // Convert based on column type
                                     if col_idx < response.columns.len() {
                                         let col_name = &response.columns[col_idx];
-                                        
-                                        // Debug enum cast
-                                        if col_name == "casted_status" {
-                                            eprintln!("DEBUG: Processing casted_status column");
-                                            eprintln!("  Raw data: {data:?}");
-                                            eprintln!("  As string: {:?}", std::str::from_utf8(&data));
-                                        }
                                         
                                         // Check for boolean columns
                                         if boolean_columns.contains(col_name) {
@@ -943,13 +936,10 @@ impl QueryExecutor {
             }
         
         // Check if this is a catalog query first
-        println!("EXECUTOR: About to call catalog interceptor with query: '{}'", query);
+        debug!("execute_select: checking catalog interceptor");
         let response = if let Some(catalog_result) = crate::catalog::CatalogInterceptor::intercept_query(query, db.clone(), Some(session.clone())).await {
             info!("Query intercepted by catalog handler");
-            println!("EXECUTOR: Got catalog result, about to unwrap");
-            let unwrapped = catalog_result?;
-            println!("EXECUTOR: Unwrapped catalog result, columns: {}, rows: {}", unwrapped.columns.len(), unwrapped.rows.len());
-            unwrapped
+            catalog_result?
         } else {
             // Route query through query router if available
             if let Some(router) = query_router {
@@ -1771,17 +1761,75 @@ impl QueryExecutor {
         use crate::translator::CreateTableTranslator;
         use crate::query::{QueryTypeDetector, QueryType};
         use crate::ddl::EnumDdlHandler;
+        use crate::system_db::SystemDb;
+        use crate::config::{DatabaseLayout, is_valid_db_identifier};
         use tracing::info;
 
         // Check if this is a CREATE DATABASE statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
            query.trim_start()[6..].trim_start().to_uppercase().starts_with("DATABASE") {
-            info!("CREATE DATABASE command received - SQLite doesn't have database concept, succeeding with no-op");
+            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+                framed
+                    .send(BackendMessage::CommandComplete {
+                        tag: "CREATE DATABASE".to_string(),
+                    })
+                    .await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
 
-            // Send command complete
-            framed.send(BackendMessage::CommandComplete {
-                tag: "CREATE DATABASE".to_string()
-            }).await
+            let mut rest = query.trim_start()[6..].trim_start();
+            rest = rest.trim_start_matches(|c: char| c.is_whitespace());
+            // Skip "DATABASE"
+            rest = rest[8..].trim_start();
+            // Optional IF NOT EXISTS
+            let rest_upper = rest.to_uppercase();
+            if rest_upper.starts_with("IF NOT EXISTS") {
+                rest = rest[13..].trim_start();
+            }
+
+            let mut name = rest.trim_end_matches(';').trim();
+            name = name.trim();
+            if name.starts_with('"') {
+                if let Some(end) = name[1..].find('"') {
+                    name = &name[1..1 + end];
+                }
+            } else {
+                name = name.split_whitespace().next().unwrap_or("");
+            }
+
+            if !is_valid_db_identifier(name) {
+                return Err(PgSqliteError::Protocol("Invalid database name".to_string()));
+            }
+
+            let data_dir = match crate::config::CONFIG.database_layout() {
+                DatabaseLayout::Directory { dir } => dir,
+                _ => {
+                    return Err(PgSqliteError::Protocol(
+                        "CREATE DATABASE requires directory-mode storage".to_string(),
+                    ));
+                }
+            };
+            std::fs::create_dir_all(&data_dir)
+                .map_err(|e| PgSqliteError::Protocol(format!("Failed to create data dir: {e}")))?;
+
+            let system_db = SystemDb::open(&data_dir)?;
+            system_db.ensure_database(name)?;
+            system_db.ensure_schema(name, "public")?;
+
+            let db_file = data_dir.join(format!("{name}.db"));
+            let db_path = db_file.to_string_lossy().to_string();
+            if !db_file.exists() {
+                // Create and initialize the database file by running pgsqlite migrations.
+                let _ = crate::session::DbHandler::new_with_config(&db_path, &crate::config::CONFIG)
+                    .map_err(|e| PgSqliteError::Sqlite(e))?;
+            }
+
+            framed
+                .send(BackendMessage::CommandComplete {
+                    tag: "CREATE DATABASE".to_string(),
+                })
+                .await
                 .map_err(PgSqliteError::Io)?;
 
             return Ok(());
@@ -1790,14 +1838,176 @@ impl QueryExecutor {
         // Check if this is a DROP DATABASE statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
            query.trim_start()[4..].trim_start().to_uppercase().starts_with("DATABASE") {
-            info!("DROP DATABASE command received - SQLite doesn't have database concept, succeeding with no-op");
+            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+                framed
+                    .send(BackendMessage::CommandComplete {
+                        tag: "DROP DATABASE".to_string(),
+                    })
+                    .await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
 
-            // Send command complete
-            framed.send(BackendMessage::CommandComplete {
-                tag: "DROP DATABASE".to_string()
-            }).await
+            let mut rest = query.trim_start()[4..].trim_start();
+            rest = rest.trim_start_matches(|c: char| c.is_whitespace());
+            // Skip "DATABASE"
+            rest = rest[8..].trim_start();
+            // Optional IF EXISTS
+            let rest_upper = rest.to_uppercase();
+            if rest_upper.starts_with("IF EXISTS") {
+                rest = rest[9..].trim_start();
+            }
+
+            let mut name = rest.trim_end_matches(';').trim();
+            name = name.trim();
+            if name.starts_with('"') {
+                if let Some(end) = name[1..].find('"') {
+                    name = &name[1..1 + end];
+                }
+            } else {
+                name = name.split_whitespace().next().unwrap_or("");
+            }
+
+            if name.is_empty() || !is_valid_db_identifier(name) {
+                return Err(PgSqliteError::Protocol("Invalid database name".to_string()));
+            }
+
+            {
+                let data_dir = match crate::config::CONFIG.database_layout() {
+                    DatabaseLayout::Directory { dir } => dir,
+                    _ => {
+                        return Err(PgSqliteError::Protocol(
+                            "DROP DATABASE requires directory-mode storage".to_string(),
+                        ));
+                    }
+                };
+                let system_db = SystemDb::open(&data_dir)?;
+                system_db.drop_database(name)?;
+                let db_file = data_dir.join(format!("{name}.db"));
+                // Best-effort delete; may fail if in use.
+                let _ = std::fs::remove_file(db_file);
+            }
+
+            framed
+                .send(BackendMessage::CommandComplete {
+                    tag: "DROP DATABASE".to_string(),
+                })
+                .await
                 .map_err(PgSqliteError::Io)?;
 
+            return Ok(());
+        }
+
+        // Check if this is a CREATE SCHEMA statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
+           query.trim_start()[6..].trim_start().to_uppercase().starts_with("SCHEMA") {
+            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+                framed
+                    .send(BackendMessage::CommandComplete {
+                        tag: "CREATE SCHEMA".to_string(),
+                    })
+                    .await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
+
+            let mut rest = query.trim_start()[6..].trim_start();
+            rest = rest[6..].trim_start();
+            // Optional IF NOT EXISTS
+            let rest_upper = rest.to_uppercase();
+            if rest_upper.starts_with("IF NOT EXISTS") {
+                rest = rest[13..].trim_start();
+            }
+
+            let mut schema = rest.trim_end_matches(';').trim();
+            schema = schema.trim();
+            if schema.starts_with('"') {
+                if let Some(end) = schema[1..].find('"') {
+                    schema = &schema[1..1 + end];
+                }
+            } else {
+                schema = schema.split_whitespace().next().unwrap_or("");
+            }
+
+            if !is_valid_db_identifier(&session.database) {
+                return Err(PgSqliteError::Protocol("Invalid database name".to_string()));
+            }
+
+            if !is_valid_db_identifier(schema) {
+                return Err(PgSqliteError::Protocol("Invalid schema name".to_string()));
+            }
+
+            let data_dir = match crate::config::CONFIG.database_layout() {
+                DatabaseLayout::Directory { dir } => dir,
+                _ => {
+                    return Err(PgSqliteError::Protocol(
+                        "CREATE SCHEMA requires directory-mode storage".to_string(),
+                    ));
+                }
+            };
+            let system_db = SystemDb::open(&data_dir)?;
+            system_db.ensure_database(&session.database)?;
+            system_db.ensure_schema(&session.database, schema)?;
+
+            framed
+                .send(BackendMessage::CommandComplete {
+                    tag: "CREATE SCHEMA".to_string(),
+                })
+                .await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+
+        // Check if this is a DROP SCHEMA statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
+           query.trim_start()[4..].trim_start().to_uppercase().starts_with("SCHEMA") {
+            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+                framed
+                    .send(BackendMessage::CommandComplete {
+                        tag: "DROP SCHEMA".to_string(),
+                    })
+                    .await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
+
+            let mut rest = query.trim_start()[4..].trim_start();
+            rest = rest[6..].trim_start();
+            // Optional IF EXISTS
+            let rest_upper = rest.to_uppercase();
+            if rest_upper.starts_with("IF EXISTS") {
+                rest = rest[9..].trim_start();
+            }
+
+            let mut schema = rest.trim_end_matches(';').trim();
+            schema = schema.trim();
+            if schema.starts_with('"') {
+                if let Some(end) = schema[1..].find('"') {
+                    schema = &schema[1..1 + end];
+                }
+            } else {
+                schema = schema.split_whitespace().next().unwrap_or("");
+            }
+
+            if is_valid_db_identifier(&session.database) && is_valid_db_identifier(schema) {
+                let data_dir = match crate::config::CONFIG.database_layout() {
+                    DatabaseLayout::Directory { dir } => dir,
+                    _ => {
+                        return Err(PgSqliteError::Protocol(
+                            "DROP SCHEMA requires directory-mode storage".to_string(),
+                        ));
+                    }
+                };
+                let system_db = SystemDb::open(&data_dir)?;
+                let _ = system_db.drop_schema(&session.database, schema);
+            }
+
+            framed
+                .send(BackendMessage::CommandComplete {
+                    tag: "DROP SCHEMA".to_string(),
+                })
+                .await
+                .map_err(PgSqliteError::Io)?;
             return Ok(());
         }
 
@@ -1864,9 +2074,10 @@ impl QueryExecutor {
         }
         
         let (translated_query, type_mappings, enum_columns, array_columns) = if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) && query.trim_start()[6..].trim_start().to_uppercase().starts_with("TABLE") {
+            let schema_mapped = crate::translator::SchemaPrefixTranslator::translate_query(query);
             // Use CREATE TABLE translator with connection for ENUM support
             db.with_session_connection(&session.id, |conn| {
-                let result = CreateTableTranslator::translate_with_connection_full(query, Some(conn))
+                let result = CreateTableTranslator::translate_with_connection_full(&schema_mapped, Some(conn))
                     .map_err(|e| rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
                         Some(format!("CREATE TABLE translation failed: {e}"))

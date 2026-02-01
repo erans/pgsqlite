@@ -1273,7 +1273,11 @@ impl DbHandler {
     
     /// Query with session-specific connection
     pub async fn query_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
-        eprintln!("🔍 query_with_session called with query: {}", query);
+        if cfg!(debug_assertions) {
+            debug!("query_with_session called with query: {}", query);
+        } else {
+            debug!("query_with_session called (len={} chars)", query.len());
+        }
         // Check if this is a catalog query that should be intercepted
         // We need to do this before applying translations
         let lower_query = query.to_lowercase();
@@ -1801,7 +1805,7 @@ impl DbHandler {
             // Check if this is a CREATE TABLE statement that needs special handling
             let (processed_query, type_mappings) =
                 if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
-                    eprintln!("🔨 Processing CREATE TABLE statement in query_with_session...");
+                    debug!("Processing CREATE TABLE statement in query_with_session");
                     // Use CREATE TABLE translator with full metadata capture
                     use crate::translator::CreateTableTranslator;
                     match CreateTableTranslator::translate_with_connection_full(query, Some(&conn)) {
@@ -1912,7 +1916,6 @@ impl DbHandler {
                 }
 
                 // Populate constraints for CREATE TABLE statements
-                eprintln!("🔍 About to populate constraints for table: {}", table_name);
                 info!("About to populate constraints for table: {}", table_name);
                 if let Err(e) = crate::catalog::constraint_populator::populate_constraints_for_table(&conn, &table_name) {
                     // Log the error but don't fail the CREATE TABLE operation
@@ -1937,7 +1940,7 @@ impl DbHandler {
         session_id: &Uuid,
         cached_conn: Option<&Arc<parking_lot::Mutex<rusqlite::Connection>>>
     ) -> Result<DbResponse, PgSqliteError> {
-        eprintln!("🗂️ execute_with_session_cached called, cached_conn: {}", cached_conn.is_some());
+        debug!("execute_with_session_cached called (cached_conn={})", cached_conn.is_some());
         match cached_conn {
             Some(conn) => {
                 self.connection_manager.execute_with_cached_connection(conn, |conn| {

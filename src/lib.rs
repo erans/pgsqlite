@@ -11,6 +11,7 @@ pub mod cache;
 pub mod config;
 pub mod ssl;
 pub mod ddl;
+pub mod system_db;
 pub mod migration;
 pub mod schema_drift;
 pub mod error;
@@ -105,7 +106,7 @@ pub async fn handle_test_connection_with_pool(
     use protocol::{PostgresCodec, FrontendMessage, BackendMessage, AuthenticationMessage, TransactionStatus, ErrorResponse};
     use session::{SessionState, ReadOnlyDbHandler, QueryRouter};
     use query::{QueryExecutor, ExtendedQueryHandler};
-    use tracing::{debug, info};
+    use tracing::{debug, info, warn};
     use config::Config;
     
     let codec = PostgresCodec::new();
@@ -187,11 +188,9 @@ pub async fn handle_test_connection_with_pool(
         while let Some(msg) = framed.next().await {
             let message = msg?;
             debug!("Received message: {:?}", message);
-            println!("HANDLE_CONNECTION: Received message: {:?}", message);
             match message {
                 FrontendMessage::Query(sql) => {
                     info!("Received Query (simple protocol): {}", sql);
-                    println!("HANDLE_CONNECTION: About to call QueryExecutor::execute_query with: '{}'", sql);
                     // Execute the query with optional query routing
                     match QueryExecutor::execute_query(&mut framed, &db_handler, &session, &sql, _query_router.as_ref()).await {
                         Ok(()) => {
@@ -247,7 +246,7 @@ pub async fn handle_test_connection_with_pool(
                     }
                 }
                 FrontendMessage::Execute { portal, max_rows } => {
-                    println!("HANDLE_CONNECTION: About to call ExtendedQueryHandler::handle_execute for portal: '{}'", portal);
+                    debug!("Executing extended protocol portal: '{}'", portal);
                     match ExtendedQueryHandler::handle_execute(&mut framed, &db_handler, &session, portal, max_rows).await {
                         Ok(()) => {},
                         Err(e) => {
@@ -298,7 +297,7 @@ pub async fn handle_test_connection_with_pool(
                 }
                 FrontendMessage::Terminate => break,
                 other => {
-                    eprintln!("Unhandled message: {other:?}");
+                    warn!("Unhandled message: {other:?}");
                     let err = ErrorResponse::new(
                         "ERROR".to_string(),
                         "0A000".to_string(),

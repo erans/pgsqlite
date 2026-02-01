@@ -170,7 +170,7 @@ pub fn register_datetime_functions(conn: &Connection) -> Result<()> {
                         f64::from_be_bytes(bytes)
                     } else {
                         // Try little-endian if size is 8
-                        eprintln!("ERROR: Unexpected blob size {} bytes", b.len());
+                        tracing::warn!("Unexpected blob size {} bytes", b.len());
                         0.0
                     }
                 }

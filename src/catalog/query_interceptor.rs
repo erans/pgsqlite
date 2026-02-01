@@ -23,10 +23,8 @@ pub struct CatalogInterceptor;
 impl CatalogInterceptor {
     /// Check if a query is targeting pg_catalog and handle it
     pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<Result<DbResponse, PgSqliteError>> {
-        println!("INTERCEPT_QUERY: {}", query);
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
-        println!("INTERCEPT: lower_query = {}", lower_query);
         
         // Check for cache status query
         if lower_query.contains("select * from pgsqlite_cache_status") {
@@ -72,47 +70,36 @@ impl CatalogInterceptor {
            lower_query.contains("pg_get_userbyid") || lower_query.contains("pg_get_indexdef") ||
            lower_query.contains("pg_size_pretty");
 
-        println!("INTERCEPT: has_catalog_tables = {}, has_system_functions = {}", has_catalog_tables, has_system_functions);
-
         if !has_catalog_tables && !has_system_functions {
-            println!("INTERCEPT: Returning None (no catalog tables or system functions)");
             return None;
         }
         
         debug!("Intercepting catalog query: {}", query);
-        println!("INTERCEPT: After debug, about to check LIMIT 0");
-
         // Special handling for LIMIT 0 queries used for metadata
         if query.contains("LIMIT 0") {
-            println!("INTERCEPT: Found LIMIT 0, returning None");
             // Skipping LIMIT 0 catalog query
             return None;
         }
-        println!("INTERCEPT: No LIMIT 0, continuing");
         
         // First, remove schema prefixes from catalog tables
-        println!("INTERCEPT: About to call SchemaPrefixTranslator");
         let schema_translated = SchemaPrefixTranslator::translate_query(query);
-        println!("INTERCEPT: schema_translated = '{}'", schema_translated);
 
         // Then, try to translate regex operators if present
-        println!("INTERCEPT: About to call RegexTranslator");
         let query_to_parse = match RegexTranslator::translate_query(&schema_translated) {
             Ok(translated) => {
                 if translated != query {
-                    println!("INTERCEPT: RegexTranslator changed query to: '{}'", translated);
+                    debug!("RegexTranslator changed query");
                 } else {
-                    println!("INTERCEPT: RegexTranslator made no changes");
+                    debug!("RegexTranslator made no changes");
                 }
                 translated
             }
             Err(e) => {
-                println!("INTERCEPT: RegexTranslator failed: {:?}", e);
+                debug!("RegexTranslator failed: {:?}", e);
                 // Failed to translate regex operators
                 query.to_string()
             }
         };
-        println!("INTERCEPT: query_to_parse = '{}'", query_to_parse);
 
         // Parse the query (keep JSON path placeholders for now)
         let dialect = PostgreSqlDialect {};
@@ -184,12 +171,9 @@ impl CatalogInterceptor {
                         }
                         
                         // Normal catalog table handling
-                        println!("INTERCEPT: About to call handle_catalog_query");
                         if let Some(response) = Self::handle_catalog_query(query_stmt, db.clone(), session.clone()).await {
-                            println!("INTERCEPT: handle_catalog_query returned Some(response), columns: {}, rows: {}", response.columns.len(), response.rows.len());
                             return Some(Ok(response));
                         }
-                        println!("INTERCEPT: handle_catalog_query returned None");
                     }
                 
                 // If we translated the query but it's not a special catalog query,
@@ -209,42 +193,32 @@ impl CatalogInterceptor {
 
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         debug!("handle_catalog_query called");
-        println!("HANDLE_CATALOG_QUERY: called with query");
         // Check if this is a SELECT from pg_catalog tables
         if let SetExpr::Select(select) = &*query.body {
-            println!("HANDLE_CATALOG_QUERY: Is SELECT query, from.len()={}, has_joins={}",
-                     select.from.len(),
-                     !select.from.is_empty() && !select.from[0].joins.is_empty());
             debug!("Is SELECT query, from.len()={}, has_joins={}",
                      select.from.len(),
                      !select.from.is_empty() && !select.from[0].joins.is_empty());
             // Check if this is a JOIN query involving catalog tables
             if !select.from.is_empty() && !select.from[0].joins.is_empty() {
                 debug!("Detected as JOIN query");
-                println!("HANDLE_CATALOG_QUERY: Detected as JOIN query");
 
                 // Check if this is a JOIN between information_schema tables
                 if let TableFactor::Table { name: main_table, .. } = &select.from[0].relation {
                     let main_table_name = main_table.to_string().to_lowercase();
-                    println!("HANDLE_CATALOG_QUERY: Main table name: '{}'", main_table_name);
 
                     // Check if main table and all JOINs are information_schema tables
                     let is_information_schema_join = main_table_name.contains("information_schema") &&
                         select.from[0].joins.iter().all(|j| {
                             if let TableFactor::Table { name: join_table, .. } = &j.relation {
                                 let join_table_name = join_table.to_string().to_lowercase();
-                                println!("HANDLE_CATALOG_QUERY: Join table name: '{}'", join_table_name);
                                 join_table_name.contains("information_schema")
                             } else {
                                 false
                             }
                         });
 
-                    println!("HANDLE_CATALOG_QUERY: is_information_schema_join = {}", is_information_schema_join);
-
                     if is_information_schema_join {
                         debug!("Detected information_schema JOIN query - translating and executing");
-                        println!("HANDLE_CATALOG_QUERY: Detected information_schema JOIN query");
 
                         // Information_schema tables exist as views with underscores, not dots
                         // e.g., information_schema_table_constraints instead of information_schema.table_constraints
@@ -260,8 +234,6 @@ impl CatalogInterceptor {
                             query_str = query_str.replace("information_schema.columns", "information_schema_columns");
                             query_str = query_str.replace("information_schema.tables", "information_schema_tables");
                             query_str = query_str.replace("information_schema.schemata", "information_schema_schemata");
-
-                            println!("HANDLE_CATALOG_QUERY: Translated query: {}", query_str);
 
                             match db.connection_manager().execute_with_session(&session_id, |conn| {
                                 debug!("Executing translated information_schema JOIN query: {}", query_str);
@@ -306,13 +278,10 @@ impl CatalogInterceptor {
                                 Ok(response) => {
                                     debug!("Successfully executed translated JOIN query, returning {} rows with {} columns",
                                            response.rows_affected, response.columns.len());
-                                    println!("HANDLE_CATALOG_QUERY: Successfully executed translated JOIN, {} rows, {} columns",
-                                            response.rows_affected, response.columns.len());
                                     return Some(response);
                                 }
                                 Err(e) => {
                                     debug!("Failed to execute translated JOIN: {}", e);
-                                    println!("HANDLE_CATALOG_QUERY: Failed to execute translated JOIN: {}", e);
                                     // Fall through to try other methods
                                 }
                             }
@@ -497,7 +466,7 @@ impl CatalogInterceptor {
     async fn check_table_factor(table_factor: &TableFactor, select: &Select, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<Result<DbResponse, PgSqliteError>> {
         if let TableFactor::Table { name, .. } = table_factor {
             let table_name = name.to_string().to_lowercase();
-            println!("CHECK_TABLE_FACTOR: Processing table name: '{}'", table_name);
+        debug!("CHECK_TABLE_FACTOR: Processing table name: '{}'", table_name);
             debug!("check_table_factor: Processing table name: {}", table_name);
             
             // Handle pg_type queries
@@ -763,7 +732,7 @@ impl CatalogInterceptor {
             // Note: pg_index is a SQLite view that will be executed normally
             // It doesn't need special interception since it exists in the database
         }
-        println!("INTERCEPT: Reached end of intercept_query, returning None");
+        debug!("Reached end of intercept_query, returning None");
         None
     }
 
@@ -2504,7 +2473,7 @@ impl CatalogInterceptor {
     async fn handle_pg_database_query(select: &Select, _db: &DbHandler) -> DbResponse {
         debug!("Handling pg_database query");
 
-        // Define pg_database columns (PostgreSQL 17 compatible)
+        // Define pg_database columns (PostgreSQL 16 compatible)
         let all_columns = vec![
             "oid".to_string(),
             "datname".to_string(),
@@ -2847,6 +2816,14 @@ impl CatalogInterceptor {
             ("session_user", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
             ("user", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
 
+            // Common ORM probes (PG16)
+            ("current_setting", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
+            ("current_database", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
+            ("current_schema", "FUNCTION", "name", "name", "SQL", "CONTAINS_SQL"),
+            ("current_schemas", "FUNCTION", "boolean", "name[]", "SQL", "CONTAINS_SQL"),
+            ("pg_backend_pid", "FUNCTION", "", "integer", "SQL", "CONTAINS_SQL"),
+            ("pg_is_in_recovery", "FUNCTION", "", "boolean", "SQL", "CONTAINS_SQL"),
+        
             // Full-text search functions
             ("to_tsvector", "FUNCTION", "tsvector", "tsvector", "SQL", "CONTAINS_SQL"),
             ("to_tsquery", "FUNCTION", "tsquery", "tsquery", "SQL", "CONTAINS_SQL"),

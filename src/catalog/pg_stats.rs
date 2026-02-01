@@ -13,7 +13,6 @@ impl PgStatsHandler {
         db: &DbHandler,
     ) -> Result<DbResponse, PgSqliteError> {
         debug!("Handling pg_stats query");
-        eprintln!("🔍 PgStatsHandler::handle_query called");
 
         // Define all available columns for PostgreSQL pg_stats view
         let all_columns = vec![
@@ -37,7 +36,7 @@ impl PgStatsHandler {
 
         // Build statistics from actual SQLite tables
         let stats = Self::get_table_statistics(db).await?;
-        eprintln!("🔍 Generated {} statistics rows", stats.len());
+        debug!("Generated {} statistics rows", stats.len());
 
         // Apply WHERE clause filtering if present
         let filtered_stats = if let Some(where_clause) = &select.selection {

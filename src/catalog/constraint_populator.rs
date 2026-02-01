@@ -47,7 +47,6 @@ static TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
 
 /// Populate PostgreSQL catalog tables with constraint information for a newly created table
 pub fn populate_constraints_for_table(conn: &Connection, table_name: &str) -> Result<()> {
-    eprintln!("🎯 populate_constraints_for_table called for: {}", table_name);
     info!("Populating constraints for table: {}", table_name);
 
     // Get the CREATE TABLE statement from SQLite
@@ -107,7 +106,13 @@ fn generate_constraint_oid(name: &str, contype: &str) -> String {
     let base_oid = generate_oid(&unique_name);
     // Offset by 500000 to put constraints in a different range
     let final_oid = base_oid + 500000;
-    eprintln!("  🔑 OID generation: {} + {} -> base:{} final:{}", name, contype, base_oid, final_oid);
+    debug!(
+        "OID generation: name={} contype={} base_oid={} final_oid={}",
+        name,
+        contype,
+        base_oid,
+        final_oid
+    );
     final_oid.to_string()
 }
 
@@ -127,10 +132,7 @@ fn get_referenced_table_oid(_conn: &Connection, definition: &str) -> Result<Stri
 /// Populate pg_constraint table with constraint information
 fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &str, table_oid: &str) -> Result<()> {
     let constraints = parse_table_constraints(table_name, create_sql);
-    eprintln!("🔎 Found {} constraints for table {}", constraints.len(), table_name);
-    for c in &constraints {
-        eprintln!("  - {} (type: {})", c.name, c.contype);
-    }
+    debug!("Found {} constraints for table {}", constraints.len(), table_name);
 
     for constraint in constraints {
         if constraint.contype == "f" {
@@ -153,11 +155,22 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                 |row| row.get(0)
             );
             if let Ok(existing_name) = existing {
-                eprintln!("  ⚠️ OID {} already exists for constraint: {}", constraint.oid, existing_name);
+                debug!(
+                    "Constraint OID collision: oid={} existing_conname={} new_conname={}",
+                    constraint.oid,
+                    existing_name,
+                    constraint.name
+                );
             }
 
-            eprintln!("💾 Inserting foreign key: oid={}, name={}, conrelid={}, confrelid={}, conkey={}, confkey={}",
-                     constraint.oid, constraint.name, table_oid, ref_table_oid, col_nums.join(","), "1");
+            debug!(
+                "Inserting foreign key: oid={} conname={} conrelid={} confrelid={} conkey_len={}",
+                constraint.oid,
+                constraint.name,
+                table_oid,
+                ref_table_oid,
+                col_nums.len()
+            );
             let result = conn.execute(
                 "INSERT OR IGNORE INTO pg_constraint (
                     oid, conname, contype, conrelid, confrelid, conkey, confkey,
@@ -179,8 +192,8 @@ fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &
                 ]
             );
             match result {
-                Ok(n) => eprintln!("  ✅ Inserted {} row(s)", n),
-                Err(e) => eprintln!("  ❌ Failed to insert: {}", e),
+                Ok(n) => debug!("Inserted {} row(s) into pg_constraint", n),
+                Err(e) => debug!("Failed to insert foreign key into pg_constraint: {}", e),
             }
         } else {
             // Other constraint types - also convert to column numbers

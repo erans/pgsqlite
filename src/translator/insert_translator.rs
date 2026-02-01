@@ -178,24 +178,23 @@ impl InsertTranslator {
             
             // Check if this is the SQLAlchemy VALUES pattern FIRST
             let final_select = if Self::is_sqlalchemy_values_pattern(select_clause) {
-                eprintln!("🎯 SQLAlchemy VALUES pattern detected, converting to UNION ALL");
-                eprintln!("   Table: {table_name}");
-                eprintln!("   Columns: {columns:?}");
-                eprintln!("   Select clause: {select_clause}");
+                debug!(
+                    "SQLAlchemy VALUES pattern detected in INSERT SELECT; converting to UNION ALL (table={}, columns={})",
+                    table_name,
+                    columns.len()
+                );
                 // Convert VALUES pattern to UNION ALL
                 Self::convert_sqlalchemy_values_to_union(select_clause, &columns, &column_types)?
             } else {
                 // Translate the SELECT clause normally
-                let converted_select = Self::translate_select_clause(
+                Self::translate_select_clause(
                     select_clause,
                     &columns,
                     &column_types
-                )?;
-                eprintln!("   Converted SELECT: {converted_select}");
-                converted_select
+                )?
             };
-            
-            eprintln!("   Final SELECT: {final_select}");
+
+            debug!("INSERT SELECT translation produced SELECT (len={})", final_select.len());
             
             // Reconstruct the INSERT query
             Ok(format!(
@@ -736,7 +735,7 @@ impl InsertTranslator {
         
         // Parse the SELECT expressions to get the type casts
         let type_casts = Self::parse_sqlalchemy_type_casts(select_expressions)?;
-        eprintln!("   🔍 Type casts: {type_casts:?}");
+        debug!("Parsed {} type casts from SQLAlchemy SELECT", type_casts.len());
         
         // Find the VALUES clause
         let values_start = select_clause.find("VALUES").ok_or("VALUES not found")?;
@@ -748,7 +747,7 @@ impl InsertTranslator {
         
         // Parse the VALUES rows
         let rows = Self::parse_values_rows(values_content)?;
-        eprintln!("   📦 Parsed {} rows from VALUES clause", rows.len());
+        debug!("Parsed {} rows from SQLAlchemy VALUES clause", rows.len());
         
         // Extract ORDER BY and RETURNING clauses if present
         let mut order_by = "";

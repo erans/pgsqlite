@@ -268,8 +268,8 @@ fn encode_data_row(values: &[Option<Vec<u8>>], dst: &mut BytesMut) {
     if values.len() == 1
         && let Some(Some(data)) = values.first()
             && data.len() == 41 {
-                println!("DEBUG: encode_data_row sending 41-byte field (likely array with nulls)");
-                println!("  Data length being written: {}", data.len());
+                tracing::debug!("encode_data_row sending 41-byte field (likely array with nulls)");
+                tracing::debug!("data length being written: {}", data.len());
             }
 
     dst.put_u8(b'D');
