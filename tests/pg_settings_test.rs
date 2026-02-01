@@ -49,6 +49,24 @@ async fn test_pg_settings_filter_by_name() {
 }
 
 #[tokio::test]
+async fn test_pg_settings_server_version_num() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db_path = temp_dir.path().join("test_pg_settings_version_num.db");
+    let db_handler = Arc::new(DbHandler::new(db_path.to_str().unwrap()).unwrap());
+
+    let result = db_handler
+        .query("SELECT setting FROM pg_settings WHERE name = 'server_version_num'")
+        .await
+        .unwrap();
+
+    assert_eq!(result.rows.len(), 1, "Should have exactly one row");
+
+    let setting_bytes = result.rows[0][0].as_ref().unwrap();
+    let setting = String::from_utf8(setting_bytes.clone()).unwrap();
+    assert_eq!(setting, "160000");
+}
+
+#[tokio::test]
 async fn test_pg_settings_all_columns() {
     let temp_dir = tempfile::tempdir().unwrap();
     let db_path = temp_dir.path().join("test_pg_settings3.db");

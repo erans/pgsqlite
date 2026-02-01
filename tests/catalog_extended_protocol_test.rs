@@ -48,7 +48,7 @@ async fn test_catalog_extended_protocol() {
         // Send parameter status messages
         framed.send(BackendMessage::ParameterStatus {
             name: "server_version".to_string(),
-            value: "14.0".to_string(),
+            value: "16.0".to_string(),
         }).await.unwrap();
         
         // Send backend key data

@@ -1,10 +1,10 @@
-use rusqlite::{Connection, Result, functions::FunctionFlags};
+use rusqlite::{functions::FunctionFlags, Connection, Result};
 use tracing::debug;
 
 /// Register PostgreSQL system information functions
 pub fn register_system_functions(conn: &Connection) -> Result<()> {
     debug!("Registering system functions");
-    
+
     // version() - Returns PostgreSQL version string
     conn.create_scalar_function(
         "version",
@@ -13,11 +13,13 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         |_ctx| {
             // Return a PostgreSQL-compatible version string
             // This format is what SQLAlchemy expects to parse
-            Ok(format!("PostgreSQL 15.0 (pgsqlite {}) on x86_64-pc-linux-gnu, compiled by rustc, 64-bit", 
-                env!("CARGO_PKG_VERSION")))
+            Ok(format!(
+                "PostgreSQL 16.0 (pgsqlite {}) on x86_64-pc-linux-gnu, compiled by rustc, 64-bit",
+                env!("CARGO_PKG_VERSION")
+            ))
         },
     )?;
-    
+
     // current_database() - Returns the current database name
     conn.create_scalar_function(
         "current_database",
@@ -28,7 +30,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok("main".to_string())
         },
     )?;
-    
+
     // current_schema() - Returns the current schema name
     conn.create_scalar_function(
         "current_schema",
@@ -39,7 +41,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok("public".to_string())
         },
     )?;
-    
+
     // current_schemas(include_implicit) - Returns array of schemas in search path
     conn.create_scalar_function(
         "current_schemas",
@@ -56,7 +58,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             }
         },
     )?;
-    
+
     // current_user() - Returns the current user name
     conn.create_scalar_function(
         "current_user",
@@ -67,7 +69,100 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok("postgres".to_string())
         },
     )?;
-    
+
+    // current_setting(setting_name [, missing_ok]) - Returns a runtime parameter
+    // Prisma's Postgres connector expects this for server version detection.
+    conn.create_scalar_function(
+        "current_setting",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // Accept non-text values as well (SQLite is dynamically typed).
+            let key: String = match ctx.get_raw(0).as_str() {
+                Ok(s) => s.to_string(),
+                Err(_) => ctx.get::<i64>(0).map(|v| v.to_string()).unwrap_or_default(),
+            };
+
+            let key_lc = key.to_lowercase();
+            // Some clients can end up calling current_setting(CAST('server_version_num' AS INTEGER)).
+            // If key is numeric/empty, fall back to server_version_num.
+            let normalized_key = match key_lc.as_str() {
+                "" | "0" => "server_version_num",
+                other => other,
+            };
+
+            let value = match normalized_key {
+                // Common Postgres server metadata
+                "server_version_num" => "160000".to_string(),
+                "server_version" => "16.0".to_string(),
+
+                // Common connector/ORM probes
+                "standard_conforming_strings" => "on".to_string(),
+                "timezone" => "UTC".to_string(),
+                "search_path" => "public".to_string(),
+                "client_encoding" => "UTF8".to_string(),
+                "datestyle" => "ISO, MDY".to_string(),
+
+                _ => {
+                    return Err(rusqlite::Error::UserFunctionError(
+                        format!(
+                            "unrecognized configuration parameter \"{}\"",
+                            normalized_key
+                        )
+                        .into(),
+                    ));
+                }
+            };
+
+            Ok(value)
+        },
+    )?;
+
+    conn.create_scalar_function(
+        "current_setting",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let key: String = match ctx.get_raw(0).as_str() {
+                Ok(s) => s.to_string(),
+                Err(_) => ctx.get::<i64>(0).map(|v| v.to_string()).unwrap_or_default(),
+            };
+            let missing_ok: bool = ctx.get(1)?;
+
+            let key_lc = key.to_lowercase();
+            let normalized_key = match key_lc.as_str() {
+                "" | "0" => "server_version_num",
+                other => other,
+            };
+
+            let value = match normalized_key {
+                "server_version_num" => Some("160000".to_string()),
+                "server_version" => Some("16.0".to_string()),
+                "standard_conforming_strings" => Some("on".to_string()),
+                "timezone" => Some("UTC".to_string()),
+                "search_path" => Some("public".to_string()),
+                "client_encoding" => Some("UTF8".to_string()),
+                "datestyle" => Some("ISO, MDY".to_string()),
+                _ => None,
+            };
+
+            if value.is_none() {
+                if missing_ok {
+                    return Ok(None);
+                }
+                return Err(rusqlite::Error::UserFunctionError(
+                    format!(
+                        "unrecognized configuration parameter \"{}\"",
+                        normalized_key
+                    )
+                    .into(),
+                ));
+            }
+
+            Ok(value)
+        },
+    )?;
+
     // session_user() - Returns the session user name
     conn.create_scalar_function(
         "session_user",
@@ -78,18 +173,13 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok("postgres".to_string())
         },
     )?;
-    
+
     // pg_backend_pid() - Returns the backend process ID
-    conn.create_scalar_function(
-        "pg_backend_pid",
-        0,
-        FunctionFlags::SQLITE_UTF8,
-        |_ctx| {
-            // Return the current process ID
-            Ok(std::process::id() as i32)
-        },
-    )?;
-    
+    conn.create_scalar_function("pg_backend_pid", 0, FunctionFlags::SQLITE_UTF8, |_ctx| {
+        // Return the current process ID
+        Ok(std::process::id() as i32)
+    })?;
+
     // pg_is_in_recovery() - Returns whether server is in recovery mode
     conn.create_scalar_function(
         "pg_is_in_recovery",
@@ -100,20 +190,15 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(0i32) // false in SQLite boolean representation
         },
     )?;
-    
+
     // pg_database_size(name) - Returns database size in bytes
-    conn.create_scalar_function(
-        "pg_database_size",
-        1,
-        FunctionFlags::SQLITE_UTF8,
-        |ctx| {
-            let _db_name: String = ctx.get(0)?;
-            // For SQLite, we can't easily get the database size without file access
-            // Return a reasonable default size
-            Ok(8192i64) // 8KB minimum SQLite database size
-        },
-    )?;
-    
+    conn.create_scalar_function("pg_database_size", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let _db_name: String = ctx.get(0)?;
+        // For SQLite, we can't easily get the database size without file access
+        // Return a reasonable default size
+        Ok(8192i64) // 8KB minimum SQLite database size
+    })?;
+
     // pg_postmaster_start_time() - Returns server start time
     conn.create_scalar_function(
         "pg_postmaster_start_time",
@@ -126,64 +211,39 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(now.format("%Y-%m-%d %H:%M:%S.%f%:z").to_string())
         },
     )?;
-    
+
     // pg_conf_load_time() - Returns configuration load time
-    conn.create_scalar_function(
-        "pg_conf_load_time",
-        0,
-        FunctionFlags::SQLITE_UTF8,
-        |_ctx| {
-            // Return current timestamp
-            use chrono::{DateTime, Utc};
-            let now: DateTime<Utc> = Utc::now();
-            Ok(now.format("%Y-%m-%d %H:%M:%S.%f%:z").to_string())
-        },
-    )?;
-    
+    conn.create_scalar_function("pg_conf_load_time", 0, FunctionFlags::SQLITE_UTF8, |_ctx| {
+        // Return current timestamp
+        use chrono::{DateTime, Utc};
+        let now: DateTime<Utc> = Utc::now();
+        Ok(now.format("%Y-%m-%d %H:%M:%S.%f%:z").to_string())
+    })?;
+
     // inet_client_addr() - Returns client's IP address
-    conn.create_scalar_function(
-        "inet_client_addr",
-        0,
-        FunctionFlags::SQLITE_UTF8,
-        |_ctx| {
-            // Return localhost as default
-            Ok("127.0.0.1".to_string())
-        },
-    )?;
-    
+    conn.create_scalar_function("inet_client_addr", 0, FunctionFlags::SQLITE_UTF8, |_ctx| {
+        // Return localhost as default
+        Ok("127.0.0.1".to_string())
+    })?;
+
     // inet_client_port() - Returns client's port number
-    conn.create_scalar_function(
-        "inet_client_port",
-        0,
-        FunctionFlags::SQLITE_UTF8,
-        |_ctx| {
-            // Return a typical PostgreSQL client port
-            Ok(5432i32)
-        },
-    )?;
-    
+    conn.create_scalar_function("inet_client_port", 0, FunctionFlags::SQLITE_UTF8, |_ctx| {
+        // Return a typical PostgreSQL client port
+        Ok(5432i32)
+    })?;
+
     // inet_server_addr() - Returns server's IP address
-    conn.create_scalar_function(
-        "inet_server_addr",
-        0,
-        FunctionFlags::SQLITE_UTF8,
-        |_ctx| {
-            // Return localhost as default
-            Ok("127.0.0.1".to_string())
-        },
-    )?;
-    
+    conn.create_scalar_function("inet_server_addr", 0, FunctionFlags::SQLITE_UTF8, |_ctx| {
+        // Return localhost as default
+        Ok("127.0.0.1".to_string())
+    })?;
+
     // inet_server_port() - Returns server's port number
-    conn.create_scalar_function(
-        "inet_server_port",
-        0,
-        FunctionFlags::SQLITE_UTF8,
-        |_ctx| {
-            // Return the standard PostgreSQL port
-            Ok(5432i32)
-        },
-    )?;
-    
+    conn.create_scalar_function("inet_server_port", 0, FunctionFlags::SQLITE_UTF8, |_ctx| {
+        // Return the standard PostgreSQL port
+        Ok(5432i32)
+    })?;
+
     // pg_has_role(role, privilege) - Check if current user has role privilege (2-parameter version)
     conn.create_scalar_function(
         "pg_has_role",
@@ -197,7 +257,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             let privilege_upper = privilege.to_uppercase();
             if !matches!(privilege_upper.as_str(), "MEMBER" | "USAGE" | "SET") {
                 return Err(rusqlite::Error::UserFunctionError(
-                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                    format!("unrecognized privilege type: \"{}\"", privilege).into(),
                 ));
             }
 
@@ -205,7 +265,9 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             // Most common roles that ORMs check for
             match role.as_str() {
                 "pg_read_all_data" | "pg_read_all_settings" | "pg_monitor" => Ok(1i32), // true
-                "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => Ok(0i32), // false - security-sensitive
+                "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => {
+                    Ok(0i32)
+                } // false - security-sensitive
                 _ => Ok(1i32), // Default: assume user has access for compatibility
             }
         },
@@ -225,7 +287,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             let privilege_upper = privilege.to_uppercase();
             if !matches!(privilege_upper.as_str(), "MEMBER" | "USAGE" | "SET") {
                 return Err(rusqlite::Error::UserFunctionError(
-                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                    format!("unrecognized privilege type: \"{}\"", privilege).into(),
                 ));
             }
 
@@ -234,20 +296,24 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             if user == "public" {
                 // Public role has limited access to sensitive roles
                 match role.as_str() {
-                    "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => Ok(0i32), // false
+                    "pg_read_server_files"
+                    | "pg_write_server_files"
+                    | "pg_execute_server_program" => Ok(0i32), // false
                     _ => Ok(1i32), // true for most roles
                 }
             } else {
                 // Regular users: check role type
                 match role.as_str() {
                     "pg_read_all_data" | "pg_read_all_settings" | "pg_monitor" => Ok(1i32), // true
-                    "pg_read_server_files" | "pg_write_server_files" | "pg_execute_server_program" => Ok(0i32), // false - security-sensitive
+                    "pg_read_server_files"
+                    | "pg_write_server_files"
+                    | "pg_execute_server_program" => Ok(0i32), // false - security-sensitive
                     _ => Ok(1i32), // Default: assume user has access for compatibility
                 }
             }
         },
     )?;
-    
+
     // has_database_privilege(user, database, privilege) - Check database privilege
     conn.create_scalar_function(
         "has_database_privilege",
@@ -261,7 +327,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(1i32) // true
         },
     )?;
-    
+
     // has_schema_privilege(user, schema, privilege) - Check schema privilege
     conn.create_scalar_function(
         "has_schema_privilege",
@@ -275,7 +341,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(1i32) // true
         },
     )?;
-    
+
     // has_table_privilege(table, privilege) - Check if current user has table privilege (2-parameter version)
     conn.create_scalar_function(
         "has_table_privilege",
@@ -287,24 +353,37 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
 
             // Validate privilege type
             let privilege_upper = privilege.to_uppercase();
-            if !matches!(privilege_upper.as_str(),
-                "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" |
-                "REFERENCES" | "TRIGGER" | "MAINTAIN" | "ALL" | "ALL PRIVILEGES") {
+            if !matches!(
+                privilege_upper.as_str(),
+                "SELECT"
+                    | "INSERT"
+                    | "UPDATE"
+                    | "DELETE"
+                    | "TRUNCATE"
+                    | "REFERENCES"
+                    | "TRIGGER"
+                    | "MAINTAIN"
+                    | "ALL"
+                    | "ALL PRIVILEGES"
+            ) {
                 return Err(rusqlite::Error::UserFunctionError(
-                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                    format!("unrecognized privilege type: \"{}\"", privilege).into(),
                 ));
             }
 
             // In SQLite, simulate table access control
             // System catalog tables should be readable but not writable
-            if table.starts_with("pg_") || table.starts_with("information_schema.") || table.starts_with("information_schema_") {
+            if table.starts_with("pg_")
+                || table.starts_with("information_schema.")
+                || table.starts_with("information_schema_")
+            {
                 match privilege_upper.as_str() {
                     "SELECT" => Ok(1i32), // true - can read system catalogs
                     "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" => Ok(0i32), // false - cannot modify system catalogs
                     "REFERENCES" | "TRIGGER" => Ok(0i32), // false - cannot create references/triggers on system tables
-                    "MAINTAIN" => Ok(0i32), // false - cannot maintain system tables
+                    "MAINTAIN" => Ok(0i32),               // false - cannot maintain system tables
                     "ALL" | "ALL PRIVILEGES" => Ok(0i32), // false - no full privileges on system tables
-                    _ => Ok(0i32), // false by default for system tables
+                    _ => Ok(0i32),                        // false by default for system tables
                 }
             } else {
                 // Regular user tables - grant all privileges for compatibility
@@ -325,40 +404,56 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
 
             // Validate privilege type
             let privilege_upper = privilege.to_uppercase();
-            if !matches!(privilege_upper.as_str(),
-                "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" |
-                "REFERENCES" | "TRIGGER" | "MAINTAIN" | "ALL" | "ALL PRIVILEGES") {
+            if !matches!(
+                privilege_upper.as_str(),
+                "SELECT"
+                    | "INSERT"
+                    | "UPDATE"
+                    | "DELETE"
+                    | "TRUNCATE"
+                    | "REFERENCES"
+                    | "TRIGGER"
+                    | "MAINTAIN"
+                    | "ALL"
+                    | "ALL PRIVILEGES"
+            ) {
                 return Err(rusqlite::Error::UserFunctionError(
-                    format!("unrecognized privilege type: \"{}\"", privilege).into()
+                    format!("unrecognized privilege type: \"{}\"", privilege).into(),
                 ));
             }
 
             // In SQLite, simulate table access control based on user and table
             if user == "public" {
                 // Public role has limited access
-                if table.starts_with("pg_") || table.starts_with("information_schema.") || table.starts_with("information_schema_") {
+                if table.starts_with("pg_")
+                    || table.starts_with("information_schema.")
+                    || table.starts_with("information_schema_")
+                {
                     match privilege_upper.as_str() {
                         "SELECT" => Ok(1i32), // true - public can read most system catalogs
-                        _ => Ok(0i32), // false - public cannot modify system catalogs
+                        _ => Ok(0i32),        // false - public cannot modify system catalogs
                     }
                 } else {
                     // Public access to user tables depends on privilege
                     match privilege_upper.as_str() {
                         "SELECT" => Ok(1i32), // true - public can typically read user tables
                         "INSERT" | "UPDATE" | "DELETE" => Ok(0i32), // false - public typically cannot modify
-                        _ => Ok(0i32), // false by default for public
+                        _ => Ok(0i32),                              // false by default for public
                     }
                 }
             } else {
                 // Regular users
-                if table.starts_with("pg_") || table.starts_with("information_schema.") || table.starts_with("information_schema_") {
+                if table.starts_with("pg_")
+                    || table.starts_with("information_schema.")
+                    || table.starts_with("information_schema_")
+                {
                     match privilege_upper.as_str() {
                         "SELECT" => Ok(1i32), // true - users can read system catalogs
                         "INSERT" | "UPDATE" | "DELETE" | "TRUNCATE" => Ok(0i32), // false - cannot modify system catalogs
                         "REFERENCES" | "TRIGGER" => Ok(0i32), // false - cannot create references/triggers on system tables
                         "MAINTAIN" => Ok(0i32), // false - cannot maintain system tables
                         "ALL" | "ALL PRIVILEGES" => Ok(0i32), // false - no full privileges on system tables
-                        _ => Ok(0i32), // false by default for system tables
+                        _ => Ok(0i32),                        // false by default for system tables
                     }
                 } else {
                     // Regular user tables - grant all privileges for compatibility
@@ -367,7 +462,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             }
         },
     )?;
-    
+
     // pg_get_userbyid(user_oid) - Returns username for user OID
     conn.create_scalar_function(
         "pg_get_userbyid",
@@ -380,50 +475,35 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok("postgres".to_string())
         },
     )?;
-    
+
     // obj_description(object_oid, catalog_name) - Returns comment for database object
-    conn.create_scalar_function(
-        "obj_description",
-        2,
-        FunctionFlags::SQLITE_UTF8,
-        |ctx| {
-            let _object_oid: i64 = ctx.get(0)?;
-            let _catalog_name: String = ctx.get(1)?;
-            
-            // For SQLite functions, we can't easily access the connection
-            // So we return NULL for now - this will be handled by query interceptor
-            // or comment function processor
-            Ok(Option::<String>::None)
-        },
-    )?;
-    
+    conn.create_scalar_function("obj_description", 2, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let _object_oid: i64 = ctx.get(0)?;
+        let _catalog_name: String = ctx.get(1)?;
+
+        // For SQLite functions, we can't easily access the connection
+        // So we return NULL for now - this will be handled by query interceptor
+        // or comment function processor
+        Ok(Option::<String>::None)
+    })?;
+
     // obj_description(object_oid) - Deprecated one-parameter form
-    conn.create_scalar_function(
-        "obj_description",
-        1,
-        FunctionFlags::SQLITE_UTF8,
-        |ctx| {
-            let _object_oid: i64 = ctx.get(0)?;
-            // Use the two-parameter version with default catalog
-            // For now, return NULL - will be handled by query interceptor for real queries
-            Ok(Option::<String>::None)
-        },
-    )?;
-    
+    conn.create_scalar_function("obj_description", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let _object_oid: i64 = ctx.get(0)?;
+        // Use the two-parameter version with default catalog
+        // For now, return NULL - will be handled by query interceptor for real queries
+        Ok(Option::<String>::None)
+    })?;
+
     // col_description(table_oid, column_number) - Returns comment for table column
-    conn.create_scalar_function(
-        "col_description",
-        2,
-        FunctionFlags::SQLITE_UTF8,
-        |ctx| {
-            let _table_oid: i64 = ctx.get(0)?;
-            let _column_number: i32 = ctx.get(1)?;
-            
-            // Query __pgsqlite_comments table for column comment
-            // For now, return NULL - will be handled by query interceptor
-            Ok(Option::<String>::None)
-        },
-    )?;
+    conn.create_scalar_function("col_description", 2, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let _table_oid: i64 = ctx.get(0)?;
+        let _column_number: i32 = ctx.get(1)?;
+
+        // Query __pgsqlite_comments table for column comment
+        // For now, return NULL - will be handled by query interceptor
+        Ok(Option::<String>::None)
+    })?;
 
     // pg_size_pretty(size_in_bytes) - Format size in bytes as human-readable string
     conn.create_scalar_function(
@@ -445,7 +525,9 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
                     return Ok(Option::<String>::None);
                 }
                 _ => {
-                    return Err(rusqlite::Error::UserFunctionError("Invalid size type".into()));
+                    return Err(rusqlite::Error::UserFunctionError(
+                        "Invalid size type".into(),
+                    ));
                 }
             };
 
@@ -458,9 +540,7 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
         "pg_size_pretty",
         0,
         FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
-        |_ctx| {
-            Ok(Option::<String>::None)
-        },
+        |_ctx| Ok(Option::<String>::None),
     )?;
 
     debug!("System functions registered successfully");
@@ -474,8 +554,8 @@ fn format_size_pretty(mut size: i64) -> String {
     let abs_size = size.unsigned_abs();
 
     // PostgreSQL unit definitions
-    const BYTES_LIMIT: u64 = 10 * 1024;  // 10240 bytes
-    const UNIT_LIMIT: u64 = 10 * 1024;  // 10240 (for kB, MB, GB, TB, PB)
+    const BYTES_LIMIT: u64 = 10 * 1024; // 10240 bytes
+    const UNIT_LIMIT: u64 = 10 * 1024; // 10240 (for kB, MB, GB, TB, PB)
 
     // Check if we should display as bytes
     if abs_size < BYTES_LIMIT {
@@ -518,145 +598,177 @@ fn format_size_pretty(mut size: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_version_function() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        let version: String = conn.query_row("SELECT version()", [], |row| row.get(0)).unwrap();
+
+        let version: String = conn
+            .query_row("SELECT version()", [], |row| row.get(0))
+            .unwrap();
         assert!(version.starts_with("PostgreSQL"));
         assert!(version.contains("pgsqlite"));
     }
-    
+
     #[test]
     fn test_current_database() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        let db_name: String = conn.query_row("SELECT current_database()", [], |row| row.get(0)).unwrap();
+
+        let db_name: String = conn
+            .query_row("SELECT current_database()", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(db_name, "main");
     }
-    
+
     #[test]
     fn test_current_schema() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        let schema: String = conn.query_row("SELECT current_schema()", [], |row| row.get(0)).unwrap();
+
+        let schema: String = conn
+            .query_row("SELECT current_schema()", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(schema, "public");
     }
-    
+
     #[test]
     fn test_current_user() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        let user: String = conn.query_row("SELECT current_user()", [], |row| row.get(0)).unwrap();
+
+        let user: String = conn
+            .query_row("SELECT current_user()", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(user, "postgres");
     }
-    
+
     #[test]
     fn test_pg_backend_pid() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        let pid: i32 = conn.query_row("SELECT pg_backend_pid()", [], |row| row.get(0)).unwrap();
+
+        let pid: i32 = conn
+            .query_row("SELECT pg_backend_pid()", [], |row| row.get(0))
+            .unwrap();
         assert!(pid > 0);
     }
-    
+
     #[test]
     fn test_pg_is_in_recovery() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
-        let in_recovery: i32 = conn.query_row("SELECT pg_is_in_recovery()", [], |row| row.get(0)).unwrap();
+
+        let in_recovery: i32 = conn
+            .query_row("SELECT pg_is_in_recovery()", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(in_recovery, 0); // false
     }
-    
+
     #[test]
     fn test_privilege_functions() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
 
         // Test pg_has_role - 2 parameter version (current user)
-        let has_role_2p: i32 = conn.query_row(
-            "SELECT pg_has_role('pg_read_all_data', 'USAGE')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_role_2p: i32 = conn
+            .query_row(
+                "SELECT pg_has_role('pg_read_all_data', 'USAGE')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_role_2p, 1); // true
 
         // Test pg_has_role - 3 parameter version
-        let has_role_3p: i32 = conn.query_row(
-            "SELECT pg_has_role('postgres', 'pg_read_all_data', 'USAGE')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_role_3p: i32 = conn
+            .query_row(
+                "SELECT pg_has_role('postgres', 'pg_read_all_data', 'USAGE')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_role_3p, 1); // true
 
         // Test pg_has_role - security-sensitive role should return false
-        let has_sensitive_role: i32 = conn.query_row(
-            "SELECT pg_has_role('pg_read_server_files', 'USAGE')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_sensitive_role: i32 = conn
+            .query_row(
+                "SELECT pg_has_role('pg_read_server_files', 'USAGE')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_sensitive_role, 0); // false
 
         // Test has_database_privilege
-        let has_db_priv: i32 = conn.query_row(
-            "SELECT has_database_privilege('postgres', 'main', 'CREATE')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_db_priv: i32 = conn
+            .query_row(
+                "SELECT has_database_privilege('postgres', 'main', 'CREATE')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_db_priv, 1); // true
 
         // Test has_schema_privilege
-        let has_schema_priv: i32 = conn.query_row(
-            "SELECT has_schema_privilege('postgres', 'public', 'CREATE')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_schema_priv: i32 = conn
+            .query_row(
+                "SELECT has_schema_privilege('postgres', 'public', 'CREATE')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_schema_priv, 1); // true
 
         // Test has_table_privilege - 2 parameter version (current user)
-        let has_table_priv_2p: i32 = conn.query_row(
-            "SELECT has_table_privilege('pg_class', 'SELECT')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_table_priv_2p: i32 = conn
+            .query_row(
+                "SELECT has_table_privilege('pg_class', 'SELECT')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_table_priv_2p, 1); // true - can read system catalogs
 
         // Test has_table_privilege - 3 parameter version
-        let has_table_priv_3p: i32 = conn.query_row(
-            "SELECT has_table_privilege('postgres', 'pg_class', 'SELECT')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_table_priv_3p: i32 = conn
+            .query_row(
+                "SELECT has_table_privilege('postgres', 'pg_class', 'SELECT')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_table_priv_3p, 1); // true
 
         // Test has_table_privilege - should deny INSERT on system tables
-        let has_table_insert: i32 = conn.query_row(
-            "SELECT has_table_privilege('pg_class', 'INSERT')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_table_insert: i32 = conn
+            .query_row(
+                "SELECT has_table_privilege('pg_class', 'INSERT')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_table_insert, 0); // false - cannot insert into system catalogs
 
         // Test has_table_privilege - should allow operations on user tables
-        let has_user_table_priv: i32 = conn.query_row(
-            "SELECT has_table_privilege('user_table', 'INSERT')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_user_table_priv: i32 = conn
+            .query_row(
+                "SELECT has_table_privilege('user_table', 'INSERT')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_user_table_priv, 1); // true - can modify user tables
 
         // Test has_table_privilege - public user with limited access
-        let has_public_insert: i32 = conn.query_row(
-            "SELECT has_table_privilege('public', 'user_table', 'INSERT')",
-            [],
-            |row| row.get(0)
-        ).unwrap();
+        let has_public_insert: i32 = conn
+            .query_row(
+                "SELECT has_table_privilege('public', 'user_table', 'INSERT')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(has_public_insert, 0); // false - public cannot insert into user tables
     }
 
@@ -669,7 +781,7 @@ mod tests {
         let result = conn.query_row(
             "SELECT pg_has_role('pg_read_all_data', 'INVALID')",
             [],
-            |row| row.get::<_, i32>(0)
+            |row| row.get::<_, i32>(0),
         );
         assert!(result.is_err()); // Should fail with invalid privilege
 
@@ -677,44 +789,40 @@ mod tests {
         let result = conn.query_row(
             "SELECT has_table_privilege('test_table', 'INVALID')",
             [],
-            |row| row.get::<_, i32>(0)
+            |row| row.get::<_, i32>(0),
         );
         assert!(result.is_err()); // Should fail with invalid privilege
     }
-    
+
     #[test]
     fn test_obj_description() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
+
         // Test two-parameter form (returns NULL since no comments table)
-        let desc: Option<String> = conn.query_row(
-            "SELECT obj_description(123456, 'pg_class')", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
+        let desc: Option<String> = conn
+            .query_row("SELECT obj_description(123456, 'pg_class')", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
         assert_eq!(desc, None); // Should return NULL
-        
+
         // Test one-parameter form (deprecated)
-        let desc: Option<String> = conn.query_row(
-            "SELECT obj_description(123456)", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
+        let desc: Option<String> = conn
+            .query_row("SELECT obj_description(123456)", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(desc, None); // Should return NULL
     }
-    
+
     #[test]
     fn test_col_description() {
         let conn = Connection::open_in_memory().unwrap();
         register_system_functions(&conn).unwrap();
-        
+
         // Test col_description function (returns NULL since no comments table)
-        let desc: Option<String> = conn.query_row(
-            "SELECT col_description(123456, 1)", 
-            [], 
-            |row| row.get(0)
-        ).unwrap();
+        let desc: Option<String> = conn
+            .query_row("SELECT col_description(123456, 1)", [], |row| row.get(0))
+            .unwrap();
         assert_eq!(desc, None); // Should return NULL
     }
 }
