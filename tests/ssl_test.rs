@@ -9,6 +9,7 @@ mod tests {
     fn test_certificate_generation() {
         let config = Config {
             database: ":memory:".to_string(),
+            default_database: "main".to_string(),
             ssl: true,
             ssl_cert: None,
             ssl_key: None,
@@ -59,12 +60,12 @@ mod tests {
         };
 
         let cert_manager = CertificateManager::new(Arc::new(config.clone()));
-        
+
         // Test in-memory certificate generation
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(cert_manager.initialize());
         assert!(result.is_ok());
-        
+
         let (_acceptor, cert_source) = result.unwrap();
         match cert_source {
             pgsqlite::ssl::CertificateSource::Generated { cert, key } => {
@@ -81,9 +82,10 @@ mod tests {
     fn test_certificate_file_persistence() {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
-        
+
         let config = Config {
             database: db_path.to_string_lossy().to_string(),
+            default_database: "main".to_string(),
             ssl: true,
             ssl_cert: None,
             ssl_key: None,
@@ -134,27 +136,30 @@ mod tests {
         };
 
         let cert_manager = CertificateManager::new(Arc::new(config.clone()));
-        
+
         // Test certificate generation and file persistence
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(cert_manager.initialize());
         assert!(result.is_ok());
-        
+
         // Check that certificate files were created
         let cert_path = temp_dir.path().join("test.crt");
         let key_path = temp_dir.path().join("test.key");
-        
+
         assert!(cert_path.exists(), "Certificate file should be created");
         assert!(key_path.exists(), "Key file should be created");
-        
+
         // Test that existing certificates are reused
         let cert_manager2 = CertificateManager::new(Arc::new(config));
         let result2 = rt.block_on(cert_manager2.initialize());
         assert!(result2.is_ok());
-        
+
         let (_acceptor2, cert_source2) = result2.unwrap();
         match cert_source2 {
-            pgsqlite::ssl::CertificateSource::FileSystem { cert_path: cp, key_path: kp } => {
+            pgsqlite::ssl::CertificateSource::FileSystem {
+                cert_path: cp,
+                key_path: kp,
+            } => {
                 assert_eq!(cp, cert_path.to_string_lossy());
                 assert_eq!(kp, key_path.to_string_lossy());
             }
@@ -166,6 +171,7 @@ mod tests {
     fn test_ssl_disabled_for_unix_sockets() {
         let config = Config {
             database: "test.db".to_string(),
+            default_database: "main".to_string(),
             ssl: true,
             ssl_cert: None,
             ssl_key: None,
@@ -216,6 +222,9 @@ mod tests {
         };
 
         // This should be validated in Config::load(), but we're testing the validation
-        assert!(config.ssl && config.no_tcp, "Invalid SSL configuration should be caught");
+        assert!(
+            config.ssl && config.no_tcp,
+            "Invalid SSL configuration should be caught"
+        );
     }
 }

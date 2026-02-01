@@ -5,7 +5,6 @@ use rustls::ServerConfig;
 use rustls_pemfile;
 use std::fs;
 use std::io::BufReader;
-use std::path::Path;
 use std::sync::Arc;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, info, warn};
@@ -84,11 +83,10 @@ impl CertificateManager {
     }
 
     fn check_filesystem_certificates(&self) -> Result<Option<CertificateSource>> {
-        let db_path = Path::new(&self.config.database);
-        let db_dir = db_path.parent().unwrap_or(Path::new("."));
-        let db_stem = db_path.file_stem()
-            .and_then(|s| s.to_str())
-            .context("Invalid database filename")?;
+        let Some(db_dir) = self.config.data_dir() else {
+            return Ok(None);
+        };
+        let db_stem = self.config.cert_stem();
 
         let cert_path = db_dir.join(format!("{db_stem}.crt"));
         let key_path = db_dir.join(format!("{db_stem}.key"));
@@ -132,11 +130,11 @@ impl CertificateManager {
     }
 
     fn save_certificates(&self, cert: &[u8], key: &[u8]) -> Result<()> {
-        let db_path = Path::new(&self.config.database);
-        let db_dir = db_path.parent().unwrap_or(Path::new("."));
-        let db_stem = db_path.file_stem()
-            .and_then(|s| s.to_str())
-            .context("Invalid database filename")?;
+        let db_dir = self
+            .config
+            .data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let db_stem = self.config.cert_stem();
 
         let cert_path = db_dir.join(format!("{db_stem}.crt"));
         let key_path = db_dir.join(format!("{db_stem}.key"));

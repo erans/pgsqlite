@@ -24,6 +24,8 @@ use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
 use pgsqlite::session::{DbHandler, SessionState};
 use pgsqlite::ssl::CertificateManager;
 use pgsqlite::migration::MigrationRunner;
+use pgsqlite::system_db::SystemDb;
+use pgsqlite::config::DatabaseLayout;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,18 +39,39 @@ async fn main() -> Result<()> {
     // Display version
     info!("pgsqlite v{}", env!("CARGO_PKG_VERSION"));
 
-    // Determine database path based on --in-memory flag
-    let db_path = if config.in_memory {
-        info!("Using in-memory SQLite database (testing mode)");
-        ":memory:".to_string()
-    } else {
-        config.database.clone()
-    };
+    let layout = config.database_layout();
+
+    // Prepare filesystem layout (directory or legacy file)
+    match &layout {
+        DatabaseLayout::InMemory => {
+            info!("Using in-memory SQLite database (testing mode)");
+        }
+        DatabaseLayout::Directory { dir } => {
+            std::fs::create_dir_all(dir)?;
+        }
+        DatabaseLayout::File { path } => {
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+        }
+    }
 
     // Handle migration command
     if config.migrate {
         info!("Running database migrations...");
         
+        // In directory mode, migrations apply to the default database file.
+        let db_path = match &layout {
+            DatabaseLayout::InMemory => ":memory:".to_string(),
+            DatabaseLayout::File { path } => path.to_string_lossy().to_string(),
+            DatabaseLayout::Directory { dir } => dir
+                .join(format!("{}.db", config.default_database))
+                .to_string_lossy()
+                .to_string(),
+        };
+
         // Open connection directly for migration
         let conn = rusqlite::Connection::open(&db_path)
             .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
@@ -74,11 +97,13 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Initialize database handler with direct executor
-    let db_handler = Arc::new(
-        DbHandler::new_with_config(&db_path, &config)
-            .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
-    );
+    // Ensure system.db exists in directory mode
+    if let DatabaseLayout::Directory { dir } = &layout {
+        let _ = SystemDb::open(dir)
+            .map_err(|e| anyhow::anyhow!("Failed to initialize system.db: {e}"))?;
+    }
+
+    let config = Arc::new(config);
 
     // Unix socket setup (only on Unix platforms)
     #[cfg(unix)]
@@ -111,10 +136,16 @@ async fn main() -> Result<()> {
         None
     };
 
-    if config.in_memory {
-        info!("Using in-memory database (for testing/benchmarking only)");
-    } else {
-        info!("Using database: {}", config.database);
+    match &layout {
+        DatabaseLayout::InMemory => {
+            info!("Using in-memory database (for testing/benchmarking only)");
+        }
+        DatabaseLayout::Directory { .. } => {
+            info!("Using data dir: {}", config.database);
+        }
+        DatabaseLayout::File { .. } => {
+            info!("Using database file: {}", config.database);
+        }
     }
 
     // Initialize SSL if enabled
@@ -122,7 +153,7 @@ async fn main() -> Result<()> {
         if config.no_tcp {
             return Err(anyhow::anyhow!("SSL cannot be enabled when TCP is disabled"));
         }
-        let cert_manager = CertificateManager::new(Arc::new(config.clone()));
+        let cert_manager = CertificateManager::new(config.clone());
         let (acceptor, _cert_source) = cert_manager.initialize().await?;
         Some(acceptor)
     } else {
@@ -166,7 +197,7 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     {
         loop {
-            let db_handler = db_handler.clone();
+            let config = config.clone();
             
             tokio::select! {
                 // Handle TCP connections
@@ -179,13 +210,12 @@ async fn main() -> Result<()> {
                 } => {
                     if let Ok((stream, addr)) = result {
                         info!("New TCP connection from {}", addr);
-                        let db_handler = db_handler.clone();
                         let tls_acceptor = tls_acceptor.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_tcp_connection(stream, addr, db_handler, tls_acceptor).await {
-                                error!("TCP connection error from {}: {}", addr, e);
-                            }
-                        });
+                              if let Err(e) = handle_tcp_connection(stream, addr, config, tls_acceptor).await {
+                                  error!("TCP connection error from {}: {}", addr, e);
+                              }
+                          });
                     }
                 }
                 
@@ -193,12 +223,12 @@ async fn main() -> Result<()> {
                 result = unix_listener.accept() => {
                     if let Ok((stream, _addr)) = result {
                         info!("New Unix socket connection");
-                        let db_handler = db_handler.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_unix_connection(stream, db_handler).await {
-                                error!("Unix socket connection error: {}", e);
-                            }
-                        });
+                         let config = config.clone();
+                         tokio::spawn(async move {
+                             if let Err(e) = handle_unix_connection(stream, config).await {
+                                 error!("Unix socket connection error: {}", e);
+                             }
+                         });
                     }
                 }
             }
@@ -209,18 +239,17 @@ async fn main() -> Result<()> {
     {
         // Windows/non-Unix: only handle TCP connections
         loop {
-            let db_handler = db_handler.clone();
+            let config = config.clone();
             
             if let Some(ref listener) = tcp_listener {
                 if let Ok((stream, addr)) = listener.accept().await {
                     info!("New TCP connection from {}", addr);
-                    let db_handler = db_handler.clone();
                     let tls_acceptor = tls_acceptor.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_tcp_connection(stream, addr, db_handler, tls_acceptor).await {
-                            error!("TCP connection error from {}: {}", addr, e);
-                        }
-                    });
+                    if let Err(e) = handle_tcp_connection(stream, addr, config, tls_acceptor).await {
+                        error!("TCP connection error from {}: {}", addr, e);
+                    }
+                });
                 }
             } else {
                 // No TCP listener and no Unix sockets on Windows
@@ -234,7 +263,7 @@ async fn main() -> Result<()> {
 async fn handle_tcp_connection(
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
-    db_handler: Arc<DbHandler>,
+    config: Arc<Config>,
     tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     info!("Handling TCP connection from {}", addr);
@@ -254,7 +283,7 @@ async fn handle_tcp_connection(
     stream.set_nodelay(true)?;
 
     // Always handle potential SSL requests, even if SSL is disabled
-    match handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor).await {
+    match handle_ssl_negotiation(stream, addr, config, tls_acceptor).await {
         Ok(()) => Ok(()),
         Err(e) => {
             // Record failure for circuit breaker
@@ -267,7 +296,7 @@ async fn handle_tcp_connection(
 async fn handle_ssl_negotiation(
     mut stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
-    db_handler: Arc<DbHandler>,
+    config: Arc<Config>,
     tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -295,7 +324,7 @@ async fn handle_ssl_negotiation(
             events::connection_accepted(addr.ip(), true);
 
             // Handle the connection with TLS
-            handle_connection_generic(tls_stream, &addr.to_string(), db_handler).await
+            handle_connection_generic(tls_stream, &addr.to_string(), config).await
         } else {
             // SSL is disabled, send 'N' to indicate SSL is not available
             stream.write_all(b"N").await?;
@@ -306,7 +335,7 @@ async fn handle_ssl_negotiation(
             events::connection_accepted(addr.ip(), false);
 
             // Continue with non-SSL connection
-            handle_connection_generic(stream, &addr.to_string(), db_handler).await
+            handle_connection_generic(stream, &addr.to_string(), config).await
         }
     } else {
         // Not an SSL request, we need to handle this as a regular startup message
@@ -318,23 +347,23 @@ async fn handle_ssl_negotiation(
 
         // Create a custom stream that will first return our buffered data
         let stream_with_buffer = StreamWithBuffer::new(stream, initial_data);
-        handle_connection_generic(stream_with_buffer, &addr.to_string(), db_handler).await
+        handle_connection_generic(stream_with_buffer, &addr.to_string(), config).await
     }
 }
 
 #[cfg(unix)]
 async fn handle_unix_connection(
     stream: tokio::net::UnixStream,
-    db_handler: Arc<DbHandler>,
+    config: Arc<Config>,
 ) -> Result<()> {
     info!("Handling Unix socket connection");
-    handle_connection_generic(stream, "unix-socket", db_handler).await
+    handle_connection_generic(stream, "unix-socket", config).await
 }
 
 async fn handle_connection_generic<S>(
     stream: S,
     connection_info: &str,
-    db_handler: Arc<DbHandler>,
+    config: Arc<Config>,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -356,7 +385,7 @@ where
     info!("Received startup message from {}: {:?}", connection_info, startup);
 
     // Extract session parameters
-    let mut database = "main".to_string();
+    let mut database = config.default_database.clone();
     let mut user = "postgres".to_string();
 
     for (key, value) in &startup.parameters {
@@ -369,6 +398,36 @@ where
 
     let session = Arc::new(SessionState::new(database.clone(), user.clone()));
     let session_id = session.id;
+
+    // Create a database handler for the requested database
+    let db_path = if config.in_memory || config.database == ":memory:" {
+        ":memory:".to_string()
+    } else {
+        match config.database_layout() {
+            DatabaseLayout::InMemory => ":memory:".to_string(),
+            DatabaseLayout::File { path } => path.to_string_lossy().to_string(),
+            DatabaseLayout::Directory { .. } => {
+                let Some(p) = config.resolve_db_file_path(&database) else {
+                    let err = ErrorResponse::new(
+                        "FATAL".to_string(),
+                        "3D000".to_string(),
+                        format!("Invalid database name: {database}"),
+                    );
+                    framed
+                        .send(BackendMessage::ErrorResponse(Box::new(err)))
+                        .await?;
+                    framed.flush().await?;
+                    return Ok(());
+                };
+                p.to_string_lossy().to_string()
+            }
+        }
+    };
+
+    let db_handler = Arc::new(
+        DbHandler::new_with_config(&db_path, &config)
+            .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
+    );
 
     // Set the database handler for this session for proper lifecycle management
     session.set_db_handler(db_handler.clone()).await;
