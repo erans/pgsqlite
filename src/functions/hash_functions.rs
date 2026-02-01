@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result, functions::FunctionFlags};
+use rusqlite::{functions::FunctionFlags, Connection, Result};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use tracing::debug;
@@ -6,7 +6,7 @@ use tracing::debug;
 /// Register hash functions for OID generation
 pub fn register_hash_functions(conn: &Connection) -> Result<()> {
     debug!("Registering hash functions");
-    
+
     // hash(text) - generates a stable hash from text
     conn.create_scalar_function(
         "hash",
@@ -19,7 +19,7 @@ pub fn register_hash_functions(conn: &Connection) -> Result<()> {
             Ok(hasher.finish() as i64)
         },
     )?;
-    
+
     // oid_hash(text) - generates PostgreSQL-compatible OID from text
     conn.create_scalar_function(
         "oid_hash",
@@ -30,10 +30,10 @@ pub fn register_hash_functions(conn: &Connection) -> Result<()> {
             let mut hasher = DefaultHasher::new();
             text.hash(&mut hasher);
             // Keep it positive and in a reasonable range for OIDs
-            Ok(((hasher.finish() & 0x7FFFFFFF) % 1000000 + 16384) as i32)
+            Ok(((hasher.finish() & 0x7FFF_FFFF) % 1_000_000 + 16384) as i32)
         },
     )?;
-    
+
     debug!("Hash functions registered successfully");
     Ok(())
 }
@@ -41,12 +41,12 @@ pub fn register_hash_functions(conn: &Connection) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_hash_function() {
         let conn = Connection::open_in_memory().unwrap();
         register_hash_functions(&conn).unwrap();
-        
+
         // Test hash function
         let hash1: i64 = conn
             .query_row("SELECT hash('test_table')", [], |row| row.get(0))
@@ -55,19 +55,19 @@ mod tests {
             .query_row("SELECT hash('test_table')", [], |row| row.get(0))
             .unwrap();
         assert_eq!(hash1, hash2); // Should be deterministic
-        
+
         // Different inputs should produce different hashes
         let hash3: i64 = conn
             .query_row("SELECT hash('other_table')", [], |row| row.get(0))
             .unwrap();
         assert_ne!(hash1, hash3);
     }
-    
+
     #[test]
     fn test_oid_hash_function() {
         let conn = Connection::open_in_memory().unwrap();
         register_hash_functions(&conn).unwrap();
-        
+
         // Test oid_hash function
         let oid1: i32 = conn
             .query_row("SELECT oid_hash('test_table')", [], |row| row.get(0))
