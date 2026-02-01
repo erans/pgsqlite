@@ -2828,6 +2828,11 @@ fn register_v27_fix_pg_proc_types(registry: &mut BTreeMap<u32, Migration>) {
                 UNION ALL SELECT 'current_user', 'f', 'f', 'f', 's', 19      -- name
                 UNION ALL SELECT 'session_user', 'f', 'f', 'f', 's', 19      -- name
                 UNION ALL SELECT 'current_schema', 'f', 'f', 'f', 's', 19    -- name
+                UNION ALL SELECT 'current_setting', 'f', 'f', 'f', 's', 25   -- text
+                UNION ALL SELECT 'current_schemas', 'f', 'f', 'f', 's', 1003 -- name[]
+                UNION ALL SELECT 'user', 'f', 'f', 'f', 's', 19              -- name
+                UNION ALL SELECT 'pg_backend_pid', 'f', 'f', 'f', 's', 23    -- int4
+                UNION ALL SELECT 'pg_is_in_recovery', 'f', 'f', 'f', 's', 16 -- boolean
 
                 -- PostgreSQL system functions
                 UNION ALL SELECT 'pg_has_role', 'f', 'f', 'f', 's', 16       -- boolean

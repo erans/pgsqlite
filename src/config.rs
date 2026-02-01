@@ -397,6 +397,14 @@ impl Config {
             return DatabaseLayout::InMemory;
         }
 
+        // Support SQLite URI filenames (e.g. `file::memory:?cache=shared&uri=true`).
+        // These are not filesystem paths and must be treated as a single "file" database.
+        if looks_like_sqlite_uri(&self.database) {
+            return DatabaseLayout::File {
+                path: PathBuf::from(&self.database),
+            };
+        }
+
         let p = PathBuf::from(&self.database);
         if p.exists() {
             if p.is_dir() {
@@ -515,6 +523,10 @@ fn looks_like_db_file_path(p: &Path) -> bool {
         ext.to_ascii_lowercase().as_str(),
         "db" | "sqlite" | "sqlite3"
     )
+}
+
+fn looks_like_sqlite_uri(s: &str) -> bool {
+    s.starts_with("file:")
 }
 
 // Global configuration instance
