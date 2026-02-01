@@ -654,14 +654,14 @@ impl BinaryEncoder {
     pub fn encode_date(unix_timestamp: f64) -> Vec<u8> {
         // For dates stored as INTEGER days since epoch in SQLite, treat as days
         // For dates stored as REAL Unix timestamps, convert from seconds
-        if unix_timestamp < 100000.0 {
+        if unix_timestamp < 100_000.0 {
             // This looks like days since epoch (1970-01-01), convert to PostgreSQL days since 2000-01-01
             let days_since_1970 = unix_timestamp as i32;
             let days_since_2000 = days_since_1970 - 10957; // 10957 days between 1970-01-01 and 2000-01-01
             days_since_2000.to_be_bytes().to_vec()
         } else {
             // This looks like seconds since epoch, convert to days since 2000-01-01
-            const PG_EPOCH_OFFSET: i64 = 946684800; // seconds between 1970-01-01 and 2000-01-01
+            const PG_EPOCH_OFFSET: i64 = 946_684_800; // seconds between 1970-01-01 and 2000-01-01
             const SECS_PER_DAY: i64 = 86400;
             let unix_secs = unix_timestamp.trunc() as i64;
             let pg_days = ((unix_secs - PG_EPOCH_OFFSET) / SECS_PER_DAY) as i32;
@@ -678,7 +678,7 @@ impl BinaryEncoder {
 
     /// Encode TIMESTAMP/TIMESTAMPTZ (microseconds since epoch to PostgreSQL format)
     pub fn encode_timestamp(unix_microseconds: f64) -> Vec<u8> {
-        const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
+        const PG_EPOCH_OFFSET: i64 = 946_684_800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
         let unix_micros = unix_microseconds.round() as i64;
         let pg_micros = unix_micros - PG_EPOCH_OFFSET;
         pg_micros.to_be_bytes().to_vec()

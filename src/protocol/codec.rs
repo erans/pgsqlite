@@ -91,7 +91,7 @@ fn decode_startup_message(src: &mut BytesMut) -> io::Result<Option<FrontendMessa
     let protocol_version = msg_buf.get_i32();
     
     // Check for SSL request (protocol version 80877103)
-    if protocol_version == 80877103 {
+    if protocol_version == 80_877_103 {
         return Ok(Some(FrontendMessage::SslRequest));
     }
     

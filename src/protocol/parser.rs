@@ -226,7 +226,7 @@ impl MessageParser {
         }
 
         let ssl_code = cursor.read_u32::<BigEndian>()?;
-        if ssl_code != 80877103 { // Magic SSL request code
+        if ssl_code != 80_877_103 { // Magic SSL request code
             return Err(ParseError::ProtocolViolation("Invalid SSL request code".to_string()));
         }
 

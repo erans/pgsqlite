@@ -145,11 +145,10 @@ impl ValueHandler {
                 // Use binary boolean encoding
                 let pg_data = crate::protocol::BinaryEncoder::encode_bool(bool_value);
                 return Ok(Some(MappedValue::Memory(pg_data)));
-            } else {
-                // Use text format
-                let pg_data = if bool_value { b"t".to_vec() } else { b"f".to_vec() };
-                return Ok(Some(MappedValue::Memory(pg_data)));
             }
+            // Use text format
+            let pg_data = if bool_value { b"t".to_vec() } else { b"f".to_vec() };
+            return Ok(Some(MappedValue::Memory(pg_data)));
         }
 
         // If the target is a numeric type, try to parse and re-serialize
@@ -196,11 +195,10 @@ impl ValueHandler {
             if binary_format {
                 let pg_data = self.convert_integer_binary(int_val, pg_type_oid);
                 return Ok(Some(MappedValue::Memory(pg_data)));
-            } else {
-                // Use small value optimization for boolean text format
-                let small = crate::protocol::SmallValue::from_bool(int_val != 0);
-                return Ok(Some(MappedValue::Small(small)));
             }
+            // Use small value optimization for boolean text format
+            let small = crate::protocol::SmallValue::from_bool(int_val != 0);
+            return Ok(Some(MappedValue::Small(small)));
         }
         
         // Try to use small value optimization for text format

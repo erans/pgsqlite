@@ -181,11 +181,10 @@ impl RateLimitWindow {
                 }
                 // If CAS failed, another thread reset it, retry
                 continue;
-            } else {
-                // Window not expired, just increment
-                let count = self.requests.fetch_add(1, Ordering::AcqRel) + 1;
-                return (count, false);
             }
+            // Window not expired, just increment
+            let count = self.requests.fetch_add(1, Ordering::AcqRel) + 1;
+            return (count, false);
         }
     }
 
@@ -462,11 +461,10 @@ impl RateLimiter {
                         }
                         // If CAS failed, retry
                         continue;
-                    } else {
-                        return Err(RateLimitError::CircuitBreakerOpen(
-                            "Service temporarily unavailable".to_string()
-                        ));
                     }
+                    return Err(RateLimitError::CircuitBreakerOpen(
+                        "Service temporarily unavailable".to_string()
+                    ));
                 }
                 CircuitState::HalfOpen => {
                     // Allow request but will monitor for success/failure
