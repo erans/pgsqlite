@@ -34,6 +34,7 @@ lazy_static! {
         register_v25_information_schema_triggers_support(&mut registry);
         register_v26_enhanced_pg_attribute_support(&mut registry);
         register_v27_fix_pg_proc_types(&mut registry);
+        register_v28_pg_stat_io_support(&mut registry);
 
         registry
     };
@@ -2863,5 +2864,30 @@ fn register_v27_fix_pg_proc_types(registry: &mut BTreeMap<u32, Migration>) {
             "#,
         ])),
         dependencies: vec![26],
+    });
+}
+
+/// Version 28: Add pg_stat_io, pg_locks, pg_prepared_statements, pg_prepared_xacts, pg_cursors support
+fn register_v28_pg_stat_io_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(28, Migration {
+        version: 28,
+        name: "pg_stat_io_and_locks_support",
+        description: "Add pg_stat_io (PostgreSQL 16+), pg_locks, pg_prepared_statements, pg_prepared_xacts, and pg_cursors views for compatibility",
+        up: MigrationAction::SqlBatch(&[
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '28', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            // Restore previous version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '27', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![27],
     });
 }
