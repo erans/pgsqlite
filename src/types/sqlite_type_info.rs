@@ -78,9 +78,8 @@ pub fn sqlite_type_to_pg_oid(sqlite_type: &str) -> i32 {
             return PgType::Int2.to_oid(); // int2
         } else if type_upper.contains("INT8") || type_upper.contains("BIGINT") {
             return PgType::Int8.to_oid(); // int8
-        } else {
-            return PgType::Int4.to_oid(); // int4 (default for INTEGER)
         }
+        return PgType::Int4.to_oid(); // int4 (default for INTEGER)
     }
     
     if type_upper.contains("BOOL") {
@@ -129,9 +128,8 @@ pub fn infer_pg_type_from_text(value: &str) -> i32 {
         // This matches PostgreSQL behavior better where int4 is the default integer type
         if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
             return PgType::Int4.to_oid(); // int4
-        } else {
-            return PgType::Int8.to_oid(); // int8
         }
+        return PgType::Int8.to_oid(); // int8
     }
     
     // Try float

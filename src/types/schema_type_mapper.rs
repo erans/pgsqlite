@@ -284,9 +284,8 @@ impl SchemaTypeMapper {
             // Use int4 for values that fit, int8 for larger
             if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
                 return PgType::Int4.to_oid(); // int4
-            } else {
-                return PgType::Int8.to_oid(); // int8
             }
+            return PgType::Int8.to_oid(); // int8
         }
         
         if s.parse::<f64>().is_ok() {
