@@ -19,14 +19,14 @@ pub fn generate_oid(name: &str) -> u32 {
 
     // Include characters from different positions for better uniqueness
     // This helps distinguish constraints with the same prefix
-    ((char1 * 1000000)
+    ((char1 * 1_000_000)
         + (char2 * 10000)
         + (char3 * 100)
         + (char4 * 37)
         + (char5 * 23)
         + (char6 * 19)
         + (length * 7))
-        % 1000000
+        % 1_000_000
         + 16384
 }
 

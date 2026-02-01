@@ -316,10 +316,9 @@ impl MigrationRunner {
                 // This is a pre-migration database, but we need to verify
                 // it hasn't been marked as version 1 yet
                 return Ok(0);
-            } else {
-                // Brand new database
-                return Ok(0);
             }
+            // Brand new database
+            return Ok(0);
         }
         
         // Metadata table exists, get version from it
