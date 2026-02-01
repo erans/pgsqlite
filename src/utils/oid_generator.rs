@@ -1,6 +1,5 @@
 /// Central OID generation module to ensure consistency across the codebase
 /// Uses the same formula as the pg_class view in migrations
-
 /// Generate a stable OID from a name using the same formula as SQLite views
 /// This matches: (unicode(substr(name, 1, 1)) * 1000000) + (unicode(substr(name || ' ', 2, 1)) * 10000) + ...
 pub fn generate_oid(name: &str) -> u32 {
@@ -12,16 +11,23 @@ pub fn generate_oid(name: &str) -> u32 {
     // Use first, middle, and last characters to avoid collisions
     let char1 = chars.get(0).copied().unwrap_or(' ') as u32;
     let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
-    let char3 = chars.get(len / 3).copied().unwrap_or(' ') as u32;  // 1/3 position
-    let char4 = chars.get(2 * len / 3).copied().unwrap_or(' ') as u32;  // 2/3 position
-    let char5 = chars.get(len.saturating_sub(1)).copied().unwrap_or(' ') as u32;  // Last char
-    let char6 = chars.get(len / 2).copied().unwrap_or(' ') as u32;  // Middle char
+    let char3 = chars.get(len / 3).copied().unwrap_or(' ') as u32; // 1/3 position
+    let char4 = chars.get(2 * len / 3).copied().unwrap_or(' ') as u32; // 2/3 position
+    let char5 = chars.get(len.saturating_sub(1)).copied().unwrap_or(' ') as u32; // Last char
+    let char6 = chars.get(len / 2).copied().unwrap_or(' ') as u32; // Middle char
     let length = name.len() as u32;
 
     // Include characters from different positions for better uniqueness
     // This helps distinguish constraints with the same prefix
-    ((char1 * 1000000) + (char2 * 10000) + (char3 * 100) +
-     (char4 * 37) + (char5 * 23) + (char6 * 19) + (length * 7)) % 1000000 + 16384
+    ((char1 * 1000000)
+        + (char2 * 10000)
+        + (char3 * 100)
+        + (char4 * 37)
+        + (char5 * 23)
+        + (char6 * 19)
+        + (length * 7))
+        % 1000000
+        + 16384
 }
 
 /// Generate OID as i32 (for functions that need signed integers)

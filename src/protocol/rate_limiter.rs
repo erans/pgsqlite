@@ -270,7 +270,7 @@ impl CircuitBreakerState {
         Self::unpack_state(packed)
     }
 
-    fn instant_to_nanos(instant: Instant) -> u64 {
+    fn instant_to_nanos(_instant: Instant) -> u64 {
         // Convert Instant to nanoseconds since UNIX epoch (approximate)
         // This is a best-effort conversion for atomic storage
         SystemTime::now()
@@ -475,7 +475,7 @@ impl RateLimiter {
 
         loop {
             let packed = self.circuit_state.packed_state.load(Ordering::Acquire);
-            let (state, failure_count, success_count) = CircuitBreakerState::unpack_state(packed);
+            let (state, failure_count, _success_count) = CircuitBreakerState::unpack_state(packed);
 
             match state {
                 CircuitState::Closed => return Ok(()),

@@ -707,7 +707,6 @@ pub mod events {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn test_security_event_creation() {
