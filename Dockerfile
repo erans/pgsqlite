@@ -1,54 +1,45 @@
-# Base stage for cargo-chef
-FROM rust:bookworm as chef
+FROM rust:1.90-bookworm AS chef
 WORKDIR /app
 RUN cargo install cargo-chef
 
-# Planner stage: Computes the recipe file
-FROM chef as planner
+FROM chef AS planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-# Builder stage: Caches dependencies and builds the binary
-FROM chef as builder
+FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-# Build dependencies - this is the cached layer
 RUN cargo chef cook --release --recipe-path recipe.json
-# Build application
 COPY . .
 RUN cargo build --release --bin pgsqlite
 
-# Runtime stage
-FROM debian:bookworm-slim as runtime
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    tini \
+    postgresql-client \
+  && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN useradd --create-home --shell /bin/bash pgsqlite
-
-# Create data directory
-RUN mkdir -p /data && chown pgsqlite:pgsqlite /data
-
-# Copy binary from builder
 COPY --from=builder /app/target/release/pgsqlite /usr/local/bin/pgsqlite
 
-# Switch to non-root user
-USER pgsqlite
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
-# Set working directory
-WORKDIR /data
+RUN chmod +x /usr/local/bin/pgsqlite /usr/local/bin/docker-entrypoint.sh \
+  && mkdir -p /var/run/postgresql \
+  && chmod 0777 /var/run/postgresql
 
-# Expose PostgreSQL default port
 EXPOSE 5432
 
-# Set default database path
-ENV PGSQLITE_DATABASE=/data/database.db
+ENV PGDATA=/var/lib/postgresql/data
+ENV PGSQLITE_DATABASE=/var/lib/postgresql/data
+VOLUME ["/var/lib/postgresql/data"]
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD timeout 5 bash -c "</dev/tcp/localhost/5432" || exit 1
+WORKDIR /var/lib/postgresql
 
-# Run pgsqlite
-CMD ["pgsqlite", "--database", "/data/database.db"]
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD pg_isready -h /var/run/postgresql -p 5432 || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+CMD ["pgsqlite", "--port", "5432"]

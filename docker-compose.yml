@@ -5,18 +5,20 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        VERSION: v0.0.18
-    platform: linux/arm64
     ports:
       - "5432:5432"
     volumes:
-      - ./data:/data
+      - ./data:/var/lib/postgresql/data
     environment:
-      - PGSQLITE_DATABASE=/data/database.db
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /var/lib/postgresql/data
+      PGSQLITE_DATABASE: /var/lib/postgresql/data
+      PGSQLITE_DEFAULT_DATABASE: postgres
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "timeout", "5", "bash", "-c", "</dev/tcp/localhost/5432"]
+      test: ["CMD", "pg_isready", "-h", "/var/run/postgresql", "-p", "5432"]
       interval: 30s
       timeout: 10s
       retries: 3

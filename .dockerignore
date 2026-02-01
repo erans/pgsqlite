@@ -4,7 +4,6 @@
 
 # Rust build artifacts
 target/
-Cargo.lock
 
 # Documentation
 README.md
@@ -29,6 +28,13 @@ run_all_driver_tests.sh
 test_pgsqlite_binary.py
 test_pgsqlite_text.py
 test_sqlite.py
+
+# Local-only agent artifacts
+.sisyphus/
+
+# Vendor / large subtrees (local checkout specific)
+prisma-engines/
+sqlalchemy/
 
 # Temporary files
 *.tmp

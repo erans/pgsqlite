@@ -36,3 +36,6 @@ test_datetime_translation
 benchmark.db
 # Worktrees
 .worktrees/
+
+# Local docker-compose data directory
+data/
