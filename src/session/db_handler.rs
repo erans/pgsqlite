@@ -1383,6 +1383,27 @@ impl DbHandler {
             });
         }
 
+        // Handle information_schema.schemata queries
+        if lower_query.contains("information_schema.schemata") {
+            use crate::catalog::query_interceptor::CatalogInterceptor;
+            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
+            if let Ok(mut statements) = parsed_query
+                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
+                    && let Some(select) = query_ast.body.as_select() {
+                        return Ok(CatalogInterceptor::handle_information_schema_schemata_query(select, self).await);
+                    }
+            // Fallback to hardcoded schemata response if parsing fails
+            return Ok(DbResponse {
+                columns: vec!["catalog_name".to_string(), "schema_name".to_string(), "schema_owner".to_string()],
+                rows: vec![
+                    vec![Some("main".to_string().into_bytes()), Some("public".to_string().into_bytes()), Some("postgres".to_string().into_bytes())],
+                    vec![Some("main".to_string().into_bytes()), Some("pg_catalog".to_string().into_bytes()), Some("postgres".to_string().into_bytes())],
+                    vec![Some("main".to_string().into_bytes()), Some("information_schema".to_string().into_bytes()), Some("postgres".to_string().into_bytes())],
+                ],
+                rows_affected: 3,
+            });
+        }
+
         // Handle pg_stats queries directly (simplified approach)
         if lower_query.contains("pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;

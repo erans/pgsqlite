@@ -1708,7 +1708,7 @@ impl CatalogInterceptor {
         (cols, indices)
     }
 
-    async fn handle_information_schema_schemata_query(select: &Select, _db: &DbHandler) -> DbResponse {
+    pub async fn handle_information_schema_schemata_query(select: &Select, _db: &DbHandler) -> DbResponse {
         debug!("Handling information_schema.schemata query");
 
         // Define information_schema.schemata columns
