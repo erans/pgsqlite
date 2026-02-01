@@ -8,7 +8,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, pg_settings::PgSettingsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
+use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, pg_settings::PgSettingsHandler, pg_stat_io::PgStatIoHandler, pg_locks::PgLocksHandler, pg_prepared_statements::PgPreparedStatementsHandler, pg_prepared_xacts::PgPreparedXactsHandler, pg_cursors::PgCursorsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -16,6 +16,20 @@ use std::collections::HashMap;
 
 /// Type alias for the complex Future type returned by process_expression
 type ProcessExpressionFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
+
+/// Centralized list of information_schema table names for consistent handling across all code paths
+pub const INFORMATION_SCHEMA_TABLES: &[&str] = &[
+    "information_schema.tables",
+    "information_schema.columns",
+    "information_schema.key_column_usage",
+    "information_schema.table_constraints",
+    "information_schema.referential_constraints",
+    "information_schema.schemata",
+    "information_schema.routines",
+    "information_schema.views",
+    "information_schema.check_constraints",
+    "information_schema.triggers",
+];
 
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
@@ -46,22 +60,27 @@ impl CatalogInterceptor {
         
         // Check for catalog tables
         let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
-           lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
-           lower_query.contains("pg_tablespace") ||
-           lower_query.contains("pg_class") || lower_query.contains("pg_attribute") ||
-           lower_query.contains("pg_enum") ||
-           lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
-           lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
-           lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
-           lower_query.contains("pg_depend") || lower_query.contains("pg_sequence") ||
-           lower_query.contains("pg_trigger") || lower_query.contains("pg_settings") ||
-           lower_query.contains("pg_collation") ||
-           lower_query.contains("pg_replication_slots") ||
-           lower_query.contains("pg_shdepend") ||
-           lower_query.contains("pg_statistic") ||
-           lower_query.contains("information_schema") ||
-           lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
-           lower_query.contains("pg_foreign_data_wrapper");
+            lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
+            lower_query.contains("pg_tablespace") ||
+            lower_query.contains("pg_class") || lower_query.contains("pg_attribute") ||
+            lower_query.contains("pg_enum") ||
+            lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
+            lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
+            lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
+            lower_query.contains("pg_depend") || lower_query.contains("pg_sequence") ||
+            lower_query.contains("pg_trigger") || lower_query.contains("pg_settings") ||
+            lower_query.contains("pg_collation") ||
+            lower_query.contains("pg_replication_slots") ||
+            lower_query.contains("pg_shdepend") ||
+            lower_query.contains("pg_statistic") ||
+            lower_query.contains("information_schema") ||
+            lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
+            lower_query.contains("pg_foreign_data_wrapper") ||
+            lower_query.contains("pg_stat_io") ||
+            lower_query.contains("pg_locks") ||
+            lower_query.contains("pg_prepared_statements") ||
+            lower_query.contains("pg_prepared_xacts") ||
+            lower_query.contains("pg_cursors");
 
         // Check for system functions
         let has_system_functions = lower_query.contains("to_regtype") ||
@@ -227,12 +246,10 @@ impl CatalogInterceptor {
                             let mut query_str = query.to_string();
 
                             // Replace information_schema.table_name with information_schema_table_name
-                            query_str = query_str.replace("information_schema.table_constraints", "information_schema_table_constraints");
-                            query_str = query_str.replace("information_schema.key_column_usage", "information_schema_key_column_usage");
-                            query_str = query_str.replace("information_schema.referential_constraints", "information_schema_referential_constraints");
-                            query_str = query_str.replace("information_schema.columns", "information_schema_columns");
-                            query_str = query_str.replace("information_schema.tables", "information_schema_tables");
-                            query_str = query_str.replace("information_schema.schemata", "information_schema_schemata");
+                            for table in INFORMATION_SCHEMA_TABLES {
+                                let view_name = table.replace("information_schema.", "information_schema_");
+                                query_str = query_str.replace(table, &view_name);
+                            }
 
                             match db.connection_manager().execute_with_session(&session_id, |conn| {
                                 debug!("Executing translated information_schema JOIN query: {}", query_str);
@@ -712,6 +729,22 @@ impl CatalogInterceptor {
                 return Some(Self::handle_information_schema_views_query(select, &db).await);
             }
 
+            // Handle information_schema.check_constraints queries
+            if table_name.contains("information_schema.check_constraints") {
+                if let Some(ref session_state) = session {
+                    return Some(Self::handle_information_schema_check_constraints_query_with_session(select, &db, &session_state.id).await);
+                }
+                return None;
+            }
+
+            // Handle information_schema.triggers queries
+            if table_name.contains("information_schema.triggers") {
+                if let Some(ref session_state) = session {
+                    return Some(Self::handle_information_schema_triggers_query_with_session(select, &db, &session_state.id).await);
+                }
+                return None;
+            }
+
             // Handle pg_database queries
             if table_name.contains("pg_database") || table_name.contains("pg_catalog.pg_database") {
                 return Some(Ok(Self::handle_pg_database_query(select, &db).await));
@@ -720,6 +753,31 @@ impl CatalogInterceptor {
             // Handle pg_constraint queries
             if table_name.contains("pg_constraint") || table_name.contains("pg_catalog.pg_constraint") {
                 return Some(crate::catalog::pg_constraint::PgConstraintHandler::handle_query(select, &db).await);
+            }
+
+            // Handle pg_stat_io queries (PostgreSQL 16+)
+            if table_name.contains("pg_stat_io") || table_name.contains("pg_catalog.pg_stat_io") {
+                return Some(PgStatIoHandler::handle_query(select, &db).await);
+            }
+
+            // Handle pg_locks queries
+            if table_name.contains("pg_locks") || table_name.contains("pg_catalog.pg_locks") {
+                return Some(PgLocksHandler::handle_query(select, &db).await);
+            }
+
+            // Handle pg_prepared_statements queries
+            if table_name.contains("pg_prepared_statements") || table_name.contains("pg_catalog.pg_prepared_statements") {
+                return Some(PgPreparedStatementsHandler::handle_query(select, &db).await);
+            }
+
+            // Handle pg_prepared_xacts queries
+            if table_name.contains("pg_prepared_xacts") || table_name.contains("pg_catalog.pg_prepared_xacts") {
+                return Some(PgPreparedXactsHandler::handle_query(select, &db).await);
+            }
+
+            // Handle pg_cursors queries
+            if table_name.contains("pg_cursors") || table_name.contains("pg_catalog.pg_cursors") {
+                return Some(PgCursorsHandler::handle_query(select, &db).await);
             }
 
             // Note: pg_index is a SQLite view that will be executed normally

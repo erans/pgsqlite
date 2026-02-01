@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::migration::MigrationRunner;
 use crate::validator::StringConstraintValidator;
 use crate::session::ConnectionManager;
+use crate::catalog::query_interceptor::INFORMATION_SCHEMA_TABLES;
 use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
 use crate::security::SqlInjectionDetector;
@@ -2611,13 +2612,12 @@ impl DbHandler {
 
     /// Rewrite information_schema queries to use real SQLite views
     fn rewrite_information_schema_query(&self, query: &str) -> String {
-        query
-            .replace("information_schema.tables", "information_schema_tables")
-            .replace("information_schema.columns", "information_schema_columns")
-            .replace("information_schema.key_column_usage", "information_schema_key_column_usage")
-            .replace("information_schema.table_constraints", "information_schema_table_constraints")
-            .replace("information_schema.referential_constraints", "information_schema_referential_constraints")
-            .replace("information_schema.schemata", "information_schema_schemata")
+        let mut result = query.to_string();
+        for &table in INFORMATION_SCHEMA_TABLES {
+            let view_name: String = table.replace("information_schema.", "information_schema_");
+            result = result.replace(table, &view_name);
+        }
+        result
     }
 }
 
