@@ -68,10 +68,9 @@ impl QueryCache {
                 entry.last_accessed = Instant::now();
                 metrics.cache_hits += 1;
                 return Some(entry.query.clone());
-            } else {
-                cache.remove(&fingerprint);
-                metrics.evictions += 1;
             }
+            cache.remove(&fingerprint);
+            metrics.evictions += 1;
         }
         
         metrics.cache_misses += 1;

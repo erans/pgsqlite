@@ -62,9 +62,8 @@ impl<K: Eq + std::hash::Hash + Clone, V: Clone> LruCache<K, V> {
             if entry.last_accessed.elapsed() < self.ttl {
                 entry.last_accessed = Instant::now();
                 return Some(entry.value.clone());
-            } else {
-                cache.remove(key);
             }
+            cache.remove(key);
         }
         
         None

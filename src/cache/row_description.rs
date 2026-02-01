@@ -1,7 +1,7 @@
+use crate::protocol::FieldDescription;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use crate::protocol::FieldDescription;
 use tracing::{debug, info};
 
 /// Cache key for RowDescription entries
@@ -54,10 +54,14 @@ impl RowDescriptionCache {
     }
 
     /// Generate a cache key from query information
-    pub fn create_key(query: &str, table_name: Option<&str>, columns: &[String]) -> RowDescriptionKey {
+    pub fn create_key(
+        query: &str,
+        table_name: Option<&str>,
+        columns: &[String],
+    ) -> RowDescriptionKey {
         // Normalize query for better cache hit rate
         let normalized_query = Self::normalize_query(query);
-        
+
         RowDescriptionKey {
             query: normalized_query,
             table_name: table_name.map(|s| s.to_string()),
@@ -68,7 +72,8 @@ impl RowDescriptionCache {
     /// Normalize query text for caching
     fn normalize_query(query: &str) -> String {
         // Convert to lowercase and normalize whitespace
-        query.to_lowercase()
+        query
+            .to_lowercase()
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
@@ -78,22 +83,24 @@ impl RowDescriptionCache {
     pub fn get(&self, key: &RowDescriptionKey) -> Option<Vec<FieldDescription>> {
         let mut cache = self.cache.write().unwrap();
         let mut stats = self.stats.write().unwrap();
-        
+
         if let Some(entry) = cache.get_mut(key) {
             // Check TTL
             if entry.created_at.elapsed() < self.ttl {
                 entry.hit_count += 1;
                 stats.hits += 1;
-                debug!("RowDescription cache hit for query: {}", &key.query[..50.min(key.query.len())]);
+                debug!(
+                    "RowDescription cache hit for query: {}",
+                    &key.query[..50.min(key.query.len())]
+                );
                 return Some(entry.fields.clone());
-            } else {
-                // Entry expired
-                cache.remove(key);
-                stats.evictions += 1;
-                stats.entries = cache.len();
             }
+            // Entry expired
+            cache.remove(key);
+            stats.evictions += 1;
+            stats.entries = cache.len();
         }
-        
+
         stats.misses += 1;
         None
     }
@@ -102,35 +109,40 @@ impl RowDescriptionCache {
     pub fn insert(&self, key: RowDescriptionKey, fields: Vec<FieldDescription>) {
         let mut cache = self.cache.write().unwrap();
         let mut stats = self.stats.write().unwrap();
-        
+
         // Check capacity and evict if necessary
         if cache.len() >= self.capacity && !cache.contains_key(&key) {
             // Find and remove the least recently used entry
-            if let Some((lru_key, _)) = cache.iter()
-                .min_by_key(|(_, entry)| (entry.hit_count, entry.created_at)) {
+            if let Some((lru_key, _)) = cache
+                .iter()
+                .min_by_key(|(_, entry)| (entry.hit_count, entry.created_at))
+            {
                 let lru_key = lru_key.clone();
                 cache.remove(&lru_key);
                 stats.evictions += 1;
                 debug!("Evicted LRU RowDescription cache entry");
             }
         }
-        
+
         let entry = CachedRowDescription {
             fields,
             created_at: Instant::now(),
             hit_count: 0,
         };
-        
+
         cache.insert(key.clone(), entry);
         stats.entries = cache.len();
-        debug!("Cached RowDescription for query: {}", &key.query[..50.min(key.query.len())]);
+        debug!(
+            "Cached RowDescription for query: {}",
+            &key.query[..50.min(key.query.len())]
+        );
     }
 
     /// Clear all cache entries
     pub fn clear(&self) {
         let mut cache = self.cache.write().unwrap();
         let mut stats = self.stats.write().unwrap();
-        
+
         cache.clear();
         stats.entries = 0;
         info!("Cleared RowDescription cache");
@@ -173,13 +185,16 @@ pub static GLOBAL_ROW_DESCRIPTION_CACHE: Lazy<RowDescriptionCache> = Lazy::new(|
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(1000);
-    
+
     let ttl_minutes = std::env::var("PGSQLITE_ROW_DESC_CACHE_TTL_MINUTES")
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(10);
-    
-    info!("Initializing RowDescription cache with capacity {} and TTL {} minutes", capacity, ttl_minutes);
+
+    info!(
+        "Initializing RowDescription cache with capacity {} and TTL {} minutes",
+        capacity, ttl_minutes
+    );
     RowDescriptionCache::new(capacity, Duration::from_secs(ttl_minutes * 60))
 });
 
@@ -191,13 +206,13 @@ mod tests {
     #[test]
     fn test_row_description_cache_basic() {
         let cache = RowDescriptionCache::new(10, Duration::from_secs(60));
-        
+
         let key = RowDescriptionKey {
             query: "select * from users".to_string(),
             table_name: Some("users".to_string()),
             columns: vec!["id".to_string(), "name".to_string()],
         };
-        
+
         let fields = vec![
             FieldDescription {
                 name: "id".to_string(),
@@ -218,35 +233,35 @@ mod tests {
                 format: 0,
             },
         ];
-        
+
         // Insert and retrieve
         cache.insert(key.clone(), fields.clone());
         let cached = cache.get(&key).unwrap();
         assert_eq!(cached.len(), 2);
         assert_eq!(cached[0].name, "id");
         assert_eq!(cached[1].name, "name");
-        
+
         // Check stats
         let stats = cache.stats();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 0);
         assert_eq!(stats.entries, 1);
     }
-    
+
     #[test]
     fn test_query_normalization() {
         let key1 = RowDescriptionCache::create_key(
             "SELECT   *  FROM   users   WHERE id = 1",
             Some("users"),
-            &["id".to_string(), "name".to_string()]
+            &["id".to_string(), "name".to_string()],
         );
-        
+
         let key2 = RowDescriptionCache::create_key(
             "select * from users where id = 1",
             Some("users"),
-            &["id".to_string(), "name".to_string()]
+            &["id".to_string(), "name".to_string()],
         );
-        
+
         assert_eq!(key1, key2);
     }
 }

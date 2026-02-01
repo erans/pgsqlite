@@ -64,10 +64,9 @@ impl ExecutionCache {
             if entry.cached_at.elapsed() < self.ttl {
                 entry.hit_count += 1;
                 return Some(entry.metadata.clone());
-            } else {
-                // Entry expired, remove it
-                cache.remove(&fingerprint);
             }
+            // Entry expired, remove it
+            cache.remove(&fingerprint);
         }
 
         None
