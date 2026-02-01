@@ -443,6 +443,7 @@ impl TypeMapper {
             "boolean" | "BOOLEAN" | "bool" | "BOOL" => return "INTEGER",
             "real" | "REAL" | "float4" | "FLOAT4" => return "DECIMAL",
             "double precision" | "DOUBLE PRECISION" | "float8" | "FLOAT8" => return "DECIMAL",
+            "blob" | "BLOB" => return "BLOB",
             "varchar" | "VARCHAR" => return "TEXT",
             "numeric" | "NUMERIC" | "decimal" | "DECIMAL" => return "DECIMAL",
             _ => {}

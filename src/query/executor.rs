@@ -2119,15 +2119,42 @@ impl QueryExecutor {
             // Invalidate schema cache for the dropped table
             invalidate_table_schema_cache(&table_name);
 
-            db.with_session_connection_mut(&session.id, |conn| {
+            let cleanup_result = db.with_session_connection_mut(&session.id, |conn| {
                 use crate::metadata::EnumTriggers;
-                EnumTriggers::clean_enum_usage_for_table(conn, &table_name)
-                    .map_err(|e| rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Failed to clean enum usage for table {table_name}: {e}"))
-                    ))
-            }).await?;
-            debug!("Cleaned up enum usage records for dropped table: {}", table_name);
+
+                if let Err(err) = EnumTriggers::clean_enum_usage_for_table(conn, &table_name) {
+                    debug!("Failed to clean enum usage for table {}: {}", table_name, err);
+                }
+
+                let metadata_tables = [
+                    "__pgsqlite_schema",
+                    "__pgsqlite_string_constraints",
+                    "__pgsqlite_numeric_constraints",
+                    "__pgsqlite_array_types",
+                    "__pgsqlite_fts_metadata",
+                    "__pgsqlite_datetime_cache",
+                ];
+
+                for metadata_table in metadata_tables {
+                    let delete_query = format!("DELETE FROM {metadata_table} WHERE table_name = ?1");
+                    if let Err(err) = conn.execute(&delete_query, params![table_name]) {
+                        debug!(
+                            "Failed to delete metadata from {} for table {}: {}",
+                            metadata_table,
+                            table_name,
+                            err
+                        );
+                    }
+                }
+
+                Ok::<(), rusqlite::Error>(())
+            }).await;
+
+            if let Err(err) = cleanup_result {
+                debug!("Failed to run metadata cleanup for dropped table {}: {}", table_name, err);
+            }
+
+            debug!("Cleaned up metadata records for dropped table: {}", table_name);
         }
         
         // If we have type mappings, store them in the metadata table

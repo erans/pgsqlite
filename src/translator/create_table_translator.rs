@@ -320,34 +320,45 @@ impl CreateTableTranslator {
             
             (sqlite_type, pg_type.clone())
         } else if let Some(conn) = conn {
-            // Check if the type is an ENUM
-            match EnumMetadata::get_enum_type(conn, &pg_type.to_lowercase()) {
-                Ok(Some(_enum_type)) => {
-                    // It's an ENUM type - store as TEXT
-                    // Note: We don't add CHECK constraints here anymore.
-                    // Instead, we'll create triggers after the table is created.
-                    let sqlite_type = "TEXT".to_string();
-                    
-                    // Store enum column info for later trigger creation
-                    context.enum_columns.push((
-                        column_name.to_string(),
-                        pg_type.to_lowercase().to_string()
-                    ));
-                    
-                    (sqlite_type, pg_type.to_lowercase())
-                }
-                _ => {
-                    // Not an ENUM, use regular type mapping
-                    let type_mapper = TypeMapper::new();
-                    let sqlite_type = type_mapper.pg_to_sqlite_for_create_table(&pg_type);
-                    let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
-                    (sqlite_type, normalized_pg_type)
+            if Self::is_bytea_type(&pg_type) {
+                let sqlite_type = "BLOB".to_string();
+                let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
+                (sqlite_type, normalized_pg_type)
+            } else {
+                // Check if the type is an ENUM
+                match EnumMetadata::get_enum_type(conn, &pg_type.to_lowercase()) {
+                    Ok(Some(_enum_type)) => {
+                        // It's an ENUM type - store as TEXT
+                        // Note: We don't add CHECK constraints here anymore.
+                        // Instead, we'll create triggers after the table is created.
+                        let sqlite_type = "TEXT".to_string();
+
+                        // Store enum column info for later trigger creation
+                        context.enum_columns.push((
+                            column_name.to_string(),
+                            pg_type.to_lowercase().to_string()
+                        ));
+
+                        (sqlite_type, pg_type.to_lowercase())
+                    }
+                    _ => {
+                        // Not an ENUM, use regular type mapping
+                        let type_mapper = TypeMapper::new();
+                        let sqlite_type = type_mapper.pg_to_sqlite_for_create_table(&pg_type);
+                        let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
+                        (sqlite_type, normalized_pg_type)
+                    }
                 }
             }
         } else {
             // No connection available, use regular type mapping
             let type_mapper = TypeMapper::new();
             let sqlite_type = type_mapper.pg_to_sqlite_for_create_table(&pg_type);
+            let sqlite_type = if Self::is_bytea_type(&pg_type) {
+                "BLOB".to_string()
+            } else {
+                sqlite_type
+            };
             let normalized_pg_type = Self::normalize_pg_type_name(&pg_type);
             (sqlite_type, normalized_pg_type)
         };
@@ -483,6 +494,10 @@ impl CreateTableTranslator {
         ];
         keywords.iter().any(|keyword| word.to_uppercase() == *keyword)
     }
+
+    fn is_bytea_type(type_name: &str) -> bool {
+        type_name.trim().eq_ignore_ascii_case("BYTEA")
+    }
     
     /// Normalize SQLite-style type names to their PostgreSQL equivalents
     fn normalize_pg_type_name(type_name: &str) -> String {
@@ -578,6 +593,7 @@ impl CreateTableTranslator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rusqlite::Connection;
     
     #[test]
     fn test_extract_type_modifier() {
@@ -660,6 +676,32 @@ mod tests {
         assert_eq!(mappings["test.col1"].type_modifier, Some(10));
         assert_eq!(mappings["test.col2"].type_modifier, Some(20));
         assert_eq!(mappings["test.col3"].type_modifier, Some(5));
+    }
+
+    #[test]
+    fn test_translate_bytea_to_blob() {
+        let sql = "CREATE TABLE test (
+            id SERIAL PRIMARY KEY,
+            bytea_col BYTEA
+        )";
+
+        let (translated, mappings) = CreateTableTranslator::translate(sql).unwrap();
+        assert!(translated.contains("bytea_col BLOB"));
+        assert_eq!(mappings["test.bytea_col"].sqlite_type, "BLOB");
+    }
+
+    #[test]
+    fn test_translate_bytea_to_blob_with_connection() {
+        let sql = "CREATE TABLE test (
+            id SERIAL PRIMARY KEY,
+            bytea_col BYTEA
+        )";
+
+        let conn = Connection::open_in_memory().unwrap();
+        let result = CreateTableTranslator::translate_with_connection_full(sql, Some(&conn)).unwrap();
+
+        assert!(result.sql.contains("bytea_col BLOB"));
+        assert_eq!(result.type_mappings["test.bytea_col"].sqlite_type, "BLOB");
     }
     
     #[test]
