@@ -3023,7 +3023,7 @@ impl ExtendedQueryHandler {
                                     ]);
                                     
                                     // Convert PostgreSQL microseconds to Unix microseconds
-                                    const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
+                                    const PG_EPOCH_OFFSET: i64 = 946_684_800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
                                     let unix_micros = pg_micros + PG_EPOCH_OFFSET;
                                     
                                     info!("Decoded binary timestamp parameter {}: {} PG microseconds = {} Unix microseconds", 
@@ -3306,7 +3306,7 @@ impl ExtendedQueryHandler {
     }
     
     // PostgreSQL epoch is 2000-01-01 00:00:00
-    const _PG_EPOCH: i64 = 946684800; // Unix timestamp for 2000-01-01
+    const _PG_EPOCH: i64 = 946_684_800; // Unix timestamp for 2000-01-01
     
     // Helper function to get the PostgreSQL type OID for a catalog column
     fn get_catalog_column_type(column_name: &str, query: &str) -> i32 {
@@ -4050,7 +4050,7 @@ impl ExtendedQueryHandler {
                                     if let Ok(unix_micros) = s.parse::<i64>() {
                                         // Convert from Unix epoch (1970-01-01) to PostgreSQL epoch (2000-01-01)
                                         // 946684800 seconds = 30 years between epochs
-                                        let pg_micros = unix_micros - (946684800 * 1_000_000);
+                                        let pg_micros = unix_micros - (946_684_800 * 1_000_000);
                                         let mut buf = vec![0u8; 8];
                                         BigEndian::write_i64(&mut buf, pg_micros);
                                         Some(buf)
@@ -5835,8 +5835,8 @@ impl ExtendedQueryHandler {
                                   i, column, pg_type, oid);
                             found_type = true;
                             break;
-                        } else {
-                            // Try SQLite schema
+                        }
+                        // Try SQLite schema
                             let schema_query = format!("PRAGMA table_info({table_name})");
                             if let Ok(response) = db.query(&schema_query).await {
                                 for row in &response.rows {
@@ -5855,7 +5855,6 @@ impl ExtendedQueryHandler {
                                             }
                                 }
                             }
-                        }
                         
                         if found_type {
                             break;

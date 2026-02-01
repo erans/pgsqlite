@@ -466,7 +466,7 @@ impl ExtendedFastPath {
                             bytes[4], bytes[5], bytes[6], bytes[7]
                         ]);
                         // Convert to microseconds since 1970-01-01 (Unix epoch)
-                        const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
+                        const PG_EPOCH_OFFSET: i64 = 946_684_800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
                         let unix_micros = pg_micros + PG_EPOCH_OFFSET;
                         Ok(rusqlite::types::Value::Integer(unix_micros))
                     } else {
@@ -506,12 +506,12 @@ impl ExtendedFastPath {
                             bytes[4], bytes[5], bytes[6], bytes[7]
                         ]);
                         // Check if this looks like a PostgreSQL timestamp (year 1900-2100)
-                        const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000;
+                        const PG_EPOCH_OFFSET: i64 = 946_684_800 * 1_000_000;
                         let unix_micros = pg_micros + PG_EPOCH_OFFSET;
                         let seconds = unix_micros / 1_000_000;
                         
                         // If it's a reasonable timestamp (between year 1970 and 2100), treat as timestamp
-                        if (0..4102444800).contains(&seconds) { // 2100-01-01
+                        if (0..4_102_444_800).contains(&seconds) { // 2100-01-01
                             // Inferring as TIMESTAMP
                             Ok(rusqlite::types::Value::Integer(unix_micros))
                         } else {

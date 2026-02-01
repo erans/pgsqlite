@@ -1462,9 +1462,8 @@ impl QueryExecutor {
         if ReturningTranslator::has_returning_clause(query) {
             debug!("Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             return Self::execute_dml_with_returning(framed, db, session, query, query_router).await;
-        } else {
-            debug!("Query does NOT have RETURNING clause: {}", query);
         }
+        debug!("Query does NOT have RETURNING clause: {}", query);
         
         // Validate numeric constraints for INSERT/UPDATE before execution
         use crate::query::{QueryTypeDetector, QueryType};
