@@ -16,7 +16,7 @@ async fn test_pg_settings_basic() {
         .rows
         .iter()
         .filter_map(|row| {
-            row.get(0)
+            row.first()
                 .and_then(|opt| opt.as_ref())
                 .and_then(|bytes| String::from_utf8(bytes.clone()).ok())
         })
@@ -107,7 +107,7 @@ async fn test_pg_settings_common_settings() {
         .rows
         .iter()
         .filter_map(|row| {
-            row.get(0)
+            row.first()
                 .and_then(|opt| opt.as_ref())
                 .and_then(|bytes| String::from_utf8(bytes.clone()).ok())
         })

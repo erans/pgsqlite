@@ -366,13 +366,13 @@ impl SecurityAuditLogger {
     /// Check if severity level should be logged
     fn should_log_severity(&self, severity: SecuritySeverity) -> bool {
         use SecuritySeverity::*;
-        match (self.config.min_severity, severity) {
-            (Info, _) => true,
-            (Warning, Warning | High | Critical) => true,
-            (High, High | Critical) => true,
-            (Critical, Critical) => true,
-            _ => false,
-        }
+        matches!(
+            (self.config.min_severity, severity),
+            (Info, _)
+                | (Warning, Warning | High | Critical)
+                | (High, High | Critical)
+                | (Critical, Critical)
+        )
     }
 
     /// Update internal statistics

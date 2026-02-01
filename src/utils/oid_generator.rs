@@ -9,7 +9,7 @@ pub fn generate_oid(name: &str) -> u32 {
 
     // Sample characters from different positions for better distribution
     // Use first, middle, and last characters to avoid collisions
-    let char1 = chars.get(0).copied().unwrap_or(' ') as u32;
+    let char1 = chars.first().copied().unwrap_or(' ') as u32;
     let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
     let char3 = chars.get(len / 3).copied().unwrap_or(' ') as u32; // 1/3 position
     let char4 = chars.get(2 * len / 3).copied().unwrap_or(' ') as u32; // 2/3 position

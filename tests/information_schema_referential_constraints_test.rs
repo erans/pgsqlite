@@ -26,7 +26,7 @@ async fn test_information_schema_referential_constraints_basic() {
     assert_eq!(result.columns[2], "constraint_schema");
 
     // Should find at least one foreign key constraint
-    assert!(result.rows.len() >= 1, "Expected at least one foreign key constraint");
+    assert!(!result.rows.is_empty(), "Expected at least one foreign key constraint");
 
     // Check constraint data
     let constraint_name = String::from_utf8(result.rows[0][0].as_ref().unwrap().clone()).unwrap();

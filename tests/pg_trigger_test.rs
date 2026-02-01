@@ -22,8 +22,8 @@ async fn test_pg_trigger_basic() {
     let ast = Parser::parse_sql(&PostgreSqlDialect {}, sql).unwrap();
     let statement = &ast[0];
 
-    if let sqlparser::ast::Statement::Query(query) = statement {
-        if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
+    if let sqlparser::ast::Statement::Query(query) = statement
+        && let sqlparser::ast::SetExpr::Select(select) = &*query.body {
             let result = PgTriggerHandler::handle_query(select, &db).await.unwrap();
 
             assert_eq!(result.rows.len(), 1);
@@ -42,7 +42,6 @@ async fn test_pg_trigger_basic() {
             let tgenabled = String::from_utf8(result.rows[0][3].as_ref().unwrap().clone()).unwrap();
             assert_eq!(tgenabled, "O");
         }
-    }
 }
 
 #[tokio::test]
@@ -63,8 +62,8 @@ async fn test_pg_trigger_before_update() {
     let ast = Parser::parse_sql(&PostgreSqlDialect {}, sql).unwrap();
     let statement = &ast[0];
 
-    if let sqlparser::ast::Statement::Query(query) = statement {
-        if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
+    if let sqlparser::ast::Statement::Query(query) = statement
+        && let sqlparser::ast::SetExpr::Select(select) = &*query.body {
             let result = PgTriggerHandler::handle_query(select, &db).await.unwrap();
 
             assert_eq!(result.rows.len(), 1);
@@ -79,7 +78,6 @@ async fn test_pg_trigger_before_update() {
             assert_eq!(tgtype & 2, 2);
             assert_eq!(tgtype & 16, 16);
         }
-    }
 }
 
 #[tokio::test]
@@ -100,8 +98,8 @@ async fn test_pg_trigger_delete() {
     let ast = Parser::parse_sql(&PostgreSqlDialect {}, sql).unwrap();
     let statement = &ast[0];
 
-    if let sqlparser::ast::Statement::Query(query) = statement {
-        if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
+    if let sqlparser::ast::Statement::Query(query) = statement
+        && let sqlparser::ast::SetExpr::Select(select) = &*query.body {
             let result = PgTriggerHandler::handle_query(select, &db).await.unwrap();
 
             assert_eq!(result.rows.len(), 1);
@@ -112,7 +110,6 @@ async fn test_pg_trigger_delete() {
             assert_eq!(tgtype & 1, 1);
             assert_eq!(tgtype & 8, 8);
         }
-    }
 }
 
 #[tokio::test]
@@ -129,12 +126,11 @@ async fn test_pg_trigger_empty() {
     let ast = Parser::parse_sql(&PostgreSqlDialect {}, sql).unwrap();
     let statement = &ast[0];
 
-    if let sqlparser::ast::Statement::Query(query) = statement {
-        if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
+    if let sqlparser::ast::Statement::Query(query) = statement
+        && let sqlparser::ast::SetExpr::Select(select) = &*query.body {
             let result = PgTriggerHandler::handle_query(select, &db).await.unwrap();
             assert_eq!(result.rows.len(), 0);
         }
-    }
 }
 
 #[tokio::test]
@@ -159,8 +155,8 @@ async fn test_pg_trigger_multiple() {
     let ast = Parser::parse_sql(&PostgreSqlDialect {}, sql).unwrap();
     let statement = &ast[0];
 
-    if let sqlparser::ast::Statement::Query(query) = statement {
-        if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
+    if let sqlparser::ast::Statement::Query(query) = statement
+        && let sqlparser::ast::SetExpr::Select(select) = &*query.body {
             let result = PgTriggerHandler::handle_query(select, &db).await.unwrap();
 
             assert_eq!(result.rows.len(), 2);
@@ -171,5 +167,4 @@ async fn test_pg_trigger_multiple() {
             assert_eq!(name1, "after_insert_trigger");
             assert_eq!(name2, "before_insert_trigger");
         }
-    }
 }

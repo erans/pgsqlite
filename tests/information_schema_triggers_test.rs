@@ -26,7 +26,7 @@ async fn test_information_schema_triggers_basic() {
     assert_eq!(result.columns[2], "event_object_table");
 
     // Should find at least one trigger
-    assert!(result.rows.len() >= 1, "Expected at least one trigger");
+    assert!(!result.rows.is_empty(), "Expected at least one trigger");
 
     // Check trigger data
     let trigger_names: Vec<String> = result.rows.iter()
@@ -93,7 +93,7 @@ async fn test_information_schema_triggers_all_columns() {
     }
 
     // Should have at least one trigger
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 
     // Verify data structure
     for row in &result.rows {
@@ -187,7 +187,7 @@ async fn test_information_schema_triggers_where_filtering() {
     // Test filtering by table name
     let result = db_handler.query_with_session("SELECT trigger_name FROM information_schema.triggers WHERE event_object_table = 'customers'", &session_id).await.unwrap();
 
-    assert!(result.rows.len() >= 1, "Expected at least one trigger for customers table");
+    assert!(!result.rows.is_empty(), "Expected at least one trigger for customers table");
     for row in &result.rows {
         let trigger_name = String::from_utf8(row[0].as_ref().unwrap().clone()).unwrap();
         assert!(trigger_name.contains("customer"));
@@ -195,7 +195,7 @@ async fn test_information_schema_triggers_where_filtering() {
 
     // Test filtering by event manipulation
     let result = db_handler.query_with_session("SELECT trigger_name FROM information_schema.triggers WHERE event_manipulation = 'INSERT'", &session_id).await.unwrap();
-    assert!(result.rows.len() >= 1); // Should find INSERT triggers
+    assert!(!result.rows.is_empty()); // Should find INSERT triggers
 
     // Test filtering by trigger schema
     let result = db_handler.query_with_session("SELECT trigger_name FROM information_schema.triggers WHERE trigger_schema = 'public'", &session_id).await.unwrap();
@@ -297,7 +297,7 @@ async fn test_information_schema_triggers_orm_compatibility() {
         &session_id
     ).await.unwrap();
 
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 
     // SQLAlchemy reflection pattern
     let result = db_handler.query_with_session(
@@ -305,7 +305,7 @@ async fn test_information_schema_triggers_orm_compatibility() {
         &session_id
     ).await.unwrap();
 
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 
     // Rails schema introspection pattern
     let result = db_handler.query_with_session(
@@ -313,7 +313,7 @@ async fn test_information_schema_triggers_orm_compatibility() {
         &session_id
     ).await.unwrap();
 
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 
     // Check that we have meaningful action statements
     for row in &result.rows {
@@ -342,7 +342,7 @@ async fn test_information_schema_triggers_action_statement() {
     // Test query focusing on action statement
     let result = db_handler.query_with_session("SELECT trigger_name, action_statement, action_condition FROM information_schema.triggers WHERE trigger_name LIKE '%balance%'", &session_id).await.unwrap();
 
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 
     for row in &result.rows {
         let trigger_name = String::from_utf8(row[0].as_ref().unwrap().clone()).unwrap();

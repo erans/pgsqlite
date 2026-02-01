@@ -426,12 +426,11 @@ fn extract_table_from_expr(expr: &Expr) -> Option<String> {
                     // Handle subquery pattern: (SELECT oid FROM pg_class WHERE relname = 'table')
                     if let Expr::Nested(subquery_expr) = right.as_ref() {
                         debug!("extract_table_from_expr: found nested subquery: {}", subquery_expr);
-                        if let Expr::Subquery(subquery) = subquery_expr.as_ref() {
-                            if let Some(select) = subquery.body.as_select() {
-                                debug!("extract_table_from_expr: processing subquery SELECT");
-                                if let Some(subquery_where) = &select.selection {
-                                    return extract_table_from_expr(subquery_where);
-                                }
+                        if let Expr::Subquery(subquery) = subquery_expr.as_ref()
+                            && let Some(select) = subquery.body.as_select() {
+                            debug!("extract_table_from_expr: processing subquery SELECT");
+                            if let Some(subquery_where) = &select.selection {
+                                return extract_table_from_expr(subquery_where);
                             }
                         }
                     }

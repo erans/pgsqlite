@@ -369,7 +369,7 @@ async fn test_information_schema_routines_contains_pg16_probe_functions() {
         .rows
         .iter()
         .filter_map(|row| {
-            row.get(0)
+            row.first()
                 .and_then(|v| v.as_ref())
                 .and_then(|b| String::from_utf8(b.clone()).ok())
         })

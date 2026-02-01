@@ -529,18 +529,17 @@ where
                 .map(|(key, _)| key.clone())
         };
 
-        if let Some(key) = lru_key {
-            if let Some(entry) = entries.remove(&key) {
-                stats.total_entries = entries.len();
-                stats.total_size_bytes = stats.total_size_bytes.saturating_sub(entry.size_bytes);
-                stats.lru_evictions += 1;
-                stats.evictions += 1;
+        if let Some(key) = lru_key
+            && let Some(entry) = entries.remove(&key) {
+            stats.total_entries = entries.len();
+            stats.total_size_bytes = stats.total_size_bytes.saturating_sub(entry.size_bytes);
+            stats.lru_evictions += 1;
+            stats.evictions += 1;
 
-                debug!("LRU eviction: removed entry, freed {} bytes", entry.size_bytes);
+            debug!("LRU eviction: removed entry, freed {} bytes", entry.size_bytes);
 
-                // Unregister memory usage
-                global_memory_monitor().record_query_deallocation(entry.size_bytes as u64);
-            }
+            // Unregister memory usage
+            global_memory_monitor().record_query_deallocation(entry.size_bytes as u64);
         }
     }
 

@@ -69,13 +69,11 @@ async fn test_pg_tablespace_all_columns() {
 
     // Verify all 5 standard columns are present
     assert_eq!(result.columns.len(), 5);
-    let expected_columns = vec![
-        "oid",
+    let expected_columns = ["oid",
         "spcname",
         "spcowner",
         "spcacl",
-        "spcoptions"
-    ];
+        "spcoptions"];
 
     for (i, expected) in expected_columns.iter().enumerate() {
         assert_eq!(result.columns[i], *expected);

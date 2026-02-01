@@ -30,6 +30,7 @@ use pgsqlite::config::DatabaseLayout;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::load();
+    pgsqlite::config::set_global_config(config.clone());
 
     // Initialize logging
     tracing_subscriber::fmt()
@@ -50,10 +51,9 @@ async fn main() -> Result<()> {
             std::fs::create_dir_all(dir)?;
         }
         DatabaseLayout::File { path } => {
-            if let Some(parent) = path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent)?;
-                }
+            if let Some(parent) = path.parent()
+                && !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
             }
         }
     }

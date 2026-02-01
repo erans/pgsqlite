@@ -69,12 +69,10 @@ async fn test_information_schema_check_constraints_all_columns() {
 
     // Verify all 4 standard columns are present
     assert_eq!(result.columns.len(), 4);
-    let expected_columns = vec![
-        "constraint_catalog",
+    let expected_columns = ["constraint_catalog",
         "constraint_schema",
         "constraint_name",
-        "check_clause"
-    ];
+        "check_clause"];
 
     for (i, expected) in expected_columns.iter().enumerate() {
         assert_eq!(result.columns[i], *expected);
@@ -169,7 +167,7 @@ async fn test_information_schema_check_constraints_where_filtering() {
     // Test filtering by constraint name pattern - be more flexible
     let result = db_handler.query_with_session("SELECT constraint_name FROM information_schema.check_constraints WHERE constraint_name LIKE '%check%'", &session_id).await.unwrap();
 
-    assert!(result.rows.len() >= 1, "Expected at least one check constraint with 'check' in the name");
+    assert!(!result.rows.is_empty(), "Expected at least one check constraint with 'check' in the name");
     for row in &result.rows {
         let constraint_name = String::from_utf8(row[0].as_ref().unwrap().clone()).unwrap();
         assert!(constraint_name.contains("check") || constraint_name.contains("customers") || constraint_name.contains("suppliers"));
@@ -223,7 +221,7 @@ async fn test_information_schema_check_constraints_table_level() {
     // Test query
     let result = db_handler.query_with_session("SELECT constraint_name, check_clause FROM information_schema.check_constraints", &session_id).await.unwrap();
 
-    assert!(result.rows.len() >= 1);
+    assert!(!result.rows.is_empty());
 
     let mut found_table_constraint = false;
     for row in &result.rows {

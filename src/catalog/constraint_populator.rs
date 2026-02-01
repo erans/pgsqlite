@@ -88,7 +88,7 @@ fn generate_table_oid(name: &str) -> String {
     // (length(name) * 7)
     let name_with_padding = format!("{}  ", name);
     let chars: Vec<char> = name_with_padding.chars().collect();
-    let char1 = chars.get(0).copied().unwrap_or(' ') as u32;
+    let char1 = chars.first().copied().unwrap_or(' ') as u32;
     let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
     let char3 = chars.get(2).copied().unwrap_or(' ') as u32;
     let length = name.len() as u32;

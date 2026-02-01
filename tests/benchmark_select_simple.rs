@@ -61,7 +61,7 @@ async fn benchmark_select_simple() {
                 id % 100,
                 id % 1000,
                 (id as f64) * 0.1,
-                if id % 2 == 0 { "true" } else { "false" }
+                if id.is_multiple_of(2) { "true" } else { "false" }
             ));
         }
         

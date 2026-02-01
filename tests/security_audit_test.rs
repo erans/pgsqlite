@@ -1,8 +1,7 @@
-use std::net::IpAddr;
 use pgsqlite::security::{
-    SecurityAuditLogger, SecurityEvent, SecurityEventType, SecuritySeverity,
-    AuditConfig, events,
+    events, AuditConfig, SecurityAuditLogger, SecurityEvent, SecurityEventType, SecuritySeverity,
 };
+use std::net::IpAddr;
 
 #[test]
 fn test_audit_logger_basic_functionality() {
@@ -153,7 +152,7 @@ fn test_convenience_functions() {
     );
 
     // If we get here without panicking, the convenience functions work
-    assert!(true);
+    // assert!(true);
 }
 
 #[test]
@@ -186,7 +185,10 @@ fn test_metadata_handling() {
     .with_metadata("new_value".to_string(), "200".to_string());
 
     assert_eq!(event.metadata.len(), 3);
-    assert_eq!(event.metadata.get("changed_setting"), Some(&"rate_limit".to_string()));
+    assert_eq!(
+        event.metadata.get("changed_setting"),
+        Some(&"rate_limit".to_string())
+    );
     assert_eq!(event.metadata.get("old_value"), Some(&"100".to_string()));
     assert_eq!(event.metadata.get("new_value"), Some(&"200".to_string()));
 }
@@ -329,7 +331,10 @@ fn test_event_serialization() {
     assert!(deserialized.is_ok());
 
     let deserialized_event = deserialized.unwrap();
-    assert_eq!(deserialized_event.event_type, SecurityEventType::AuthenticationSuccess);
+    assert_eq!(
+        deserialized_event.event_type,
+        SecurityEventType::AuthenticationSuccess
+    );
     assert_eq!(deserialized_event.severity, SecuritySeverity::Info);
     assert_eq!(deserialized_event.username, Some("testuser".to_string()));
 }

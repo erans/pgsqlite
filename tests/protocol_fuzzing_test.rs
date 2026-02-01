@@ -232,8 +232,8 @@ fn generate_fuzz_inputs() -> Vec<Vec<u8>> {
     // Random byte sequences
     for len in [1, 4, 16, 64, 256, 1024] {
         let mut rng_data = vec![0u8; len];
-        for i in 0..len {
-            rng_data[i] = (i * 37 + 113) as u8; // Deterministic "random"
+        for (i, item) in rng_data.iter_mut().enumerate().take(len) {
+            *item = (i * 37 + 113) as u8; // Deterministic "random"
         }
         inputs.push(rng_data);
     }

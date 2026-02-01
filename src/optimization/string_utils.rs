@@ -1,6 +1,6 @@
+use once_cell::sync::Lazy;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use once_cell::sync::Lazy;
 
 /// Optimized string utilities using Cow<str> to reduce allocations
 pub struct StringOptimizer {
@@ -34,25 +34,44 @@ impl StringOptimizer {
         // Common error messages and protocol strings
         self.static_strings.insert("Empty query", "Empty query");
         self.static_strings.insert("DEALLOCATE", "DEALLOCATE");
-        self.static_strings.insert("Could not extract table name", "Could not extract table name");
-        self.static_strings.insert("Could not extract column definitions", "Could not extract column definitions");
-        self.static_strings.insert("Query contains potentially malicious quote injection pattern",
-                                   "Query contains potentially malicious quote injection pattern");
-        self.static_strings.insert("Query contains potentially malicious pattern",
-                                   "Query contains potentially malicious pattern");
-        self.static_strings.insert("Query contains dangerous multi-statement pattern",
-                                   "Query contains dangerous multi-statement pattern");
+        self.static_strings.insert(
+            "Could not extract table name",
+            "Could not extract table name",
+        );
+        self.static_strings.insert(
+            "Could not extract column definitions",
+            "Could not extract column definitions",
+        );
+        self.static_strings.insert(
+            "Query contains potentially malicious quote injection pattern",
+            "Query contains potentially malicious quote injection pattern",
+        );
+        self.static_strings.insert(
+            "Query contains potentially malicious pattern",
+            "Query contains potentially malicious pattern",
+        );
+        self.static_strings.insert(
+            "Query contains dangerous multi-statement pattern",
+            "Query contains dangerous multi-statement pattern",
+        );
     }
 
     fn init_command_tags(&mut self) {
         // Common PostgreSQL command completion tags
-        self.command_tags.insert(("INSERT", 0), Cow::Borrowed("INSERT 0 0"));
-        self.command_tags.insert(("INSERT", 1), Cow::Borrowed("INSERT 0 1"));
-        self.command_tags.insert(("UPDATE", 0), Cow::Borrowed("UPDATE 0"));
-        self.command_tags.insert(("UPDATE", 1), Cow::Borrowed("UPDATE 1"));
-        self.command_tags.insert(("DELETE", 0), Cow::Borrowed("DELETE 0"));
-        self.command_tags.insert(("DELETE", 1), Cow::Borrowed("DELETE 1"));
-        self.command_tags.insert(("SELECT", 0), Cow::Borrowed("SELECT 0"));
+        self.command_tags
+            .insert(("INSERT", 0), Cow::Borrowed("INSERT 0 0"));
+        self.command_tags
+            .insert(("INSERT", 1), Cow::Borrowed("INSERT 0 1"));
+        self.command_tags
+            .insert(("UPDATE", 0), Cow::Borrowed("UPDATE 0"));
+        self.command_tags
+            .insert(("UPDATE", 1), Cow::Borrowed("UPDATE 1"));
+        self.command_tags
+            .insert(("DELETE", 0), Cow::Borrowed("DELETE 0"));
+        self.command_tags
+            .insert(("DELETE", 1), Cow::Borrowed("DELETE 1"));
+        self.command_tags
+            .insert(("SELECT", 0), Cow::Borrowed("SELECT 0"));
     }
 
     /// Get a static error message or create one if not cached
@@ -106,7 +125,10 @@ impl StringOptimizer {
         }
 
         // Simple case: clean identifier
-        if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.') {
+        if trimmed
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+        {
             Some(if trimmed == input {
                 Cow::Borrowed(input)
             } else {
@@ -169,7 +191,7 @@ impl StringOptimizer {
 }
 
 /// Global string optimizer instance
-static GLOBAL_STRING_OPTIMIZER: Lazy<StringOptimizer> = Lazy::new(|| StringOptimizer::new());
+static GLOBAL_STRING_OPTIMIZER: Lazy<StringOptimizer> = Lazy::new(StringOptimizer::new);
 
 /// Get the global string optimizer
 pub fn global_string_optimizer() -> &'static StringOptimizer {
@@ -212,8 +234,7 @@ macro_rules! optimized_string {
         std::borrow::Cow::Borrowed($literal)
     };
     ($expr:expr) => {
-        $crate::optimization::string_utils::global_string_optimizer()
-            .extract_column_name($expr)
+        $crate::optimization::string_utils::global_string_optimizer().extract_column_name($expr)
     };
 }
 
@@ -230,8 +251,7 @@ macro_rules! command_tag {
 #[macro_export]
 macro_rules! error_message {
     ($key:literal) => {
-        $crate::optimization::string_utils::global_string_optimizer()
-            .get_error_message($key)
+        $crate::optimization::string_utils::global_string_optimizer().get_error_message($key)
     };
 }
 
@@ -292,7 +312,7 @@ mod tests {
         // Test with invalid UTF-8
         let bytes = &[0xFF, 0xFE];
         let s = optimizer.bytes_to_string_lossy(bytes);
-        assert!(s.len() > 0); // Should handle gracefully
+        assert!(!s.is_empty()); // Should handle gracefully
     }
 
     #[test]

@@ -50,7 +50,7 @@ async fn test_pg_index_basic() {
 
     // Verify we have some indexes
     println!("Found {} indexes", rows.len());
-    assert!(rows.len() > 0, "Expected to find at least one index");
+    assert!(!rows.is_empty(), "Expected to find at least one index");
 }
 
 #[tokio::test]

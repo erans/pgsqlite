@@ -196,14 +196,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_only_handler_creation() {
-        let config = Arc::new(Config::load());
+        let config = Arc::new(crate::config::global_config().clone());
         let handler = ReadOnlyDbHandler::new(":memory:", config);
         assert!(handler.is_ok());
     }
 
     #[tokio::test]
     async fn test_write_query_rejection() {
-        let config = Arc::new(Config::load());
+        let config = Arc::new(crate::config::global_config().clone());
         let handler = ReadOnlyDbHandler::new(":memory:", config).unwrap();
         
         let result = handler.query("INSERT INTO test VALUES (1)").await;

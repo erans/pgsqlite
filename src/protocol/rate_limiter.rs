@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use parking_lot::RwLock;
 use thiserror::Error;
 use tracing::{debug, warn, info};
@@ -151,16 +151,6 @@ impl RateLimitWindow {
         }
     }
 
-    fn is_expired(&self, window_duration: Duration) -> bool {
-        let window_start = self.window_start_nanos.load(Ordering::Acquire);
-        let current_nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-
-        current_nanos.saturating_sub(window_start) >= window_duration.as_nanos() as u64
-    }
-
     fn is_expired_nanos(&self, window_duration_nanos: u64, current_nanos: u64) -> bool {
         let window_start = self.window_start_nanos.load(Ordering::Acquire);
         current_nanos.saturating_sub(window_start) >= window_duration_nanos
@@ -270,31 +260,7 @@ impl CircuitBreakerState {
         Self::unpack_state(packed)
     }
 
-    fn instant_to_nanos(_instant: Instant) -> u64 {
-        // Convert Instant to nanoseconds since UNIX epoch (approximate)
-        // This is a best-effort conversion for atomic storage
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64
-    }
-
-    fn nanos_to_duration_since_now(nanos: u64) -> Option<Duration> {
-        if nanos == 0 {
-            return None;
-        }
-
-        let current_nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-
-        if nanos > current_nanos {
-            Some(Duration::from_nanos(nanos - current_nanos))
-        } else {
-            Some(Duration::from_nanos(0))
-        }
-    }
+    // (helper functions removed; unused)
 }
 
 /// Rate limiter with circuit breaker functionality
@@ -513,33 +479,32 @@ impl RateLimiter {
     /// Check rate limits
     fn check_rate_limits(&self, client_ip: Option<IpAddr>) -> Result<(), RateLimitError> {
         // If per-IP limiting is enabled and we have an IP, check per-IP limits
-        if self.rate_config.per_ip_limiting {
-            if let Some(ip) = client_ip {
-                let mut ip_windows = self.ip_windows.write();
+        if self.rate_config.per_ip_limiting
+            && let Some(ip) = client_ip {
+            let mut ip_windows = self.ip_windows.write();
 
-                // Check if we're tracking too many IPs
-                if ip_windows.len() >= self.rate_config.max_tracked_ips && !ip_windows.contains_key(&ip) {
-                    warn!("Too many IP addresses being tracked, falling back to global rate limiting for {}", ip);
-                    // Fall through to global rate limiting
-                } else {
-                    let window = ip_windows.entry(ip).or_insert_with(RateLimitWindow::new);
+            // Check if we're tracking too many IPs
+            if ip_windows.len() >= self.rate_config.max_tracked_ips && !ip_windows.contains_key(&ip) {
+                warn!("Too many IP addresses being tracked, falling back to global rate limiting for {}", ip);
+                // Fall through to global rate limiting
+            } else {
+                let window = ip_windows.entry(ip).or_insert_with(RateLimitWindow::new);
 
-                    let (requests, _was_reset) = window.check_and_increment(self.rate_config.window_duration);
-                    if requests > self.rate_config.max_requests {
-                        // Log rate limit exceeded event
-                        events::rate_limit_exceeded(Some(ip), "per-ip", requests);
+                let (requests, _was_reset) = window.check_and_increment(self.rate_config.window_duration);
+                if requests > self.rate_config.max_requests {
+                    // Log rate limit exceeded event
+                    events::rate_limit_exceeded(Some(ip), "per-ip", requests);
 
-                        return Err(RateLimitError::RateLimitExceeded(
-                            format!("Per-IP rate limit exceeded for {}: {} requests per {} seconds",
-                                ip,
-                                self.rate_config.max_requests,
-                                self.rate_config.window_duration.as_secs())
-                        ));
-                    }
-
-                    // Per-IP limit passed, no need to check global limit
-                    return Ok(());
+                    return Err(RateLimitError::RateLimitExceeded(
+                        format!("Per-IP rate limit exceeded for {}: {} requests per {} seconds",
+                            ip,
+                            self.rate_config.max_requests,
+                            self.rate_config.window_duration.as_secs())
+                    ));
                 }
+
+                // Per-IP limit passed, no need to check global limit
+                return Ok(());
             }
         }
 

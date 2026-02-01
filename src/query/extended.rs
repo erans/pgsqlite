@@ -817,7 +817,7 @@ impl ExtendedQueryHandler {
                                     let value_str = value.as_ref().and_then(|v| std::str::from_utf8(v).ok()).unwrap_or("<non-utf8>");
                                     // Special case: For __pgsqlite_metadata.value column, always use TEXT
                                     // to avoid incorrect type inference for metadata values like '25'
-                                    let inferred_type = if table_name.as_ref().map_or(false, |t| t == "__pgsqlite_metadata") && col_name == "value" {
+                                    let inferred_type = if table_name.as_ref().is_some_and(|t| t == "__pgsqlite_metadata") && col_name == "value" {
                                         info!("PARSE: Column 'value' in __pgsqlite_metadata: forcing TEXT type");
                                         PgType::Text.to_oid()
                                     } else {
@@ -4815,7 +4815,7 @@ impl ExtendedQueryHandler {
                             if let Some(value) = response.rows[0].get(i) {
                                 // Special case: For __pgsqlite_metadata.value column, always use TEXT
                                 // to avoid incorrect type inference for metadata values like '25'
-                                if table_name.as_ref().map_or(false, |t| t == "__pgsqlite_metadata") && col_name == "value" {
+                                if table_name.as_ref().is_some_and(|t| t == "__pgsqlite_metadata") && col_name == "value" {
                                     info!("EXECUTE: Column 'value' in __pgsqlite_metadata: forcing TEXT type");
                                     25 // TEXT
                                 } else {
@@ -4866,9 +4866,8 @@ impl ExtendedQueryHandler {
         // Check if we're resuming from a previous Execute
         let has_portal_state = session.portal_manager.get_execution_state(portal_name).is_some();
         let (rows_to_send, sent_count, total_rows) = if let Some(state) = session.portal_manager.get_execution_state(portal_name) {
-            if state.cached_result.is_some() {
+            if let Some(cached) = state.cached_result.as_ref() {
                 // Resume from cached results
-                let cached = state.cached_result.as_ref().unwrap();
                 let start_idx = state.row_offset;
                 let available_rows = cached.rows.len() - start_idx;
                 
@@ -5779,17 +5778,16 @@ impl ExtendedQueryHandler {
             // Prisma uses this for schema/namespace filtering and passes a text[] value.
             {
                 let any_pattern = format!(r"(?i)\bany\s*\(\s*\${i}\s*\)");
-                if let Ok(any_regex) = regex::Regex::new(&any_pattern) {
-                    if any_regex.is_match(query) {
-                        param_types.push(PgType::TextArray.to_oid());
-                        info!(
-                            "Detected ANY(${}) usage; defaulting parameter {} type to TEXT[] (OID {})",
-                            i,
-                            i,
-                            PgType::TextArray.to_oid()
-                        );
-                        continue;
-                    }
+                if let Ok(any_regex) = regex::Regex::new(&any_pattern)
+                    && any_regex.is_match(query) {
+                    param_types.push(PgType::TextArray.to_oid());
+                    info!(
+                        "Detected ANY(${}) usage; defaulting parameter {} type to TEXT[] (OID {})",
+                        i,
+                        i,
+                        PgType::TextArray.to_oid()
+                    );
+                    continue;
                 }
             }
             

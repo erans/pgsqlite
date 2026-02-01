@@ -1,10 +1,10 @@
-use std::collections::HashSet;
-use sqlparser::ast::{Statement, Expr, SelectItem, TableFactor, Join, Value, FunctionArguments};
-use sqlparser::dialect::PostgreSqlDialect;
-use sqlparser::parser::Parser;
-use tracing::{warn, debug};
 use crate::security::events;
 use crate::PgSqliteError;
+use sqlparser::ast::{Expr, FunctionArguments, Join, SelectItem, Statement, TableFactor, Value};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
+use std::collections::HashSet;
+use tracing::{debug, warn};
 
 /// Advanced SQL injection detection using proper SQL parsing and AST analysis
 pub struct SqlInjectionDetector {
@@ -16,8 +16,6 @@ pub struct SqlInjectionDetector {
     max_unions: usize,
     /// Blacklisted function names that are potentially dangerous
     dangerous_functions: HashSet<String>,
-    /// Whitelisted table patterns for legitimate operations
-    allowed_table_patterns: HashSet<String>,
 }
 
 impl Default for SqlInjectionDetector {
@@ -43,7 +41,6 @@ impl SqlInjectionDetector {
             max_statements: 3,
             max_unions: 5,
             dangerous_functions,
-            allowed_table_patterns: HashSet::new(),
         }
     }
 
@@ -53,9 +50,10 @@ impl SqlInjectionDetector {
 
         // Basic length check
         if query.len() > 1_000_000 {
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Query too long: {} bytes", query.len())
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Query too long: {} bytes",
+                query.len()
+            )));
         }
 
         // Try to parse the SQL
@@ -64,16 +62,21 @@ impl SqlInjectionDetector {
             Ok(stmts) => stmts,
             Err(parse_error) => {
                 // If parsing fails, apply basic pattern-based analysis as fallback
-                warn!("SQL parsing failed, falling back to pattern analysis: {}", parse_error);
+                warn!(
+                    "SQL parsing failed, falling back to pattern analysis: {}",
+                    parse_error
+                );
                 return self.fallback_pattern_analysis(query);
             }
         };
 
         if statements.len() > self.max_statements {
             events::sql_injection_attempt(None, None, query, "too many statements");
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Too many statements: {} (max: {})", statements.len(), self.max_statements)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Too many statements: {} (max: {})",
+                statements.len(),
+                self.max_statements
+            )));
         }
 
         let mut analysis = SqlAnalysisResult::new();
@@ -85,7 +88,7 @@ impl SqlInjectionDetector {
             if i > 0 && self.is_dangerous_statement(statement) {
                 events::sql_injection_attempt(None, None, query, "dangerous multi-statement");
                 return Err(PgSqliteError::InvalidParameter(
-                    "Dangerous multi-statement query detected".to_string()
+                    "Dangerous multi-statement query detected".to_string(),
                 ));
             }
         }
@@ -93,30 +96,32 @@ impl SqlInjectionDetector {
         // Analyze the overall structure
         if analysis.union_count > self.max_unions {
             events::sql_injection_attempt(None, None, query, "excessive unions");
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Too many UNION operations: {} (max: {})", analysis.union_count, self.max_unions)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Too many UNION operations: {} (max: {})",
+                analysis.union_count, self.max_unions
+            )));
         }
 
         if analysis.max_depth > self.max_depth {
             events::sql_injection_attempt(None, None, query, "excessive nesting");
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Query nesting too deep: {} (max: {})", analysis.max_depth, self.max_depth)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Query nesting too deep: {} (max: {})",
+                analysis.max_depth, self.max_depth
+            )));
         }
 
         // Check for suspicious tautologies
         if analysis.has_tautology {
             events::sql_injection_attempt(None, None, query, "tautology detected");
             return Err(PgSqliteError::InvalidParameter(
-                "Suspicious tautology condition detected".to_string()
+                "Suspicious tautology condition detected".to_string(),
             ));
         }
 
         if analysis.has_dangerous_function {
             events::sql_injection_attempt(None, None, query, "dangerous function call");
             return Err(PgSqliteError::InvalidParameter(
-                "Dangerous function call detected".to_string()
+                "Dangerous function call detected".to_string(),
             ));
         }
 
@@ -128,7 +133,7 @@ impl SqlInjectionDetector {
         statement: &Statement,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
         analysis.max_depth = analysis.max_depth.max(depth);
 
@@ -140,13 +145,15 @@ impl SqlInjectionDetector {
                 analysis.has_modifying_statements = true;
                 self.analyze_dml_statement(statement, analysis, depth + 1, original_query)?;
             }
-            Statement::Drop { .. } | Statement::CreateTable { .. } | Statement::AlterTable { .. } => {
+            Statement::Drop { .. }
+            | Statement::CreateTable { .. }
+            | Statement::AlterTable { .. } => {
                 analysis.has_ddl_statements = true;
                 // DDL statements in injection contexts are highly suspicious
                 if depth > 0 || analysis.statement_count > 0 {
                     events::sql_injection_attempt(None, None, original_query, "suspicious DDL");
                     return Err(PgSqliteError::InvalidParameter(
-                        "Suspicious DDL statement detected".to_string()
+                        "Suspicious DDL statement detected".to_string(),
                     ));
                 }
             }
@@ -164,7 +171,7 @@ impl SqlInjectionDetector {
         query: &sqlparser::ast::Query,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
         if let sqlparser::ast::SetExpr::Select(select) = &*query.body {
             // Analyze SELECT items
@@ -185,16 +192,25 @@ impl SqlInjectionDetector {
             if let Some(ref where_clause) = select.selection {
                 self.analyze_expression(where_clause, analysis, depth, original_query)?;
             }
-        } else if let sqlparser::ast::SetExpr::SetOperation { op: _, left, right, .. } = &*query.body {
+        } else if let sqlparser::ast::SetExpr::SetOperation {
+            op: _, left, right, ..
+        } = &*query.body
+        {
             analysis.union_count += 1;
 
             // Check for suspicious UNION patterns with sensitive data
             let query_str = original_query.to_uppercase();
-            if (query_str.contains("UNION") && query_str.contains("PASSWORD")) ||
-               (query_str.contains("UNION") && query_str.contains("ADMIN")) {
-                events::sql_injection_attempt(None, None, original_query, "suspicious union with sensitive data");
+            if (query_str.contains("UNION") && query_str.contains("PASSWORD"))
+                || (query_str.contains("UNION") && query_str.contains("ADMIN"))
+            {
+                events::sql_injection_attempt(
+                    None,
+                    None,
+                    original_query,
+                    "suspicious union with sensitive data",
+                );
                 return Err(PgSqliteError::InvalidParameter(
-                    "Suspicious UNION with sensitive data access".to_string()
+                    "Suspicious UNION with sensitive data access".to_string(),
                 ));
             }
 
@@ -237,7 +253,7 @@ impl SqlInjectionDetector {
         item: &SelectItem,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
         match item {
             SelectItem::UnnamedExpr(expr) => {
@@ -262,7 +278,7 @@ impl SqlInjectionDetector {
         table: &TableFactor,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
         match table {
             TableFactor::Table { name, .. } => {
@@ -274,9 +290,14 @@ impl SqlInjectionDetector {
 
                     // System table access in complex queries is suspicious
                     if depth > 1 || analysis.union_count > 0 {
-                        events::sql_injection_attempt(None, None, original_query, "suspicious system table access");
+                        events::sql_injection_attempt(
+                            None,
+                            None,
+                            original_query,
+                            "suspicious system table access",
+                        );
                         return Err(PgSqliteError::InvalidParameter(
-                            "Suspicious system table access detected".to_string()
+                            "Suspicious system table access detected".to_string(),
                         ));
                     }
                 }
@@ -294,7 +315,7 @@ impl SqlInjectionDetector {
         join: &Join,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
         self.analyze_table_factor(&join.relation, analysis, depth, original_query)?;
 
@@ -309,8 +330,10 @@ impl SqlInjectionDetector {
         expr: &Expr,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
+        analysis.max_depth = analysis.max_depth.max(depth);
+
         match expr {
             Expr::BinaryOp { left, op, right } => {
                 // Check for tautologies like 1=1, 'a'='a', etc.
@@ -326,13 +349,22 @@ impl SqlInjectionDetector {
 
                 if self.dangerous_functions.contains(&func_name) {
                     analysis.has_dangerous_function = true;
+                    events::sql_injection_attempt(
+                        None,
+                        None,
+                        original_query,
+                        "dangerous function call",
+                    );
                 }
 
                 // Analyze function arguments
                 if let FunctionArguments::List(function_arg_list) = &func.args {
                     for arg in &function_arg_list.args {
-                        if let sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Expr(arg_expr)) = arg {
-                            self.analyze_expression(&arg_expr, analysis, depth, original_query)?;
+                        if let sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Expr(arg_expr),
+                        ) = arg
+                        {
+                            self.analyze_expression(arg_expr, analysis, depth + 1, original_query)?;
                         }
                     }
                 }
@@ -357,14 +389,15 @@ impl SqlInjectionDetector {
         statement: &Statement,
         analysis: &mut SqlAnalysisResult,
         depth: usize,
-        original_query: &str
+        original_query: &str,
     ) -> Result<(), PgSqliteError> {
         // For INSERT, UPDATE, DELETE statements, analyze the WHERE clauses and subqueries
         match statement {
-            Statement::Update { selection, .. } => {
-                if let Some(where_clause) = selection {
-                    self.analyze_expression(where_clause, analysis, depth, original_query)?;
-                }
+            Statement::Update {
+                selection: Some(where_clause),
+                ..
+            } => {
+                self.analyze_expression(where_clause, analysis, depth, original_query)?;
             }
             Statement::Delete(delete_stmt) => {
                 if let Some(where_clause) = &delete_stmt.selection {
@@ -418,35 +451,45 @@ impl SqlInjectionDetector {
             Expr::Value(val) => {
                 matches!(val.value, Value::Boolean(true))
             }
-            Expr::BinaryOp { left, op, right } => {
-                self.is_tautology(left, op, right)
-            }
+            Expr::BinaryOp { left, op, right } => self.is_tautology(left, op, right),
             _ => false,
         }
     }
 
     fn is_dangerous_statement(&self, statement: &Statement) -> bool {
-        matches!(statement,
-            Statement::Drop { .. } |
-            Statement::Delete { .. } |
-            Statement::Update { .. } |
-            Statement::Insert { .. } |
-            Statement::CreateTable { .. } |
-            Statement::AlterTable { .. }
+        matches!(
+            statement,
+            Statement::Drop { .. }
+                | Statement::Delete { .. }
+                | Statement::Update { .. }
+                | Statement::Insert { .. }
+                | Statement::CreateTable { .. }
+                | Statement::AlterTable { .. }
         )
     }
 
     fn is_sensitive_table(&self, table_name: &str) -> bool {
         let sensitive_tables = [
             "information_schema",
-            "pg_user", "pg_shadow", "pg_roles", "pg_database",
-            "pg_tables", "pg_views", "pg_indexes",
-            "sqlite_master", "sqlite_sequence",
-            "__pgsqlite_schema", "__pgsqlite_enums",
-            "sys", "sysobjects", "syscolumns"
+            "pg_user",
+            "pg_shadow",
+            "pg_roles",
+            "pg_database",
+            "pg_tables",
+            "pg_views",
+            "pg_indexes",
+            "sqlite_master",
+            "sqlite_sequence",
+            "__pgsqlite_schema",
+            "__pgsqlite_enums",
+            "sys",
+            "sysobjects",
+            "syscolumns",
         ];
 
-        sensitive_tables.iter().any(|&sensitive| table_name.contains(sensitive))
+        sensitive_tables
+            .iter()
+            .any(|&sensitive| table_name.contains(sensitive))
     }
 
     /// Fallback pattern-based analysis when SQL parsing fails
@@ -475,9 +518,10 @@ impl SqlInjectionDetector {
         for pattern in &dangerous_patterns {
             if query_upper.contains(pattern) {
                 events::sql_injection_attempt(None, None, query, pattern);
-                return Err(PgSqliteError::InvalidParameter(
-                    format!("Malicious pattern detected: {}", pattern)
-                ));
+                return Err(PgSqliteError::InvalidParameter(format!(
+                    "Malicious pattern detected: {}",
+                    pattern
+                )));
             }
         }
 
@@ -485,9 +529,10 @@ impl SqlInjectionDetector {
         let semicolon_count = query.matches(';').count();
         if semicolon_count > self.max_statements {
             events::sql_injection_attempt(None, None, query, "too many statements");
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Too many statements: {}", semicolon_count)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Too many statements: {}",
+                semicolon_count
+            )));
         }
 
         Ok(SqlAnalysisResult::new())
@@ -514,22 +559,36 @@ impl SqlAnalysisResult {
     }
 
     pub fn is_suspicious(&self) -> bool {
-        self.has_tautology ||
-        self.has_dangerous_function ||
-        (self.has_modifying_statements && self.statement_count > 1) ||
-        (self.accesses_sensitive_tables && (self.union_count > 0 || self.max_depth > 2))
+        self.has_tautology
+            || self.has_dangerous_function
+            || (self.has_modifying_statements && self.statement_count > 1)
+            || (self.accesses_sensitive_tables && (self.union_count > 0 || self.max_depth > 2))
     }
 
     pub fn risk_score(&self) -> u32 {
         let mut score = 0;
 
-        if self.has_tautology { score += 50; }
-        if self.has_dangerous_function { score += 70; }
-        if self.has_ddl_statements { score += 40; }
-        if self.accesses_sensitive_tables { score += 30; }
-        if self.statement_count > 2 { score += 20; }
-        if self.union_count > 2 { score += 25; }
-        if self.max_depth > 5 { score += 15; }
+        if self.has_tautology {
+            score += 50;
+        }
+        if self.has_dangerous_function {
+            score += 70;
+        }
+        if self.has_ddl_statements {
+            score += 40;
+        }
+        if self.accesses_sensitive_tables {
+            score += 30;
+        }
+        if self.statement_count > 2 {
+            score += 20;
+        }
+        if self.union_count > 2 {
+            score += 25;
+        }
+        if self.max_depth > 5 {
+            score += 15;
+        }
 
         score
     }

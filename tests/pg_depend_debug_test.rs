@@ -49,9 +49,9 @@ async fn test_pg_depend_debug() {
     // Check if pg_depend table exists
     println!("\n=== Testing pg_depend table existence ===");
     let table_check = client.query("SELECT name FROM sqlite_master WHERE type='table' AND name='pg_depend'", &[]).await.unwrap();
-    println!("pg_depend table exists: {}", table_check.len() > 0);
+    println!("pg_depend table exists: {}", !table_check.is_empty());
 
-    if table_check.len() > 0 {
+    if !table_check.is_empty() {
         // Check table structure
         let structure_result = client.query("SELECT sql FROM sqlite_master WHERE name = 'pg_depend'", &[]).await;
         if let Ok(structure) = structure_result {
@@ -101,5 +101,5 @@ async fn test_pg_depend_debug() {
     }
 
     // The test should at least not fail - we're just debugging
-    assert!(true, "Debug test should always pass");
+    // assert!(true, "Debug test should always pass");
 }

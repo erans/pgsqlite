@@ -5,7 +5,6 @@ use regex::Regex;
 use once_cell::sync::Lazy;
 use crate::cache::SchemaCache;
 use crate::optimization::{OptimizationManager, statement_cache_optimizer::StatementCacheOptimizer};
-use crate::error_message;
 use crate::query::{QueryTypeDetector, QueryType, process_query, executor::extract_table_name_from_create};
 use crate::config::Config;
 use crate::migration::MigrationRunner;
@@ -13,12 +12,9 @@ use crate::validator::StringConstraintValidator;
 use crate::session::ConnectionManager;
 use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
-use crate::security::{events, SqlInjectionDetector};
-use tracing::{debug, info, error, warn};
-
-/// Security limits for query validation
-const MAX_QUERY_LENGTH: usize = 1_000_000; // 1MB max query length
-const MAX_QUERY_DEPTH: usize = 100; // Maximum nesting depth for subqueries
+use crate::security::SqlInjectionDetector;
+use parking_lot::Mutex;
+use tracing::{debug, info, error};
 
 // Regex patterns used in database handler
 static FROM_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
@@ -56,6 +52,9 @@ pub struct DbHandler {
     statement_cache_optimizer: Arc<StatementCacheOptimizer>,
     sql_injection_detector: Arc<SqlInjectionDetector>,
     pub(crate) db_path: String,
+    // Keep a connection alive for shared in-memory SQLite URIs.
+    // SQLite shared in-memory databases exist only while at least one connection is open.
+    _in_memory_anchor: Option<Arc<Mutex<rusqlite::Connection>>>,
 }
 
 impl DbHandler {
@@ -66,214 +65,8 @@ impl DbHandler {
         Ok(())
     }
 
-    /// Legacy pattern-based validation (kept for backward compatibility)
-    fn validate_sql_security_legacy(query: &str) -> Result<(), PgSqliteError> {
-        // Length validation
-        if query.len() > MAX_QUERY_LENGTH {
-            warn!("Rejected oversized query: {} bytes", query.len());
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Query too long: {} bytes (max: {})", query.len(), MAX_QUERY_LENGTH)
-            ));
-        }
-
-        // Basic depth analysis by counting parentheses nesting
-        let mut paren_depth = 0;
-        let mut max_depth = 0;
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        let mut escape_next = false;
-
-        for ch in query.chars() {
-            if escape_next {
-                escape_next = false;
-                continue;
-            }
-
-            let in_string = in_single_quote || in_double_quote;
-
-            match ch {
-                '\\' if in_string => escape_next = true,
-                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-                '"' if !in_single_quote => in_double_quote = !in_double_quote,
-                '(' if !in_string => {
-                    paren_depth += 1;
-                    max_depth = max_depth.max(paren_depth);
-                    if max_depth > MAX_QUERY_DEPTH {
-                        warn!("Rejected deeply nested query: {} levels", max_depth);
-                        return Err(PgSqliteError::InvalidParameter(
-                            format!("Query nesting too deep: {} levels (max: {})", max_depth, MAX_QUERY_DEPTH)
-                        ));
-                    }
-                }
-                ')' if !in_string => {
-                    paren_depth = paren_depth.saturating_sub(1);
-                }
-                _ => {}
-            }
-        }
-
-        // Check for suspicious patterns that might indicate SQL injection attempts
-        // First check in the full query for quote-based injection patterns
-        let query_upper = query.to_uppercase();
-        let quote_injection_patterns = [
-            "'; DROP",
-            "\"; DROP",
-            "'; DELETE",
-            "\"; DELETE",
-            "'; INSERT",
-            "\"; INSERT",
-            "'; UPDATE",
-            "\"; UPDATE",
-            "\"1\"=\"1\"",
-            "'1'='1'",
-            "\" OR \"",
-            "' OR '",
-        ];
-
-        for pattern in &quote_injection_patterns {
-            if query_upper.contains(pattern) {
-                warn!("Rejected query with quote injection pattern: {}", pattern);
-
-                // Log SQL injection attempt
-                events::sql_injection_attempt(None, None, query, pattern);
-
-                return Err(PgSqliteError::InvalidParameter(
-                    error_message!("Query contains potentially malicious quote injection pattern").into_owned()
-                ));
-            }
-        }
-
-        // Then check for other patterns outside of quoted strings
-        let query_no_strings = Self::remove_quoted_strings(query);
-        let query_no_strings_upper = query_no_strings.to_uppercase();
-
-        let suspicious_patterns = [
-            "OR 1=1",
-            "OR 1 = 1",
-            "AND 1=1",
-            "AND 1 = 1",
-            "UNION SELECT PASSWORD",
-            "UNION SELECT * FROM",
-            "EXEC(",
-            "EXECUTE(",
-            "SP_EXECUTESQL",
-            "XP_CMDSHELL",
-        ];
-
-        for pattern in &suspicious_patterns {
-            if query_no_strings_upper.contains(pattern) {
-                warn!("Rejected query with suspicious pattern: {}", pattern);
-
-                // Log SQL injection attempt
-                events::sql_injection_attempt(None, None, query, pattern);
-
-                return Err(PgSqliteError::InvalidParameter(
-                    error_message!("Query contains potentially malicious pattern").into_owned()
-                ));
-            }
-        }
-
-        // Check for multiple statements with dangerous operations
-        let statement_count = query.matches(';').count();
-        if statement_count > 0 {
-            // If there are multiple statements, check for dangerous combinations
-            let dangerous_multi_statement_patterns = [
-                "; DROP",
-                "; DELETE",
-                "; INSERT",
-                "; UPDATE",
-                "; CREATE",
-                "; ALTER",
-                "; EXEC",
-            ];
-
-            for pattern in &dangerous_multi_statement_patterns {
-                if query_upper.contains(pattern) {
-                    warn!("Rejected query with dangerous multi-statement pattern: {}", pattern);
-
-                    // Log SQL injection attempt
-                    events::sql_injection_attempt(None, None, query, pattern);
-
-                    return Err(PgSqliteError::InvalidParameter(
-                        error_message!("Query contains dangerous multi-statement pattern").into_owned()
-                    ));
-                }
-            }
-        }
-
-        // Check for excessive semicolon statements (potential SQL injection)
-        if statement_count > 2 {
-            warn!("Rejected query with excessive statements: {} semicolons", statement_count);
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Too many statements in query: {} (max: 2)", statement_count)
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Remove quoted string literals to avoid false positives in pattern detection
-    fn remove_quoted_strings(query: &str) -> String {
-        let mut result = String::with_capacity(query.len());
-        let mut in_single_quote = false;
-        let mut in_double_quote = false;
-        let mut i = 0;
-        let chars: Vec<char> = query.chars().collect();
-
-        while i < chars.len() {
-            let ch = chars[i];
-
-            match ch {
-                '\'' if !in_double_quote => {
-                    // Check if this quote is escaped
-                    let mut escape_count = 0;
-                    let mut j = i;
-                    while j > 0 && chars[j - 1] == '\\' {
-                        escape_count += 1;
-                        j -= 1;
-                    }
-                    // If odd number of backslashes, the quote is escaped
-                    if escape_count % 2 == 0 {
-                        in_single_quote = !in_single_quote;
-                        if !in_single_quote {
-                            result.push(' '); // Replace string content with space
-                        }
-                    } else if !in_single_quote {
-                        result.push(ch); // Escaped quote outside of string
-                    }
-                }
-                '"' if !in_single_quote => {
-                    // Check if this quote is escaped
-                    let mut escape_count = 0;
-                    let mut j = i;
-                    while j > 0 && chars[j - 1] == '\\' {
-                        escape_count += 1;
-                        j -= 1;
-                    }
-                    // If odd number of backslashes, the quote is escaped
-                    if escape_count % 2 == 0 {
-                        in_double_quote = !in_double_quote;
-                        if !in_double_quote {
-                            result.push(' '); // Replace string content with space
-                        }
-                    } else if !in_double_quote {
-                        result.push(ch); // Escaped quote outside of string
-                    }
-                }
-                _ => {
-                    if !in_single_quote && !in_double_quote {
-                        result.push(ch);
-                    }
-                }
-            }
-            i += 1;
-        }
-
-        result
-    }
-
     pub fn new(db_path: &str) -> Result<Self, rusqlite::Error> {
-        Self::new_with_config(db_path, &Config::load())
+        Self::new_with_config(db_path, crate::config::global_config())
     }
     
     pub fn new_with_config(db_path: &str, config: &Config) -> Result<Self, rusqlite::Error> {
@@ -284,9 +77,15 @@ impl DbHandler {
         
         // Create a temporary connection for migrations
         let temp_conn = Self::create_initial_connection(db_path, config)?;
-        
-        // Run migrations if needed
-        Self::run_migrations_if_needed(temp_conn, db_path)?;
+
+        // Run migrations if needed.
+        // For shared in-memory URIs, keep a connection open so the database persists.
+        let temp_conn = Self::run_migrations_if_needed(temp_conn, db_path)?;
+        let in_memory_anchor = if db_path.contains(":memory:") {
+            Some(Arc::new(Mutex::new(temp_conn)))
+        } else {
+            None
+        };
         
         // Initialize optimization components
         let optimization_manager = Arc::new(OptimizationManager::new(true));
@@ -307,6 +106,7 @@ impl DbHandler {
             statement_cache_optimizer,
             sql_injection_detector: Arc::new(SqlInjectionDetector::new()),
             db_path: db_path.to_string(),
+            _in_memory_anchor: in_memory_anchor,
         })
     }
     
@@ -343,118 +143,112 @@ impl DbHandler {
         Ok(conn)
     }
     
-    fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<(), rusqlite::Error> {
-        // Skip all checks for in-memory databases
-        if db_path.contains(":memory:") {
+    fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<rusqlite::Connection, rusqlite::Error> {
+        let conn = if db_path.contains(":memory:") {
             debug!("Running initial migrations for in-memory database...");
-            
+
             // Register functions before migrations
             crate::functions::register_all_functions(&conn)?;
-            
+
             let mut runner = MigrationRunner::new(conn);
             match runner.run_pending_migrations() {
-                Ok(applied) => {
-                    if !applied.is_empty() {
-                        // Migrations applied
-                    }
-                }
+                Ok(_applied) => {}
                 Err(e) => {
                     return Err(rusqlite::Error::SqliteFailure(
                         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Migration failed: {e}"))
+                        Some(format!("Migration failed: {e}")),
                     ));
                 }
             }
-            return Ok(());
-        }
-        
-        // For file-based databases, first check for schema drift
-        // This needs to happen before migration checks to catch incomplete setups
-        let schema_table_exists = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_schema'",
-            [],
-            |row| row.get::<_, i64>(0)
-        ).unwrap_or(0) > 0;
-        
-        if schema_table_exists {
-            // Database has pgsqlite schema - check for drift
-            use crate::schema_drift::SchemaDriftDetector;
-            match SchemaDriftDetector::detect_drift(&conn) {
-                Ok(drift) => {
-                    if !drift.is_empty() {
-                        return Err(rusqlite::Error::SqliteFailure(
-                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                            Some(format!("Schema drift detected: {}", drift.format_report()))
-                        ));
-                    }
-                }
-                Err(_e) => {
-                    // Don't fail on drift detection errors, just log them
-                    // Schema drift check failed
-                }
-            }
-        }
-        
-        // Now check if migrations are needed
-        let needs_migrations = conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_migrations'",
-            [],
-            |row| row.get::<_, i64>(0)
-        ).unwrap_or(0) == 0;
-        
-        if needs_migrations {
-            debug!("Running initial migrations...");
-            
-            // Register functions before migrations
-            crate::functions::register_all_functions(&conn)?;
-            
-            let mut runner = MigrationRunner::new(conn);
-            match runner.run_pending_migrations() {
-                Ok(applied) => {
-                    if !applied.is_empty() {
-                        // Migrations applied
-                    }
-                }
-                Err(e) => {
-                    return Err(rusqlite::Error::SqliteFailure(
-                        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                        Some(format!("Migration failed: {e}"))
-                    ));
-                }
-            }
+
+            runner.into_connection()
         } else {
-            // Check if we need to run any pending migrations
-            // Register functions first
-            crate::functions::register_all_functions(&conn)?;
-            
-            let runner = MigrationRunner::new(conn);
-            match runner.check_schema_version() {
-                Ok(()) => {
-                    // Schema is up to date
-                    debug!("Schema version check passed");
-                }
-                Err(e) => {
-                    // Schema is outdated, run migrations
-                    debug!("Schema is outdated: {}", e);
-                    let mut runner = runner;
-                    match runner.run_pending_migrations() {
-                        Ok(applied) => {
-                            if !applied.is_empty() {
-                                debug!("Applied {} migrations", applied.len());
-                            }
-                        }
-                        Err(e) => {
+            // For file-based databases, first check for schema drift.
+            // This needs to happen before migration checks to catch incomplete setups.
+            let schema_table_exists = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_schema'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0)
+                > 0;
+
+            if schema_table_exists {
+                // Database has pgsqlite schema - check for drift
+                use crate::schema_drift::SchemaDriftDetector;
+                match SchemaDriftDetector::detect_drift(&conn) {
+                    Ok(drift) => {
+                        if !drift.is_empty() {
                             return Err(rusqlite::Error::SqliteFailure(
                                 rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
-                                Some(format!("Migration failed: {e}"))
+                                Some(format!("Schema drift detected: {}", drift.format_report())),
                             ));
                         }
                     }
+                    Err(_e) => {
+                        // Don't fail on drift detection errors
+                    }
                 }
             }
-        }
-        
-        Ok(())
+
+            // Now check if migrations are needed
+            let needs_migrations = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_migrations'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap_or(0)
+                == 0;
+
+            if needs_migrations {
+                debug!("Running initial migrations...");
+
+                // Register functions before migrations
+                crate::functions::register_all_functions(&conn)?;
+
+                let mut runner = MigrationRunner::new(conn);
+                match runner.run_pending_migrations() {
+                    Ok(_applied) => {}
+                    Err(e) => {
+                        return Err(rusqlite::Error::SqliteFailure(
+                            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                            Some(format!("Migration failed: {e}")),
+                        ));
+                    }
+                }
+
+                runner.into_connection()
+            } else {
+                // Check if we need to run any pending migrations
+                // Register functions first
+                crate::functions::register_all_functions(&conn)?;
+
+                let runner = MigrationRunner::new(conn);
+                match runner.check_schema_version() {
+                    Ok(()) => {
+                        debug!("Schema version check passed");
+                        runner.into_connection()
+                    }
+                    Err(e) => {
+                        debug!("Schema is outdated: {}", e);
+                        let mut runner = runner;
+                        match runner.run_pending_migrations() {
+                            Ok(_applied) => runner.into_connection(),
+                            Err(e) => {
+                                return Err(rusqlite::Error::SqliteFailure(
+                                    rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+                                    Some(format!("Migration failed: {e}")),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(conn)
     }
     
     /// Create a connection for a new session
@@ -633,8 +427,8 @@ impl DbHandler {
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_sequence");
                 if let Ok(mut statements) = parsed_query
                     && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            if let Ok(sequence_data) = PgSequenceHandler::handle_query(select, self).await {
+                        && let Some(select) = query_ast.body.as_select()
+                            && let Ok(sequence_data) = PgSequenceHandler::handle_query(select, self).await {
                                 // Insert the data into temp table
                                 for row in &sequence_data.rows {
                                     let mut values = Vec::new();
@@ -654,7 +448,6 @@ impl DbHandler {
                                     temp_conn.execute(&insert_sql, []).ok();
                                 }
                             }
-                        }
 
                 // Now execute the actual query against the temp table
                 let mut stmt = temp_conn.prepare(query)?;
@@ -695,11 +488,10 @@ impl DbHandler {
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
                 if let Ok(mut statements) = parsed_query
                     && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            if let Ok(response) = PgSequenceHandler::handle_query(select, self).await {
+                        && let Some(select) = query_ast.body.as_select()
+                            && let Ok(response) = PgSequenceHandler::handle_query(select, self).await {
                                 return Ok(response);
                             }
-                        }
             }
         }
 
@@ -742,8 +534,8 @@ impl DbHandler {
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_stats");
                 if let Ok(mut statements) = parsed_query
                     && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            if let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
+                        && let Some(select) = query_ast.body.as_select()
+                            && let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
                                 // Insert the data into temp table
                                 for row in &stats_data.rows {
                                     let mut values = Vec::new();
@@ -798,7 +590,6 @@ impl DbHandler {
                                     rows_affected: 0,
                                 });
                             }
-                        }
             } else {
                 // For non-aggregate queries, use the direct handler
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
@@ -880,7 +671,7 @@ impl DbHandler {
             Ok(result)
         } else {
             // For file databases, create a temporary connection
-            let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+            let conn = Self::create_initial_connection(&self.db_path, crate::config::global_config())?;
             
             // Register functions on the temporary connection
             crate::functions::register_all_functions(&conn)?;
@@ -1417,8 +1208,8 @@ impl DbHandler {
                     let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, "SELECT * FROM pg_stats");
                     if let Ok(mut statements) = parsed_query
                         && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                            && let Some(select) = query_ast.body.as_select() {
-                                if let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
+                            && let Some(select) = query_ast.body.as_select()
+                                && let Ok(stats_data) = PgStatsHandler::handle_query(select, self).await {
                                     // Insert the data into temp table
                                     for row in &stats_data.rows {
                                         let mut values = Vec::new();
@@ -1479,7 +1270,6 @@ impl DbHandler {
                                         })
                                     });
                                 }
-                            }
                 }
             } else {
                 // For non-aggregate queries, use the direct handler
@@ -1777,7 +1567,7 @@ impl DbHandler {
             self.remove_session_connection(&temp_session);
             Ok(result)
         } else {
-            let mut conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+            let mut conn = Self::create_initial_connection(&self.db_path, crate::config::global_config())?;
 
             // Register functions on the temporary connection
             crate::functions::register_all_functions(&conn)?;
@@ -2204,7 +1994,7 @@ impl DbHandler {
     
     /// Get table schema
     pub async fn get_table_schema(&self, table_name: &str) -> Result<crate::cache::schema::TableSchema, rusqlite::Error> {
-        let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+        let conn = Self::create_initial_connection(&self.db_path, crate::config::global_config())?;
         self.schema_cache.get_or_load(&conn, table_name)
     }
     
@@ -2212,7 +2002,7 @@ impl DbHandler {
     pub async fn get_schema_type(&self, table_name: &str, column_name: &str) -> Result<Option<String>, rusqlite::Error> {
         // Create a dedicated connection to read schema data
         // This ensures we can read committed schema metadata regardless of session isolation
-        let conn = Self::create_initial_connection(&self.db_path, &Config::load())?;
+        let conn = Self::create_initial_connection(&self.db_path, crate::config::global_config())?;
         
         debug!("get_schema_type: Looking for table='{}', column='{}'", table_name, column_name);
         
@@ -2869,7 +2659,7 @@ mod tests {
 
         // Test multi-statement query should fail
         let multi_statement = "SELECT 1; SELECT 2; SELECT 3; SELECT 4";
-        assert!(handler.validate_sql_security(&multi_statement).is_err());
+        assert!(handler.validate_sql_security(multi_statement).is_err());
     }
 
     #[test]

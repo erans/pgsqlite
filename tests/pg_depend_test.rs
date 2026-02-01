@@ -32,7 +32,7 @@ async fn test_pg_depend_basic() {
     }
 
     // Should have at least one dependency for the SERIAL-like column
-    assert!(rows.len() >= 1, "Should have at least 1 dependency for INTEGER PRIMARY KEY");
+    assert!(!rows.is_empty(), "Should have at least 1 dependency for INTEGER PRIMARY KEY");
 
     // Check dependency properties
     let dep_row = &rows[0];
@@ -205,7 +205,7 @@ async fn test_pg_depend_wildcard_query() {
     let rows = client.query("SELECT * FROM pg_depend", &[]).await.unwrap();
 
     println!("Wildcard query returned {} dependencies", rows.len());
-    assert!(rows.len() >= 1, "Should have at least one dependency");
+    assert!(!rows.is_empty(), "Should have at least one dependency");
 
     // Verify all 7 columns are returned
     let first_row = &rows[0];

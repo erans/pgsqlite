@@ -367,13 +367,13 @@ impl CatalogInterceptor {
                         if (table_name.contains("pg_class") || table_name.contains("pg_attribute")) && has_catalog_joins {
                             debug!("Intercepting pg_attribute JOIN query for special handling");
                             // Execute the query using session connection to ensure table visibility
-                            if let Some(ref session) = session {
-                                if let Some(db_handler) = session.get_db_handler().await {
-                                    let session_id = session.id;
-                                    let query_str = query.to_string();
+                            if let Some(ref session) = session
+                                && let Some(db_handler) = session.get_db_handler().await {
+                                let session_id = session.id;
+                                let query_str = query.to_string();
 
 
-                                    match db_handler.with_session_connection(&session_id, |conn| {
+                                match db_handler.with_session_connection(&session_id, |conn| {
                                         debug!("Executing catalog JOIN query with session connection: {}", query_str);
 
                                         // Execute the query directly with the session's connection
@@ -407,15 +407,14 @@ impl CatalogInterceptor {
                                                 Err(e)
                                             }
                                         }
-                                    }).await {
-                                        Ok(response) => {
-                                            debug!("Successfully executed catalog JOIN query, returning {} rows", response.rows_affected);
-                                            return Some(response);
-                                        }
-                                        Err(e) => {
-                                            debug!("Failed to execute catalog JOIN with session connection: {}", e);
-                                            // Fall through to try other methods
-                                        }
+                                }).await {
+                                    Ok(response) => {
+                                        debug!("Successfully executed catalog JOIN query, returning {} rows", response.rows_affected);
+                                        return Some(response);
+                                    }
+                                    Err(e) => {
+                                        debug!("Failed to execute catalog JOIN with session connection: {}", e);
+                                        // Fall through to try other methods
                                     }
                                 }
                             }
@@ -1136,10 +1135,9 @@ impl CatalogInterceptor {
              collencoding, collcollate, collctype, colliculocale, collicurules, collversion) in collations {
 
             // Apply name filter if present
-            if let Some(ref filter) = name_filter {
-                if collname != filter {
-                    continue;
-                }
+            if let Some(ref filter) = name_filter
+                && collname != filter {
+                continue;
             }
 
             let full_row: Vec<Option<Vec<u8>>> = vec![
@@ -1172,17 +1170,16 @@ impl CatalogInterceptor {
     }
 
     fn extract_collation_name_filter(where_clause: &Expr) -> Option<String> {
-        match where_clause {
-            Expr::BinaryOp { left, op, right } => {
-                if let (Expr::Identifier(ident), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
-                    (left.as_ref(), op, right.as_ref())
-                    && ident.value.to_lowercase() == "collname"
-                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
-                            return Some(value.clone());
-                        }
+        if let Expr::BinaryOp { left, op, right } = where_clause
+            && let (
+                Expr::Identifier(ident),
+                sqlparser::ast::BinaryOperator::Eq,
+                Expr::Value(value_with_span),
+            ) = (left.as_ref(), op, right.as_ref())
+                && ident.value.to_lowercase() == "collname"
+                && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                return Some(value.clone());
             }
-            _ => {}
-        }
         None
     }
 

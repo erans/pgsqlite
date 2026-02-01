@@ -1,6 +1,7 @@
 use clap::Parser;
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "pgsqlite")]
@@ -529,7 +530,19 @@ fn looks_like_sqlite_uri(s: &str) -> bool {
     s.starts_with("file:")
 }
 
-// Global configuration instance
-lazy_static::lazy_static! {
-    pub static ref CONFIG: Config = Config::load();
+static GLOBAL_CONFIG: OnceLock<Config> = OnceLock::new();
+
+/// Set the process-wide config.
+///
+/// The library must not parse CLI args on its own because `cargo test` and other runners
+/// pass their own flags (e.g. `--quiet`) which are not pgsqlite flags.
+pub fn set_global_config(config: Config) {
+    let _ = GLOBAL_CONFIG.set(config);
+}
+
+/// Get the process-wide config.
+///
+/// If not explicitly set by the binary, this falls back to defaults + env vars.
+pub fn global_config() -> &'static Config {
+    GLOBAL_CONFIG.get_or_init(|| Config::parse_from(["pgsqlite"]))
 }

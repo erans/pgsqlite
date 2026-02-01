@@ -1,10 +1,10 @@
+use crate::types::{DecimalHandler, PgType};
+use crate::PgSqliteError;
 use bytes::{BufMut, BytesMut};
-use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
+use rust_decimal::Decimal;
 use std::convert::TryInto;
 use std::str::FromStr;
-use crate::types::{PgType, DecimalHandler};
-use crate::PgSqliteError;
 use tracing::debug;
 
 /// Security limits for input validation
@@ -71,24 +71,30 @@ impl BinaryEncoder {
     pub fn encode_numeric(value: &Decimal) -> Vec<u8> {
         DecimalHandler::encode_numeric(value)
     }
-    
+
     /// Encode a UUID value (OID 2950)
     /// Binary format is 16 bytes raw UUID
     pub fn encode_uuid(uuid_str: &str) -> Result<Vec<u8>, PgSqliteError> {
         // Input validation
         if uuid_str.len() > 128 {
-            return Err(PgSqliteError::InvalidParameter("UUID string too long".to_string()));
+            return Err(PgSqliteError::InvalidParameter(
+                "UUID string too long".to_string(),
+            ));
         }
 
         // Remove hyphens and validate format
         let hex_str = uuid_str.replace('-', "");
         if hex_str.len() != 32 {
-            return Err(PgSqliteError::InvalidParameter("Invalid UUID format: must be 32 hex characters".to_string()));
+            return Err(PgSqliteError::InvalidParameter(
+                "Invalid UUID format: must be 32 hex characters".to_string(),
+            ));
         }
 
         // Validate all characters are hex before processing
         if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(PgSqliteError::InvalidParameter("Invalid UUID: contains non-hex characters".to_string()));
+            return Err(PgSqliteError::InvalidParameter(
+                "Invalid UUID: contains non-hex characters".to_string(),
+            ));
         }
 
         // Convert hex string to bytes with bounds checking
@@ -98,21 +104,24 @@ impl BinaryEncoder {
         for i in (0..32).step_by(2) {
             // Safe indexing - we've validated length is exactly 32
             let hex_pair: String = [hex_chars[i], hex_chars[i + 1]].iter().collect();
-            let byte = u8::from_str_radix(&hex_pair, 16)
-                .map_err(|_| PgSqliteError::InvalidParameter("Invalid UUID hex characters".to_string()))?;
+            let byte = u8::from_str_radix(&hex_pair, 16).map_err(|_| {
+                PgSqliteError::InvalidParameter("Invalid UUID hex characters".to_string())
+            })?;
             bytes.push(byte);
         }
 
         Ok(bytes)
     }
-    
+
     /// Validate JSON string depth and structure
     fn validate_json_security(json_str: &str) -> Result<(), PgSqliteError> {
         // Length check
         if json_str.len() > MAX_STRING_LENGTH {
-            return Err(PgSqliteError::InvalidParameter(
-                format!("JSON string too long: {} bytes (max: {})", json_str.len(), MAX_STRING_LENGTH)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "JSON string too long: {} bytes (max: {})",
+                json_str.len(),
+                MAX_STRING_LENGTH
+            )));
         }
 
         // Basic depth check by counting braces and brackets
@@ -125,9 +134,10 @@ impl BinaryEncoder {
                     depth += 1;
                     max_depth = max_depth.max(depth);
                     if max_depth > MAX_JSON_DEPTH {
-                        return Err(PgSqliteError::InvalidParameter(
-                            format!("JSON nesting too deep: {} levels (max: {})", max_depth, MAX_JSON_DEPTH)
-                        ));
+                        return Err(PgSqliteError::InvalidParameter(format!(
+                            "JSON nesting too deep: {} levels (max: {})",
+                            max_depth, MAX_JSON_DEPTH
+                        )));
                     }
                 }
                 '}' | ']' => {
@@ -157,27 +167,26 @@ impl BinaryEncoder {
         result.extend_from_slice(json_str.as_bytes());
         Ok(result)
     }
-    
+
     /// Encode MONEY value (OID 790)
     /// Binary format is 8-byte integer representing cents * 100
     pub fn encode_money(amount_str: &str) -> Result<Vec<u8>, String> {
         // Parse the string, removing currency symbols and commas
-        let clean_str = amount_str
-            .replace(['$', ','], "")
-            .trim()
-            .to_string();
-        
+        let clean_str = amount_str.replace(['$', ','], "").trim().to_string();
+
         // Parse as decimal to handle fractional cents
-        let decimal = Decimal::from_str(&clean_str)
-            .map_err(|e| format!("Invalid money value: {e}"))?;
-        
+        let decimal =
+            Decimal::from_str(&clean_str).map_err(|e| format!("Invalid money value: {e}"))?;
+
         // Convert to cents (multiply by 100)
         let cents = decimal * Decimal::from(100);
-        
+
         // Convert to i64
-        let cents_i64 = cents.round().to_i64()
+        let cents_i64 = cents
+            .round()
+            .to_i64()
             .ok_or_else(|| "Money value too large".to_string())?;
-        
+
         Ok(cents_i64.to_be_bytes().to_vec())
     }
 
@@ -198,7 +207,7 @@ impl BinaryEncoder {
         }
 
         // Extract the content between { and }
-        let inner = &trimmed[1..trimmed.len()-1];
+        let inner = &trimmed[1..trimmed.len() - 1];
 
         // Handle empty array
         if inner.is_empty() {
@@ -271,22 +280,25 @@ impl BinaryEncoder {
     ///   - lower_bound (i32): lower bound (typically 1)
     /// - NULL bitmap (optional): bit array indicating NULL positions
     /// - Elements: each prefixed with length (i32), -1 for NULL
-    pub fn encode_array(
-        array_str: &str,
-        elem_type_oid: i32,
-    ) -> Result<Vec<u8>, PgSqliteError> {
+    pub fn encode_array(array_str: &str, elem_type_oid: i32) -> Result<Vec<u8>, PgSqliteError> {
         // Input validation
         if array_str.len() > MAX_STRING_LENGTH {
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Array string too long: {} bytes (max: {})", array_str.len(), MAX_STRING_LENGTH)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Array string too long: {} bytes (max: {})",
+                array_str.len(),
+                MAX_STRING_LENGTH
+            )));
         }
 
-        debug!("encode_array called with: '{}', type_oid: {}", array_str, elem_type_oid);
+        debug!(
+            "encode_array called with: '{}', type_oid: {}",
+            array_str, elem_type_oid
+        );
 
         // Convert PostgreSQL format to JSON if needed
-        let json_str = Self::pg_array_to_json(array_str)
-            .map_err(|e| PgSqliteError::Protocol(format!("Array format conversion failed: {}", e)))?;
+        let json_str = Self::pg_array_to_json(array_str).map_err(|e| {
+            PgSqliteError::Protocol(format!("Array format conversion failed: {}", e))
+        })?;
         debug!("After conversion to JSON: '{}'", json_str);
 
         // Additional JSON validation
@@ -296,14 +308,17 @@ impl BinaryEncoder {
         let array: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| PgSqliteError::InvalidParameter(format!("Invalid JSON array: {e}")))?;
 
-        let elements = array.as_array()
+        let elements = array
+            .as_array()
             .ok_or_else(|| PgSqliteError::InvalidParameter("Not a JSON array".to_string()))?;
 
         // Array size validation
         if elements.len() > MAX_ARRAY_SIZE {
-            return Err(PgSqliteError::InvalidParameter(
-                format!("Array too large: {} elements (max: {})", elements.len(), MAX_ARRAY_SIZE)
-            ));
+            return Err(PgSqliteError::InvalidParameter(format!(
+                "Array too large: {} elements (max: {})",
+                elements.len(),
+                MAX_ARRAY_SIZE
+            )));
         }
 
         if elements.is_empty() {
@@ -317,10 +332,14 @@ impl BinaryEncoder {
 
         // Check for NULLs
         let has_nulls = elements.iter().any(|e| e.is_null());
-        debug!("Array has {} elements, has_nulls: {}", elements.len(), has_nulls);
-        
+        debug!(
+            "Array has {} elements, has_nulls: {}",
+            elements.len(),
+            has_nulls
+        );
+
         let mut result = Vec::new();
-        
+
         // Header
         result.extend_from_slice(&1i32.to_be_bytes()); // ndim = 1 (1D array)
 
@@ -335,7 +354,7 @@ impl BinaryEncoder {
 
         // Note: PostgreSQL binary protocol does NOT include a NULL bitmap
         // Instead, NULL values are indicated by -1 length in the data section
-        
+
         // Encode elements
         for (idx, elem) in elements.iter().enumerate() {
             if elem.is_null() {
@@ -347,35 +366,26 @@ impl BinaryEncoder {
 
             // Encode element based on type
             let elem_bytes = match elem_type_oid {
-                t if t == PgType::Int4.to_oid() => {
-                    elem.as_i64()
-                        .and_then(|v| v.try_into().ok())
-                        .map(|v: i32| v.to_be_bytes().to_vec())
-                }
-                t if t == PgType::Int8.to_oid() => {
-                    elem.as_i64()
-                        .map(|v| v.to_be_bytes().to_vec())
-                }
-                t if t == PgType::Int2.to_oid() => {
-                    elem.as_i64()
-                        .and_then(|v| v.try_into().ok())
-                        .map(|v: i16| v.to_be_bytes().to_vec())
-                }
+                t if t == PgType::Int4.to_oid() => elem
+                    .as_i64()
+                    .and_then(|v| v.try_into().ok())
+                    .map(|v: i32| v.to_be_bytes().to_vec()),
+                t if t == PgType::Int8.to_oid() => elem.as_i64().map(|v| v.to_be_bytes().to_vec()),
+                t if t == PgType::Int2.to_oid() => elem
+                    .as_i64()
+                    .and_then(|v| v.try_into().ok())
+                    .map(|v: i16| v.to_be_bytes().to_vec()),
                 t if t == PgType::Float4.to_oid() => {
-                    elem.as_f64()
-                        .map(|v| (v as f32).to_be_bytes().to_vec())
+                    elem.as_f64().map(|v| (v as f32).to_be_bytes().to_vec())
                 }
                 t if t == PgType::Float8.to_oid() => {
-                    elem.as_f64()
-                        .map(|v| v.to_be_bytes().to_vec())
+                    elem.as_f64().map(|v| v.to_be_bytes().to_vec())
                 }
                 t if t == PgType::Bool.to_oid() => {
-                    elem.as_bool()
-                        .map(|v| vec![if v { 1 } else { 0 }])
+                    elem.as_bool().map(|v| vec![if v { 1 } else { 0 }])
                 }
                 t if t == PgType::Text.to_oid() || t == PgType::Varchar.to_oid() => {
-                    elem.as_str()
-                        .map(|s| s.as_bytes().to_vec())
+                    elem.as_str().map(|s| s.as_bytes().to_vec())
                 }
                 t if t == PgType::Numeric.to_oid() => {
                     // Handle NUMERIC type - use string representation and encode as PostgreSQL NUMERIC binary format
@@ -407,7 +417,9 @@ impl BinaryEncoder {
                     result.extend_from_slice(&bytes);
                 }
                 None => {
-                    return Err(PgSqliteError::InvalidParameter(format!("Cannot encode array element: {elem:?}")));
+                    return Err(PgSqliteError::InvalidParameter(format!(
+                        "Cannot encode array element: {elem:?}"
+                    )));
                 }
             }
         }
@@ -416,7 +428,7 @@ impl BinaryEncoder {
 
         Ok(result)
     }
-    
+
     /// Encode a range type value
     /// PostgreSQL range binary format:
     /// - flags (1 byte): 0x01=empty, 0x02=LB_INC, 0x04=UB_INC, 0x08=LB_INF, 0x10=UB_INF
@@ -425,32 +437,32 @@ impl BinaryEncoder {
     pub fn encode_int4range(range_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = range_str.trim();
         let mut result = Vec::new();
-        
+
         // Handle empty range
         if trimmed == "empty" {
             result.push(0x01); // RANGE_EMPTY flag
             return Ok(result);
         }
-        
+
         // Parse range format: [lower,upper), (lower,upper], etc.
         if trimmed.len() < 3 {
             return Err("Invalid range format".to_string());
         }
-        
+
         let lower_inclusive = trimmed.starts_with('[');
         let upper_inclusive = trimmed.ends_with(']');
-        
+
         // Extract bounds
-        let inner = &trimmed[1..trimmed.len()-1];
+        let inner = &trimmed[1..trimmed.len() - 1];
         let parts: Vec<&str> = inner.split(',').collect();
-        
+
         if parts.len() != 2 {
             return Err("Invalid range format: expected two bounds".to_string());
         }
-        
+
         let lower_str = parts[0].trim();
         let upper_str = parts[1].trim();
-        
+
         // Calculate flags
         let mut flags = 0u8;
         if lower_inclusive {
@@ -459,70 +471,72 @@ impl BinaryEncoder {
         if upper_inclusive {
             flags |= 0x04; // UB_INC
         }
-        
+
         // Check for infinite bounds
         let lower_infinite = lower_str == "-infinity" || lower_str.is_empty();
         let upper_infinite = upper_str == "infinity" || upper_str.is_empty();
-        
+
         if lower_infinite {
             flags |= 0x08; // LB_INF
         }
         if upper_infinite {
             flags |= 0x10; // UB_INF
         }
-        
+
         result.push(flags);
-        
+
         // Encode lower bound if not infinite
         if !lower_infinite {
-            let lower_val: i32 = lower_str.parse()
+            let lower_val: i32 = lower_str
+                .parse()
                 .map_err(|_| format!("Invalid lower bound: {lower_str}"))?;
             let lower_bytes = lower_val.to_be_bytes();
             result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&lower_bytes);
         }
-        
+
         // Encode upper bound if not infinite
         if !upper_infinite {
-            let upper_val: i32 = upper_str.parse()
+            let upper_val: i32 = upper_str
+                .parse()
                 .map_err(|_| format!("Invalid upper bound: {upper_str}"))?;
             let upper_bytes = upper_val.to_be_bytes();
             result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&upper_bytes);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Encode an int8range value
     pub fn encode_int8range(range_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = range_str.trim();
         let mut result = Vec::new();
-        
+
         // Handle empty range
         if trimmed == "empty" {
             result.push(0x01); // RANGE_EMPTY flag
             return Ok(result);
         }
-        
+
         // Parse range format
         if trimmed.len() < 3 {
             return Err("Invalid range format".to_string());
         }
-        
+
         let lower_inclusive = trimmed.starts_with('[');
         let upper_inclusive = trimmed.ends_with(']');
-        
-        let inner = &trimmed[1..trimmed.len()-1];
+
+        let inner = &trimmed[1..trimmed.len() - 1];
         let parts: Vec<&str> = inner.split(',').collect();
-        
+
         if parts.len() != 2 {
             return Err("Invalid range format: expected two bounds".to_string());
         }
-        
+
         let lower_str = parts[0].trim();
         let upper_str = parts[1].trim();
-        
+
         // Calculate flags
         let mut flags = 0u8;
         if lower_inclusive {
@@ -531,68 +545,70 @@ impl BinaryEncoder {
         if upper_inclusive {
             flags |= 0x04; // UB_INC
         }
-        
+
         let lower_infinite = lower_str == "-infinity" || lower_str.is_empty();
         let upper_infinite = upper_str == "infinity" || upper_str.is_empty();
-        
+
         if lower_infinite {
             flags |= 0x08; // LB_INF
         }
         if upper_infinite {
             flags |= 0x10; // UB_INF
         }
-        
+
         result.push(flags);
-        
+
         // Encode bounds
         if !lower_infinite {
-            let lower_val: i64 = lower_str.parse()
+            let lower_val: i64 = lower_str
+                .parse()
                 .map_err(|_| format!("Invalid lower bound: {lower_str}"))?;
             let lower_bytes = lower_val.to_be_bytes();
             result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&lower_bytes);
         }
-        
+
         if !upper_infinite {
-            let upper_val: i64 = upper_str.parse()
+            let upper_val: i64 = upper_str
+                .parse()
                 .map_err(|_| format!("Invalid upper bound: {upper_str}"))?;
             let upper_bytes = upper_val.to_be_bytes();
             result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&upper_bytes);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Encode a numrange value
     pub fn encode_numrange(range_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = range_str.trim();
         let mut result = Vec::new();
-        
+
         // Handle empty range
         if trimmed == "empty" {
             result.push(0x01); // RANGE_EMPTY flag
             return Ok(result);
         }
-        
+
         // Parse range format
         if trimmed.len() < 3 {
             return Err("Invalid range format".to_string());
         }
-        
+
         let lower_inclusive = trimmed.starts_with('[');
         let upper_inclusive = trimmed.ends_with(']');
-        
-        let inner = &trimmed[1..trimmed.len()-1];
+
+        let inner = &trimmed[1..trimmed.len() - 1];
         let parts: Vec<&str> = inner.split(',').collect();
-        
+
         if parts.len() != 2 {
             return Err("Invalid range format: expected two bounds".to_string());
         }
-        
+
         let lower_str = parts[0].trim();
         let upper_str = parts[1].trim();
-        
+
         // Calculate flags
         let mut flags = 0u8;
         if lower_inclusive {
@@ -601,39 +617,39 @@ impl BinaryEncoder {
         if upper_inclusive {
             flags |= 0x04; // UB_INC
         }
-        
+
         let lower_infinite = lower_str == "-infinity" || lower_str.is_empty();
         let upper_infinite = upper_str == "infinity" || upper_str.is_empty();
-        
+
         if lower_infinite {
             flags |= 0x08; // LB_INF
         }
         if upper_infinite {
             flags |= 0x10; // UB_INF
         }
-        
+
         result.push(flags);
-        
+
         // Encode numeric bounds using DecimalHandler
         if !lower_infinite {
-            let lower_decimal = Decimal::from_str(lower_str)
-                .map_err(|e| format!("Invalid lower bound: {e}"))?;
+            let lower_decimal =
+                Decimal::from_str(lower_str).map_err(|e| format!("Invalid lower bound: {e}"))?;
             let lower_bytes = DecimalHandler::encode_numeric(&lower_decimal);
             result.extend_from_slice(&(lower_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&lower_bytes);
         }
-        
+
         if !upper_infinite {
-            let upper_decimal = Decimal::from_str(upper_str)
-                .map_err(|e| format!("Invalid upper bound: {e}"))?;
+            let upper_decimal =
+                Decimal::from_str(upper_str).map_err(|e| format!("Invalid upper bound: {e}"))?;
             let upper_bytes = DecimalHandler::encode_numeric(&upper_decimal);
             result.extend_from_slice(&(upper_bytes.len() as i32).to_be_bytes());
             result.extend_from_slice(&upper_bytes);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Encode DATE (days since 2000-01-01)
     pub fn encode_date(unix_timestamp: f64) -> Vec<u8> {
         // For dates stored as INTEGER days since epoch in SQLite, treat as days
@@ -652,14 +668,14 @@ impl BinaryEncoder {
             pg_days.to_be_bytes().to_vec()
         }
     }
-    
+
     /// Encode TIME (microseconds since midnight)
     pub fn encode_time(microseconds_since_midnight: f64) -> Vec<u8> {
         // The input is already in microseconds, just convert to i64
         let micros = microseconds_since_midnight.round() as i64;
         micros.to_be_bytes().to_vec()
     }
-    
+
     /// Encode TIMESTAMP/TIMESTAMPTZ (microseconds since epoch to PostgreSQL format)
     pub fn encode_timestamp(unix_microseconds: f64) -> Vec<u8> {
         const PG_EPOCH_OFFSET: i64 = 946684800 * 1_000_000; // microseconds between 1970-01-01 and 2000-01-01
@@ -667,7 +683,7 @@ impl BinaryEncoder {
         let pg_micros = unix_micros - PG_EPOCH_OFFSET;
         pg_micros.to_be_bytes().to_vec()
     }
-    
+
     /// Encode INTERVAL (microseconds, days, months)
     pub fn encode_interval(total_seconds: f64) -> Vec<u8> {
         // For simple intervals, encode as microseconds + 0 days + 0 months
@@ -684,18 +700,19 @@ impl BinaryEncoder {
     pub fn encode_cidr(cidr_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = cidr_str.trim();
         let mut result = Vec::new();
-        
+
         // Parse CIDR format: address/prefix_length
         let (addr_str, prefix_len) = if let Some(slash_pos) = trimmed.find('/') {
             let addr = &trimmed[..slash_pos];
             let prefix = &trimmed[slash_pos + 1..];
-            let len = prefix.parse::<u8>()
+            let len = prefix
+                .parse::<u8>()
                 .map_err(|_| format!("Invalid prefix length: {prefix}"))?;
             (addr, len)
         } else {
             return Err("CIDR must include prefix length".to_string());
         };
-        
+
         // Determine if IPv4 or IPv6
         if addr_str.contains(':') {
             // IPv6
@@ -703,7 +720,7 @@ impl BinaryEncoder {
             if prefix_len > 128 {
                 return Err("IPv6 prefix length cannot exceed 128".to_string());
             }
-            
+
             result.push(2); // AF_INET6
             result.push(prefix_len); // bits
             result.push(1); // is_cidr = true
@@ -715,28 +732,29 @@ impl BinaryEncoder {
             if prefix_len > 32 {
                 return Err("IPv4 prefix length cannot exceed 32".to_string());
             }
-            
+
             result.push(1); // AF_INET
             result.push(prefix_len); // bits
             result.push(1); // is_cidr = true
             result.push(4); // addr_len = 4 bytes for IPv4
             result.extend_from_slice(&octets);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Encode INET value (OID 869)
     /// Binary format: same as CIDR but is_cidr flag is 0
     pub fn encode_inet(inet_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = inet_str.trim();
         let mut result = Vec::new();
-        
+
         // Parse INET format: address or address/prefix_length
         let (addr_str, prefix_len) = if let Some(slash_pos) = trimmed.find('/') {
             let addr = &trimmed[..slash_pos];
             let prefix = &trimmed[slash_pos + 1..];
-            let len = prefix.parse::<u8>()
+            let len = prefix
+                .parse::<u8>()
                 .map_err(|_| format!("Invalid prefix length: {prefix}"))?;
             (addr, len)
         } else if trimmed.contains(':') {
@@ -746,7 +764,7 @@ impl BinaryEncoder {
             // IPv4 without prefix - default to /32
             (trimmed, 32)
         };
-        
+
         // Determine if IPv4 or IPv6
         if addr_str.contains(':') {
             // IPv6
@@ -754,7 +772,7 @@ impl BinaryEncoder {
             if prefix_len > 128 {
                 return Err("IPv6 prefix length cannot exceed 128".to_string());
             }
-            
+
             result.push(2); // AF_INET6
             result.push(prefix_len); // bits
             result.push(0); // is_cidr = false
@@ -766,22 +784,22 @@ impl BinaryEncoder {
             if prefix_len > 32 {
                 return Err("IPv4 prefix length cannot exceed 32".to_string());
             }
-            
+
             result.push(1); // AF_INET
             result.push(prefix_len); // bits
             result.push(0); // is_cidr = false
             result.push(4); // addr_len = 4 bytes for IPv4
             result.extend_from_slice(&octets);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Encode MACADDR value (OID 829)
     /// Binary format: 6 bytes representing the MAC address
     pub fn encode_macaddr(mac_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = mac_str.trim();
-        
+
         // Parse MAC address format: aa:bb:cc:dd:ee:ff or aa-bb-cc-dd-ee-ff
         let hex_parts: Vec<&str> = if trimmed.contains(':') {
             trimmed.split(':').collect()
@@ -790,26 +808,26 @@ impl BinaryEncoder {
         } else {
             return Err("Invalid MAC address format".to_string());
         };
-        
+
         if hex_parts.len() != 6 {
             return Err("MAC address must have 6 components".to_string());
         }
-        
+
         let mut result = Vec::with_capacity(6);
         for part in hex_parts {
             let byte = u8::from_str_radix(part, 16)
                 .map_err(|_| format!("Invalid MAC address component: {part}"))?;
             result.push(byte);
         }
-        
+
         Ok(result)
     }
-    
+
     /// Encode MACADDR8 value (OID 774)
     /// Binary format: 8 bytes representing the EUI-64 MAC address
     pub fn encode_macaddr8(mac_str: &str) -> Result<Vec<u8>, String> {
         let trimmed = mac_str.trim();
-        
+
         // Parse MAC address format: support both 6-byte and 8-byte formats
         let hex_parts: Vec<&str> = if trimmed.contains(':') {
             trimmed.split(':').collect()
@@ -818,9 +836,9 @@ impl BinaryEncoder {
         } else {
             return Err("Invalid MAC address format".to_string());
         };
-        
+
         let mut result = Vec::with_capacity(8);
-        
+
         if hex_parts.len() == 6 {
             // Convert 6-byte MAC to 8-byte EUI-64 format
             // Insert FF:FE between 3rd and 4th bytes
@@ -828,7 +846,7 @@ impl BinaryEncoder {
                 let byte = u8::from_str_radix(part, 16)
                     .map_err(|_| format!("Invalid MAC address component: {part}"))?;
                 result.push(byte);
-                
+
                 if i == 2 {
                     // Insert FF:FE after the 3rd byte
                     result.push(0xFF);
@@ -845,37 +863,38 @@ impl BinaryEncoder {
         } else {
             return Err("MAC address must have 6 or 8 components".to_string());
         }
-        
+
         Ok(result)
     }
-    
+
     /// Parse IPv4 address string to 4-byte array
     fn parse_ipv4(addr_str: &str) -> Result<[u8; 4], String> {
         let parts: Vec<&str> = addr_str.split('.').collect();
         if parts.len() != 4 {
             return Err("IPv4 address must have 4 octets".to_string());
         }
-        
+
         let mut octets = [0u8; 4];
         for (i, part) in parts.iter().enumerate() {
-            let octet = part.parse::<u8>()
+            let octet = part
+                .parse::<u8>()
                 .map_err(|_| format!("Invalid IPv4 octet: {part}"))?;
             octets[i] = octet;
         }
-        
+
         Ok(octets)
     }
-    
+
     /// Parse IPv6 address string to 16-byte array
     fn parse_ipv6(addr_str: &str) -> Result<[u8; 16], String> {
         // Simple IPv6 parsing - for production, consider using a proper library
         let addr_str = addr_str.trim();
-        
+
         // Handle special cases
         if addr_str == "::" {
             return Ok([0u8; 16]);
         }
-        
+
         // Handle IPv6 address expansion for "::" compression
         let (left, right) = if let Some(pos) = addr_str.find("::") {
             let left_part = &addr_str[..pos];
@@ -884,10 +903,10 @@ impl BinaryEncoder {
         } else {
             (addr_str, "")
         };
-        
+
         let mut result = [0u8; 16];
         let mut pos = 0;
-        
+
         // Parse left part
         if !left.is_empty() {
             for group in left.split(':') {
@@ -901,7 +920,7 @@ impl BinaryEncoder {
                 pos += 2;
             }
         }
-        
+
         // Parse right part (if any)
         if !right.is_empty() {
             let mut right_groups = Vec::new();
@@ -913,7 +932,7 @@ impl BinaryEncoder {
                     .map_err(|_| format!("Invalid IPv6 group: {group}"))?;
                 right_groups.push(value);
             }
-            
+
             // Place right groups at the end
             let mut right_pos = 16 - (right_groups.len() * 2);
             for value in right_groups {
@@ -922,12 +941,16 @@ impl BinaryEncoder {
                 right_pos += 2;
             }
         }
-        
+
         Ok(result)
     }
 
     /// Encode a value based on its PostgreSQL type OID
-    pub fn encode_value(value: &rusqlite::types::Value, type_oid: i32, binary_format: bool) -> Option<Vec<u8>> {
+    pub fn encode_value(
+        value: &rusqlite::types::Value,
+        type_oid: i32,
+        binary_format: bool,
+    ) -> Option<Vec<u8>> {
         if !binary_format {
             // Text format - use existing converters
             return None;
@@ -1019,7 +1042,7 @@ impl BinaryEncoder {
                         let days_since_1970 = *i as i32;
                         let days_since_2000 = days_since_1970 - 10957; // 10957 days between 1970-01-01 and 2000-01-01
                         Some(days_since_2000.to_be_bytes().to_vec())
-                    },
+                    }
                     _ => None,
                 }
             }
@@ -1071,9 +1094,7 @@ impl BinaryEncoder {
             t if t == PgType::Uuid.to_oid() => {
                 // UUID - 16 bytes binary
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_uuid(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_uuid(s).ok(),
                     _ => None,
                 }
             }
@@ -1094,9 +1115,7 @@ impl BinaryEncoder {
             t if t == PgType::Money.to_oid() => {
                 // MONEY - 8-byte integer
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_money(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_money(s).ok(),
                     _ => None,
                 }
             }
@@ -1117,7 +1136,9 @@ impl BinaryEncoder {
                         debug!("encode_value: Int4Array with text value: '{}'", s);
                         let result = Self::encode_array(s, PgType::Int4.to_oid());
                         match &result {
-                            Ok(data) => debug!("encode_value: Int4Array encoded to {} bytes", data.len()),
+                            Ok(data) => {
+                                debug!("encode_value: Int4Array encoded to {} bytes", data.len())
+                            }
                             Err(e) => debug!("encode_value: Int4Array encoding failed: {}", e),
                         }
                         result.ok()
@@ -1201,27 +1222,21 @@ impl BinaryEncoder {
             t if t == PgType::Int4range.to_oid() => {
                 // INT4RANGE
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_int4range(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_int4range(s).ok(),
                     _ => None,
                 }
             }
             t if t == PgType::Int8range.to_oid() => {
                 // INT8RANGE
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_int8range(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_int8range(s).ok(),
                     _ => None,
                 }
             }
             t if t == PgType::Numrange.to_oid() => {
                 // NUMRANGE
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_numrange(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_numrange(s).ok(),
                     _ => None,
                 }
             }
@@ -1229,36 +1244,28 @@ impl BinaryEncoder {
             t if t == PgType::Cidr.to_oid() => {
                 // CIDR
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_cidr(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_cidr(s).ok(),
                     _ => None,
                 }
             }
             t if t == PgType::Inet.to_oid() => {
                 // INET
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_inet(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_inet(s).ok(),
                     _ => None,
                 }
             }
             t if t == PgType::Macaddr.to_oid() => {
                 // MACADDR
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_macaddr(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_macaddr(s).ok(),
                     _ => None,
                 }
             }
             t if t == PgType::Macaddr8.to_oid() => {
                 // MACADDR8
                 match value {
-                    rusqlite::types::Value::Text(s) => {
-                        Self::encode_macaddr8(s).ok()
-                    }
+                    rusqlite::types::Value::Text(s) => Self::encode_macaddr8(s).ok(),
                     _ => None,
                 }
             }
@@ -1369,7 +1376,7 @@ mod tests {
     fn test_binary_floats() {
         let f4_bytes = BinaryEncoder::encode_float4(1.5);
         assert_eq!(f4_bytes.len(), 4);
-        
+
         let f8_bytes = BinaryEncoder::encode_float8(1.5);
         assert_eq!(f8_bytes.len(), 8);
     }
@@ -1387,7 +1394,7 @@ mod tests {
         assert_eq!(&buffer[pos2..pos2 + 4], &[0, 0, 0, 42]);
         assert_eq!(&buffer[pos3..pos3 + 5], b"hello");
     }
-    
+
     #[test]
     fn test_date_encoding() {
         // Test DATE encoding
@@ -1397,7 +1404,7 @@ mod tests {
         let expected: i32 = 8780;
         assert_eq!(encoded, expected.to_be_bytes().to_vec());
     }
-    
+
     #[test]
     fn test_time_encoding() {
         // Test TIME encoding
@@ -1407,7 +1414,7 @@ mod tests {
         let expected: i64 = 52245123456;
         assert_eq!(encoded, expected.to_be_bytes().to_vec());
     }
-    
+
     #[test]
     fn test_timestamp_encoding() {
         // Test TIMESTAMP encoding
@@ -1417,43 +1424,43 @@ mod tests {
         let expected: i64 = 758644245123456;
         assert_eq!(encoded, expected.to_be_bytes().to_vec());
     }
-    
+
     #[test]
     fn test_interval_encoding() {
         // Test INTERVAL encoding
         // 1 day 2:30:00 = 95400 seconds
         let encoded = BinaryEncoder::encode_interval(95400.0);
         assert_eq!(encoded.len(), 16); // 8 bytes microseconds + 4 bytes days + 4 bytes months
-        
+
         // Check microseconds part
         let micros = i64::from_be_bytes(encoded[0..8].try_into().unwrap());
         assert_eq!(micros, 95400000000); // 95400 * 1_000_000
-        
+
         // Check days and months (should be 0)
         let days = i32::from_be_bytes(encoded[8..12].try_into().unwrap());
         let months = i32::from_be_bytes(encoded[12..16].try_into().unwrap());
         assert_eq!(days, 0);
         assert_eq!(months, 0);
     }
-    
+
     #[test]
     fn test_uuid_encoding() {
         // Test UUID encoding
         let uuid_str = "550e8400-e29b-41d4-a716-446655440000";
         let encoded = BinaryEncoder::encode_uuid(uuid_str).unwrap();
         assert_eq!(encoded.len(), 16);
-        
+
         // Verify first few bytes
         assert_eq!(encoded[0], 0x55);
         assert_eq!(encoded[1], 0x0e);
         assert_eq!(encoded[2], 0x84);
         assert_eq!(encoded[3], 0x00);
     }
-    
+
     #[test]
     fn test_json_jsonb_encoding() {
         let json_str = r#"{"key": "value"}"#;
-        
+
         // JSON encoding - same as text
         let json_encoded = BinaryEncoder::encode_json(json_str).unwrap();
         assert_eq!(json_encoded, json_str.as_bytes());
@@ -1463,23 +1470,23 @@ mod tests {
         assert_eq!(jsonb_encoded[0], 1); // version
         assert_eq!(&jsonb_encoded[1..], json_str.as_bytes());
     }
-    
+
     #[test]
     fn test_money_encoding() {
         // Test various money formats
         let encoded1 = BinaryEncoder::encode_money("123.45").unwrap();
         let money1 = i64::from_be_bytes(encoded1.try_into().unwrap());
         assert_eq!(money1, 12345); // $123.45 = 12345 cents
-        
+
         let encoded2 = BinaryEncoder::encode_money("$1,234.56").unwrap();
         let money2 = i64::from_be_bytes(encoded2.try_into().unwrap());
         assert_eq!(money2, 123456); // $1,234.56 = 123456 cents
-        
+
         let encoded3 = BinaryEncoder::encode_money("-99.99").unwrap();
         let money3 = i64::from_be_bytes(encoded3.try_into().unwrap());
         assert_eq!(money3, -9999); // -$99.99 = -9999 cents
     }
-    
+
     #[test]
     fn test_numeric_encoding() {
         // Test is already covered by decimal_handler tests
@@ -1488,7 +1495,7 @@ mod tests {
         let encoded = BinaryEncoder::encode_numeric(&decimal);
         assert!(!encoded.is_empty());
     }
-    
+
     #[test]
     fn test_array_encoding() {
         // Test empty array
@@ -1501,89 +1508,136 @@ mod tests {
         // Verify header
         assert_eq!(i32::from_be_bytes(int_array[0..4].try_into().unwrap()), 1); // ndim = 1
         assert_eq!(i32::from_be_bytes(int_array[4..8].try_into().unwrap()), 0); // no nulls
-        assert_eq!(i32::from_be_bytes(int_array[8..12].try_into().unwrap()), PgType::Int4.to_oid()); // elemtype
+        assert_eq!(
+            i32::from_be_bytes(int_array[8..12].try_into().unwrap()),
+            PgType::Int4.to_oid()
+        ); // elemtype
         assert_eq!(i32::from_be_bytes(int_array[12..16].try_into().unwrap()), 3); // dim size
         assert_eq!(i32::from_be_bytes(int_array[16..20].try_into().unwrap()), 1); // lower bound
-        
+
         // Test array with nulls - this is the critical test
-        let null_array = BinaryEncoder::encode_array("[1, null, 3]", PgType::Int4.to_oid()).unwrap();
+        let null_array =
+            BinaryEncoder::encode_array("[1, null, 3]", PgType::Int4.to_oid()).unwrap();
         println!("NULL array encoded to {} bytes", null_array.len());
         println!("Hex: {:02x?}", null_array);
 
         // Check header (PostgreSQL binary protocol format)
         assert_eq!(i32::from_be_bytes(null_array[0..4].try_into().unwrap()), 1); // ndim = 1
         let has_nulls_flag = i32::from_be_bytes(null_array[4..8].try_into().unwrap());
-        assert_eq!(has_nulls_flag, 1, "has_nulls flag should be 1 for arrays with NULLs");
-        assert_eq!(i32::from_be_bytes(null_array[8..12].try_into().unwrap()), PgType::Int4.to_oid());
-        assert_eq!(i32::from_be_bytes(null_array[12..16].try_into().unwrap()), 3); // dim size = 3
-        assert_eq!(i32::from_be_bytes(null_array[16..20].try_into().unwrap()), 1); // lower bound = 1
+        assert_eq!(
+            has_nulls_flag, 1,
+            "has_nulls flag should be 1 for arrays with NULLs"
+        );
+        assert_eq!(
+            i32::from_be_bytes(null_array[8..12].try_into().unwrap()),
+            PgType::Int4.to_oid()
+        );
+        assert_eq!(
+            i32::from_be_bytes(null_array[12..16].try_into().unwrap()),
+            3
+        ); // dim size = 3
+        assert_eq!(
+            i32::from_be_bytes(null_array[16..20].try_into().unwrap()),
+            1
+        ); // lower bound = 1
 
         // Note: PostgreSQL binary protocol does NOT include a NULL bitmap
         // NULLs are indicated by -1 length in the data section
 
         // Check elements starting at byte 20
         // Element 0: value = 1
-        assert_eq!(i32::from_be_bytes(null_array[20..24].try_into().unwrap()), 4); // length = 4
-        assert_eq!(i32::from_be_bytes(null_array[24..28].try_into().unwrap()), 1); // value = 1
+        assert_eq!(
+            i32::from_be_bytes(null_array[20..24].try_into().unwrap()),
+            4
+        ); // length = 4
+        assert_eq!(
+            i32::from_be_bytes(null_array[24..28].try_into().unwrap()),
+            1
+        ); // value = 1
 
         // Element 1: NULL
-        assert_eq!(i32::from_be_bytes(null_array[28..32].try_into().unwrap()), -1); // length = -1 for NULL
+        assert_eq!(
+            i32::from_be_bytes(null_array[28..32].try_into().unwrap()),
+            -1
+        ); // length = -1 for NULL
 
         // Element 2: value = 3
-        assert_eq!(i32::from_be_bytes(null_array[32..36].try_into().unwrap()), 4); // length = 4
-        assert_eq!(i32::from_be_bytes(null_array[36..40].try_into().unwrap()), 3); // value = 3
+        assert_eq!(
+            i32::from_be_bytes(null_array[32..36].try_into().unwrap()),
+            4
+        ); // length = 4
+        assert_eq!(
+            i32::from_be_bytes(null_array[36..40].try_into().unwrap()),
+            3
+        ); // value = 3
 
         // Total size should be 40 bytes (no NULL bitmap in binary protocol)
-        assert_eq!(null_array.len(), 40, "Array with 3 INT4 elements (1 NULL) should be 40 bytes");
-        
+        assert_eq!(
+            null_array.len(),
+            40,
+            "Array with 3 INT4 elements (1 NULL) should be 40 bytes"
+        );
+
         // Test text array
-        let text_array = BinaryEncoder::encode_array(r#"["hello", "world"]"#, PgType::Text.to_oid()).unwrap();
-        assert_eq!(i32::from_be_bytes(text_array[8..12].try_into().unwrap()), PgType::Text.to_oid());
+        let text_array =
+            BinaryEncoder::encode_array(r#"["hello", "world"]"#, PgType::Text.to_oid()).unwrap();
+        assert_eq!(
+            i32::from_be_bytes(text_array[8..12].try_into().unwrap()),
+            PgType::Text.to_oid()
+        );
 
         // Test bool array
-        let bool_array = BinaryEncoder::encode_array("[true, false, true]", PgType::Bool.to_oid()).unwrap();
-        assert_eq!(i32::from_be_bytes(bool_array[8..12].try_into().unwrap()), PgType::Bool.to_oid());
+        let bool_array =
+            BinaryEncoder::encode_array("[true, false, true]", PgType::Bool.to_oid()).unwrap();
+        assert_eq!(
+            i32::from_be_bytes(bool_array[8..12].try_into().unwrap()),
+            PgType::Bool.to_oid()
+        );
 
         // Test PostgreSQL format conversion
         let pg_array = BinaryEncoder::encode_array("{1,NULL,3}", PgType::Int4.to_oid()).unwrap();
         println!("PG format array encoded to {} bytes", pg_array.len());
-        assert_eq!(pg_array.len(), 40, "PG format should also encode to 40 bytes (binary protocol format)");
+        assert_eq!(
+            pg_array.len(),
+            40,
+            "PG format should also encode to 40 bytes (binary protocol format)"
+        );
     }
-    
+
     #[test]
     fn test_range_encoding() {
         // Test INT4RANGE
         let empty_range = BinaryEncoder::encode_int4range("empty").unwrap();
         assert_eq!(empty_range, vec![0x01]); // RANGE_EMPTY
-        
+
         let inclusive_range = BinaryEncoder::encode_int4range("[1,10]").unwrap();
         assert_eq!(inclusive_range[0], 0x06); // LB_INC | UB_INC
-        
+
         let exclusive_range = BinaryEncoder::encode_int4range("(1,10)").unwrap();
         assert_eq!(exclusive_range[0], 0x00); // neither inclusive
-        
+
         let half_open = BinaryEncoder::encode_int4range("[1,10)").unwrap();
         assert_eq!(half_open[0], 0x02); // LB_INC only
-        
+
         // Test INT8RANGE
         let int8_range = BinaryEncoder::encode_int8range("[1000000000000,2000000000000]").unwrap();
         assert_eq!(int8_range[0], 0x06); // LB_INC | UB_INC
-        
+
         // Test NUMRANGE
         let num_range = BinaryEncoder::encode_numrange("[1.5,3.14]").unwrap();
         assert_eq!(num_range[0], 0x06); // LB_INC | UB_INC
-        
+
         // Test infinite bounds
         let infinite_lower = BinaryEncoder::encode_int4range("(,100]").unwrap();
         assert_eq!(infinite_lower[0], 0x0C); // UB_INC | LB_INF
-        
+
         let infinite_upper = BinaryEncoder::encode_int4range("[0,)").unwrap();
         assert_eq!(infinite_upper[0], 0x12); // LB_INC | UB_INF
-        
+
         let infinite_both = BinaryEncoder::encode_int4range("(,)").unwrap();
         assert_eq!(infinite_both[0], 0x18); // LB_INF | UB_INF
     }
-    
+
     #[test]
     fn test_network_encoding() {
         // Test IPv4 CIDR
@@ -1593,7 +1647,7 @@ mod tests {
         assert_eq!(ipv4_cidr[2], 1); // is_cidr = true
         assert_eq!(ipv4_cidr[3], 4); // address length
         assert_eq!(&ipv4_cidr[4..8], &[192, 168, 1, 0]); // address bytes
-        
+
         // Test IPv4 INET
         let ipv4_inet = BinaryEncoder::encode_inet("192.168.1.1").unwrap();
         assert_eq!(ipv4_inet[0], 1); // AF_INET
@@ -1601,7 +1655,7 @@ mod tests {
         assert_eq!(ipv4_inet[2], 0); // is_cidr = false
         assert_eq!(ipv4_inet[3], 4); // address length
         assert_eq!(&ipv4_inet[4..8], &[192, 168, 1, 1]); // address bytes
-        
+
         // Test IPv6 CIDR
         let ipv6_cidr = BinaryEncoder::encode_cidr("2001:db8::/32").unwrap();
         assert_eq!(ipv6_cidr[0], 2); // AF_INET6
@@ -1609,65 +1663,71 @@ mod tests {
         assert_eq!(ipv6_cidr[2], 1); // is_cidr = true
         assert_eq!(ipv6_cidr[3], 16); // address length
         assert_eq!(&ipv6_cidr[4..8], &[0x20, 0x01, 0x0d, 0xb8]); // first 4 bytes
-        
+
         // Test IPv6 INET
         let ipv6_inet = BinaryEncoder::encode_inet("::1").unwrap();
         assert_eq!(ipv6_inet[0], 2); // AF_INET6
         assert_eq!(ipv6_inet[1], 128); // default prefix for IPv6
         assert_eq!(ipv6_inet[2], 0); // is_cidr = false
         assert_eq!(ipv6_inet[3], 16); // address length
-        // Last two bytes should be [0, 1] for ::1
+                                      // Last two bytes should be [0, 1] for ::1
         assert_eq!(&ipv6_inet[18..20], &[0, 1]);
     }
-    
+
     #[test]
     fn test_macaddr_encoding() {
         // Test MACADDR (6 bytes)
         let mac6 = BinaryEncoder::encode_macaddr("08:00:2b:01:02:03").unwrap();
         assert_eq!(mac6.len(), 6);
         assert_eq!(mac6, vec![0x08, 0x00, 0x2b, 0x01, 0x02, 0x03]);
-        
+
         // Test MACADDR with dashes
         let mac6_dash = BinaryEncoder::encode_macaddr("aa-bb-cc-dd-ee-ff").unwrap();
         assert_eq!(mac6_dash.len(), 6);
         assert_eq!(mac6_dash, vec![0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff]);
-        
+
         // Test MACADDR8 with 6-byte input (should be converted to 8-byte EUI-64)
         let mac8_from6 = BinaryEncoder::encode_macaddr8("08:00:2b:01:02:03").unwrap();
         assert_eq!(mac8_from6.len(), 8);
-        assert_eq!(mac8_from6, vec![0x08, 0x00, 0x2b, 0xff, 0xfe, 0x01, 0x02, 0x03]);
-        
+        assert_eq!(
+            mac8_from6,
+            vec![0x08, 0x00, 0x2b, 0xff, 0xfe, 0x01, 0x02, 0x03]
+        );
+
         // Test MACADDR8 with 8-byte input
         let mac8_full = BinaryEncoder::encode_macaddr8("08:00:2b:01:02:03:04:05").unwrap();
         assert_eq!(mac8_full.len(), 8);
-        assert_eq!(mac8_full, vec![0x08, 0x00, 0x2b, 0x01, 0x02, 0x03, 0x04, 0x05]);
+        assert_eq!(
+            mac8_full,
+            vec![0x08, 0x00, 0x2b, 0x01, 0x02, 0x03, 0x04, 0x05]
+        );
     }
-    
+
     #[test]
     fn test_ipv4_parsing() {
         let addr = BinaryEncoder::parse_ipv4("127.0.0.1").unwrap();
         assert_eq!(addr, [127, 0, 0, 1]);
-        
+
         let addr2 = BinaryEncoder::parse_ipv4("255.255.255.255").unwrap();
         assert_eq!(addr2, [255, 255, 255, 255]);
-        
+
         // Test error cases
         assert!(BinaryEncoder::parse_ipv4("256.0.0.1").is_err()); // Invalid octet
         assert!(BinaryEncoder::parse_ipv4("1.2.3").is_err()); // Too few octets
         assert!(BinaryEncoder::parse_ipv4("1.2.3.4.5").is_err()); // Too many octets
     }
-    
+
     #[test]
     fn test_ipv6_parsing() {
         // Test simple cases
         let addr = BinaryEncoder::parse_ipv6("::").unwrap();
         assert_eq!(addr, [0u8; 16]);
-        
+
         let addr2 = BinaryEncoder::parse_ipv6("::1").unwrap();
         let mut expected = [0u8; 16];
         expected[15] = 1;
         assert_eq!(addr2, expected);
-        
+
         // Test 2001:db8::
         let addr3 = BinaryEncoder::parse_ipv6("2001:db8::").unwrap();
         let mut expected3 = [0u8; 16];
@@ -1708,10 +1768,12 @@ mod tests {
     #[test]
     fn test_security_validation_arrays() {
         // Test array size validation - create oversized array
-        let large_array = "[".to_string() + &(0..MAX_ARRAY_SIZE + 1)
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(",") + "]";
+        let large_array = "[".to_string()
+            + &(0..MAX_ARRAY_SIZE + 1)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+            + "]";
         assert!(BinaryEncoder::encode_array(&large_array, PgType::Int4.to_oid()).is_err());
 
         // Test array string length validation
@@ -1734,9 +1796,9 @@ mod tests {
         let null_json = "{\"key\": \"value\0injection\"}";
         // Should still work as JSON can contain null bytes, but will be validated
         let result = BinaryEncoder::encode_json(null_json);
-        if result.is_ok() {
+        if let Ok(encoded) = result {
             // Ensure the null byte is preserved
-            assert!(result.unwrap().contains(&0u8));
+            assert!(encoded.contains(&0u8));
         }
 
         // Extremely nested JSON object

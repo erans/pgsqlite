@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tokio::sync::{RwLock, Mutex};
 use crate::protocol::TransactionStatus;
 use crate::cache::QueryCache;
-use crate::config::CONFIG;
+use crate::config::global_config;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use once_cell::sync::Lazy;
@@ -12,7 +12,8 @@ use rusqlite::Connection;
 
 // Global query cache shared across all sessions
 pub static GLOBAL_QUERY_CACHE: Lazy<Arc<QueryCache>> = Lazy::new(|| {
-    Arc::new(QueryCache::new(CONFIG.query_cache_size, CONFIG.query_cache_ttl))
+    let cfg = global_config();
+    Arc::new(QueryCache::new(cfg.query_cache_size, cfg.query_cache_ttl))
 });
 
 // Global session counter for WAL mode isolation optimization

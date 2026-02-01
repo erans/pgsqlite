@@ -1768,7 +1768,7 @@ impl QueryExecutor {
         // Check if this is a CREATE DATABASE statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
            query.trim_start()[6..].trim_start().to_uppercase().starts_with("DATABASE") {
-            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+            if !matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
                 framed
                     .send(BackendMessage::CommandComplete {
                         tag: "CREATE DATABASE".to_string(),
@@ -1802,7 +1802,7 @@ impl QueryExecutor {
                 return Err(PgSqliteError::Protocol("Invalid database name".to_string()));
             }
 
-            let data_dir = match crate::config::CONFIG.database_layout() {
+            let data_dir = match crate::config::global_config().database_layout() {
                 DatabaseLayout::Directory { dir } => dir,
                 _ => {
                     return Err(PgSqliteError::Protocol(
@@ -1821,8 +1821,8 @@ impl QueryExecutor {
             let db_path = db_file.to_string_lossy().to_string();
             if !db_file.exists() {
                 // Create and initialize the database file by running pgsqlite migrations.
-                let _ = crate::session::DbHandler::new_with_config(&db_path, &crate::config::CONFIG)
-                    .map_err(|e| PgSqliteError::Sqlite(e))?;
+                let _ = crate::session::DbHandler::new_with_config(&db_path, crate::config::global_config())
+                    .map_err(PgSqliteError::Sqlite)?;
             }
 
             framed
@@ -1838,7 +1838,7 @@ impl QueryExecutor {
         // Check if this is a DROP DATABASE statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
            query.trim_start()[4..].trim_start().to_uppercase().starts_with("DATABASE") {
-            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+            if !matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
                 framed
                     .send(BackendMessage::CommandComplete {
                         tag: "DROP DATABASE".to_string(),
@@ -1873,7 +1873,7 @@ impl QueryExecutor {
             }
 
             {
-                let data_dir = match crate::config::CONFIG.database_layout() {
+                let data_dir = match crate::config::global_config().database_layout() {
                     DatabaseLayout::Directory { dir } => dir,
                     _ => {
                         return Err(PgSqliteError::Protocol(
@@ -1901,7 +1901,7 @@ impl QueryExecutor {
         // Check if this is a CREATE SCHEMA statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
            query.trim_start()[6..].trim_start().to_uppercase().starts_with("SCHEMA") {
-            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+            if !matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
                 framed
                     .send(BackendMessage::CommandComplete {
                         tag: "CREATE SCHEMA".to_string(),
@@ -1937,7 +1937,7 @@ impl QueryExecutor {
                 return Err(PgSqliteError::Protocol("Invalid schema name".to_string()));
             }
 
-            let data_dir = match crate::config::CONFIG.database_layout() {
+            let data_dir = match crate::config::global_config().database_layout() {
                 DatabaseLayout::Directory { dir } => dir,
                 _ => {
                     return Err(PgSqliteError::Protocol(
@@ -1961,7 +1961,7 @@ impl QueryExecutor {
         // Check if this is a DROP SCHEMA statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
            query.trim_start()[4..].trim_start().to_uppercase().starts_with("SCHEMA") {
-            if !matches!(crate::config::CONFIG.database_layout(), DatabaseLayout::Directory { .. }) {
+            if !matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
                 framed
                     .send(BackendMessage::CommandComplete {
                         tag: "DROP SCHEMA".to_string(),
@@ -1990,7 +1990,7 @@ impl QueryExecutor {
             }
 
             if is_valid_db_identifier(&session.database) && is_valid_db_identifier(schema) {
-                let data_dir = match crate::config::CONFIG.database_layout() {
+                let data_dir = match crate::config::global_config().database_layout() {
                     DatabaseLayout::Directory { dir } => dir,
                     _ => {
                         return Err(PgSqliteError::Protocol(

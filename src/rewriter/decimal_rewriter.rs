@@ -1010,14 +1010,15 @@ impl<'a> DecimalQueryRewriter<'a> {
         if table_name == "__derived__" || context.cte_columns.contains_key(&table_name) || 
            (table.is_none() && context.derived_table_columns.contains_key(&table_name)) {
             // For derived tables/CTEs, check if the column type suggests decimal storage
-            let pg_type = self.resolver.resolve_expr_type(&if table.is_some() {
+            let expr = if let Some(table) = table {
                 Expr::CompoundIdentifier(vec![
-                    sqlparser::ast::Ident::new(table.unwrap()),
-                    sqlparser::ast::Ident::new(column)
+                    sqlparser::ast::Ident::new(table),
+                    sqlparser::ast::Ident::new(column),
                 ])
             } else {
                 Expr::Identifier(sqlparser::ast::Ident::new(column))
-            }, context);
+            };
+            let pg_type = self.resolver.resolve_expr_type(&expr, context);
             return pg_type == PgType::Numeric; // Only NUMERIC types need wrapping from derived tables
         }
         

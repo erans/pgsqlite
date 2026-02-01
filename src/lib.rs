@@ -107,7 +107,6 @@ pub async fn handle_test_connection_with_pool(
     use session::{SessionState, ReadOnlyDbHandler, QueryRouter};
     use query::{QueryExecutor, ExtendedQueryHandler};
     use tracing::{debug, info, warn};
-    use config::Config;
     
     let codec = PostgresCodec::new();
     let mut framed = Framed::new(stream, codec);
@@ -141,7 +140,7 @@ pub async fn handle_test_connection_with_pool(
         .map_err(|e| anyhow::anyhow!("Failed to create session connection: {}", e))?;
     
     // Set up connection pooling infrastructure (optional - can be enabled via config)
-    let config = Arc::new(Config::load());
+    let config = Arc::new(crate::config::global_config().clone());
     
     // Create QueryRouter if pooling is enabled
     let _query_router = if config.use_pooling {

@@ -380,12 +380,14 @@ impl MessageParser {
 
 // Simplified message types for fuzzing
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum PostgresMessage {
     Frontend(FrontendMessage),
     Backend(BackendMessage),
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum BackendMessage {
     Authentication(AuthenticationMessage),
     ErrorResponse(ErrorResponse),

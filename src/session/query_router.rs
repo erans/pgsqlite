@@ -235,7 +235,7 @@ mod tests {
     fn test_query_classification() {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = Arc::new(Config::load());
+        let config = Arc::new(crate::config::global_config().clone());
         let write_db = format!("file::memory:?cache=shared&uri=true&test=classification_{timestamp}");
         let read_db = format!("file::memory:?cache=shared&uri=true&test=classification_ro_{timestamp}");
         let write_handler = Arc::new(DbHandler::new(&write_db).unwrap());
@@ -263,7 +263,7 @@ mod tests {
         // Create minimal router without database connections that could cause migration conflicts
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = Arc::new(Config::load());
+        let config = Arc::new(crate::config::global_config().clone());
         
         // Use completely unique temporary files instead of memory databases to avoid conflicts
         let write_db = format!("/tmp/test_pragma_write_{timestamp}.db");
@@ -305,7 +305,7 @@ mod tests {
     async fn test_route_determination() {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = Arc::new(Config::load());
+        let config = Arc::new(crate::config::global_config().clone());
         
         // Use temporary files to avoid migration conflicts
         let write_db = format!("/tmp/test_route_write_{timestamp}.db");
