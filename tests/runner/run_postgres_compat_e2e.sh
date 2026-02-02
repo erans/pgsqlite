@@ -46,6 +46,13 @@ docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -c "select count(*) from information_schema.schemata;" \
   >/dev/null
 
+echo "[e2e] Text bool: SELECT EXISTS should return t/f"
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -tAc "select exists(select 1);" \
+  | grep -qx "t"
+
 echo "[e2e] Schema: create schema foo and verify reflected"
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
