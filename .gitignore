@@ -39,3 +39,5 @@ benchmark.db
 
 # Local docker-compose data directory
 data/
+
+.sisyphus/
