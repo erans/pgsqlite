@@ -179,7 +179,8 @@ impl CastTranslator {
         let mut iterations = 0;
         const MAX_ITERATIONS: usize = 100;
 
-        for &cast_pos in &cast_positions {
+        // Process from right-to-left to keep indices stable while rewriting.
+        for &cast_pos in cast_positions.iter().rev() {
             if iterations >= MAX_ITERATIONS {
                 break;
             }
@@ -452,12 +453,7 @@ impl CastTranslator {
 
             // If we're not in parentheses, look for expression boundaries
             if paren_depth == 0
-                && (ch == b' '
-                    || ch == b','
-                    || ch == b'('
-                    || ch == b'='
-                    || ch == b'<'
-                    || ch == b'>')
+                && (ch == b' ' || ch == b',' || ch == b'=' || ch == b'<' || ch == b'>')
             {
                 return i + 1;
             }
