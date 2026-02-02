@@ -5,7 +5,7 @@ pub struct CurrentSchemaFromTranslator;
 
 static CURRENT_SCHEMA_FROM_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r#"(?is)^\s*select\s+\*\s+from\s+current_schema\s*\(\s*\)\s*(?:as\s+([A-Za-z_][A-Za-z0-9_]*)\s*)?(?:;)?\s*$"#,
+        r#"(?is)(^|;)\s*select\s+\*\s+from\s+current_schema\s*\(\s*\)\s*(?:as\s+([A-Za-z_][A-Za-z0-9_]*)\s*)?(;|$)"#,
     )
     .expect("regex compiles")
 });
@@ -20,16 +20,18 @@ impl CurrentSchemaFromTranslator {
             return query.to_string();
         }
 
-        let trimmed = query.trim_end();
-        let has_semicolon = trimmed.ends_with(';');
-        let suffix = if has_semicolon { ";" } else { "" };
-        let alias = CURRENT_SCHEMA_FROM_PATTERN
-            .captures(query)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str())
-            .unwrap_or("current_schema");
-
-        format!("SELECT current_schema() AS {alias}{suffix}")
+        CURRENT_SCHEMA_FROM_PATTERN
+            .replace_all(query, |caps: &regex::Captures| {
+                let prefix = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+                let alias = caps.get(2).map(|m| m.as_str()).unwrap_or("current_schema");
+                let suffix = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+                if prefix.is_empty() {
+                    format!("SELECT current_schema() AS {alias}{suffix}")
+                } else {
+                    format!("{prefix} SELECT current_schema() AS {alias}{suffix}")
+                }
+            })
+            .to_string()
     }
 }
 
@@ -53,6 +55,15 @@ mod tests {
         assert_eq!(
             CurrentSchemaFromTranslator::translate_query(query),
             "SELECT current_schema() AS current_schema;"
+        );
+    }
+
+    #[test]
+    fn rewrites_when_not_first_statement() {
+        let query = "set search_path=foo; select * from current_schema();";
+        assert_eq!(
+            CurrentSchemaFromTranslator::translate_query(query),
+            "set search_path=foo; SELECT current_schema() AS current_schema;"
         );
     }
 

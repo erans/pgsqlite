@@ -40,6 +40,18 @@ static DROP_TABLE_REGEX: Lazy<Result<Regex, regex::Error>> = Lazy::new(|| {
     Regex::new(r"(?i)DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([a-zA-Z_][a-zA-Z0-9_]*)")
 });
 
+static SELECT_SET_CONFIG_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?is)^\s*select\s+set_config\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*(true|false)\s*\)\s*;?\s*$",
+    )
+    .expect("regex compiles")
+});
+
+static CURRENT_SETTING_LITERAL_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)\bcurrent_setting\s*\(\s*'([^']*)'\s*(?:,\s*(true|false)\s*)?\)")
+        .expect("regex compiles")
+});
+
 /// Invalidate cached schema information for a table
 fn invalidate_table_schema_cache(table_name: &str) {
     let mut cache = TABLE_SCHEMA_CACHE.write();
@@ -61,6 +73,14 @@ async fn rewrite_session_functions(query: &str, session: &Arc<SessionState>) -> 
             .get("SEARCH_PATH")
             .cloned()
             .unwrap_or_else(|| "public".to_string())
+    };
+
+    let timezone = {
+        let params = session.parameters.read().await;
+        params
+            .get("TIMEZONE")
+            .cloned()
+            .unwrap_or_else(|| "UTC".to_string())
     };
 
     let mut schemas: Vec<String> = search_path
@@ -106,6 +126,40 @@ async fn rewrite_session_functions(query: &str, session: &Arc<SessionState>) -> 
                 current_schemas_true.clone()
             } else {
                 current_schemas_false.clone()
+            }
+        })
+        .to_string();
+
+    result = CURRENT_SETTING_LITERAL_PATTERN
+        .replace_all(&result, |caps: &regex::Captures| {
+            let key = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            let missing_ok = caps
+                .get(2)
+                .map(|m| m.as_str())
+                .unwrap_or("false")
+                .eq_ignore_ascii_case("true");
+            let key_lc = key.trim().to_lowercase();
+            let value = match key_lc.as_str() {
+                "search_path" => Some(search_path.clone()),
+                "timezone" => Some(timezone.clone()),
+                "server_version" => Some("16.0".to_string()),
+                "server_version_num" => Some("160000".to_string()),
+                "standard_conforming_strings" => Some("on".to_string()),
+                "client_encoding" => Some("UTF8".to_string()),
+                "datestyle" => Some("ISO, MDY".to_string()),
+                _ => None,
+            };
+
+            match value {
+                Some(v) => format!("'{}'", escape_sql_literal(&v)),
+                None => {
+                    if missing_ok {
+                        "NULL".to_string()
+                    } else {
+                        // Leave as-is so the SQLite function can raise a matching error.
+                        caps.get(0).map(|m| m.as_str()).unwrap_or("").to_string()
+                    }
+                }
             }
         })
         .to_string();
@@ -193,6 +247,56 @@ fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
 
 fn is_ident_byte(b: u8) -> bool {
     (b'0'..=b'9').contains(&b) || (b'a'..=b'z').contains(&b) || (b'A'..=b'Z').contains(&b) || b == b'_'
+}
+
+async fn try_handle_select_set_config<T>(
+    framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+    session: &Arc<SessionState>,
+    query: &str,
+) -> Result<bool, PgSqliteError>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    if let Some(caps) = SELECT_SET_CONFIG_PATTERN.captures(query) {
+        let param_name = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let param_value = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let upper = param_name.trim().to_uppercase();
+        let value = param_value.to_string();
+
+        {
+            let mut params = session.parameters.write().await;
+            params.insert(upper, value.clone());
+        }
+
+        let field = FieldDescription {
+            name: "set_config".to_string(),
+            table_oid: 0,
+            column_id: 1,
+            type_oid: PgType::Text.to_oid(),
+            type_size: -1,
+            type_modifier: -1,
+            format: 0,
+        };
+        framed
+            .send(BackendMessage::RowDescription(vec![field]))
+            .await
+            .map_err(PgSqliteError::Io)?;
+
+        framed
+            .send(BackendMessage::DataRow(vec![Some(value.into_bytes())]))
+            .await
+            .map_err(PgSqliteError::Io)?;
+
+        let tag = create_command_tag("SELECT", 1).into_owned();
+        framed
+            .send(BackendMessage::CommandComplete { tag })
+            .await
+            .map_err(PgSqliteError::Io)?;
+
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 async fn upsert_schema_metadata(
@@ -442,8 +546,14 @@ impl QueryExecutor {
             }
         }
 
-        let rewritten_session_query = rewrite_session_functions(query, session).await;
+        let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(query);
+        let rewritten_session_query = rewrite_session_functions(&current_schema_from_rewritten, session).await;
         let query = rewritten_session_query.as_str();
+
+        if try_handle_select_set_config(framed, session, query).await? {
+            return Ok(());
+        }
+
         // Ultra-fast path: Skip all translation if query is simple enough
         let is_ultra_simple = crate::query::simple_query_detector::is_ultra_simple_query(query);
         // Checking if query is ultra-simple
