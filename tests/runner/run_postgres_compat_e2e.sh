@@ -106,4 +106,11 @@ docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -c "select set_config('search_path','bar',false); show search_path;" \
   | grep -q "bar"
 
+echo "[e2e] SQL PREPARE/EXECUTE/DEALLOCATE (simple query)"
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "prepare p1(int4) as select \$1::int4 + 1; execute p1(41); deallocate p1;" \
+  | grep -q "42"
+
 echo "[e2e] OK"
