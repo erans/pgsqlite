@@ -843,91 +843,6 @@ impl DbHandler {
             });
         }
 
-        // Handle information_schema.routines queries first
-        if lower_query.contains("information_schema.routines") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.triggers queries
-        if lower_query.contains("information_schema.triggers") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_triggers_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["trigger_catalog".to_string(), "trigger_schema".to_string(), "trigger_name".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.referential_constraints queries
-        if lower_query.contains("information_schema.referential_constraints") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_referential_constraints_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["constraint_name".to_string(), "constraint_catalog".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.check_constraints queries
-        if lower_query.contains("information_schema.check_constraints") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_check_constraints_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["constraint_catalog".to_string(), "constraint_schema".to_string(), "constraint_name".to_string(), "check_clause".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.views queries
-        if lower_query.contains("information_schema.views") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_views_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["table_name".to_string(), "view_definition".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
         if (lower_query.contains("pg_catalog") ||
            lower_query.contains("pg_type") || lower_query.contains("pg_class") ||
            lower_query.contains("pg_attribute") || lower_query.contains("pg_enum") ||
@@ -937,78 +852,9 @@ impl DbHandler {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
-            if lower_query.contains("information_schema.tables") {
-                return self.handle_information_schema_tables_query(query, session_id).await;
-            }
-
-            if lower_query.contains("information_schema.columns") {
-                // Use the catalog interceptor for columns queries with session-based execution
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
-            if lower_query.contains("information_schema.key_column_usage") {
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_key_column_usage_query(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
-            if lower_query.contains("information_schema.table_constraints") {
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_table_constraints_query(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "constraint_type".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
-            if lower_query.contains("information_schema.routines") {
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
             // Handle SQLAlchemy table existence check with a simpler query
-            if lower_query.contains("pg_class.relname") && 
-               lower_query.contains("pg_namespace") && 
+            if lower_query.contains("pg_class.relname") &&
+               lower_query.contains("pg_namespace") &&
                lower_query.contains("pg_table_is_visible") &&
                lower_query.contains("any") && 
                lower_query.contains("array") {
@@ -1299,112 +1145,6 @@ impl DbHandler {
             });
         }
 
-        // Handle information_schema.routines queries first
-        if lower_query.contains("information_schema.routines") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.triggers queries
-        if lower_query.contains("information_schema.triggers") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_triggers_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["trigger_catalog".to_string(), "trigger_schema".to_string(), "trigger_name".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.referential_constraints queries
-        if lower_query.contains("information_schema.referential_constraints") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_referential_constraints_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["constraint_name".to_string(), "constraint_catalog".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.check_constraints queries
-        if lower_query.contains("information_schema.check_constraints") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_check_constraints_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["constraint_catalog".to_string(), "constraint_schema".to_string(), "constraint_name".to_string(), "check_clause".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.views queries
-        if lower_query.contains("information_schema.views") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return CatalogInterceptor::handle_information_schema_views_query_with_session(select, self, session_id).await;
-                    }
-            // Fallback to empty response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["table_name".to_string(), "view_definition".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            });
-        }
-
-        // Handle information_schema.schemata queries
-        if lower_query.contains("information_schema.schemata") {
-            use crate::catalog::query_interceptor::CatalogInterceptor;
-            let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-            if let Ok(mut statements) = parsed_query
-                && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                    && let Some(select) = query_ast.body.as_select() {
-                        return Ok(CatalogInterceptor::handle_information_schema_schemata_query(select, self).await);
-                    }
-            // Fallback to hardcoded schemata response if parsing fails
-            return Ok(DbResponse {
-                columns: vec!["catalog_name".to_string(), "schema_name".to_string(), "schema_owner".to_string()],
-                rows: vec![
-                    vec![Some("main".to_string().into_bytes()), Some("public".to_string().into_bytes()), Some("postgres".to_string().into_bytes())],
-                    vec![Some("main".to_string().into_bytes()), Some("pg_catalog".to_string().into_bytes()), Some("postgres".to_string().into_bytes())],
-                    vec![Some("main".to_string().into_bytes()), Some("information_schema".to_string().into_bytes()), Some("postgres".to_string().into_bytes())],
-                ],
-                rows_affected: 3,
-            });
-        }
-
         // Handle pg_stats queries directly (simplified approach)
         if lower_query.contains("pg_stats") {
             use crate::catalog::pg_stats::PgStatsHandler;
@@ -1437,78 +1177,9 @@ impl DbHandler {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
-            if lower_query.contains("information_schema.tables") {
-                return self.handle_information_schema_tables_query(query, session_id).await;
-            }
-
-            if lower_query.contains("information_schema.columns") {
-                // Use the catalog interceptor for columns queries with session-based execution
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
-            if lower_query.contains("information_schema.key_column_usage") {
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_key_column_usage_query(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
-            if lower_query.contains("information_schema.table_constraints") {
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_table_constraints_query(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["constraint_name".to_string(), "table_name".to_string(), "constraint_type".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
-            if lower_query.contains("information_schema.routines") {
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_routines_query(select, self).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["routine_name".to_string(), "routine_type".to_string(), "data_type".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
             // Handle SQLAlchemy table existence check with a simpler query
-            if lower_query.contains("pg_class.relname") && 
-               lower_query.contains("pg_namespace") && 
+            if lower_query.contains("pg_class.relname") &&
+               lower_query.contains("pg_namespace") &&
                lower_query.contains("pg_table_is_visible") &&
                lower_query.contains("any") && 
                lower_query.contains("array") {
@@ -2417,77 +2088,6 @@ impl DbHandler {
         &self.statement_cache_optimizer
     }
     
-    /// Handle information_schema.tables query
-    async fn handle_information_schema_tables_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
-        debug!("Handling information_schema.tables query: {}", query);
-        
-        // Check if this is a simple table_name only query
-        if query.contains("SELECT table_name") && !query.contains("table_catalog") {
-            // Simple query - just return table names
-            let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
-            
-            return self.connection_manager.execute_with_session(session_id, |conn| {
-                let mut stmt = conn.prepare(tables_query)?;
-                let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
-                    let table_name: String = row.get(0)?;
-                    Ok(vec![Some(table_name.into_bytes())])
-                })?.collect();
-                
-                Ok(DbResponse {
-                    columns: vec!["table_name".to_string()],
-                    rows: rows?,
-                    rows_affected: 0,
-                })
-            });
-        }
-        
-        // Full information_schema.tables query
-        let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
-        
-        self.connection_manager.execute_with_session(session_id, |conn| {
-            let mut stmt = conn.prepare(tables_query)?;
-            let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
-                let table_name: String = row.get(0)?;
-                // Return full information_schema.tables row
-                Ok(vec![
-                    Some("main".to_string().into_bytes()),      // table_catalog
-                    Some("public".to_string().into_bytes()),    // table_schema  
-                    Some(table_name.into_bytes()),              // table_name
-                    Some("BASE TABLE".to_string().into_bytes()), // table_type
-                    None,                                       // self_referencing_column_name
-                    None,                                       // reference_generation
-                    None,                                       // user_defined_type_catalog
-                    None,                                       // user_defined_type_schema
-                    None,                                       // user_defined_type_name
-                    None,                                       // is_insertable_into
-                    None,                                       // is_typed
-                    None,                                       // commit_action
-                ])
-            })?.collect();
-            
-            Ok(DbResponse {
-                columns: vec![
-                    "table_catalog".to_string(),
-                    "table_schema".to_string(),
-                    "table_name".to_string(),
-                    "table_type".to_string(),
-                    "self_referencing_column_name".to_string(),
-                    "reference_generation".to_string(),
-                    "user_defined_type_catalog".to_string(),
-                    "user_defined_type_schema".to_string(),
-                    "user_defined_type_name".to_string(),
-                    "is_insertable_into".to_string(),
-                    "is_typed".to_string(),
-                    "commit_action".to_string(),
-                ],
-                rows: rows?,
-                rows_affected: 0,
-            })
-        })
-    }
-
-
-
     /// Handle SQLAlchemy table existence check query
     /// This optimizes the complex JOIN query by doing a simple table lookup
     async fn handle_table_existence_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
@@ -2614,7 +2214,11 @@ impl DbHandler {
     fn rewrite_information_schema_query(&self, query: &str) -> String {
         let mut result = query.to_string();
         for &table in INFORMATION_SCHEMA_TABLES {
-            let view_name: String = table.replace("information_schema.", "information_schema_");
+            let view_name = table.replace("information_schema.", "information_schema_");
+            if let Some((_, table_name)) = table.split_once('.') {
+                let quoted = format!("\"information_schema\".\"{}\"", table_name);
+                result = result.replace(&quoted, &view_name);
+            }
             result = result.replace(table, &view_name);
         }
         result

@@ -73,7 +73,6 @@ impl CatalogInterceptor {
             lower_query.contains("pg_replication_slots") ||
             lower_query.contains("pg_shdepend") ||
             lower_query.contains("pg_statistic") ||
-            lower_query.contains("information_schema") ||
             lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
             lower_query.contains("pg_foreign_data_wrapper") ||
             lower_query.contains("pg_stat_io") ||
@@ -675,94 +674,6 @@ impl CatalogInterceptor {
                         None
                     },
                 };
-            }
-
-            // Handle information_schema.schemata queries
-            if table_name.contains("information_schema.schemata") 
-                || table_name.contains(r#""information_schema"."schemata""#)
-                || table_name.contains("information_schema_schemata") {
-                return Some(Ok(Self::handle_information_schema_schemata_query(select, &db).await));
-            }
-
-            // Handle information_schema.tables queries
-            if table_name.contains("information_schema.tables") 
-                || table_name.contains(r#""information_schema"."tables""#)
-                || table_name.contains("information_schema_tables") {
-                return Some(Ok(Self::handle_information_schema_tables_query(select, &db).await));
-            }
-
-            // Handle information_schema.columns queries
-            if table_name.contains("information_schema.columns") 
-                || table_name.contains(r#""information_schema"."columns""#)
-                || table_name.contains("information_schema_columns") {
-                if let Some(ref session_state) = session {
-                    return Some(Self::handle_information_schema_columns_query_with_session(select, &db, &session_state.id).await);
-                }
-                return None;
-            }
-
-            // Handle information_schema.key_column_usage queries
-            if table_name.contains("information_schema.key_column_usage") 
-                || table_name.contains(r#""information_schema"."key_column_usage""#)
-                || table_name.contains("information_schema_key_column_usage") {
-                if let Some(ref session_state) = session {
-                    return Some(Self::handle_information_schema_key_column_usage_query(select, &db, &session_state.id).await);
-                }
-                return None;
-            }
-
-            // Handle information_schema.table_constraints queries
-            if table_name.contains("information_schema.table_constraints") 
-                || table_name.contains(r#""information_schema"."table_constraints""#)
-                || table_name.contains("information_schema_table_constraints") {
-                if let Some(ref session_state) = session {
-                    return Some(Self::handle_information_schema_table_constraints_query(select, &db, &session_state.id).await);
-                }
-                return None;
-            }
-
-            // Handle information_schema.referential_constraints queries
-            if table_name.contains("information_schema.referential_constraints") 
-                || table_name.contains(r#""information_schema"."referential_constraints""#)
-                || table_name.contains("information_schema_referential_constraints") {
-                if let Some(ref session_state) = session {
-                    return Some(Self::handle_information_schema_referential_constraints_query_with_session(select, &db, &session_state.id).await);
-                }
-                return None;
-            }
-
-            // Handle information_schema.routines queries
-            if table_name.contains("information_schema.routines") 
-                || table_name.contains(r#""information_schema"."routines""#)
-                || table_name.contains("information_schema_routines") {
-                return Some(Self::handle_information_schema_routines_query(select, &db).await);
-            }
-
-            // Handle information_schema.views queries
-            if table_name.contains("information_schema.views") 
-                || table_name.contains(r#""information_schema"."views""#)
-                || table_name.contains("information_schema_views") {
-                return Some(Self::handle_information_schema_views_query(select, &db).await);
-            }
-
-            // Handle information_schema.check_constraints queries
-            if table_name.contains("information_schema.check_constraints") 
-                || table_name.contains(r#""information_schema"."check_constraints""#)
-                || table_name.contains("information_schema_check_constraints") {
-                if let Some(ref session_state) = session {
-                    return Some(Self::handle_information_schema_check_constraints_query_with_session(select, &db, &session_state.id).await);
-                }
-                return None;
-            }
-
-            // Handle information_schema.triggers queries
-            if table_name.contains("information_schema.triggers") 
-                || table_name.contains(r#""information_schema"."triggers""#)
-                || table_name.contains("information_schema_triggers") {
-                if let Some(ref session_state) = session {
-                    return Some(Self::handle_information_schema_triggers_query_with_session(select, &db, &session_state.id).await);
-                }
-                return None;
             }
 
             // Handle pg_database queries
@@ -1751,7 +1662,6 @@ impl CatalogInterceptor {
     }
 
     /// Extract selected columns from a SELECT query for information_schema views
-    /// Returns (column_names, column_indices, is_aggregate)
     fn extract_selected_columns(select: &Select, all_columns: &[String]) -> (Vec<String>, Vec<usize>, bool) {
         if select.projection.len() == 1
             && let SelectItem::Wildcard(_) = &select.projection[0] {
@@ -1784,13 +1694,11 @@ impl CatalogInterceptor {
                     }
                 }
                 SelectItem::UnnamedExpr(Expr::Function(func)) => {
-                    // Handle aggregate functions like COUNT(*), COUNT(1), SUM(col), etc.
                     let func_name = func.name.to_string().to_lowercase();
                     if func_name == "count" || func_name == "sum" || func_name == "avg" || func_name == "max" || func_name == "min" {
                         is_aggregate = true;
-                        // Add a placeholder column name for the aggregate result
                         cols.push(func_name);
-                        indices.push(0); // Will be replaced with actual value
+                        indices.push(0);
                     }
                 }
                 _ => {}
@@ -1813,7 +1721,6 @@ impl CatalogInterceptor {
             "sql_path".to_string(),
         ];
 
-        // Extract selected columns and check for aggregates
         let (selected_columns, column_indices, is_aggregate) = Self::extract_selected_columns(select, &all_columns);
 
         // Define available schemas
@@ -1823,7 +1730,6 @@ impl CatalogInterceptor {
             ("main", "information_schema", "postgres"), // Information schema
         ];
 
-        // Handle aggregate queries like COUNT(*)
         if is_aggregate {
             let count = schemas.len();
             let count_bytes = count.to_string().into_bytes();
@@ -1858,102 +1764,6 @@ impl CatalogInterceptor {
             columns: selected_columns,
             rows,
             rows_affected,
-        }
-    }
-
-    async fn handle_information_schema_tables_query(select: &Select, db: &DbHandler) -> DbResponse {
-        debug!("Handling information_schema.tables query");
-
-        // Get list of tables and views from SQLite
-        let tables_response = match db.query("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
-            Ok(response) => response,
-            Err(_) => return DbResponse {
-                columns: vec!["table_name".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            },
-        };
-
-        // Define information_schema.tables columns (enhanced with all PostgreSQL standard columns)
-        let all_columns = vec![
-            "table_catalog".to_string(),
-            "table_schema".to_string(),
-            "table_name".to_string(),
-            "table_type".to_string(),
-            "self_referencing_column_name".to_string(),
-            "reference_generation".to_string(),
-            "user_defined_type_catalog".to_string(),
-            "user_defined_type_schema".to_string(),
-            "user_defined_type_name".to_string(),
-            "is_insertable_into".to_string(),
-            "is_typed".to_string(),
-            "commit_action".to_string(),
-        ];
-
-        // Extract selected columns
-        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
-
-        // Check for WHERE clause filtering
-        let table_filters = if let Some(ref where_clause) = select.selection {
-            Self::extract_table_name_filters(where_clause)
-        } else {
-            Vec::new()
-        };
-
-        // Build rows
-        let mut rows = Vec::new();
-        for table_row in &tables_response.rows {
-            if table_row.len() >= 2
-                && let (Some(Some(table_name_bytes)), Some(Some(table_type_bytes))) =
-                    (table_row.first(), table_row.get(1)) {
-                    let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
-                    let sqlite_type = String::from_utf8_lossy(table_type_bytes).to_string();
-
-                    // Apply WHERE clause filtering if present
-                    if !table_filters.is_empty() && !table_filters.contains(&table_name) {
-                        continue;
-                    }
-
-                    // Map SQLite type to PostgreSQL table_type
-                    let table_type = match sqlite_type.as_str() {
-                        "table" => "BASE TABLE",
-                        "view" => "VIEW",
-                        _ => "BASE TABLE", // Default fallback
-                    };
-
-                    // Determine if table is insertable (views are not)
-                    let is_insertable = if table_type == "VIEW" { "NO" } else { "YES" };
-
-                    // Create full row with all columns
-                    let full_row: Vec<Option<Vec<u8>>> = vec![
-                        Some("main".to_string().into_bytes()),        // table_catalog
-                        Some("public".to_string().into_bytes()),      // table_schema
-                        Some(table_name.into_bytes()),                // table_name
-                        Some(table_type.to_string().into_bytes()),    // table_type
-                        None,                                         // self_referencing_column_name
-                        None,                                         // reference_generation
-                        None,                                         // user_defined_type_catalog
-                        None,                                         // user_defined_type_schema
-                        None,                                         // user_defined_type_name
-                        Some(is_insertable.to_string().into_bytes()), // is_insertable_into
-                        Some("NO".to_string().into_bytes()),          // is_typed
-                        None,                                         // commit_action
-                    ];
-
-                    // Project only the requested columns
-                    let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
-                        .map(|&idx| full_row[idx].clone())
-                        .collect();
-
-                    rows.push(projected_row);
-                }
-        }
-        
-        let rows_count = rows.len();
-        DbResponse {
-            columns: selected_columns,
-            rows,
-            rows_affected: rows_count,
         }
     }
 
@@ -2658,69 +2468,6 @@ impl CatalogInterceptor {
             _ => {}
         }
         None
-    }
-
-    fn extract_table_name_filters(where_clause: &Expr) -> Vec<String> {
-        match where_clause {
-            Expr::BinaryOp { left, op, right } => {
-                // Handle "table_name = 'value'"
-                if let (Expr::Identifier(ident), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
-                    (left.as_ref(), op, right.as_ref())
-                    && ident.value.to_lowercase() == "table_name"
-                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
-                            return vec![value.clone()];
-                        }
-                // Handle "'value' = table_name" (reversed)
-                if let (Expr::Value(value_with_span), sqlparser::ast::BinaryOperator::Eq, Expr::Identifier(ident)) =
-                    (left.as_ref(), op, right.as_ref())
-                    && ident.value.to_lowercase() == "table_name"
-                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
-                            return vec![value.clone()];
-                        }
-                // Handle compound identifiers like "information_schema.tables.table_name = 'value'"
-                if let (Expr::CompoundIdentifier(parts), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
-                    (left.as_ref(), op, right.as_ref())
-                    && let Some(last_part) = parts.last()
-                        && last_part.value.to_lowercase() == "table_name"
-                            && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
-                                return vec![value.clone()];
-                            }
-            }
-            Expr::InList { expr, list, negated } => {
-                // Handle "table_name IN ('value1', 'value2')"
-                if !negated {
-                    if let Expr::Identifier(ident) = expr.as_ref()
-                        && ident.value.to_lowercase() == "table_name" {
-                            let mut values = Vec::new();
-                            for item in list {
-                                if let Expr::Value(value_with_span) = item
-                                    && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
-                                        values.push(value.clone());
-                                    }
-                            }
-                            return values;
-                        }
-                    // Handle compound identifiers in IN clause
-                    if let Expr::CompoundIdentifier(parts) = expr.as_ref()
-                        && let Some(last_part) = parts.last()
-                            && last_part.value.to_lowercase() == "table_name" {
-                                let mut values = Vec::new();
-                                for item in list {
-                                    if let Expr::Value(value_with_span) = item
-                                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
-                                            values.push(value.clone());
-                                        }
-                                }
-                                return values;
-                            }
-                }
-            }
-            Expr::Nested(inner) => {
-                return Self::extract_table_name_filters(inner);
-            }
-            _ => {}
-        }
-        Vec::new()
     }
 
     pub async fn handle_information_schema_routines_query(select: &Select, _db: &DbHandler) -> Result<DbResponse, PgSqliteError> {
