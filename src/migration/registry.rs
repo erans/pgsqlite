@@ -35,6 +35,7 @@ lazy_static! {
         register_v26_enhanced_pg_attribute_support(&mut registry);
         register_v27_fix_pg_proc_types(&mut registry);
         register_v28_pg_stat_io_support(&mut registry);
+        register_v29_information_schema_complete_views(&mut registry);
 
         registry
     };
@@ -2889,5 +2890,693 @@ fn register_v28_pg_stat_io_support(registry: &mut BTreeMap<u32, Migration>) {
             "#,
         ])),
         dependencies: vec![27],
+    });
+}
+
+/// Version 29: Create complete information_schema views as real SQLite views
+/// This migration adds the missing information_schema views that were previously
+/// handled only by catalog interceptors. Having real views enables JOIN, COUNT,
+/// and other SQL operations that require actual table structures.
+fn register_v29_information_schema_complete_views(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(29, Migration {
+        version: 29,
+        name: "information_schema_complete_views",
+        description: "Create complete information_schema views (routines, views, check_constraints, triggers) as real SQLite views for JOIN/COUNT support",
+        up: MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_routines;"#,
+            r#"DROP VIEW IF EXISTS information_schema_views;"#,
+            r#"DROP VIEW IF EXISTS information_schema_check_constraints;"#,
+            r#"DROP VIEW IF EXISTS information_schema_triggers;"#,
+            r#"DROP VIEW IF EXISTS information_schema_schemata;"#,
+            r#"DROP VIEW IF EXISTS information_schema_tables;"#,
+            r#"DROP VIEW IF EXISTS information_schema_columns;"#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_schemata AS
+            SELECT 'main' as catalog_name, 'public' as schema_name, 'postgres' as schema_owner,
+                   NULL as default_character_set_catalog, NULL as default_character_set_schema,
+                   NULL as default_character_set_name, NULL as sql_path
+            UNION ALL
+            SELECT 'main', 'pg_catalog', 'postgres', NULL, NULL, NULL, NULL
+            UNION ALL
+            SELECT 'main', 'information_schema', 'postgres', NULL, NULL, NULL, NULL;
+            "#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_tables AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                m.name as table_name,
+                CASE m.type
+                    WHEN 'table' THEN 'BASE TABLE'
+                    WHEN 'view' THEN 'VIEW'
+                    ELSE 'UNKNOWN'
+                END as table_type,
+                NULL as self_referencing_column_name,
+                NULL as reference_generation,
+                NULL as user_defined_type_catalog,
+                NULL as user_defined_type_schema,
+                NULL as user_defined_type_name,
+                CASE m.type
+                    WHEN 'view' THEN 'NO'
+                    ELSE 'YES'
+                END as is_insertable_into,
+                'NO' as is_typed,
+                'NO' as commit_action
+            FROM sqlite_master m
+            WHERE m.type IN ('table', 'view')
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_columns AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                m.name as table_name,
+                p.name as column_name,
+                p.cid + 1 as ordinal_position,
+                NULL as column_default,
+                CASE
+                    WHEN p."notnull" = 1 OR p.pk = 1 THEN 'NO'
+                    ELSE 'YES'
+                END as is_nullable,
+                CASE
+                    WHEN s.pg_type IS NOT NULL THEN
+                        CASE
+                            WHEN upper(s.pg_type) LIKE 'VARCHAR%' THEN 'character varying'
+                            WHEN upper(s.pg_type) LIKE 'CHARACTER VARYING%' THEN 'character varying'
+                            WHEN upper(s.pg_type) LIKE 'CHARACTER%' THEN 'character'
+                            WHEN upper(s.pg_type) LIKE 'CHAR%' THEN 'character'
+                            WHEN upper(s.pg_type) LIKE 'TEXT%' THEN 'text'
+                            WHEN upper(s.pg_type) LIKE 'INTEGER%' THEN 'integer'
+                            WHEN upper(s.pg_type) LIKE 'INT%' THEN 'integer'
+                            WHEN upper(s.pg_type) LIKE 'BIGINT%' THEN 'bigint'
+                            WHEN upper(s.pg_type) LIKE 'SMALLINT%' THEN 'smallint'
+                            WHEN upper(s.pg_type) LIKE 'DECIMAL%' THEN 'numeric'
+                            WHEN upper(s.pg_type) LIKE 'NUMERIC%' THEN 'numeric'
+                            WHEN upper(s.pg_type) LIKE 'BOOL%' THEN 'boolean'
+                            WHEN upper(s.pg_type) LIKE 'BOOLEAN%' THEN 'boolean'
+                            WHEN upper(s.pg_type) LIKE 'TIMESTAMP%' THEN 'timestamp without time zone'
+                            WHEN upper(s.pg_type) LIKE 'DATE%' THEN 'date'
+                            WHEN upper(s.pg_type) LIKE 'TIME%' THEN 'time without time zone'
+                            ELSE lower(s.pg_type)
+                        END
+                    ELSE
+                        CASE
+                            WHEN upper(p.type) LIKE '%INT%' THEN 'integer'
+                            WHEN upper(p.type) LIKE 'VARCHAR%' THEN 'character varying'
+                            WHEN upper(p.type) LIKE 'CHARACTER VARYING%' THEN 'character varying'
+                            WHEN upper(p.type) LIKE 'CHAR%' THEN 'character'
+                            WHEN upper(p.type) = 'TEXT' THEN 'text'
+                            WHEN upper(p.type) = 'REAL' THEN 'real'
+                            WHEN upper(p.type) = 'DOUBLE' THEN 'double precision'
+                            WHEN upper(p.type) = 'BLOB' THEN 'bytea'
+                            WHEN upper(p.type) = 'BOOLEAN' THEN 'boolean'
+                            WHEN upper(p.type) = 'DATE' THEN 'date'
+                            WHEN upper(p.type) LIKE 'TIME%' THEN 'time without time zone'
+                            WHEN upper(p.type) LIKE 'TIMESTAMP%' THEN 'timestamp without time zone'
+                            WHEN upper(p.type) LIKE 'DECIMAL%' THEN 'numeric'
+                            WHEN upper(p.type) LIKE 'NUMERIC%' THEN 'numeric'
+                            ELSE 'text'
+                        END
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as domain_catalog,
+                NULL as domain_schema,
+                NULL as domain_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'NO' as is_self_referencing,
+                'NO' as is_identity,
+                NULL as identity_generation,
+                NULL as identity_start,
+                NULL as identity_increment,
+                NULL as identity_maximum,
+                NULL as identity_minimum,
+                NULL as identity_cycle,
+                'NO' as is_generated,
+                NULL as generation_expression,
+                'NO' as is_updatable
+            FROM sqlite_master m
+            JOIN pragma_table_info(m.name) p
+            LEFT JOIN __pgsqlite_schema s
+                ON s.table_name = m.name AND s.column_name = p.name
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND m.name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_routines AS
+            SELECT
+                'main' as routine_catalog,
+                'pg_catalog' as routine_schema,
+                func_name as routine_name,
+                'main' as specific_catalog,
+                'pg_catalog' as specific_schema,
+                func_name as specific_name,
+                CASE func_kind
+                    WHEN 'f' THEN 'FUNCTION'
+                    WHEN 'a' THEN 'FUNCTION'
+                    WHEN 'p' THEN 'PROCEDURE'
+                    ELSE 'FUNCTION'
+                END as routine_type,
+                NULL as module_catalog,
+                NULL as module_schema,
+                NULL as module_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                CASE func_rettype
+                    WHEN 23 THEN 'integer'
+                    WHEN 25 THEN 'text'
+                    WHEN 16 THEN 'boolean'
+                    WHEN 20 THEN 'bigint'
+                    WHEN 21 THEN 'smallint'
+                    WHEN 700 THEN 'real'
+                    WHEN 701 THEN 'double precision'
+                    WHEN 1043 THEN 'character varying'
+                    WHEN 1082 THEN 'date'
+                    WHEN 1083 THEN 'time without time zone'
+                    WHEN 1114 THEN 'timestamp without time zone'
+                    WHEN 1184 THEN 'timestamp with time zone'
+                    WHEN 1700 THEN 'numeric'
+                    WHEN 114 THEN 'json'
+                    WHEN 3802 THEN 'jsonb'
+                    WHEN 2950 THEN 'uuid'
+                    WHEN 3614 THEN 'tsvector'
+                    WHEN 3615 THEN 'tsquery'
+                    WHEN 2277 THEN 'anyarray'
+                    WHEN 2283 THEN 'anyelement'
+                    ELSE 'text'
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as type_udt_catalog,
+                NULL as type_udt_schema,
+                NULL as type_udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'EXTERNAL' as routine_body,
+                '' as routine_definition,
+                NULL as external_name,
+                'SQL' as external_language,
+                'SQL' as parameter_style,
+                CASE func_strict WHEN 't' THEN 'YES' ELSE 'NO' END as is_deterministic,
+                'CONTAINS_SQL' as sql_data_access,
+                CASE func_kind WHEN 'p' THEN 'YES' ELSE NULL END as is_null_call,
+                NULL as sql_path,
+                'YES' as schema_level_routine,
+                0 as max_dynamic_result_sets,
+                'NO' as is_user_defined_cast,
+                'NO' as is_implicitly_invocable,
+                'INVOKER' as security_type,
+                NULL as to_sql_specific_catalog,
+                NULL as to_sql_specific_schema,
+                NULL as to_sql_specific_name,
+                'NO' as as_locator,
+                NULL as created,
+                NULL as last_altered,
+                NULL as new_savepoint_level,
+                'NO' as is_udt_dependent,
+                NULL as result_cast_from_data_type,
+                NULL as result_cast_as_locator,
+                NULL as result_cast_char_max_length,
+                NULL as result_cast_char_octet_length,
+                NULL as result_cast_char_set_catalog,
+                NULL as result_cast_char_set_schema,
+                NULL as result_cast_char_set_name,
+                NULL as result_cast_collation_catalog,
+                NULL as result_cast_collation_schema,
+                NULL as result_cast_collation_name,
+                NULL as result_cast_numeric_precision,
+                NULL as result_cast_numeric_precision_radix,
+                NULL as result_cast_numeric_scale,
+                NULL as result_cast_datetime_precision,
+                NULL as result_cast_interval_type,
+                NULL as result_cast_interval_precision,
+                NULL as result_cast_type_udt_catalog,
+                NULL as result_cast_type_udt_schema,
+                NULL as result_cast_type_udt_name,
+                NULL as result_cast_scope_catalog,
+                NULL as result_cast_scope_schema,
+                NULL as result_cast_scope_name,
+                NULL as result_cast_maximum_cardinality,
+                NULL as result_cast_dtd_identifier
+            FROM (
+                -- String functions
+                SELECT 'length' as func_name, 'f' as func_kind, 't' as func_strict, 23 as func_rettype
+                UNION ALL SELECT 'lower', 'f', 't', 25
+                UNION ALL SELECT 'upper', 'f', 't', 25
+                UNION ALL SELECT 'substr', 'f', 't', 25
+                UNION ALL SELECT 'substring', 'f', 't', 25
+                UNION ALL SELECT 'replace', 'f', 't', 25
+                UNION ALL SELECT 'trim', 'f', 't', 25
+                UNION ALL SELECT 'ltrim', 'f', 't', 25
+                UNION ALL SELECT 'rtrim', 'f', 't', 25
+                UNION ALL SELECT 'concat', 'f', 'f', 25
+                UNION ALL SELECT 'concat_ws', 'f', 'f', 25
+                UNION ALL SELECT 'left', 'f', 't', 25
+                UNION ALL SELECT 'right', 'f', 't', 25
+                UNION ALL SELECT 'repeat', 'f', 't', 25
+                UNION ALL SELECT 'reverse', 'f', 't', 25
+                UNION ALL SELECT 'split_part', 'f', 't', 25
+                UNION ALL SELECT 'string_agg', 'a', 'f', 25
+                UNION ALL SELECT 'translate', 'f', 't', 25
+                UNION ALL SELECT 'ascii', 'f', 't', 23
+                UNION ALL SELECT 'chr', 'f', 't', 25
+                UNION ALL SELECT 'initcap', 'f', 't', 25
+                UNION ALL SELECT 'lpad', 'f', 't', 25
+                UNION ALL SELECT 'rpad', 'f', 't', 25
+                UNION ALL SELECT 'position', 'f', 't', 23
+                UNION ALL SELECT 'strpos', 'f', 't', 23
+
+                -- Math functions
+                UNION ALL SELECT 'abs', 'f', 't', 23
+                UNION ALL SELECT 'round', 'f', 't', 1700
+                UNION ALL SELECT 'ceil', 'f', 't', 1700
+                UNION ALL SELECT 'ceiling', 'f', 't', 1700
+                UNION ALL SELECT 'floor', 'f', 't', 1700
+                UNION ALL SELECT 'trunc', 'f', 't', 1700
+                UNION ALL SELECT 'sqrt', 'f', 't', 701
+                UNION ALL SELECT 'power', 'f', 't', 701
+                UNION ALL SELECT 'exp', 'f', 't', 701
+                UNION ALL SELECT 'ln', 'f', 't', 701
+                UNION ALL SELECT 'log', 'f', 't', 701
+                UNION ALL SELECT 'mod', 'f', 't', 23
+                UNION ALL SELECT 'sign', 'f', 't', 23
+                UNION ALL SELECT 'random', 'f', 'f', 701
+                UNION ALL SELECT 'pi', 'f', 'f', 701
+                UNION ALL SELECT 'degrees', 'f', 't', 701
+                UNION ALL SELECT 'radians', 'f', 't', 701
+                UNION ALL SELECT 'sin', 'f', 't', 701
+                UNION ALL SELECT 'cos', 'f', 't', 701
+                UNION ALL SELECT 'tan', 'f', 't', 701
+                UNION ALL SELECT 'asin', 'f', 't', 701
+                UNION ALL SELECT 'acos', 'f', 't', 701
+                UNION ALL SELECT 'atan', 'f', 't', 701
+                UNION ALL SELECT 'atan2', 'f', 't', 701
+
+                -- Aggregate functions
+                UNION ALL SELECT 'count', 'a', 'f', 20
+                UNION ALL SELECT 'sum', 'a', 'f', 1700
+                UNION ALL SELECT 'avg', 'a', 'f', 1700
+                UNION ALL SELECT 'max', 'a', 'f', 2283
+                UNION ALL SELECT 'min', 'a', 'f', 2283
+                UNION ALL SELECT 'array_agg', 'a', 'f', 2277
+                UNION ALL SELECT 'bool_and', 'a', 'f', 16
+                UNION ALL SELECT 'bool_or', 'a', 'f', 16
+                UNION ALL SELECT 'every', 'a', 'f', 16
+                UNION ALL SELECT 'bit_and', 'a', 'f', 23
+                UNION ALL SELECT 'bit_or', 'a', 'f', 23
+
+                -- Date/time functions
+                UNION ALL SELECT 'now', 'f', 'f', 1184
+                UNION ALL SELECT 'current_timestamp', 'f', 'f', 1184
+                UNION ALL SELECT 'current_date', 'f', 'f', 1082
+                UNION ALL SELECT 'current_time', 'f', 'f', 1083
+                UNION ALL SELECT 'localtime', 'f', 'f', 1083
+                UNION ALL SELECT 'localtimestamp', 'f', 'f', 1114
+                UNION ALL SELECT 'date', 'f', 't', 1082
+                UNION ALL SELECT 'time', 'f', 't', 1083
+                UNION ALL SELECT 'timestamp', 'f', 't', 1114
+                UNION ALL SELECT 'extract', 'f', 't', 701
+                UNION ALL SELECT 'date_part', 'f', 't', 701
+                UNION ALL SELECT 'date_trunc', 'f', 't', 1184
+                UNION ALL SELECT 'age', 'f', 't', 1186
+                UNION ALL SELECT 'to_char', 'f', 't', 25
+                UNION ALL SELECT 'to_date', 'f', 't', 1082
+                UNION ALL SELECT 'to_timestamp', 'f', 't', 1184
+                UNION ALL SELECT 'make_date', 'f', 't', 1082
+                UNION ALL SELECT 'make_time', 'f', 't', 1083
+                UNION ALL SELECT 'make_timestamp', 'f', 't', 1114
+                UNION ALL SELECT 'make_timestamptz', 'f', 't', 1184
+
+                -- JSON functions
+                UNION ALL SELECT 'json_agg', 'a', 'f', 114
+                UNION ALL SELECT 'jsonb_agg', 'a', 'f', 3802
+                UNION ALL SELECT 'json_object_agg', 'a', 'f', 114
+                UNION ALL SELECT 'jsonb_object_agg', 'a', 'f', 3802
+                UNION ALL SELECT 'to_json', 'f', 't', 114
+                UNION ALL SELECT 'to_jsonb', 'f', 't', 3802
+                UNION ALL SELECT 'row_to_json', 'f', 't', 114
+                UNION ALL SELECT 'json_build_array', 'f', 'f', 114
+                UNION ALL SELECT 'jsonb_build_array', 'f', 'f', 3802
+                UNION ALL SELECT 'json_build_object', 'f', 'f', 114
+                UNION ALL SELECT 'jsonb_build_object', 'f', 'f', 3802
+                UNION ALL SELECT 'json_extract_path', 'f', 't', 114
+                UNION ALL SELECT 'jsonb_extract_path', 'f', 't', 3802
+                UNION ALL SELECT 'json_extract_path_text', 'f', 't', 25
+                UNION ALL SELECT 'jsonb_extract_path_text', 'f', 't', 25
+                UNION ALL SELECT 'json_array_length', 'f', 't', 23
+                UNION ALL SELECT 'jsonb_array_length', 'f', 't', 23
+                UNION ALL SELECT 'json_typeof', 'f', 't', 25
+                UNION ALL SELECT 'jsonb_typeof', 'f', 't', 25
+                UNION ALL SELECT 'jsonb_set', 'f', 't', 3802
+                UNION ALL SELECT 'jsonb_insert', 'f', 't', 3802
+                UNION ALL SELECT 'jsonb_delete', 'f', 't', 3802
+                UNION ALL SELECT 'jsonb_pretty', 'f', 't', 25
+                UNION ALL SELECT 'json_each', 'f', 't', 2249
+                UNION ALL SELECT 'jsonb_each', 'f', 't', 2249
+                UNION ALL SELECT 'json_each_text', 'f', 't', 2249
+                UNION ALL SELECT 'jsonb_each_text', 'f', 't', 2249
+                UNION ALL SELECT 'json_array_elements', 'f', 't', 114
+                UNION ALL SELECT 'jsonb_array_elements', 'f', 't', 3802
+                UNION ALL SELECT 'json_array_elements_text', 'f', 't', 25
+                UNION ALL SELECT 'jsonb_array_elements_text', 'f', 't', 25
+                UNION ALL SELECT 'json_object_keys', 'f', 't', 25
+                UNION ALL SELECT 'jsonb_object_keys', 'f', 't', 25
+                UNION ALL SELECT 'json_populate_record', 'f', 't', 2249
+                UNION ALL SELECT 'jsonb_populate_record', 'f', 't', 2249
+                UNION ALL SELECT 'json_to_record', 'f', 't', 2249
+                UNION ALL SELECT 'jsonb_to_record', 'f', 't', 2249
+                UNION ALL SELECT 'json_strip_nulls', 'f', 't', 114
+                UNION ALL SELECT 'jsonb_strip_nulls', 'f', 't', 3802
+
+                -- Array functions
+                UNION ALL SELECT 'unnest', 'f', 'f', 2283
+                UNION ALL SELECT 'array_length', 'f', 't', 23
+                UNION ALL SELECT 'array_dims', 'f', 't', 25
+                UNION ALL SELECT 'array_lower', 'f', 't', 23
+                UNION ALL SELECT 'array_upper', 'f', 't', 23
+                UNION ALL SELECT 'array_ndims', 'f', 't', 23
+                UNION ALL SELECT 'array_position', 'f', 't', 23
+                UNION ALL SELECT 'array_positions', 'f', 't', 1007
+                UNION ALL SELECT 'array_remove', 'f', 't', 2277
+                UNION ALL SELECT 'array_replace', 'f', 't', 2277
+                UNION ALL SELECT 'array_cat', 'f', 't', 2277
+                UNION ALL SELECT 'array_append', 'f', 't', 2277
+                UNION ALL SELECT 'array_prepend', 'f', 't', 2277
+                UNION ALL SELECT 'array_to_string', 'f', 't', 25
+                UNION ALL SELECT 'string_to_array', 'f', 't', 1009
+                UNION ALL SELECT 'cardinality', 'f', 't', 23
+
+                -- UUID functions
+                UNION ALL SELECT 'gen_random_uuid', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_generate_v4', 'f', 'f', 2950
+
+                -- Full-text search
+                UNION ALL SELECT 'to_tsvector', 'f', 't', 3614
+                UNION ALL SELECT 'to_tsquery', 'f', 't', 3615
+                UNION ALL SELECT 'plainto_tsquery', 'f', 't', 3615
+                UNION ALL SELECT 'phraseto_tsquery', 'f', 't', 3615
+                UNION ALL SELECT 'websearch_to_tsquery', 'f', 't', 3615
+                UNION ALL SELECT 'ts_headline', 'f', 't', 25
+                UNION ALL SELECT 'ts_rank', 'f', 't', 700
+                UNION ALL SELECT 'ts_rank_cd', 'f', 't', 700
+
+                -- System/session functions
+                UNION ALL SELECT 'version', 'f', 'f', 25
+                UNION ALL SELECT 'current_database', 'f', 'f', 19
+                UNION ALL SELECT 'current_user', 'f', 'f', 19
+                UNION ALL SELECT 'session_user', 'f', 'f', 19
+                UNION ALL SELECT 'current_schema', 'f', 'f', 19
+                UNION ALL SELECT 'current_schemas', 'f', 'f', 1003
+                UNION ALL SELECT 'current_setting', 'f', 'f', 25
+                UNION ALL SELECT 'set_config', 'f', 't', 25
+                UNION ALL SELECT 'pg_backend_pid', 'f', 'f', 23
+                UNION ALL SELECT 'pg_is_in_recovery', 'f', 'f', 16
+                UNION ALL SELECT 'pg_postmaster_start_time', 'f', 'f', 1184
+                UNION ALL SELECT 'pg_conf_load_time', 'f', 'f', 1184
+                UNION ALL SELECT 'inet_server_addr', 'f', 'f', 869
+                UNION ALL SELECT 'inet_server_port', 'f', 'f', 23
+                UNION ALL SELECT 'inet_client_addr', 'f', 'f', 869
+                UNION ALL SELECT 'inet_client_port', 'f', 'f', 23
+
+                -- PostgreSQL catalog functions
+                UNION ALL SELECT 'pg_has_role', 'f', 'f', 16
+                UNION ALL SELECT 'has_table_privilege', 'f', 'f', 16
+                UNION ALL SELECT 'has_schema_privilege', 'f', 'f', 16
+                UNION ALL SELECT 'has_database_privilege', 'f', 'f', 16
+                UNION ALL SELECT 'pg_table_is_visible', 'f', 't', 16
+                UNION ALL SELECT 'pg_type_is_visible', 'f', 't', 16
+                UNION ALL SELECT 'pg_function_is_visible', 'f', 't', 16
+                UNION ALL SELECT 'pg_get_constraintdef', 'f', 't', 25
+                UNION ALL SELECT 'pg_get_indexdef', 'f', 't', 25
+                UNION ALL SELECT 'pg_get_viewdef', 'f', 't', 25
+                UNION ALL SELECT 'pg_get_triggerdef', 'f', 't', 25
+                UNION ALL SELECT 'pg_get_expr', 'f', 't', 25
+                UNION ALL SELECT 'pg_get_userbyid', 'f', 't', 19
+                UNION ALL SELECT 'format_type', 'f', 't', 25
+                UNION ALL SELECT 'to_regtype', 'f', 't', 2206
+                UNION ALL SELECT 'to_regclass', 'f', 't', 2205
+                UNION ALL SELECT 'to_regproc', 'f', 't', 24
+                UNION ALL SELECT 'pg_typeof', 'f', 't', 2206
+                UNION ALL SELECT 'pg_column_size', 'f', 't', 23
+                UNION ALL SELECT 'pg_database_size', 'f', 't', 20
+                UNION ALL SELECT 'pg_table_size', 'f', 't', 20
+                UNION ALL SELECT 'pg_total_relation_size', 'f', 't', 20
+                UNION ALL SELECT 'pg_size_pretty', 'f', 't', 25
+                UNION ALL SELECT 'pg_relation_size', 'f', 't', 20
+                UNION ALL SELECT 'pg_indexes_size', 'f', 't', 20
+
+                -- Coalesce/nullif/case
+                UNION ALL SELECT 'coalesce', 'f', 'f', 2283
+                UNION ALL SELECT 'nullif', 'f', 't', 2283
+                UNION ALL SELECT 'greatest', 'f', 'f', 2283
+                UNION ALL SELECT 'least', 'f', 'f', 2283
+
+                -- Type casting
+                UNION ALL SELECT 'cast', 'f', 't', 2283
+
+                -- Boolean
+                UNION ALL SELECT 'bool', 'f', 't', 16
+            );
+            "#,
+
+            // Create information_schema_views view
+            // This view provides metadata about user-defined views
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_views AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                name as table_name,
+                sql as view_definition,
+                'NONE' as check_option,
+                'NO' as is_updatable,
+                'NO' as is_insertable_into,
+                'NO' as is_trigger_updatable,
+                'NO' as is_trigger_deletable,
+                'NO' as is_trigger_insertable_into
+            FROM sqlite_master
+            WHERE type = 'view'
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%'
+              AND name NOT LIKE 'pg_%'
+              AND name NOT LIKE 'information_schema_%';
+            "#,
+
+            // Create information_schema_check_constraints view
+            // This view provides metadata about CHECK constraints
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_check_constraints AS
+            SELECT
+                'main' as constraint_catalog,
+                'public' as constraint_schema,
+                con.conname as constraint_name,
+                COALESCE(con.consrc, '') as check_clause
+            FROM pg_constraint con
+            WHERE con.contype = 'c';
+            "#,
+
+            // Create information_schema_triggers view
+            // This view provides metadata about triggers
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_triggers AS
+            SELECT
+                'main' as trigger_catalog,
+                'main' as trigger_schema,
+                name as trigger_name,
+                CASE
+                    WHEN sql LIKE '%BEFORE%' THEN 'BEFORE'
+                    WHEN sql LIKE '%AFTER%' THEN 'AFTER'
+                    WHEN sql LIKE '%INSTEAD OF%' THEN 'INSTEAD OF'
+                    ELSE 'AFTER'
+                END as action_timing,
+                CASE
+                    WHEN sql LIKE '%INSERT%' THEN 'INSERT'
+                    WHEN sql LIKE '%UPDATE%' THEN 'UPDATE'
+                    WHEN sql LIKE '%DELETE%' THEN 'DELETE'
+                    ELSE 'INSERT'
+                END as event_manipulation,
+                'main' as event_object_catalog,
+                'public' as event_object_schema,
+                tbl_name as event_object_table,
+                NULL as event_object_column,
+                0 as action_order,
+                NULL as action_condition,
+                sql as action_statement,
+                'ROW' as action_orientation,
+                'ROW' as action_timing_original,
+                NULL as action_reference_old_table,
+                NULL as action_reference_new_table,
+                NULL as action_reference_old_row,
+                NULL as action_reference_new_row,
+                NULL as created
+            FROM sqlite_master
+            WHERE type = 'trigger'
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Update schema version
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '29', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_routines;"#,
+            r#"DROP VIEW IF EXISTS information_schema_views;"#,
+            r#"DROP VIEW IF EXISTS information_schema_check_constraints;"#,
+            r#"DROP VIEW IF EXISTS information_schema_triggers;"#,
+            r#"DROP VIEW IF EXISTS information_schema_schemata;"#,
+            r#"DROP VIEW IF EXISTS information_schema_tables;"#,
+            r#"DROP VIEW IF EXISTS information_schema_columns;"#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_tables AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                relname as table_name,
+                CASE relkind
+                    WHEN 'r' THEN 'BASE TABLE'
+                    WHEN 'v' THEN 'VIEW'
+                    ELSE 'UNKNOWN'
+                END as table_type,
+                'YES' as is_insertable_into,
+                NULL as self_referencing_column_name,
+                NULL as reference_generation,
+                NULL as user_defined_type_catalog,
+                NULL as user_defined_type_schema,
+                NULL as user_defined_type_name,
+                'NO' as is_typed,
+                'NO' as commit_action
+            FROM pg_class
+            WHERE relkind IN ('r', 'v');
+            "#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_columns AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                a.attname as column_name,
+                a.attnum as ordinal_position,
+                NULL as column_default,
+                CASE WHEN a.attnotnull = 't' THEN 'NO' ELSE 'YES' END as is_nullable,
+                CASE a.atttypid
+                    WHEN 23 THEN 'integer'
+                    WHEN 25 THEN 'text'
+                    WHEN 700 THEN 'real'
+                    WHEN 701 THEN 'double precision'
+                    WHEN 17 THEN 'bytea'
+                    WHEN 1043 THEN 'character varying'
+                    WHEN 1042 THEN 'character'
+                    WHEN 16 THEN 'boolean'
+                    WHEN 1082 THEN 'date'
+                    WHEN 1083 THEN 'time without time zone'
+                    WHEN 1114 THEN 'timestamp without time zone'
+                    WHEN 1184 THEN 'timestamp with time zone'
+                    WHEN 1700 THEN 'numeric'
+                    ELSE 'text'
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as domain_catalog,
+                NULL as domain_schema,
+                NULL as domain_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'NO' as is_self_referencing,
+                'NO' as is_identity,
+                NULL as identity_generation,
+                NULL as identity_start,
+                NULL as identity_increment,
+                NULL as identity_maximum,
+                NULL as identity_minimum,
+                NULL as identity_cycle,
+                'NO' as is_generated,
+                NULL as generation_expression,
+                'NO' as is_updatable
+            FROM pg_class c
+            JOIN pg_attribute a ON c.oid = a.attrelid
+            WHERE c.relkind = 'r'
+              AND a.attnum > 0;
+            "#,
+
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_schemata AS
+            SELECT 'main' as catalog_name, 'public' as schema_name, 'postgres' as schema_owner,
+                   NULL as default_character_set_catalog, NULL as default_character_set_schema,
+                   NULL as default_character_set_name, NULL as sql_path;
+            "#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '28', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![28],
     });
 }
