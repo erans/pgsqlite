@@ -1,0 +1,149 @@
+services:
+  server:
+    image: twentycrm/twenty:${TAG:-latest}
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_PORT: 3000
+      PG_DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@${PG_DATABASE_HOST:-db}:${PG_DATABASE_PORT:-5432}/default
+      SERVER_URL: ${SERVER_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DISABLE_DB_MIGRATIONS: ${DISABLE_DB_MIGRATIONS}
+      DISABLE_CRON_JOBS_REGISTRATION: ${DISABLE_CRON_JOBS_REGISTRATION}
+
+      STORAGE_TYPE: ${STORAGE_TYPE:-s3}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-us-east-1}
+      STORAGE_S3_NAME: ${STORAGE_S3_NAME:-twenty-local}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-http://rustfs:9000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${RUSTFS_ACCESS_KEY:-rustfsadmin}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${RUSTFS_SECRET_KEY:-rustfsadmin}}
+      AWS_REGION: ${AWS_REGION:-${STORAGE_S3_REGION:-us-east-1}}
+      AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-true}
+
+      APP_SECRET: ${APP_SECRET:-replace_me_with_a_random_string}
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: curl --fail http://localhost:3000/healthz
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: always
+
+  worker:
+    image: twentycrm/twenty:${TAG:-latest}
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    command: ["yarn", "worker:prod"]
+    environment:
+      PG_DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:-postgres}@${PG_DATABASE_HOST:-db}:${PG_DATABASE_PORT:-5432}/default
+      SERVER_URL: ${SERVER_URL}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+
+      STORAGE_TYPE: ${STORAGE_TYPE:-s3}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-us-east-1}
+      STORAGE_S3_NAME: ${STORAGE_S3_NAME:-twenty-local}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-http://rustfs:9000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${RUSTFS_ACCESS_KEY:-rustfsadmin}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${RUSTFS_SECRET_KEY:-rustfsadmin}}
+      AWS_REGION: ${AWS_REGION:-${STORAGE_S3_REGION:-us-east-1}}
+      AWS_S3_FORCE_PATH_STYLE: ${AWS_S3_FORCE_PATH_STYLE:-true}
+
+      APP_SECRET: ${APP_SECRET:-replace_me_with_a_random_string}
+
+    depends_on:
+      db:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+      rustfs-init:
+        condition: service_completed_successfully
+    restart: always
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    volumes:
+      - rustfs-data:/data
+      - rustfs-logs:/logs
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-rustfsadmin}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-rustfsadmin}
+      RUSTFS_ADDRESS: ":9000"
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_REGION: ${STORAGE_S3_REGION:-us-east-1}
+    command: ["/data"]
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "nc -z 127.0.0.1 9000"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: always
+
+  rustfs-init:
+    image: public.ecr.aws/aws-cli/aws-cli:2.15.57
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-${RUSTFS_ACCESS_KEY:-rustfsadmin}}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-${RUSTFS_SECRET_KEY:-rustfsadmin}}
+      AWS_DEFAULT_REGION: ${STORAGE_S3_REGION:-us-east-1}
+      AWS_EC2_METADATA_DISABLED: "true"
+    depends_on:
+      rustfs:
+        condition: service_healthy
+    entrypoint: ["sh", "-lc"]
+    command:
+      - |
+        ENDPOINT="${STORAGE_S3_ENDPOINT:-http://rustfs:9000}"
+        BUCKET="${STORAGE_S3_NAME:-twenty-local}"
+        aws s3api --endpoint-url "$$ENDPOINT" head-bucket --bucket "$$BUCKET" >/dev/null 2>&1 \
+          || aws s3api --endpoint-url "$$ENDPOINT" create-bucket --bucket "$$BUCKET"
+        aws s3api --endpoint-url "$$ENDPOINT" list-buckets
+    restart: "no"
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${PG_DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_DATABASE_PASSWORD:-postgres}
+      POSTGRES_DB: ${PG_DATABASE_NAME:-default}
+    healthcheck:
+      test: pg_isready -U ${PG_DATABASE_USER:-postgres} -h localhost -d ${PG_DATABASE_NAME:-default}
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  redis:
+    image: redis
+    restart: always
+    command: ["--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db-data:
+  rustfs-data:
+  rustfs-logs:
+  server-local-data:
