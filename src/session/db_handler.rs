@@ -865,6 +865,14 @@ impl DbHandler {
             // which will strip the schema prefix and allow them to query the views
         }
         
+        // Rewrite information_schema queries to use real SQLite views
+        let rewritten_query = if lower_query.contains("information_schema") {
+            self.rewrite_information_schema_query(query)
+        } else {
+            query.to_string()
+        };
+        let query = rewritten_query.as_str();
+        
         // Use cached connection if available, otherwise fall back to lookup
         match cached_conn {
             Some(conn) => {
