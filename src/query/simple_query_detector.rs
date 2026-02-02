@@ -7,6 +7,8 @@ pub fn contains_non_deterministic_functions(query: &str) -> bool {
     let query_lower = query.to_lowercase();
     query_lower.contains("gen_random_uuid") ||
     query_lower.contains("uuid_generate_v4") ||
+    query_lower.contains("uuid_generate_v1") ||
+    query_lower.contains("uuid_generate_v1mc") ||
     query_lower.contains("random()") ||
     query_lower.contains("now()") ||
     query_lower.contains("current_timestamp") ||
