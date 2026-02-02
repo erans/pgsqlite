@@ -3,9 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
-IMAGE_NAME="pgsqlite-e2e-local-postgres-compat"
-CONTAINER_NAME="pgsqlite-e2e-postgres-compat"
-VOLUME_NAME="pgsqlite-e2e-data-postgres-compat"
+IMAGE_NAME="pgsqlite-e2e-local-uuid-ossp"
+CONTAINER_NAME="pgsqlite-e2e-uuid-ossp"
+VOLUME_NAME="pgsqlite-e2e-data-uuid-ossp"
 HOST_PORT="55432"
 
 cleanup() {
@@ -39,71 +39,82 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 
-echo "[e2e] Smoke: information_schema.schemata count"
+echo "[e2e] CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\""
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
   -v ON_ERROR_STOP=1 \
-  -c "select count(*) from information_schema.schemata;" \
+  -c "create extension if not exists \"uuid-ossp\";" \
   >/dev/null
 
-echo "[e2e] Schema: create schema foo and verify reflected"
+echo "[e2e] CREATE EXTENSION idempotency"
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
   -v ON_ERROR_STOP=1 \
-  -c "create schema foo;" \
+  -c "create extension if not exists \"uuid-ossp\";" \
   >/dev/null
 
+echo "[e2e] uuid_generate_v4()"
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
   -v ON_ERROR_STOP=1 \
-  -c "select schema_name from information_schema.schemata where schema_name = 'foo';" \
-  | grep -q "foo"
+  -c "select uuid_generate_v4();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
 
-echo "[e2e] Session: SET search_path=foo; current_schema() should return foo"
+echo "[e2e] uuid_generate_v1()/uuid_generate_v1mc()"
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
   -v ON_ERROR_STOP=1 \
-  -c "set search_path=foo; select current_schema();" \
-  | grep -q "foo"
-
-echo "[e2e] Session: SHOW search_path should return foo"
-docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
-  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
-  -v ON_ERROR_STOP=1 \
-  -c "set search_path=foo; show search_path;" \
-  | grep -q "foo"
-
-echo "[e2e] Session: current_setting('search_path') should return foo"
-docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
-  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
-  -v ON_ERROR_STOP=1 \
-  -c "set search_path=foo; select current_setting('search_path');" \
-  | grep -q "foo"
-
-echo "[e2e] Compatibility: SELECT * FROM current_schema() should return foo"
-docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
-  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
-  -v ON_ERROR_STOP=1 \
-  -c "set search_path=foo; select * from current_schema();" \
-  | grep -q "foo"
-
-echo "[e2e] Session: set_config('search_path','bar',false) should affect current_schema()"
-docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
-  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
-  -v ON_ERROR_STOP=1 \
-  -c "create schema bar;" \
-  >/dev/null
+  -c "select uuid_generate_v1();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
   -v ON_ERROR_STOP=1 \
-  -c "select set_config('search_path','bar',false); select current_schema();" \
-  | grep -q "bar"
+  -c "select uuid_generate_v1mc();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-1[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+echo "[e2e] uuid_ns_*() constants"
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "select uuid_nil();" \
+  | grep -q "00000000-0000-0000-0000-000000000000"
 
 docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
   -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
   -v ON_ERROR_STOP=1 \
-  -c "select set_config('search_path','bar',false); show search_path;" \
-  | grep -q "bar"
+  -c "select uuid_ns_dns();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "select uuid_ns_url();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "select uuid_ns_oid();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "select uuid_ns_x500();" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+echo "[e2e] uuid_generate_v3/v5 deterministic versions"
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "select uuid_generate_v3(uuid_ns_url(), 'http://www.postgresql.org');" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-3[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
+
+docker run --rm -e PGPASSWORD=postgres postgres:16 psql \
+  -h host.docker.internal -p "${HOST_PORT}" -U postgres -d default \
+  -v ON_ERROR_STOP=1 \
+  -c "select uuid_generate_v5(uuid_ns_url(), 'http://www.postgresql.org');" \
+  | grep -Eq "[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 echo "[e2e] OK"
