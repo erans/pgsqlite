@@ -254,14 +254,7 @@ impl PgConstraintHandler {
     }
 
     fn generate_table_oid(table_name: &str) -> u32 {
-        // Generate deterministic OID from table name (same as pg_class handler)
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        table_name.hash(&mut hasher);
-        let hash = hasher.finish();
-        16384 + ((hash % 65536) as u32) // Keep OIDs in reasonable range
+        crate::utils::generate_oid(table_name)
     }
 
     fn constraint_to_row(constraint: &ConstraintInfo) -> Vec<Option<Vec<u8>>> {

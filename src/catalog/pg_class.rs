@@ -77,7 +77,7 @@ impl PgClassHandler {
                 let relnatts = col_info.rows.len() as i16;
                 
                 // Generate a stable OID from table name
-                let oid = generate_oid_from_name(&table_name);
+                let oid = crate::utils::generate_oid(&table_name);
                 
                 // Check if table has indexes
                 let index_query = format!("PRAGMA index_list({table_name})");
@@ -186,8 +186,8 @@ impl PgClassHandler {
                 let index_name = String::from_utf8_lossy(index_name_bytes);
                 let table_name = String::from_utf8_lossy(table_name_bytes);
                 
-                let index_oid = generate_oid_from_name(&index_name);
-                let _table_oid = generate_oid_from_name(&table_name);
+            let index_oid = crate::utils::generate_oid(&index_name);
+            let _table_oid = crate::utils::generate_oid(&table_name);
                 
                 // Build row data for WHERE evaluation
                 let mut row_data = HashMap::new();
@@ -360,14 +360,4 @@ impl PgClassHandler {
             _ => None,
         }
     }
-}
-
-fn generate_oid_from_name(name: &str) -> u32 {
-    // Generate a stable OID from name using a simple hash
-    // Start at 16384 to avoid conflicts with system OIDs
-    let mut hash = 0u32;
-    for byte in name.bytes() {
-        hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-    }
-    16384 + (hash % 1_000_000)
 }

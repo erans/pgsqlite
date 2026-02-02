@@ -231,11 +231,7 @@ impl PgTriggerHandler {
     }
 
     fn generate_table_oid(table_name: &str) -> u32 {
-        let mut hash = 0u32;
-        for byte in table_name.bytes() {
-            hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-        }
-        16384 + (hash % 65536)
+        crate::utils::generate_oid(table_name)
     }
 
     fn apply_where_filter(

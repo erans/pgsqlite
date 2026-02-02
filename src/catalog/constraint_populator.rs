@@ -81,20 +81,7 @@ fn get_create_table_sql(conn: &Connection, table_name: &str) -> Result<String> {
 
 /// Generate table OID using the same algorithm as the pg_class view
 fn generate_table_oid(name: &str) -> String {
-    // Must match the formula in pg_class view for JOIN compatibility:
-    // (unicode(substr(name, 1, 1)) * 1000000) +
-    // (unicode(substr(name || ' ', 2, 1)) * 10000) +
-    // (unicode(substr(name || '  ', 3, 1)) * 100) +
-    // (length(name) * 7)
-    let name_with_padding = format!("{}  ", name);
-    let chars: Vec<char> = name_with_padding.chars().collect();
-    let char1 = chars.first().copied().unwrap_or(' ') as u32;
-    let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
-    let char3 = chars.get(2).copied().unwrap_or(' ') as u32;
-    let length = name.len() as u32;
-
-    let oid = ((char1 * 1_000_000) + (char2 * 10000) + (char3 * 100) + (length * 7)) % 1_000_000 + 16384;
-    oid.to_string()
+    crate::utils::generate_oid_string(name)
 }
 
 /// Generate constraint OID with better collision avoidance

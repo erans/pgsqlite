@@ -155,7 +155,7 @@ async fn add_table_attributes(
     selected_indices: &[usize],
     already_filtered_by_table: bool,
 ) -> Result<(), PgSqliteError> {
-    let table_oid = generate_oid_from_name(table_name);
+    let table_oid = crate::utils::generate_oid(table_name);
 
     debug!("Getting column info for table: {}", table_name);
 
@@ -616,14 +616,4 @@ fn map_sqlite_to_pg_type(sqlite_type: &str) -> (i32, i16, i32) {
     };
     
     (oid, attlen, -1) // atttypmod = -1 for no modifier
-}
-
-fn generate_oid_from_name(name: &str) -> u32 {
-    // Generate a stable OID from name using a simple hash
-    // Start at 16384 to avoid conflicts with system OIDs
-    let mut hash = 0u32;
-    for byte in name.bytes() {
-        hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-    }
-    16384 + (hash % 1_000_000)
 }
