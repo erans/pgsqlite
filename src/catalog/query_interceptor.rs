@@ -678,17 +678,23 @@ impl CatalogInterceptor {
             }
 
             // Handle information_schema.schemata queries
-            if table_name.contains("information_schema.schemata") {
+            if table_name.contains("information_schema.schemata") 
+                || table_name.contains(r#""information_schema"."schemata""#)
+                || table_name.contains("information_schema_schemata") {
                 return Some(Ok(Self::handle_information_schema_schemata_query(select, &db).await));
             }
 
             // Handle information_schema.tables queries
-            if table_name.contains("information_schema.tables") {
+            if table_name.contains("information_schema.tables") 
+                || table_name.contains(r#""information_schema"."tables""#)
+                || table_name.contains("information_schema_tables") {
                 return Some(Ok(Self::handle_information_schema_tables_query(select, &db).await));
             }
 
             // Handle information_schema.columns queries
-            if table_name.contains("information_schema.columns") {
+            if table_name.contains("information_schema.columns") 
+                || table_name.contains(r#""information_schema"."columns""#)
+                || table_name.contains("information_schema_columns") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_columns_query_with_session(select, &db, &session_state.id).await);
                 }
@@ -696,7 +702,9 @@ impl CatalogInterceptor {
             }
 
             // Handle information_schema.key_column_usage queries
-            if table_name.contains("information_schema.key_column_usage") {
+            if table_name.contains("information_schema.key_column_usage") 
+                || table_name.contains(r#""information_schema"."key_column_usage""#)
+                || table_name.contains("information_schema_key_column_usage") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_key_column_usage_query(select, &db, &session_state.id).await);
                 }
@@ -704,7 +712,9 @@ impl CatalogInterceptor {
             }
 
             // Handle information_schema.table_constraints queries
-            if table_name.contains("information_schema.table_constraints") {
+            if table_name.contains("information_schema.table_constraints") 
+                || table_name.contains(r#""information_schema"."table_constraints""#)
+                || table_name.contains("information_schema_table_constraints") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_table_constraints_query(select, &db, &session_state.id).await);
                 }
@@ -712,7 +722,9 @@ impl CatalogInterceptor {
             }
 
             // Handle information_schema.referential_constraints queries
-            if table_name.contains("information_schema.referential_constraints") {
+            if table_name.contains("information_schema.referential_constraints") 
+                || table_name.contains(r#""information_schema"."referential_constraints""#)
+                || table_name.contains("information_schema_referential_constraints") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_referential_constraints_query_with_session(select, &db, &session_state.id).await);
                 }
@@ -720,17 +732,23 @@ impl CatalogInterceptor {
             }
 
             // Handle information_schema.routines queries
-            if table_name.contains("information_schema.routines") {
+            if table_name.contains("information_schema.routines") 
+                || table_name.contains(r#""information_schema"."routines""#)
+                || table_name.contains("information_schema_routines") {
                 return Some(Self::handle_information_schema_routines_query(select, &db).await);
             }
 
             // Handle information_schema.views queries
-            if table_name.contains("information_schema.views") {
+            if table_name.contains("information_schema.views") 
+                || table_name.contains(r#""information_schema"."views""#)
+                || table_name.contains("information_schema_views") {
                 return Some(Self::handle_information_schema_views_query(select, &db).await);
             }
 
             // Handle information_schema.check_constraints queries
-            if table_name.contains("information_schema.check_constraints") {
+            if table_name.contains("information_schema.check_constraints") 
+                || table_name.contains(r#""information_schema"."check_constraints""#)
+                || table_name.contains("information_schema_check_constraints") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_check_constraints_query_with_session(select, &db, &session_state.id).await);
                 }
@@ -738,7 +756,9 @@ impl CatalogInterceptor {
             }
 
             // Handle information_schema.triggers queries
-            if table_name.contains("information_schema.triggers") {
+            if table_name.contains("information_schema.triggers") 
+                || table_name.contains(r#""information_schema"."triggers""#)
+                || table_name.contains("information_schema_triggers") {
                 if let Some(ref session_state) = session {
                     return Some(Self::handle_information_schema_triggers_query_with_session(select, &db, &session_state.id).await);
                 }
@@ -1166,7 +1186,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Define standard collations
         let collations = vec![
@@ -1255,7 +1275,7 @@ impl CatalogInterceptor {
             "conflicting".to_string(),
         ];
 
-        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, _, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Always return empty - SQLite has no replication
         DbResponse {
@@ -1276,7 +1296,7 @@ impl CatalogInterceptor {
             "deptype".to_string(),
         ];
 
-        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, _, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Always return empty - SQLite has no shared dependencies
         DbResponse {
@@ -1321,7 +1341,7 @@ impl CatalogInterceptor {
             "stavalues5".to_string(),
         ];
 
-        let (selected_columns, _) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, _, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Always return empty - internal stats table, use pg_stats view instead
         DbResponse {
@@ -1731,16 +1751,19 @@ impl CatalogInterceptor {
     }
 
     /// Extract selected columns from a SELECT query for information_schema views
-    fn extract_selected_columns(select: &Select, all_columns: &[String]) -> (Vec<String>, Vec<usize>) {
+    /// Returns (column_names, column_indices, is_aggregate)
+    fn extract_selected_columns(select: &Select, all_columns: &[String]) -> (Vec<String>, Vec<usize>, bool) {
         if select.projection.len() == 1
             && let SelectItem::Wildcard(_) = &select.projection[0] {
                 // SELECT * - return all columns
-                return (all_columns.to_vec(), (0..all_columns.len()).collect::<Vec<_>>());
+                return (all_columns.to_vec(), (0..all_columns.len()).collect::<Vec<_>>(), false);
             }
 
         // Extract specific columns
         let mut cols = Vec::new();
         let mut indices = Vec::new();
+        let mut is_aggregate = false;
+
         for item in &select.projection {
             match item {
                 SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
@@ -1760,10 +1783,20 @@ impl CatalogInterceptor {
                         }
                     }
                 }
+                SelectItem::UnnamedExpr(Expr::Function(func)) => {
+                    // Handle aggregate functions like COUNT(*), COUNT(1), SUM(col), etc.
+                    let func_name = func.name.to_string().to_lowercase();
+                    if func_name == "count" || func_name == "sum" || func_name == "avg" || func_name == "max" || func_name == "min" {
+                        is_aggregate = true;
+                        // Add a placeholder column name for the aggregate result
+                        cols.push(func_name);
+                        indices.push(0); // Will be replaced with actual value
+                    }
+                }
                 _ => {}
             }
         }
-        (cols, indices)
+        (cols, indices, is_aggregate)
     }
 
     pub async fn handle_information_schema_schemata_query(select: &Select, _db: &DbHandler) -> DbResponse {
@@ -1780,8 +1813,8 @@ impl CatalogInterceptor {
             "sql_path".to_string(),
         ];
 
-        // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        // Extract selected columns and check for aggregates
+        let (selected_columns, column_indices, is_aggregate) = Self::extract_selected_columns(select, &all_columns);
 
         // Define available schemas
         let schemas = vec![
@@ -1789,6 +1822,17 @@ impl CatalogInterceptor {
             ("main", "pg_catalog", "postgres"),  // System catalog schema
             ("main", "information_schema", "postgres"), // Information schema
         ];
+
+        // Handle aggregate queries like COUNT(*)
+        if is_aggregate {
+            let count = schemas.len();
+            let count_bytes = count.to_string().into_bytes();
+            return DbResponse {
+                columns: vec!["count".to_string()],
+                rows: vec![vec![Some(count_bytes)]],
+                rows_affected: 1,
+            };
+        }
 
         let mut rows = Vec::new();
         for (catalog, schema, owner) in schemas {
@@ -1847,7 +1891,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Check for WHERE clause filtering
         let table_filters = if let Some(ref where_clause) = select.selection {
@@ -1965,7 +2009,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Check for WHERE clause filtering
         let table_filter = if let Some(ref where_clause) = select.selection {
@@ -2239,7 +2283,7 @@ impl CatalogInterceptor {
         ];
 
         // Determine which columns are being selected
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Extract table filter from WHERE clause if present
         let table_filter = if let Some(ref where_clause) = select.selection {
@@ -2386,7 +2430,7 @@ impl CatalogInterceptor {
         ];
 
         // Determine which columns are being selected
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Extract table filter from WHERE clause if present
         let table_filter = if let Some(ref where_clause) = select.selection {
@@ -2545,7 +2589,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Single database entry representing the current SQLite database
         let full_row: Vec<Option<Vec<u8>>> = vec![
@@ -2769,7 +2813,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Get system functions from pg_proc style data
         let functions = Self::get_system_functions_for_routines();
@@ -3029,7 +3073,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Get views from SQLite
         let views = Self::get_sqlite_views(db).await?;
@@ -3131,7 +3175,7 @@ impl CatalogInterceptor {
             "delete_rule".to_string(),
         ];
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
         // Get referential constraints from pg_constraint
         let constraints = Self::get_referential_constraints(db).await?;
         // Apply WHERE clause filtering if present
@@ -3292,7 +3336,7 @@ impl CatalogInterceptor {
             "delete_rule".to_string(),
         ];
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
         // Get referential constraints using session connection
         let constraints = Self::get_referential_constraints_with_session(db, session_id).await?;
         // Apply WHERE clause filtering if present
@@ -3421,7 +3465,7 @@ impl CatalogInterceptor {
             "is_trigger_insertable_into".to_string(),
         ];
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
         // Get views from SQLite using session connection
         let views = Self::get_sqlite_views_with_session(db, session_id).await?;
         // Apply WHERE clause filtering if present
@@ -3589,7 +3633,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Get check constraints using session connection
         let constraints = Self::get_check_constraints_with_session(db, session_id).await?;
@@ -3723,7 +3767,7 @@ impl CatalogInterceptor {
         ];
 
         // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+        let (selected_columns, column_indices, _) = Self::extract_selected_columns(select, &all_columns);
 
         // Get triggers using session connection
         let triggers = Self::get_triggers_with_session(db, session_id).await?;
