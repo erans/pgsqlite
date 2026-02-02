@@ -21,6 +21,7 @@ bitflags! {
         const BATCH_UPDATE = 0x100;
         const SESSION_IDENTIFIER = 0x200;
         const CREATE_TABLE = 0x400;
+        const CURRENT_SCHEMA_FROM = 0x800;
     }
 }
 
@@ -116,6 +117,12 @@ impl<'a> UnifiedProcessor<'a> {
            memchr::memmem::find(query_bytes, b"session_user").is_some() ||
            memchr::memmem::find(query_bytes, b"SESSION_USER").is_some() {
             translations.insert(TranslationFlags::SESSION_IDENTIFIER);
+            complexity = ComplexityLevel::Moderate;
+        }
+
+        if memchr::memmem::find(query_bytes, b"current_schema").is_some() ||
+           memchr::memmem::find(query_bytes, b"CURRENT_SCHEMA").is_some() {
+            translations.insert(TranslationFlags::CURRENT_SCHEMA_FROM);
             complexity = ComplexityLevel::Moderate;
         }
 
@@ -272,7 +279,9 @@ fn has_any_special_pattern_fast(bytes: &[u8]) -> bool {
     memchr::memmem::find(bytes, b"current_user").is_some() ||
     memchr::memmem::find(bytes, b"CURRENT_USER").is_some() ||
     memchr::memmem::find(bytes, b"session_user").is_some() ||
-    memchr::memmem::find(bytes, b"SESSION_USER").is_some()
+    memchr::memmem::find(bytes, b"SESSION_USER").is_some() ||
+    memchr::memmem::find(bytes, b"current_schema").is_some() ||
+    memchr::memmem::find(bytes, b"CURRENT_SCHEMA").is_some()
 }
 
 /// Check INSERT-specific patterns
@@ -384,6 +393,11 @@ fn process_complex_query<'a>(
     let mut result = Cow::Borrowed(query);
     
     // Apply translations in optimal order (destructive ones first)
+
+    if processor.needs_translation(TranslationFlags::CURRENT_SCHEMA_FROM) {
+        let translated = crate::translator::CurrentSchemaFromTranslator::translate_query(&result);
+        result = Cow::Owned(translated);
+    }
     
     // 1. Schema translation (changes table references)
     if processor.needs_translation(TranslationFlags::SCHEMA) {
