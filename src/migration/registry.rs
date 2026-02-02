@@ -36,6 +36,7 @@ lazy_static! {
         register_v27_fix_pg_proc_types(&mut registry);
         register_v28_pg_stat_io_support(&mut registry);
         register_v29_information_schema_complete_views(&mut registry);
+        register_v30_schema_metadata_support(&mut registry);
 
         registry
     };
@@ -3578,5 +3579,94 @@ fn register_v29_information_schema_complete_views(registry: &mut BTreeMap<u32, M
             "#,
         ])),
         dependencies: vec![28],
+    });
+}
+
+/// Version 30: Add schema metadata table and dynamic schema views
+fn register_v30_schema_metadata_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(30, Migration {
+        version: 30,
+        name: "schema_metadata_support",
+        description: "Add __pgsqlite_schemas table and dynamic pg_namespace/information_schema.schemata views",
+        up: MigrationAction::SqlBatch(&[
+            r#"
+            CREATE TABLE IF NOT EXISTS __pgsqlite_schemas (
+                schema_name TEXT PRIMARY KEY,
+                schema_oid INTEGER NOT NULL,
+                schema_owner TEXT NOT NULL,
+                is_system INTEGER NOT NULL DEFAULT 0
+            );
+            "#,
+            r#"
+            INSERT OR IGNORE INTO __pgsqlite_schemas (schema_name, schema_oid, schema_owner, is_system)
+            VALUES
+                ('pg_catalog', 11, 'postgres', 1),
+                ('public', 2200, 'postgres', 0),
+                ('information_schema', 13445, 'postgres', 1);
+            "#,
+            r#"DROP VIEW IF EXISTS pg_namespace;"#,
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_namespace AS
+            SELECT
+                schema_oid as oid,
+                schema_name as nspname,
+                10 as nspowner,
+                NULL as nspacl
+            FROM __pgsqlite_schemas;
+            "#,
+            r#"DROP VIEW IF EXISTS information_schema_schemata;"#,
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_schemata AS
+            SELECT
+                'main' as catalog_name,
+                schema_name as schema_name,
+                schema_owner as schema_owner,
+                NULL as default_character_set_catalog,
+                NULL as default_character_set_schema,
+                NULL as default_character_set_name,
+                NULL as sql_path
+            FROM __pgsqlite_schemas;
+            "#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '30', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_schemata;"#,
+            r#"DROP VIEW IF EXISTS pg_namespace;"#,
+            r#"DROP TABLE IF EXISTS __pgsqlite_schemas;"#,
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_namespace AS
+            SELECT
+                11 as oid,
+                'pg_catalog' as nspname,
+                10 as nspowner,
+                NULL as nspacl
+            UNION ALL
+            SELECT
+                2200 as oid,
+                'public' as nspname,
+                10 as nspowner,
+                NULL as nspacl;
+            "#,
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_schemata AS
+            SELECT 'main' as catalog_name, 'public' as schema_name, 'postgres' as schema_owner,
+                   NULL as default_character_set_catalog, NULL as default_character_set_schema,
+                   NULL as default_character_set_name, NULL as sql_path
+            UNION ALL
+            SELECT 'main', 'pg_catalog', 'postgres', NULL, NULL, NULL, NULL
+            UNION ALL
+            SELECT 'main', 'information_schema', 'postgres', NULL, NULL, NULL, NULL;
+            "#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '29', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![29],
     });
 }

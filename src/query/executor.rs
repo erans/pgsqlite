@@ -54,6 +54,186 @@ pub fn invalidate_all_schema_cache() {
     debug!("Invalidated all schema cache");
 }
 
+async fn rewrite_session_functions(query: &str, session: &Arc<SessionState>) -> String {
+    let search_path = {
+        let params = session.parameters.read().await;
+        params
+            .get("SEARCH_PATH")
+            .cloned()
+            .unwrap_or_else(|| "public".to_string())
+    };
+
+    let mut schemas: Vec<String> = search_path
+        .split(',')
+        .map(|part| part.trim().trim_matches('\'').trim_matches('"').to_string())
+        .filter(|item| !item.is_empty())
+        .collect();
+
+    if schemas.is_empty() {
+        schemas.push("public".to_string());
+    }
+
+    let current_schema = schemas[0].clone();
+    let mut with_implicit = Vec::new();
+    with_implicit.push("pg_catalog".to_string());
+    for schema in &schemas {
+        if schema != "pg_catalog" {
+            with_implicit.push(schema.clone());
+        }
+    }
+
+    let current_schemas_true = format!("'{}'", json_array_literal(&with_implicit));
+    let current_schemas_false = format!("'{}'", json_array_literal(&schemas));
+
+    let mut result = query.to_string();
+
+    if CURRENT_SCHEMA_ONLY_PATTERN.is_match(&result) {
+        let has_semicolon = result.trim_end().ends_with(';');
+        let suffix = if has_semicolon { ";" } else { "" };
+        return format!("SELECT '{}' AS current_schema{suffix}", escape_sql_literal(&current_schema));
+    }
+
+    result = CURRENT_SCHEMA_FN_PATTERN
+        .replace_all(&result, format!("'{}'", escape_sql_literal(&current_schema)))
+        .to_string();
+
+    result = replace_current_schema_bare(&result, &format!("'{}'", escape_sql_literal(&current_schema)));
+
+    result = CURRENT_SCHEMAS_PATTERN
+        .replace_all(&result, |caps: &regex::Captures| {
+            let flag = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+            if flag.eq_ignore_ascii_case("true") {
+                current_schemas_true.clone()
+            } else {
+                current_schemas_false.clone()
+            }
+        })
+        .to_string();
+
+    result
+}
+
+fn json_array_literal(items: &[String]) -> String {
+    let mut result = String::from("[");
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            result.push(',');
+        }
+        result.push('"');
+        for ch in item.chars() {
+            if ch == '"' {
+                result.push_str("\\\"");
+            } else {
+                result.push(ch);
+            }
+        }
+        result.push('"');
+    }
+    result.push(']');
+    result
+}
+
+fn escape_sql_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+static CURRENT_SCHEMA_ONLY_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)^\s*select\s+current_schema\s*\(\s*\)\s*;?\s*$").expect("regex compiles")
+});
+
+static CURRENT_SCHEMA_FN_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bcurrent_schema\s*\(\s*\)").expect("regex compiles")
+});
+
+static CURRENT_SCHEMAS_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bcurrent_schemas\s*\(\s*(true|false)\s*\)").expect("regex compiles")
+});
+
+fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
+    let bytes = input.as_bytes();
+    let target = b"current_schema";
+    let mut output = String::with_capacity(input.len());
+    let mut i = 0;
+    let mut in_single = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            output.push('\'');
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                output.push('\'');
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+
+        if !in_single && (b == b'c' || b == b'C') && i + target.len() <= bytes.len() {
+            if bytes[i..i + target.len()].eq_ignore_ascii_case(target) {
+                let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
+                let next = if i + target.len() < bytes.len() { Some(bytes[i + target.len()]) } else { None };
+                let prev_ok = prev.map_or(true, |p| !is_ident_byte(p) && p != b'.');
+                let next_ok = next.map_or(true, |n| !is_ident_byte(n) && n != b'(');
+                if prev_ok && next_ok {
+                    output.push_str(replacement);
+                    i += target.len();
+                    continue;
+                }
+            }
+        }
+
+        output.push(b as char);
+        i += 1;
+    }
+
+    output
+}
+
+fn is_ident_byte(b: u8) -> bool {
+    (b'0'..=b'9').contains(&b) || (b'a'..=b'z').contains(&b) || (b'A'..=b'Z').contains(&b) || b == b'_'
+}
+
+async fn upsert_schema_metadata(
+    db: &Arc<DbHandler>,
+    session: &Arc<SessionState>,
+    schema: &str,
+) -> Result<(), PgSqliteError> {
+    let schema_oid = match schema {
+        "pg_catalog" => 11,
+        "public" => 2200,
+        "information_schema" => 13445,
+        _ => crate::utils::oid_generator::generate_oid(schema) as i64,
+    };
+    let is_system = matches!(schema, "pg_catalog" | "information_schema") as i64;
+    let schema_literal = escape_sql_literal(schema);
+    let query = format!(
+        "INSERT OR IGNORE INTO __pgsqlite_schemas (schema_name, schema_oid, schema_owner, is_system) VALUES ('{}', {}, 'postgres', {})",
+        schema_literal,
+        schema_oid,
+        is_system
+    );
+    let cached_conn = QueryExecutor::get_or_cache_connection(session, db).await;
+    db.execute_with_session_cached(&query, &session.id, cached_conn.as_ref()).await?;
+    Ok(())
+}
+
+async fn drop_schema_metadata(
+    db: &Arc<DbHandler>,
+    session: &Arc<SessionState>,
+    schema: &str,
+) -> Result<(), PgSqliteError> {
+    let schema_literal = escape_sql_literal(schema);
+    let query = format!(
+        "DELETE FROM __pgsqlite_schemas WHERE schema_name = '{}'",
+        schema_literal
+    );
+    let cached_conn = QueryExecutor::get_or_cache_connection(session, db).await;
+    db.execute_with_session_cached(&query, &session.id, cached_conn.as_ref()).await?;
+    Ok(())
+}
+
 /// Get all schema information for a table in one query
 async fn get_table_schema_info(table_name: &str, db: &Arc<DbHandler>, session_id: &Uuid) -> TableSchemaInfo {
     // Check cache first
@@ -261,6 +441,9 @@ impl QueryExecutor {
                 ));
             }
         }
+
+        let rewritten_session_query = rewrite_session_functions(query, session).await;
+        let query = rewritten_session_query.as_str();
         // Ultra-fast path: Skip all translation if query is simple enough
         let is_ultra_simple = crate::query::simple_query_detector::is_ultra_simple_query(query);
         // Checking if query is ultra-simple
@@ -626,6 +809,11 @@ impl QueryExecutor {
             let batch_translator = BatchDeleteTranslator::new(decimal_cache);
             translated_query = batch_translator.translate(&translated_query, &[]);
             debug!("Query after batch DELETE translation: {}", translated_query);
+        }
+
+        if translation_flags.contains(crate::translator::TranslationFlags::CURRENT_SCHEMA_FROM) {
+            translated_query = crate::translator::CurrentSchemaFromTranslator::translate_query(&translated_query);
+            debug!("Query after current_schema FROM translation: {}", translated_query);
         }
         
         // Translate FTS operations if needed
@@ -1900,16 +2088,6 @@ impl QueryExecutor {
         // Check if this is a CREATE SCHEMA statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
            query.trim_start()[6..].trim_start().to_uppercase().starts_with("SCHEMA") {
-            if !matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
-                framed
-                    .send(BackendMessage::CommandComplete {
-                        tag: "CREATE SCHEMA".to_string(),
-                    })
-                    .await
-                    .map_err(PgSqliteError::Io)?;
-                return Ok(());
-            }
-
             let mut rest = query.trim_start()[6..].trim_start();
             rest = rest[6..].trim_start();
             // Optional IF NOT EXISTS
@@ -1936,17 +2114,21 @@ impl QueryExecutor {
                 return Err(PgSqliteError::Protocol("Invalid schema name".to_string()));
             }
 
-            let data_dir = match crate::config::global_config().database_layout() {
-                DatabaseLayout::Directory { dir } => dir,
-                _ => {
-                    return Err(PgSqliteError::Protocol(
-                        "CREATE SCHEMA requires directory-mode storage".to_string(),
-                    ));
-                }
-            };
-            let system_db = SystemDb::open(&data_dir)?;
-            system_db.ensure_database(&session.database)?;
-            system_db.ensure_schema(&session.database, schema)?;
+            upsert_schema_metadata(db, session, schema).await?;
+
+            if matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
+                let data_dir = match crate::config::global_config().database_layout() {
+                    DatabaseLayout::Directory { dir } => dir,
+                    _ => {
+                        return Err(PgSqliteError::Protocol(
+                            "CREATE SCHEMA requires directory-mode storage".to_string(),
+                        ));
+                    }
+                };
+                let system_db = SystemDb::open(&data_dir)?;
+                system_db.ensure_database(&session.database)?;
+                system_db.ensure_schema(&session.database, schema)?;
+            }
 
             framed
                 .send(BackendMessage::CommandComplete {
@@ -1960,16 +2142,6 @@ impl QueryExecutor {
         // Check if this is a DROP SCHEMA statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
            query.trim_start()[4..].trim_start().to_uppercase().starts_with("SCHEMA") {
-            if !matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
-                framed
-                    .send(BackendMessage::CommandComplete {
-                        tag: "DROP SCHEMA".to_string(),
-                    })
-                    .await
-                    .map_err(PgSqliteError::Io)?;
-                return Ok(());
-            }
-
             let mut rest = query.trim_start()[4..].trim_start();
             rest = rest[6..].trim_start();
             // Optional IF EXISTS
@@ -1989,6 +2161,9 @@ impl QueryExecutor {
             }
 
             if is_valid_db_identifier(&session.database) && is_valid_db_identifier(schema) {
+            drop_schema_metadata(db, session, schema).await?;
+
+            if matches!(crate::config::global_config().database_layout(), DatabaseLayout::Directory { .. }) {
                 let data_dir = match crate::config::global_config().database_layout() {
                     DatabaseLayout::Directory { dir } => dir,
                     _ => {
@@ -1999,6 +2174,7 @@ impl QueryExecutor {
                 };
                 let system_db = SystemDb::open(&data_dir)?;
                 let _ = system_db.drop_schema(&session.database, schema);
+            }
             }
 
             framed
