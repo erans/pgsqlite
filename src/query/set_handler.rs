@@ -13,7 +13,7 @@ static SET_TIMEZONE_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 static SET_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*SET\s+(\w+)\s+(?:TO|=)\s+(.+)$").unwrap()
+    Regex::new(r"(?i)^\s*SET\s+(\w+)\s*(?:TO|=)\s*(.+)$").unwrap()
 });
 
 static SHOW_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
@@ -84,6 +84,19 @@ impl SetHandler {
         if let Some(caps) = SET_PARAMETER_PATTERN.captures(trimmed) {
             let param_name = caps[1].to_uppercase();
             let param_value = caps[2].trim().trim_matches('\'').trim_matches('"');
+
+            if param_name == "SEARCH_PATH" {
+                let normalized = normalize_search_path(param_value, session).await;
+                let mut params = session.parameters.write().await;
+                params.insert(param_name.clone(), normalized);
+                drop(params);
+
+                framed.send(BackendMessage::CommandComplete {
+                    tag: "SET".to_string()
+                }).await.map_err(PgSqliteError::Io)?;
+
+                return Ok(());
+            }
             
             // Update session parameter
             let mut params = session.parameters.write().await;
@@ -186,6 +199,36 @@ impl SetHandler {
     fn is_valid_offset(offset: &str) -> bool {
         let offset_pattern = Regex::new(r"^[+-]\d{2}:\d{2}$").unwrap();
         offset_pattern.is_match(offset)
+    }
+}
+
+async fn normalize_search_path(value: &str, session: &Arc<SessionState>) -> String {
+    let raw = value.trim().trim_matches('\'').trim_matches('"').to_string();
+    if raw.eq_ignore_ascii_case("default") {
+        return "public".to_string();
+    }
+
+    if raw.is_empty() {
+        return "public".to_string();
+    }
+
+    let user = session.user.clone();
+    let mut parts = Vec::new();
+    for part in raw.split(',') {
+        let mut item = part.trim().trim_matches('\'').trim_matches('"').to_string();
+        if item.is_empty() {
+            continue;
+        }
+        if item == "$user" {
+            item = user.clone();
+        }
+        parts.push(item);
+    }
+
+    if parts.is_empty() {
+        "public".to_string()
+    } else {
+        parts.join(", ")
     }
 }
 

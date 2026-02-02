@@ -63,6 +63,7 @@ impl SessionState {
         parameters.insert("TimeZone".to_string(), "UTC".to_string());
         parameters.insert("IntervalStyle".to_string(), "postgres".to_string());
         parameters.insert("integer_datetimes".to_string(), "on".to_string());
+        parameters.insert("SEARCH_PATH".to_string(), "public".to_string());
         
         // Increment active session count
         ACTIVE_SESSION_COUNT.fetch_add(1, Ordering::Relaxed);
