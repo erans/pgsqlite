@@ -203,6 +203,18 @@ static CURRENT_SCHEMAS_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bcurrent_schemas\s*\(\s*(true|false)\s*\)").expect("regex compiles")
 });
 
+static SQL_PREPARE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)^\s*PREPARE\s+").expect("regex compiles")
+});
+
+static SQL_EXECUTE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)^\s*EXECUTE\s+").expect("regex compiles")
+});
+
+static SQL_DEALLOCATE_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)^\s*DEALLOCATE\b").expect("regex compiles")
+});
+
 fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
     let bytes = input.as_bytes();
     let target = b"current_schema";
@@ -297,6 +309,406 @@ where
     }
 
     Ok(false)
+}
+
+async fn handle_sql_prepare<T>(
+    framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+    session: &Arc<SessionState>,
+    query: &str,
+) -> Result<(), PgSqliteError>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
+    // PREPARE name [(type,...)] AS statement
+    let mut rest = query.trim();
+    rest = rest[7..].trim_start();
+    let (name, after_name) = parse_sql_identifier(rest);
+    if name.is_empty() {
+        return Err(PgSqliteError::Protocol("Invalid prepared statement name".to_string()));
+    }
+
+    // Check duplicates
+    {
+        let stmts = session.prepared_statements.read().await;
+        if stmts.contains_key(name) {
+            return Err(PgSqliteError::Protocol(format!(
+                "prepared statement \"{}\" already exists",
+                name
+            )));
+        }
+    }
+
+    let mut rest = after_name.trim_start();
+    let mut type_list: Option<Vec<String>> = None;
+    if rest.starts_with('(') {
+        if let Some((inside, after)) = extract_parenthesized(rest) {
+            type_list = Some(split_top_level_commas(inside));
+            rest = after.trim_start();
+        } else {
+            return Err(PgSqliteError::Protocol("Invalid PREPARE type list".to_string()));
+        }
+    }
+
+    if !rest.to_uppercase().starts_with("AS") {
+        return Err(PgSqliteError::Protocol("PREPARE missing AS".to_string()));
+    }
+    rest = rest[2..].trim_start();
+    let statement = rest.trim_end_matches(';').trim().to_string();
+    if statement.is_empty() {
+        return Err(PgSqliteError::Protocol("PREPARE missing statement".to_string()));
+    }
+
+    let param_count = if let Some(ref types) = type_list {
+        types.len()
+    } else {
+        max_dollar_param_index(&statement)
+    };
+    let mut param_types: Vec<i32> = Vec::with_capacity(param_count);
+    if let Some(types) = type_list {
+        for t in types {
+            param_types.push(pg_type_oid_from_sql_name(&t));
+        }
+    } else {
+        param_types.resize(param_count, crate::types::PgType::Unknown.to_oid());
+    }
+
+    let prepared = crate::session::PreparedStatement {
+        query: statement,
+        translated_query: None,
+        param_types,
+        param_formats: vec![],
+        field_descriptions: vec![],
+        translation_metadata: None,
+    };
+
+    {
+        let mut stmts = session.prepared_statements.write().await;
+        stmts.insert(name.to_string(), prepared);
+    }
+
+    framed
+        .send(BackendMessage::CommandComplete {
+            tag: "PREPARE".to_string(),
+        })
+        .await
+        .map_err(PgSqliteError::Io)?;
+
+    Ok(())
+}
+
+async fn handle_sql_deallocate<T>(
+    framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+    session: &Arc<SessionState>,
+    query: &str,
+) -> Result<(), PgSqliteError>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+{
+    // DEALLOCATE [PREPARE] name | ALL
+    let mut rest = query.trim();
+    rest = rest[10..].trim_start();
+    if rest.to_uppercase().starts_with("PREPARE") {
+        rest = rest[7..].trim_start();
+    }
+
+    if rest.to_uppercase().starts_with("ALL") {
+        let mut stmts = session.prepared_statements.write().await;
+        stmts.clear();
+    } else {
+        let (name, _after) = parse_sql_identifier(rest);
+        if name.is_empty() {
+            return Err(PgSqliteError::Protocol("Invalid DEALLOCATE name".to_string()));
+        }
+        let mut stmts = session.prepared_statements.write().await;
+        stmts.remove(name);
+    }
+
+    framed
+        .send(BackendMessage::CommandComplete {
+            tag: "DEALLOCATE".to_string(),
+        })
+        .await
+        .map_err(PgSqliteError::Io)?;
+
+    Ok(())
+}
+
+async fn expand_sql_execute(session: &Arc<SessionState>, query: &str) -> Result<String, PgSqliteError> {
+    // EXECUTE name [(expr,...)]
+    let mut rest = query.trim();
+    rest = rest[7..].trim_start();
+    let (name, after_name) = parse_sql_identifier(rest);
+    if name.is_empty() {
+        return Err(PgSqliteError::Protocol("Invalid EXECUTE name".to_string()));
+    }
+
+    let (args, _after_args) = parse_execute_args(after_name.trim_start());
+
+    let (stmt_query, stmt_param_types) = {
+        let stmts = session.prepared_statements.read().await;
+        let stmt = stmts
+            .get(name)
+            .ok_or_else(|| PgSqliteError::Protocol(format!("prepared statement \"{}\" does not exist", name)))?;
+        (stmt.query.clone(), stmt.param_types.clone())
+    };
+
+    if max_dollar_param_index(&stmt_query) != args.len() && !stmt_param_types.is_empty() {
+        // Best-effort check: if stmt has $n params, require matching arg count.
+        // If stmt has no $n, allow EXECUTE with no args.
+        let expected = std::cmp::max(max_dollar_param_index(&stmt_query), stmt_param_types.len());
+        if expected != args.len() {
+            return Err(PgSqliteError::Protocol(format!(
+                "EXECUTE parameter count mismatch (expected {}, got {})",
+                expected,
+                args.len()
+            )));
+        }
+    }
+
+    Ok(replace_dollar_params(&stmt_query, &args))
+}
+
+fn parse_execute_args(rest: &str) -> (Vec<String>, &str) {
+    let r = rest.trim_start();
+    if r.starts_with('(') {
+        if let Some((inside, after)) = extract_parenthesized(r) {
+            let parts = split_top_level_commas(inside);
+            return (
+                parts
+                    .into_iter()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                after,
+            );
+        }
+    }
+    (Vec::new(), r)
+}
+
+fn parse_sql_identifier(input: &str) -> (&str, &str) {
+    let s = input.trim_start();
+    if s.starts_with('"') {
+        if let Some(end) = s[1..].find('"') {
+            let name = &s[1..1 + end];
+            let rest = &s[2 + end..];
+            return (name, rest);
+        }
+        return ("", s);
+    }
+    let bytes = s.as_bytes();
+    let mut end = 0usize;
+    while end < bytes.len() {
+        let b = bytes[end];
+        if b.is_ascii_whitespace() || b == b'(' || b == b';' {
+            break;
+        }
+        end += 1;
+    }
+    let name = s[..end].trim();
+    let rest = &s[end..];
+    (name, rest)
+}
+
+fn extract_parenthesized(input: &str) -> Option<(&str, &str)> {
+    let bytes = input.as_bytes();
+    if bytes.is_empty() || bytes[0] != b'(' {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+        if in_single {
+            i += 1;
+            continue;
+        }
+        if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            depth -= 1;
+            if depth == 0 {
+                let inside = &input[1..i];
+                let after = &input[i + 1..];
+                return Some((inside, after));
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn split_top_level_commas(input: &str) -> Vec<String> {
+    let bytes = input.as_bytes();
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0i32;
+    let mut in_single = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+        if in_single {
+            i += 1;
+            continue;
+        }
+        if b == b'(' {
+            depth += 1;
+        } else if b == b')' {
+            if depth > 0 {
+                depth -= 1;
+            }
+        } else if b == b',' && depth == 0 {
+            parts.push(input[start..i].trim().to_string());
+            start = i + 1;
+        }
+        i += 1;
+    }
+    if start <= input.len() {
+        let tail = input[start..].trim();
+        if !tail.is_empty() {
+            parts.push(tail.to_string());
+        }
+    }
+    parts
+}
+
+fn max_dollar_param_index(query: &str) -> usize {
+    let bytes = query.as_bytes();
+    let mut in_single = false;
+    let mut i = 0usize;
+    let mut max_n = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+        if in_single {
+            i += 1;
+            continue;
+        }
+        if b == b'$' {
+            let mut j = i + 1;
+            let mut n = 0usize;
+            let mut found = false;
+            while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
+                found = true;
+                n = n * 10 + (bytes[j] - b'0') as usize;
+                j += 1;
+            }
+            if found {
+                if n > max_n {
+                    max_n = n;
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    max_n
+}
+
+fn replace_dollar_params(query: &str, args: &[String]) -> String {
+    let bytes = query.as_bytes();
+    let mut out = String::with_capacity(query.len() + args.len() * 8);
+    let mut in_single = false;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            out.push('\'');
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+        if !in_single && b == b'$' {
+            let mut j = i + 1;
+            let mut n = 0usize;
+            let mut found = false;
+            while j < bytes.len() && (bytes[j] as char).is_ascii_digit() {
+                found = true;
+                n = n * 10 + (bytes[j] - b'0') as usize;
+                j += 1;
+            }
+            if found && n >= 1 {
+                if let Some(arg) = args.get(n - 1) {
+                    out.push_str(arg);
+                } else {
+                    out.push_str("NULL");
+                }
+                i = j;
+                continue;
+            }
+        }
+        out.push(b as char);
+        i += 1;
+    }
+    out
+}
+
+fn pg_type_oid_from_sql_name(type_name: &str) -> i32 {
+    let t = type_name.trim();
+    let base = t
+        .split('(')
+        .next()
+        .unwrap_or(t)
+        .trim()
+        .trim_matches('"');
+    let base = base
+        .rsplit('.')
+        .next()
+        .unwrap_or(base)
+        .trim()
+        .to_lowercase();
+
+    match base.as_str() {
+        "bool" | "boolean" => crate::types::PgType::Bool.to_oid(),
+        "int2" | "smallint" => crate::types::PgType::Int2.to_oid(),
+        "int4" | "integer" | "int" => crate::types::PgType::Int4.to_oid(),
+        "int8" | "bigint" => crate::types::PgType::Int8.to_oid(),
+        "text" => crate::types::PgType::Text.to_oid(),
+        "varchar" | "character varying" => crate::types::PgType::Varchar.to_oid(),
+        "char" | "character" => crate::types::PgType::Char.to_oid(),
+        "uuid" => crate::types::PgType::Uuid.to_oid(),
+        "json" => crate::types::PgType::Json.to_oid(),
+        "jsonb" => crate::types::PgType::Jsonb.to_oid(),
+        "numeric" | "decimal" => crate::types::PgType::Numeric.to_oid(),
+        "date" => crate::types::PgType::Date.to_oid(),
+        "time" => crate::types::PgType::Time.to_oid(),
+        "timestamp" => crate::types::PgType::Timestamp.to_oid(),
+        "timestamptz" | "timestamp with time zone" => crate::types::PgType::Timestamptz.to_oid(),
+        _ => crate::types::PgType::Unknown.to_oid(),
+    }
 }
 
 async fn upsert_schema_metadata(
@@ -467,15 +879,7 @@ impl QueryExecutor {
             return Err(PgSqliteError::Protocol(error_message!("Empty query").into_owned()));
         }
         
-        // Handle PostgreSQL DEALLOCATE commands (used for prepared statement cleanup)
-        let query_upper = query_to_execute.to_uppercase();
-        if query_upper.starts_with("DEALLOCATE") {
-            debug!("DEALLOCATE command - treating as successful no-op (SQLite manages prepared statements automatically)");
-            // Send CommandComplete for successful DEALLOCATE
-            let msg = BackendMessage::CommandComplete { tag: error_message!("DEALLOCATE").into_owned() };
-            framed.send(msg).await.map_err(PgSqliteError::Io)?;
-            return Ok(());
-        }
+        // Note: SQL-level DEALLOCATE is handled per-statement in execute_single_statement.
         
         // debug!("Executing query: {}", query_to_execute);
         
@@ -546,7 +950,22 @@ impl QueryExecutor {
             }
         }
 
-        let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(query);
+        let mut effective_query = std::borrow::Cow::Borrowed(query);
+
+        // SQL-level PREPARE/EXECUTE/DEALLOCATE (simple query protocol)
+        // These are session-scoped objects in PostgreSQL; pgsqlite maps them to SessionState storage.
+        if SQL_PREPARE_PATTERN.is_match(effective_query.as_ref()) {
+            return handle_sql_prepare(framed, session, effective_query.as_ref()).await;
+        }
+        if SQL_EXECUTE_PATTERN.is_match(effective_query.as_ref()) {
+            let expanded = expand_sql_execute(session, effective_query.as_ref()).await?;
+            effective_query = std::borrow::Cow::Owned(expanded);
+        }
+        if SQL_DEALLOCATE_PATTERN.is_match(effective_query.as_ref()) {
+            return handle_sql_deallocate(framed, session, effective_query.as_ref()).await;
+        }
+
+        let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(effective_query.as_ref());
         let rewritten_session_query = rewrite_session_functions(&current_schema_from_rewritten, session).await;
         let query = rewritten_session_query.as_str();
 
