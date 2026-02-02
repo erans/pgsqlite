@@ -711,6 +711,58 @@ fn pg_type_oid_from_sql_name(type_name: &str) -> i32 {
     }
 }
 
+fn detect_boolean_projection_indices(query: &str) -> std::collections::HashSet<usize> {
+    use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement, UnaryOperator};
+    use sqlparser::dialect::PostgreSqlDialect;
+    use sqlparser::parser::Parser;
+
+    let mut indices = std::collections::HashSet::new();
+    let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query);
+    let Ok(mut statements) = parsed else {
+        return indices;
+    };
+    if statements.len() != 1 {
+        return indices;
+    }
+    let Some(Statement::Query(query_stmt)) = statements.pop() else {
+        return indices;
+    };
+    let body = &query_stmt.body;
+    let SetExpr::Select(select) = body.as_ref() else {
+        return indices;
+    };
+
+    for (idx, item) in select.projection.iter().enumerate() {
+        let expr = match item {
+            SelectItem::UnnamedExpr(e) => Some(e),
+            SelectItem::ExprWithAlias { expr, .. } => Some(expr),
+            _ => None,
+        };
+        let Some(expr) = expr else { continue; };
+        if matches!(expr, Expr::Exists { .. }) {
+            indices.insert(idx);
+            continue;
+        }
+        if let Expr::UnaryOp { op: UnaryOperator::Not, expr: inner } = expr {
+            if matches!(inner.as_ref(), Expr::Exists { .. }) {
+                indices.insert(idx);
+                continue;
+            }
+        }
+    }
+
+    // Fallback: sqlparser might not classify some EXISTS projections in edge cases.
+    // For common compatibility queries like: SELECT EXISTS(SELECT ...)
+    if indices.is_empty() {
+        let q = query.to_lowercase();
+        if q.contains("select") && q.contains("exists") {
+            indices.insert(0);
+        }
+    }
+
+    indices
+}
+
 async fn upsert_schema_metadata(
     db: &Arc<DbHandler>,
     session: &Arc<SessionState>,
@@ -1019,6 +1071,8 @@ impl QueryExecutor {
                             std::collections::HashMap::new()
                         )
                     };
+
+                    let boolean_projection_indices = detect_boolean_projection_indices(query);
                     
                     // Check for scalar subqueries that return timestamps
                     // Pattern: (SELECT MAX/MIN(timestamp_col) FROM table) as alias
@@ -1057,7 +1111,9 @@ impl QueryExecutor {
                         .enumerate()
                         .map(|(i, name)| {
                             // We need to determine type OID before creating the closure
-                            let type_oid = if let Some(pg_type) = column_types.get(name) {
+                            let type_oid = if boolean_projection_indices.contains(&i) {
+                                PgType::Bool.to_oid()
+                            } else if let Some(pg_type) = column_types.get(name) {
                                 // Try to get enum-aware type OID, fall back to basic type if fails
                                 crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                             } else {
@@ -1131,6 +1187,17 @@ impl QueryExecutor {
                                     // Convert based on column type
                                     if col_idx < response.columns.len() {
                                         let col_name = &response.columns[col_idx];
+
+                                        if boolean_projection_indices.contains(&col_idx) {
+                                            return match std::str::from_utf8(&data) {
+                                                Ok(s) => match s.trim() {
+                                                    "0" | "f" | "false" | "FALSE" => Some(b"f".to_vec()),
+                                                    "1" | "t" | "true" | "TRUE" => Some(b"t".to_vec()),
+                                                    _ => Some(data),
+                                                },
+                                                Err(_) => Some(data),
+                                            };
+                                        }
                                         
                                         // Check for boolean columns
                                         if boolean_columns.contains(col_name) {
@@ -1669,6 +1736,8 @@ impl QueryExecutor {
         
         // Extract table name from query to look up schema
         let table_name = extract_table_name_from_select(query);
+
+        let boolean_projection_indices = detect_boolean_projection_indices(query);
         // debug!("Non-ultra execute_select: table_name={:?}", table_name);
         // debug!("Table name extraction result: {:?} for query: {}", table_name, query);
         
@@ -1832,7 +1901,9 @@ impl QueryExecutor {
                 .enumerate()
                 .map(|(i, name)| {
                     // First priority: Check schema table for stored type mappings
-                    let type_oid = if let Some(pg_type) = schema_types.get(name) {
+                    let type_oid = if boolean_projection_indices.contains(&i) {
+                        PgType::Bool.to_oid()
+                    } else if let Some(pg_type) = schema_types.get(name) {
                         // Use basic type OID mapping (enum checking would require async which isn't allowed in closure)
                         crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type)
                     } else if let Some(aggregate_oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, Some(query)) {
@@ -2057,6 +2128,25 @@ impl QueryExecutor {
         debug!("About to convert array data for {} rows", response.rows.len());
         let mut converted_rows = Self::convert_array_data_in_rows(response.rows, &fields)?;
         debug!("Completed array data conversion");
+
+        if !boolean_projection_indices.is_empty() {
+            for row in &mut converted_rows {
+                for idx in &boolean_projection_indices {
+                    if let Some(Some(value_bytes)) = row.get_mut(*idx) {
+                        if let Ok(s) = std::str::from_utf8(value_bytes) {
+                            let v = match s.trim() {
+                                "0" | "f" | "false" | "FALSE" => Some(b"f".to_vec()),
+                                "1" | "t" | "true" | "TRUE" => Some(b"t".to_vec()),
+                                _ => None,
+                            };
+                            if let Some(v) = v {
+                                *value_bytes = v;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         
         // Convert datetime data if needed
         if !datetime_columns.is_empty() {
