@@ -3311,7 +3311,16 @@ fn register_v29_information_schema_complete_views(registry: &mut BTreeMap<u32, M
 
                 -- UUID functions
                 UNION ALL SELECT 'gen_random_uuid', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_generate_v1', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_generate_v1mc', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_generate_v3', 'f', 't', 2950
                 UNION ALL SELECT 'uuid_generate_v4', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_generate_v5', 'f', 't', 2950
+                UNION ALL SELECT 'uuid_nil', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_ns_dns', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_ns_url', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_ns_oid', 'f', 'f', 2950
+                UNION ALL SELECT 'uuid_ns_x500', 'f', 'f', 2950
 
                 -- Full-text search
                 UNION ALL SELECT 'to_tsvector', 'f', 't', 3614

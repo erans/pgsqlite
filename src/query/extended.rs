@@ -5402,6 +5402,42 @@ impl ExtendedQueryHandler {
             );
             return Err(enum_error);
         }
+
+        if query_starts_with_ignore_case(query, "CREATE EXTENSION") {
+            let mut rest = query.trim_start()[6..].trim_start();
+            rest = rest[9..].trim_start();
+
+            let rest_upper = rest.to_uppercase();
+            if rest_upper.starts_with("IF NOT EXISTS") {
+                rest = rest[13..].trim_start();
+            }
+
+            let mut ext = rest.trim_end_matches(';').trim();
+            ext = ext.trim();
+            if ext.starts_with('"') {
+                if let Some(end) = ext[1..].find('"') {
+                    ext = &ext[1..1 + end];
+                }
+            } else {
+                ext = ext.split_whitespace().next().unwrap_or("");
+            }
+
+            let ext_lc = ext.to_lowercase();
+            if ext_lc != "uuid-ossp" && ext_lc != "uuid_ossp" {
+                return Err(PgSqliteError::NotSupported(format!(
+                    "Extension not supported: {}",
+                    ext
+                )));
+            }
+
+            framed
+                .send(BackendMessage::CommandComplete {
+                    tag: "CREATE EXTENSION".to_string(),
+                })
+                .await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
         
         // Handle CREATE TABLE translation
         if query_starts_with_ignore_case(query, "CREATE TABLE") {

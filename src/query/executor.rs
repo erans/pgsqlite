@@ -2249,6 +2249,45 @@ impl QueryExecutor {
             return Ok(());
         }
 
+        // Check if this is a CREATE EXTENSION statement
+        if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
+           query.trim_start()[6..].trim_start().to_uppercase().starts_with("EXTENSION") {
+            let mut rest = query.trim_start()[6..].trim_start();
+            rest = rest[9..].trim_start();
+
+            // Optional IF NOT EXISTS
+            let rest_upper = rest.to_uppercase();
+            if rest_upper.starts_with("IF NOT EXISTS") {
+                rest = rest[13..].trim_start();
+            }
+
+            let mut ext = rest.trim_end_matches(';').trim();
+            ext = ext.trim();
+            if ext.starts_with('"') {
+                if let Some(end) = ext[1..].find('"') {
+                    ext = &ext[1..1 + end];
+                }
+            } else {
+                ext = ext.split_whitespace().next().unwrap_or("");
+            }
+
+            let ext_lc = ext.to_lowercase();
+            if ext_lc != "uuid-ossp" && ext_lc != "uuid_ossp" {
+                return Err(PgSqliteError::NotSupported(format!(
+                    "Extension not supported: {}",
+                    ext
+                )));
+            }
+
+            framed
+                .send(BackendMessage::CommandComplete {
+                    tag: "CREATE EXTENSION".to_string(),
+                })
+                .await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+
         // Check if this is a DROP SCHEMA statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&
            query.trim_start()[4..].trim_start().to_uppercase().starts_with("SCHEMA") {

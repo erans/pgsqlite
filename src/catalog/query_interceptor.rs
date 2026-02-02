@@ -2649,6 +2649,15 @@ impl CatalogInterceptor {
 
             // UUID functions
             ("uuid_generate_v4", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_generate_v1", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_generate_v1mc", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_generate_v3", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_generate_v5", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_nil", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_ns_dns", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_ns_url", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_ns_oid", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+            ("uuid_ns_x500", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
 
             // System functions
             ("version", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),

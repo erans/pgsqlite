@@ -154,6 +154,15 @@ impl PgProcHandler {
 
             // UUID functions
             ("uuid_generate_v4", "11", "2950", "f", "v", false, false), // uuid_generate_v4() -> uuid
+            ("uuid_generate_v1", "11", "2950", "f", "v", false, false), // uuid_generate_v1() -> uuid
+            ("uuid_generate_v1mc", "11", "2950", "f", "v", false, false), // uuid_generate_v1mc() -> uuid
+            ("uuid_generate_v3", "11", "2950", "f", "i", true, false), // uuid_generate_v3(uuid,text) -> uuid
+            ("uuid_generate_v5", "11", "2950", "f", "i", true, false), // uuid_generate_v5(uuid,text) -> uuid
+            ("uuid_nil", "11", "2950", "f", "v", false, false), // uuid_nil() -> uuid
+            ("uuid_ns_dns", "11", "2950", "f", "v", false, false), // uuid_ns_dns() -> uuid
+            ("uuid_ns_url", "11", "2950", "f", "v", false, false), // uuid_ns_url() -> uuid
+            ("uuid_ns_oid", "11", "2950", "f", "v", false, false), // uuid_ns_oid() -> uuid
+            ("uuid_ns_x500", "11", "2950", "f", "v", false, false), // uuid_ns_x500() -> uuid
 
             // System functions
             ("version", "11", "25", "f", "s", false, false),      // version() -> text
