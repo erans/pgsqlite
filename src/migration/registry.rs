@@ -37,6 +37,8 @@ lazy_static! {
         register_v28_pg_stat_io_support(&mut registry);
         register_v29_information_schema_complete_views(&mut registry);
         register_v30_schema_metadata_support(&mut registry);
+        register_v31_user_sql_functions_support(&mut registry);
+        register_v32_information_schema_routines_user_functions(&mut registry);
 
         registry
     };
@@ -3322,6 +3324,9 @@ fn register_v29_information_schema_complete_views(registry: &mut BTreeMap<u32, M
                 UNION ALL SELECT 'uuid_ns_oid', 'f', 'f', 2950
                 UNION ALL SELECT 'uuid_ns_x500', 'f', 'f', 2950
 
+                -- unaccent
+                UNION ALL SELECT 'unaccent', 'f', 't', 25
+
                 -- Full-text search
                 UNION ALL SELECT 'to_tsvector', 'f', 't', 3614
                 UNION ALL SELECT 'to_tsquery', 'f', 't', 3615
@@ -3677,5 +3682,207 @@ fn register_v30_schema_metadata_support(registry: &mut BTreeMap<u32, Migration>)
             "#,
         ])),
         dependencies: vec![29],
+    });
+}
+
+/// Version 31: Persist SQL-language user functions and expose via pg_proc
+fn register_v31_user_sql_functions_support(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(31, Migration {
+        version: 31,
+        name: "user_sql_functions_support",
+        description: "Persist SQL-language user functions and include them in pg_proc / routines introspection",
+        up: MigrationAction::SqlBatch(&[
+            r#"
+            CREATE TABLE IF NOT EXISTS __pgsqlite_user_functions (
+                schema_name TEXT NOT NULL,
+                func_name TEXT NOT NULL,
+                func_nargs INTEGER NOT NULL,
+                func_kind TEXT NOT NULL DEFAULT 'f',
+                func_strict TEXT NOT NULL DEFAULT 'f',
+                func_retset TEXT NOT NULL DEFAULT 'f',
+                func_volatile TEXT NOT NULL DEFAULT 'i',
+                func_rettype INTEGER NOT NULL DEFAULT 25,
+                arg_names TEXT NULL,      -- JSON array
+                arg_types TEXT NULL,      -- JSON array
+                body_expr TEXT NOT NULL,  -- scalar expression template (uses $1..$n)
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                PRIMARY KEY (schema_name, func_name, func_nargs)
+            );
+            "#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '31', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP TABLE IF EXISTS __pgsqlite_user_functions;"#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '30', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![30],
+    });
+}
+
+/// Version 32: Rebuild information_schema_routines view to include user SQL functions
+fn register_v32_information_schema_routines_user_functions(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(32, Migration {
+        version: 32,
+        name: "information_schema_routines_user_functions",
+        description: "Include __pgsqlite_user_functions in information_schema.routines view",
+        up: MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_routines;"#,
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_routines AS
+            SELECT
+                'main' as routine_catalog,
+                schema_name as routine_schema,
+                func_name as routine_name,
+                'main' as specific_catalog,
+                schema_name as specific_schema,
+                func_name as specific_name,
+                CASE func_kind
+                    WHEN 'f' THEN 'FUNCTION'
+                    WHEN 'a' THEN 'FUNCTION'
+                    WHEN 'p' THEN 'PROCEDURE'
+                    ELSE 'FUNCTION'
+                END as routine_type,
+                NULL as module_catalog,
+                NULL as module_schema,
+                NULL as module_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                CASE func_rettype
+                    WHEN 23 THEN 'integer'
+                    WHEN 25 THEN 'text'
+                    WHEN 16 THEN 'boolean'
+                    WHEN 20 THEN 'bigint'
+                    WHEN 21 THEN 'smallint'
+                    WHEN 700 THEN 'real'
+                    WHEN 701 THEN 'double precision'
+                    WHEN 1043 THEN 'character varying'
+                    WHEN 1082 THEN 'date'
+                    WHEN 1083 THEN 'time without time zone'
+                    WHEN 1114 THEN 'timestamp without time zone'
+                    WHEN 1184 THEN 'timestamp with time zone'
+                    WHEN 1700 THEN 'numeric'
+                    WHEN 114 THEN 'json'
+                    WHEN 3802 THEN 'jsonb'
+                    WHEN 2950 THEN 'uuid'
+                    ELSE 'text'
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as type_udt_catalog,
+                NULL as type_udt_schema,
+                NULL as type_udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'EXTERNAL' as routine_body,
+                '' as routine_definition,
+                NULL as external_name,
+                'SQL' as external_language,
+                'SQL' as parameter_style,
+                'NO' as is_deterministic,
+                'CONTAINS_SQL' as sql_data_access,
+                NULL as is_null_call,
+                NULL as sql_path,
+                'YES' as schema_level_routine,
+                0 as max_dynamic_result_sets,
+                'NO' as is_user_defined_cast,
+                'NO' as is_implicitly_invocable,
+                'INVOKER' as security_type,
+                NULL as to_sql_specific_catalog,
+                NULL as to_sql_specific_schema,
+                NULL as to_sql_specific_name,
+                'NO' as as_locator,
+                NULL as created,
+                NULL as last_altered,
+                NULL as new_savepoint_level,
+                'NO' as is_udt_dependent,
+                NULL as result_cast_from_data_type,
+                NULL as result_cast_as_locator,
+                NULL as result_cast_char_max_length,
+                NULL as result_cast_char_octet_length,
+                NULL as result_cast_char_set_catalog,
+                NULL as result_cast_char_set_schema,
+                NULL as result_cast_char_set_name,
+                NULL as result_cast_collation_catalog,
+                NULL as result_cast_collation_schema,
+                NULL as result_cast_collation_name,
+                NULL as result_cast_numeric_precision,
+                NULL as result_cast_numeric_precision_radix,
+                NULL as result_cast_numeric_scale,
+                NULL as result_cast_datetime_precision,
+                NULL as result_cast_interval_type,
+                NULL as result_cast_interval_precision,
+                NULL as result_cast_type_udt_catalog,
+                NULL as result_cast_type_udt_schema,
+                NULL as result_cast_type_udt_name,
+                NULL as result_cast_scope_catalog,
+                NULL as result_cast_scope_schema,
+                NULL as result_cast_scope_name,
+                NULL as result_cast_maximum_cardinality,
+                NULL as result_cast_dtd_identifier
+            FROM (
+                SELECT 'pg_catalog' as schema_name, func_name, func_kind, func_strict, func_rettype
+                FROM (
+                    SELECT 'length' as func_name, 'f' as func_kind, 't' as func_strict, 23 as func_rettype
+                    UNION ALL SELECT 'lower', 'f', 't', 25
+                    UNION ALL SELECT 'upper', 'f', 't', 25
+                    UNION ALL SELECT 'substr', 'f', 't', 25
+                    UNION ALL SELECT 'replace', 'f', 't', 25
+                    UNION ALL SELECT 'trim', 'f', 't', 25
+                    UNION ALL SELECT 'ltrim', 'f', 't', 25
+                    UNION ALL SELECT 'rtrim', 'f', 't', 25
+                    UNION ALL SELECT 'count', 'a', 'f', 20
+                    UNION ALL SELECT 'now', 'f', 'f', 1184
+                    UNION ALL SELECT 'current_user', 'f', 'f', 19
+                    UNION ALL SELECT 'current_database', 'f', 'f', 19
+                    UNION ALL SELECT 'current_schema', 'f', 'f', 19
+                    UNION ALL SELECT 'current_setting', 'f', 'f', 25
+                    UNION ALL SELECT 'unaccent', 'f', 't', 25
+                )
+
+                UNION ALL
+                SELECT schema_name, func_name, func_kind, func_strict, func_rettype
+                FROM __pgsqlite_user_functions
+            );
+            "#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '32', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_routines;"#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '31', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![31],
     });
 }
