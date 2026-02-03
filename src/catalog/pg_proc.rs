@@ -1,16 +1,20 @@
 use crate::session::db_handler::{DbHandler, DbResponse};
 use crate::PgSqliteError;
 use sqlparser::ast::{Select, SelectItem, Expr};
+use sqlparser::ast::{FunctionArgExpr, Ident};
 use tracing::debug;
 use std::collections::HashMap;
 use super::where_evaluator::WhereEvaluator;
+use crate::session::SessionState;
+use std::sync::Arc;
 
 pub struct PgProcHandler;
 
 impl PgProcHandler {
     pub async fn handle_query(
         select: &Select,
-        _db: &DbHandler,
+        db: &DbHandler,
+        session: Option<&Arc<SessionState>>,
     ) -> Result<DbResponse, PgSqliteError> {
         debug!("Handling pg_proc query");
 
@@ -48,12 +52,40 @@ impl PgProcHandler {
             "proacl".to_string(),
         ];
 
+        // Aggregate shortcut: SELECT count(*) FROM pg_proc ...
+        if Self::is_count_star_query(select) {
+            let mut functions = Self::get_system_functions();
+            if let Some(session) = session
+                && let Ok(user_funcs) = Self::load_user_functions(db, session).await {
+                    functions.extend(user_funcs);
+                }
+
+            let filtered = if let Some(where_clause) = &select.selection {
+                Self::apply_where_filter(&functions, where_clause, &all_columns)?
+            } else {
+                functions
+            };
+
+            let count = filtered.len().to_string().into_bytes();
+            return Ok(DbResponse {
+                columns: vec!["count".to_string()],
+                rows: vec![vec![Some(count)]],
+                rows_affected: 1,
+            });
+        }
+
         // Determine which columns to return
         let selected_columns = Self::get_selected_columns(&select.projection, &all_columns);
 
         // Build function metadata - we'll populate with SQLite built-in functions
         // and pgsqlite-specific functions
-        let functions = Self::get_system_functions();
+        let mut functions = Self::get_system_functions();
+
+        // Add persisted SQL-language user functions if available
+        if let Some(session) = session
+            && let Ok(user_funcs) = Self::load_user_functions(db, session).await {
+                functions.extend(user_funcs);
+            }
 
         // Apply WHERE clause filtering if present
         let filtered_functions = if let Some(where_clause) = &select.selection {
@@ -114,6 +146,32 @@ impl PgProcHandler {
         selected
     }
 
+    fn is_count_star_query(select: &Select) -> bool {
+        if select.projection.len() != 1 {
+            return false;
+        }
+        let SelectItem::UnnamedExpr(Expr::Function(func)) = &select.projection[0] else {
+            return false;
+        };
+
+        // name could be "count" or pg_catalog.count; we only check last ident.
+        let func_name = match func.name.0.last() {
+            Some(sqlparser::ast::ObjectNamePart::Identifier(Ident { value, .. })) => value.to_lowercase(),
+            None => return false,
+        };
+        if func_name != "count" {
+            return false;
+        }
+        let args = match &func.args {
+            sqlparser::ast::FunctionArguments::List(list) => &list.args,
+            _ => return false,
+        };
+        if args.len() != 1 {
+            return false;
+        }
+        matches!(&args[0], sqlparser::ast::FunctionArg::Unnamed(FunctionArgExpr::Wildcard))
+    }
+
     fn get_system_functions() -> Vec<HashMap<String, Vec<u8>>> {
         let mut functions = Vec::new();
 
@@ -163,6 +221,9 @@ impl PgProcHandler {
             ("uuid_ns_url", "11", "2950", "f", "v", false, false), // uuid_ns_url() -> uuid
             ("uuid_ns_oid", "11", "2950", "f", "v", false, false), // uuid_ns_oid() -> uuid
             ("uuid_ns_x500", "11", "2950", "f", "v", false, false), // uuid_ns_x500() -> uuid
+
+            // unaccent extension functions
+            ("unaccent", "11", "25", "f", "s", true, false), // unaccent(text) -> text
 
             // System functions
             ("version", "11", "25", "f", "s", false, false),      // version() -> text
@@ -233,6 +294,85 @@ impl PgProcHandler {
         }
 
         functions
+    }
+
+    async fn load_user_functions(
+        db: &DbHandler,
+        session: &Arc<SessionState>,
+    ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
+        let mut out = Vec::new();
+
+        let rows = db
+            .with_session_connection(&session.id, |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT schema_name, func_name, func_nargs, func_kind, func_strict, func_retset, func_volatile, func_rettype FROM __pgsqlite_user_functions",
+                )?;
+                let mut rows = Vec::new();
+                let mut iter = stmt.query([])?;
+                while let Some(row) = iter.next()? {
+                    let schema_name: String = row.get(0)?;
+                    let func_name: String = row.get(1)?;
+                    let func_nargs: i64 = row.get(2)?;
+                    let func_kind: String = row.get(3)?;
+                    let func_strict: String = row.get(4)?;
+                    let func_retset: String = row.get(5)?;
+                    let func_volatile: String = row.get(6)?;
+                    let func_rettype: i64 = row.get(7)?;
+                    rows.push((schema_name, func_name, func_nargs, func_kind, func_strict, func_retset, func_volatile, func_rettype));
+                }
+                Ok(rows)
+            })
+            .await;
+
+        let Ok(rows) = rows else {
+            return Ok(out);
+        };
+
+        for (i, (schema_name, func_name, func_nargs, func_kind, func_strict, func_retset, func_volatile, func_rettype)) in
+            rows.into_iter().enumerate()
+        {
+            let oid = crate::utils::oid_generator::generate_oid(&format!("{schema_name}.{func_name}/{func_nargs}")) + (i as u32);
+            let mut func = HashMap::new();
+            func.insert("oid".to_string(), oid.to_string().into_bytes());
+            func.insert("proname".to_string(), func_name.as_bytes().to_vec());
+            let nsp = match schema_name.as_str() {
+                "pg_catalog" => 11,
+                "public" => 2200,
+                "information_schema" => 13445,
+                _ => 11,
+            };
+            func.insert("pronamespace".to_string(), nsp.to_string().into_bytes());
+            func.insert("proowner".to_string(), b"10".to_vec());
+            func.insert("prolang".to_string(), b"12".to_vec());
+            func.insert("procost".to_string(), b"1".to_vec());
+            func.insert("prorows".to_string(), b"0".to_vec());
+            func.insert("provariadic".to_string(), b"0".to_vec());
+            func.insert("prosupport".to_string(), b"0".to_vec());
+            func.insert("prokind".to_string(), func_kind.into_bytes());
+            func.insert("prosecdef".to_string(), b"f".to_vec());
+            func.insert("proleakproof".to_string(), b"f".to_vec());
+            func.insert("proisstrict".to_string(), func_strict.into_bytes());
+            func.insert("proretset".to_string(), func_retset.into_bytes());
+            func.insert("provolatile".to_string(), func_volatile.into_bytes());
+            func.insert("proparallel".to_string(), b"s".to_vec());
+            func.insert("pronargs".to_string(), func_nargs.to_string().into_bytes());
+            func.insert("pronargdefaults".to_string(), b"0".to_vec());
+            func.insert("prorettype".to_string(), func_rettype.to_string().into_bytes());
+            func.insert("proargtypes".to_string(), b"".to_vec());
+            func.insert("proallargtypes".to_string(), b"".to_vec());
+            func.insert("proargmodes".to_string(), b"".to_vec());
+            func.insert("proargnames".to_string(), b"".to_vec());
+            func.insert("proargdefaults".to_string(), b"".to_vec());
+            func.insert("protrftypes".to_string(), b"".to_vec());
+            func.insert("prosrc".to_string(), b"".to_vec());
+            func.insert("probin".to_string(), b"".to_vec());
+            func.insert("prosqlbody".to_string(), b"".to_vec());
+            func.insert("proconfig".to_string(), b"".to_vec());
+            func.insert("proacl".to_string(), b"".to_vec());
+            out.push(func);
+        }
+
+        Ok(out)
     }
 
     fn apply_where_filter(

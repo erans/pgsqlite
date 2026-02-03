@@ -9,6 +9,7 @@ use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
 use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, pg_settings::PgSettingsHandler, pg_stat_io::PgStatIoHandler, pg_locks::PgLocksHandler, pg_prepared_statements::PgPreparedStatementsHandler, pg_prepared_xacts::PgPreparedXactsHandler, pg_cursors::PgCursorsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
+use super::pg_proc::PgProcHandler;
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -75,6 +76,7 @@ impl CatalogInterceptor {
             lower_query.contains("pg_statistic") ||
             lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
             lower_query.contains("pg_foreign_data_wrapper") ||
+            lower_query.contains("pg_proc") ||
             lower_query.contains("pg_stat_io") ||
             lower_query.contains("pg_locks") ||
             lower_query.contains("pg_prepared_statements") ||
@@ -490,6 +492,10 @@ impl CatalogInterceptor {
             // Handle pg_namespace queries
             if table_name.contains("pg_namespace") || table_name.contains("pg_catalog.pg_namespace") {
                 return Some(Ok(Self::handle_pg_namespace_query(select)));
+            }
+
+            if table_name.contains("pg_proc") || table_name.contains("pg_catalog.pg_proc") {
+                return Some(PgProcHandler::handle_query(select, &db, session.as_ref()).await);
             }
 
             // Handle pg_range queries (usually empty)
@@ -2658,6 +2664,9 @@ impl CatalogInterceptor {
             ("uuid_ns_url", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
             ("uuid_ns_oid", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
             ("uuid_ns_x500", "FUNCTION", "uuid", "uuid", "SQL", "CONTAINS_SQL"),
+
+            // unaccent extension functions
+            ("unaccent", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
 
             // System functions
             ("version", "FUNCTION", "text", "text", "SQL", "CONTAINS_SQL"),
