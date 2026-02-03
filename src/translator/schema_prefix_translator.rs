@@ -24,6 +24,14 @@ static CREATE_INDEX_ON_SCHEMA_TABLE: Lazy<Regex> = Lazy::new(|| {
     .expect("regex compiles")
 });
 
+static SCHEMA_QUALIFIED_FUNCTION_CALL: Lazy<Regex> = Lazy::new(|| {
+    // Only rewrite a very small allowlist of schema-qualified functions we implement.
+    Regex::new(
+        r#"(?i)\b("public"|public)\s*\.\s*("unaccent"|unaccent|"unaccent_immutable"|unaccent_immutable)\s*\("#,
+    )
+    .expect("regex compiles")
+});
+
 impl SchemaPrefixTranslator {
     /// Translate a query string by removing schema prefixes
     pub fn translate_query(query: &str) -> String {
@@ -73,6 +81,16 @@ impl SchemaPrefixTranslator {
             result = result.replace(&format!("pg_catalog.{func}"), func);
             result = result.replace(&format!("PG_CATALOG.{}", func.to_uppercase()), func);
         }
+
+        // Also remove schema prefix from a small allowlist of public functions.
+        // SQLite doesn't support schema-qualified function calls.
+        result = SCHEMA_QUALIFIED_FUNCTION_CALL
+            .replace_all(&result, |caps: &regex::Captures| {
+                let func = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+                let func = func.trim_matches('"');
+                format!("{func}(")
+            })
+            .to_string();
 
         // Rewrite schema-qualified table references (non-catalog schemas) into a stable
         // single-table namespace by mapping schema.table -> schema__table.

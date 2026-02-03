@@ -1,5 +1,7 @@
+use once_cell::sync::Lazy;
 use rusqlite::{functions::FunctionFlags, Connection, Result};
 use tracing::debug;
+use unicode_normalization::UnicodeNormalization;
 
 /// Register all PostgreSQL string functions
 pub fn register_string_functions(conn: &Connection) -> Result<()> {
@@ -79,6 +81,30 @@ pub fn register_string_functions(conn: &Connection) -> Result<()> {
             } else {
                 Ok(0i64)
             }
+        },
+    )?;
+
+    // unaccent(text) -> text
+    conn.create_scalar_function(
+        "unaccent",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let input: Option<String> = ctx.get(0)?;
+            Ok(input.map(|s| unaccent_text(&s)))
+        },
+    )?;
+
+    // unaccent(regdictionary, text) -> text
+    // NOTE: pgsqlite currently ignores the regdictionary selection and uses the same implementation.
+    conn.create_scalar_function(
+        "unaccent",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let _dict: Option<String> = ctx.get(0)?;
+            let input: Option<String> = ctx.get(1)?;
+            Ok(input.map(|s| unaccent_text(&s)))
         },
     )?;
 
@@ -238,6 +264,87 @@ pub fn register_string_functions(conn: &Connection) -> Result<()> {
 
     debug!("Successfully registered string functions");
     Ok(())
+}
+
+static UNACCENT_RULES: Lazy<Vec<(String, String)>> = Lazy::new(|| {
+    let mut rules = Vec::new();
+    if let Ok(path) = std::env::var("PGSQLITE_UNACCENT_RULES_PATH")
+        && let Ok(contents) = std::fs::read_to_string(path) {
+            for line in contents.lines() {
+                let l = line.trim();
+                if l.is_empty() || l.starts_with('#') {
+                    continue;
+                }
+                let parts: Vec<&str> = l.split_whitespace().collect();
+                if parts.is_empty() {
+                    continue;
+                }
+                let from = parts[0].to_string();
+                let to = if parts.len() >= 2 {
+                    parts[1].to_string()
+                } else {
+                    "".to_string()
+                };
+                rules.push((from, to));
+            }
+        }
+    rules
+});
+
+fn unaccent_text(input: &str) -> String {
+    let input = maybe_repair_mojibake(input);
+
+    // Step 1: compatibility decomposition then strip combining marks.
+    let mut s: String = input.nfkd().filter(|c| !is_combining_mark(*c)).collect();
+
+    // Step 2: common compatibility substitutions not guaranteed by nfkd.
+    // Keep this small and deterministic.
+    if s.contains('ß') {
+        s = s.replace('ß', "ss");
+    }
+
+    // Step 3: optional additional rules (Postgres-like unaccent.rules support via env path).
+    for (from, to) in UNACCENT_RULES.iter() {
+        if s.contains(from) {
+            s = s.replace(from, to);
+        }
+    }
+
+    s
+}
+
+fn maybe_repair_mojibake(input: &str) -> std::borrow::Cow<'_, str> {
+    // Some clients can effectively double-encode UTF-8, producing mojibake like "HÃ´tel".
+    // If this looks like that pattern, try to reinterpret the Latin-1 bytes as UTF-8.
+    if !(input.contains('Ã') || input.contains('Â') || input.contains('â')) {
+        return std::borrow::Cow::Borrowed(input);
+    }
+
+    let mut bytes = Vec::with_capacity(input.len());
+    for ch in input.chars() {
+        let u = ch as u32;
+        if u > 0xFF {
+            return std::borrow::Cow::Borrowed(input);
+        }
+        bytes.push(u as u8);
+    }
+
+    match String::from_utf8(bytes) {
+        Ok(s) => std::borrow::Cow::Owned(s),
+        Err(_) => std::borrow::Cow::Borrowed(input),
+    }
+}
+
+fn is_combining_mark(c: char) -> bool {
+    let u = c as u32;
+    matches!(
+        u,
+        0x0300..=0x036F
+            | 0x1AB0..=0x1AFF
+            | 0x1DC0..=0x1DFF
+            | 0x20D0..=0x20FF
+            | 0xFE20..=0xFE2F
+    )
 }
 
 /// String aggregator for string_agg function

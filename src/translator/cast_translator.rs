@@ -217,7 +217,9 @@ impl CastTranslator {
 
             // Check if this is an ENUM type cast
             let translated_cast = if let Some(conn) = conn {
-                if Self::is_enum_type(conn, type_name) {
+                if type_name.eq_ignore_ascii_case("regdictionary") {
+                    Self::normalize_regdictionary_expr(expr)
+                } else if Self::is_enum_type(conn, type_name) {
                     // For ENUM types, we validate the value
                     Self::translate_enum_cast(expr, type_name, conn)
                 } else if type_name.eq_ignore_ascii_case("text") {
@@ -304,6 +306,9 @@ impl CastTranslator {
                     }
                 }
             } else {
+                if type_name.eq_ignore_ascii_case("regdictionary") {
+                    Self::normalize_regdictionary_expr(expr)
+                } else
                 // No connection, use standard SQL cast
                 if type_name.eq_ignore_ascii_case("text") {
                     // Remove outer parentheses if present
@@ -640,6 +645,18 @@ impl CastTranslator {
             // Runtime validation will be handled by triggers
             expr.to_string()
         }
+    }
+
+    fn normalize_regdictionary_expr(expr: &str) -> String {
+        let trimmed = expr.trim();
+        if trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+            return trimmed.to_string();
+        }
+        if trimmed.starts_with('$') || trimmed.starts_with('?') {
+            return trimmed.to_string();
+        }
+        let escaped = trimmed.replace('\'', "''");
+        format!("'{escaped}'")
     }
 
     /// Check if an expression might need explicit TEXT casting
