@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 IMAGE_NAME="pgsqlite-e2e-local-uuid-ossp"
 CONTAINER_NAME="pgsqlite-e2e-uuid-ossp"
 VOLUME_NAME="pgsqlite-e2e-data-uuid-ossp"
-HOST_PORT="55432"
+HOST_PORT="55433"
 
 cleanup() {
   docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
