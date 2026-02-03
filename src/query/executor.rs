@@ -236,19 +236,18 @@ fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
             continue;
         }
 
-        if !in_single && (b == b'c' || b == b'C') && i + target.len() <= bytes.len() {
-            if bytes[i..i + target.len()].eq_ignore_ascii_case(target) {
+        if !in_single && (b == b'c' || b == b'C') && i + target.len() <= bytes.len()
+            && bytes[i..i + target.len()].eq_ignore_ascii_case(target) {
                 let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
                 let next = if i + target.len() < bytes.len() { Some(bytes[i + target.len()]) } else { None };
-                let prev_ok = prev.map_or(true, |p| !is_ident_byte(p) && p != b'.');
-                let next_ok = next.map_or(true, |n| !is_ident_byte(n) && n != b'(');
+                let prev_ok = prev.is_none_or(|p| !is_ident_byte(p) && p != b'.');
+                let next_ok = next.is_none_or(|n| !is_ident_byte(n) && n != b'(');
                 if prev_ok && next_ok {
                     output.push_str(replacement);
                     i += target.len();
                     continue;
                 }
             }
-        }
 
         output.push(b as char);
         i += 1;
@@ -258,7 +257,7 @@ fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
 }
 
 fn is_ident_byte(b: u8) -> bool {
-    (b'0'..=b'9').contains(&b) || (b'a'..=b'z').contains(&b) || (b'A'..=b'Z').contains(&b) || b == b'_'
+    b.is_ascii_digit() || b.is_ascii_lowercase() || b.is_ascii_uppercase() || b == b'_'
 }
 
 async fn try_handle_select_set_config<T>(
@@ -470,8 +469,8 @@ async fn expand_sql_execute(session: &Arc<SessionState>, query: &str) -> Result<
 
 fn parse_execute_args(rest: &str) -> (Vec<String>, &str) {
     let r = rest.trim_start();
-    if r.starts_with('(') {
-        if let Some((inside, after)) = extract_parenthesized(r) {
+    if r.starts_with('(')
+        && let Some((inside, after)) = extract_parenthesized(r) {
             let parts = split_top_level_commas(inside);
             return (
                 parts
@@ -482,16 +481,15 @@ fn parse_execute_args(rest: &str) -> (Vec<String>, &str) {
                 after,
             );
         }
-    }
     (Vec::new(), r)
 }
 
 fn parse_sql_identifier(input: &str) -> (&str, &str) {
     let s = input.trim_start();
-    if s.starts_with('"') {
-        if let Some(end) = s[1..].find('"') {
-            let name = &s[1..1 + end];
-            let rest = &s[2 + end..];
+    if let Some(stripped) = s.strip_prefix('"') {
+        if let Some(end) = stripped.find('"') {
+            let name = &stripped[..end];
+            let rest = &stripped[end + 1..];
             return (name, rest);
         }
         return ("", s);
@@ -530,7 +528,8 @@ fn extract_parenthesized(input: &str) -> Option<(&str, &str)> {
             continue;
         }
         if in_single {
-            i += 1;
+            let ch = input[i..].chars().next().unwrap();
+            i += ch.len_utf8();
             continue;
         }
         if b == b'(' {
@@ -711,6 +710,360 @@ fn pg_type_oid_from_sql_name(type_name: &str) -> i32 {
     }
 }
 
+pub(crate) async fn try_handle_create_or_replace_sql_function(
+    db: &Arc<DbHandler>,
+    session: &Arc<SessionState>,
+    query: &str,
+) -> Result<bool, PgSqliteError> {
+    // Minimal support for:
+    // CREATE OR REPLACE FUNCTION schema.func(argname type, ...) RETURNS type LANGUAGE sql [IMMUTABLE|STABLE|VOLATILE] AS $$ SELECT <expr> $$;
+    let q = query.trim();
+    let upper = q.to_uppercase();
+    if !upper.starts_with("CREATE") || !upper.contains("FUNCTION") || !upper.contains("LANGUAGE SQL") {
+        return Ok(false);
+    }
+
+    // Find "FUNCTION" keyword
+    let func_pos = upper.find("FUNCTION").ok_or_else(|| PgSqliteError::Protocol("Invalid CREATE FUNCTION".to_string()))?;
+    let after_func = &q[func_pos + "FUNCTION".len()..];
+    let after_func = after_func.trim_start();
+
+    // Find arg list
+    let name_end = after_func.find('(').ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing arg list".to_string()))?;
+    let name_part = after_func[..name_end].trim();
+    let (schema_name, func_name) = parse_schema_qualified_name(name_part);
+    if func_name.is_empty() {
+        return Err(PgSqliteError::Protocol("Invalid function name".to_string()));
+    }
+
+    let args_start = &after_func[name_end..];
+    let Some((args_inside, after_args)) = extract_parenthesized(args_start) else {
+        return Err(PgSqliteError::Protocol("Invalid function arg list".to_string()));
+    };
+    let arg_defs = split_top_level_commas(args_inside);
+    let mut arg_names = Vec::new();
+    let mut arg_types = Vec::new();
+    for def in arg_defs {
+        let d = def.trim();
+        if d.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = d.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(PgSqliteError::Protocol("Invalid function argument".to_string()));
+        }
+        let name = parts[0].trim_matches('"').to_string();
+        let ty = parts[1..].join(" ");
+        arg_names.push(name);
+        arg_types.push(ty);
+    }
+    let nargs = arg_names.len() as i64;
+
+    // RETURNS type
+    let after_args_upper = after_args.to_uppercase();
+    let returns_pos = after_args_upper
+        .find("RETURNS")
+        .ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing RETURNS".to_string()))?;
+    let after_returns = after_args[returns_pos + "RETURNS".len()..].trim_start();
+    let after_returns_upper = after_returns.to_uppercase();
+    let lang_pos = after_returns_upper
+        .find("LANGUAGE")
+        .ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing LANGUAGE".to_string()))?;
+    let return_type_str = after_returns[..lang_pos].trim();
+    let return_oid = pg_type_oid_from_sql_name(return_type_str);
+
+    let volatility = if upper.contains("IMMUTABLE") {
+        'i'
+    } else if upper.contains("STABLE") {
+        's'
+    } else {
+        'v'
+    };
+    let strict = if upper.contains("STRICT") { 't' } else { 'f' };
+
+    // Extract $$ body $$ (accept any tag: $tag$...$tag$)
+    let as_pos = upper.find("AS").ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing AS".to_string()))?;
+    let after_as = &q[as_pos + 2..];
+    let (body, _rest) = extract_dollar_quoted_body(after_as.trim_start())
+        .ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing $$".to_string()))?;
+    let body = body.trim();
+    let body_upper = body.to_uppercase();
+    if !body_upper.trim_start().starts_with("SELECT") {
+        return Ok(false);
+    }
+    let mut expr = body.trim_start()[6..].trim_start();
+    expr = expr.trim_end_matches(';').trim();
+
+    // Convert arg references to $1..$n
+    let mut template = expr.to_string();
+    for (idx, name) in arg_names.iter().enumerate() {
+        let placeholder = format!("${}", idx + 1);
+        template = replace_identifier_token(&template, name, &placeholder);
+    }
+
+    let schema_name = if schema_name.is_empty() { "public".to_string() } else { schema_name };
+
+    // Ensure table exists (for older DBs)
+    let init = "CREATE TABLE IF NOT EXISTS __pgsqlite_user_functions (\
+        schema_name TEXT NOT NULL,\
+        func_name TEXT NOT NULL,\
+        func_nargs INTEGER NOT NULL,\
+        func_kind TEXT NOT NULL DEFAULT 'f',\
+        func_strict TEXT NOT NULL DEFAULT 'f',\
+        func_retset TEXT NOT NULL DEFAULT 'f',\
+        func_volatile TEXT NOT NULL DEFAULT 'i',\
+        func_rettype INTEGER NOT NULL DEFAULT 25,\
+        arg_names TEXT NULL,\
+        arg_types TEXT NULL,\
+        body_expr TEXT NOT NULL,\
+        created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),\
+        PRIMARY KEY (schema_name, func_name, func_nargs)\
+    );";
+    let cached_conn = QueryExecutor::get_or_cache_connection(session, db).await;
+    let _ = db.execute_with_session_cached(init, &session.id, cached_conn.as_ref()).await;
+
+    let insert = format!(
+        "INSERT OR REPLACE INTO __pgsqlite_user_functions (schema_name, func_name, func_nargs, func_kind, func_strict, func_retset, func_volatile, func_rettype, arg_names, arg_types, body_expr) \
+         VALUES ('{}','{}',{},'f','{}','f','{}',{},'{}','{}','{}')",
+        escape_sql_literal(&schema_name),
+        escape_sql_literal(&func_name),
+        nargs,
+        strict,
+        volatility,
+        return_oid,
+        escape_sql_literal(&format!("[{}]", arg_names.iter().map(|n| format!("\"{}\"", n.replace('"', "\\\""))).collect::<Vec<_>>().join(","))),
+        escape_sql_literal(&format!("[{}]", arg_types.iter().map(|t| format!("\"{}\"", t.replace('"', "\\\""))).collect::<Vec<_>>().join(","))),
+        escape_sql_literal(&template),
+    );
+    let cached_conn = QueryExecutor::get_or_cache_connection(session, db).await;
+    db.execute_with_session_cached(&insert, &session.id, cached_conn.as_ref()).await?;
+    Ok(true)
+}
+
+fn extract_dollar_quoted_body(input: &str) -> Option<(&str, &str)> {
+    let s = input;
+    let mut start = 0usize;
+    while start < s.len() {
+        let next = s[start..].find('$')? + start;
+        let rest = &s[next..];
+        let second = rest[1..].find('$')? + 1;
+        let tag = &rest[..=second];
+        let body_start = &rest[tag.len()..];
+        if let Some(end_pos) = body_start.find(tag) {
+            let body = &body_start[..end_pos];
+            let after = &body_start[end_pos + tag.len()..];
+            return Some((body, after));
+        }
+        start = next + 1;
+    }
+    None
+}
+
+pub(crate) async fn expand_user_sql_functions(
+    db: &Arc<DbHandler>,
+    session: &Arc<SessionState>,
+    query: &str,
+) -> Result<String, PgSqliteError> {
+    // Best-effort: if the table doesn't exist yet, do nothing.
+    let rows = db
+        .with_session_connection(&session.id, |conn| {
+            let mut stmt = match conn.prepare(
+                "SELECT schema_name, func_name, func_nargs, body_expr FROM __pgsqlite_user_functions",
+            ) {
+                Ok(s) => s,
+                Err(_) => return Ok(Vec::new()),
+            };
+            let mut out = Vec::new();
+            let mut iter = stmt.query([])?;
+            while let Some(row) = iter.next()? {
+                let schema_name: String = row.get(0)?;
+                let func_name: String = row.get(1)?;
+                let func_nargs: i64 = row.get(2)?;
+                let body_expr: String = row.get(3)?;
+                out.push((schema_name, func_name, func_nargs as usize, body_expr));
+            }
+            Ok(out)
+        })
+        .await
+        .unwrap_or_default();
+
+    if rows.is_empty() {
+        return Ok(query.to_string());
+    }
+
+    let search_path = {
+        let params = session.parameters.read().await;
+        params
+            .get("SEARCH_PATH")
+            .cloned()
+            .unwrap_or_else(|| "public".to_string())
+    };
+    let mut search_schemas: Vec<String> = search_path
+        .split(',')
+        .map(|s| s.trim().trim_matches('\'').trim_matches('"').to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if search_schemas.is_empty() {
+        search_schemas.push("public".to_string());
+    }
+
+    let mut result = query.to_string();
+    for (schema_name, func_name, nargs, body_expr) in rows {
+        // Expand schema-qualified calls first
+        result = expand_named_function_calls(&result, Some(&schema_name), &func_name, nargs, &body_expr);
+        // Expand unqualified calls if schema is in search_path
+        if search_schemas.iter().any(|s| s == &schema_name) {
+            result = expand_named_function_calls(&result, None, &func_name, nargs, &body_expr);
+        }
+    }
+
+    Ok(result)
+}
+
+fn expand_named_function_calls(
+    query: &str,
+    schema: Option<&str>,
+    func: &str,
+    nargs: usize,
+    body_expr: &str,
+) -> String {
+    let bytes = query.as_bytes();
+    let mut out = String::with_capacity(query.len());
+    let mut i = 0usize;
+    let mut in_single = false;
+
+    let func_lc = func.to_lowercase();
+    let schema_lc = schema.map(|s| s.to_lowercase());
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            out.push('\'');
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+
+        if !in_single {
+            // Try match at this position
+            if let Some(schema_lc) = schema_lc.as_ref() {
+                // schema.func(
+                if i + schema_lc.len() + 1 + func_lc.len() < bytes.len() {
+                    let slice = &query[i..];
+                    let prefix = format!("{schema_lc}.{func_lc}");
+                    if slice.to_lowercase().starts_with(&prefix) {
+                        let after = i + prefix.len();
+                        if after < bytes.len() && bytes[after] == b'('
+                            && let Some((inside, after_paren)) = extract_parenthesized(&query[after..]) {
+                                let args = split_top_level_commas(inside);
+                                if args.len() == nargs {
+                                    let args: Vec<String> = args
+                                        .into_iter()
+                                        .map(|a| format!("({})", a.trim()))
+                                        .collect();
+                                    let expanded = replace_dollar_params(body_expr, &args);
+                                    out.push_str(&expanded);
+                                    let consumed = query[after..].len() - after_paren.len();
+                                    i = after + consumed;
+                                    continue;
+                                }
+                            }
+                    }
+                }
+            } else {
+                // func(
+                if i + func_lc.len() < bytes.len() {
+                    let slice = &query[i..];
+                    if slice.to_lowercase().starts_with(&func_lc) {
+                        let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
+                        let prev_ok = prev.is_none_or(|p| !is_ident_byte(p) && p != b'.');
+                        if prev_ok {
+                            let after = i + func_lc.len();
+                            if after < bytes.len() && bytes[after] == b'('
+                                && let Some((inside, after_paren)) = extract_parenthesized(&query[after..]) {
+                                    let args = split_top_level_commas(inside);
+                                    if args.len() == nargs {
+                                        let args: Vec<String> = args
+                                            .into_iter()
+                                            .map(|a| format!("({})", a.trim()))
+                                            .collect();
+                                        let expanded = replace_dollar_params(body_expr, &args);
+                                        out.push_str(&expanded);
+                                        let consumed = query[after..].len() - after_paren.len();
+                                        i = after + consumed;
+                                        continue;
+                                    }
+                                }
+                        }
+                    }
+                }
+            }
+        }
+
+        let ch = query[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
+}
+
+fn parse_schema_qualified_name(input: &str) -> (String, String) {
+    let s = input.trim();
+    if s.contains('.') {
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() >= 2 {
+            let schema = parts[0].trim().trim_matches('"').to_string();
+            let name = parts[1].trim().trim_matches('"').to_string();
+            return (schema, name);
+        }
+    }
+    ("public".to_string(), s.trim_matches('"').to_string())
+}
+
+fn replace_identifier_token(input: &str, ident: &str, replacement: &str) -> String {
+    let bytes = input.as_bytes();
+    let target = ident.as_bytes();
+    let mut out = String::with_capacity(input.len() + 8);
+    let mut i = 0usize;
+    let mut in_single = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\'' {
+            out.push('\'');
+            if in_single && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            in_single = !in_single;
+            i += 1;
+            continue;
+        }
+        if !in_single && i + target.len() <= bytes.len()
+            && bytes[i..i + target.len()].eq_ignore_ascii_case(target) {
+                let prev = if i == 0 { None } else { Some(bytes[i - 1]) };
+                let next = if i + target.len() < bytes.len() { Some(bytes[i + target.len()]) } else { None };
+                let prev_ok = prev.is_none_or(|p| !is_ident_byte(p) && p != b'.');
+                let next_ok = next.is_none_or(|n| !is_ident_byte(n));
+                if prev_ok && next_ok {
+                    out.push_str(replacement);
+                    i += target.len();
+                    continue;
+                }
+            }
+        let ch = input[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 fn detect_boolean_projection_indices(query: &str) -> std::collections::HashSet<usize> {
     use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement, UnaryOperator};
     use sqlparser::dialect::PostgreSqlDialect;
@@ -743,12 +1096,11 @@ fn detect_boolean_projection_indices(query: &str) -> std::collections::HashSet<u
             indices.insert(idx);
             continue;
         }
-        if let Expr::UnaryOp { op: UnaryOperator::Not, expr: inner } = expr {
-            if matches!(inner.as_ref(), Expr::Exists { .. }) {
+        if let Expr::UnaryOp { op: UnaryOperator::Not, expr: inner } = expr
+            && matches!(inner.as_ref(), Expr::Exists { .. }) {
                 indices.insert(idx);
                 continue;
             }
-        }
     }
 
     // Fallback: sqlparser might not classify some EXISTS projections in edge cases.
@@ -1017,7 +1369,17 @@ impl QueryExecutor {
             return handle_sql_deallocate(framed, session, effective_query.as_ref()).await;
         }
 
-        let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(effective_query.as_ref());
+        // Expand SQL-language user functions (CREATE OR REPLACE FUNCTION ... LANGUAGE sql)
+        // before schema prefix stripping.
+        {
+            let expanded = expand_user_sql_functions(db, session, effective_query.as_ref()).await?;
+            if expanded != effective_query.as_ref() {
+                effective_query = std::borrow::Cow::Owned(expanded);
+            }
+        }
+
+        let schema_mapped = crate::translator::SchemaPrefixTranslator::translate_query(effective_query.as_ref());
+        let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(&schema_mapped);
         let rewritten_session_query = rewrite_session_functions(&current_schema_from_rewritten, session).await;
         let query = rewritten_session_query.as_str();
 
@@ -2132,8 +2494,8 @@ impl QueryExecutor {
         if !boolean_projection_indices.is_empty() {
             for row in &mut converted_rows {
                 for idx in &boolean_projection_indices {
-                    if let Some(Some(value_bytes)) = row.get_mut(*idx) {
-                        if let Ok(s) = std::str::from_utf8(value_bytes) {
+                    if let Some(Some(value_bytes)) = row.get_mut(*idx)
+                        && let Ok(s) = std::str::from_utf8(value_bytes) {
                             let v = match s.trim() {
                                 "0" | "f" | "false" | "FALSE" => Some(b"f".to_vec()),
                                 "1" | "t" | "true" | "TRUE" => Some(b"t".to_vec()),
@@ -2143,7 +2505,6 @@ impl QueryExecutor {
                                 *value_bytes = v;
                             }
                         }
-                    }
                 }
             }
         }
@@ -2781,7 +3142,7 @@ impl QueryExecutor {
             }
 
             let ext_lc = ext.to_lowercase();
-            if ext_lc != "uuid-ossp" && ext_lc != "uuid_ossp" {
+            if ext_lc != "uuid-ossp" && ext_lc != "uuid_ossp" && ext_lc != "unaccent" {
                 return Err(PgSqliteError::NotSupported(format!(
                     "Extension not supported: {}",
                     ext
@@ -2796,6 +3157,20 @@ impl QueryExecutor {
                 .map_err(PgSqliteError::Io)?;
             return Ok(());
         }
+
+        // SQL-language CREATE OR REPLACE FUNCTION (persisted user function)
+        if query.trim_start().to_uppercase().starts_with("CREATE")
+            && query.to_uppercase().contains("FUNCTION")
+            && query.to_uppercase().contains("LANGUAGE SQL")
+            && try_handle_create_or_replace_sql_function(db, session, query).await? {
+                framed
+                    .send(BackendMessage::CommandComplete {
+                        tag: "CREATE FUNCTION".to_string(),
+                    })
+                    .await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
 
         // Check if this is a DROP SCHEMA statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Drop) &&

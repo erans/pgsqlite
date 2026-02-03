@@ -145,6 +145,12 @@ impl ExtendedQueryHandler {
         if cleaned_query.trim().is_empty() {
             return Err(PgSqliteError::Protocol("Empty query".to_string()));
         }
+
+        // Expand SQL-language user functions before schema prefix stripping.
+        cleaned_query = crate::query::executor::expand_user_sql_functions(db, session, &cleaned_query).await?;
+
+        // Strip schema prefixes from a safe allowlist of schema-qualified function calls.
+        cleaned_query = crate::translator::SchemaPrefixTranslator::translate_query(&cleaned_query);
         
         // Removed verbose debug logging for parsing
         
@@ -5423,7 +5429,7 @@ impl ExtendedQueryHandler {
             }
 
             let ext_lc = ext.to_lowercase();
-            if ext_lc != "uuid-ossp" && ext_lc != "uuid_ossp" {
+            if ext_lc != "uuid-ossp" && ext_lc != "uuid_ossp" && ext_lc != "unaccent" {
                 return Err(PgSqliteError::NotSupported(format!(
                     "Extension not supported: {}",
                     ext
@@ -5438,6 +5444,19 @@ impl ExtendedQueryHandler {
                 .map_err(PgSqliteError::Io)?;
             return Ok(());
         }
+
+        if query_starts_with_ignore_case(query, "CREATE")
+            && query.to_uppercase().contains("FUNCTION")
+            && query.to_uppercase().contains("LANGUAGE SQL")
+            && crate::query::executor::try_handle_create_or_replace_sql_function(db, session, query).await? {
+                framed
+                    .send(BackendMessage::CommandComplete {
+                        tag: "CREATE FUNCTION".to_string(),
+                    })
+                    .await
+                    .map_err(PgSqliteError::Io)?;
+                return Ok(());
+            }
         
         // Handle CREATE TABLE translation
         if query_starts_with_ignore_case(query, "CREATE TABLE") {
