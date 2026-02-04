@@ -21,6 +21,7 @@ pub struct LazyQueryProcessor<'a> {
     needs_pg_table_is_visible_translation: bool,
     needs_session_identifier_translation: bool,
     needs_current_schema_from_translation: bool,
+    needs_current_database_from_translation: bool,
 }
 
 impl<'a> LazyQueryProcessor<'a> {
@@ -35,7 +36,8 @@ impl<'a> LazyQueryProcessor<'a> {
                          query.contains("AT TIME ZONE") || query.contains("pg_table_is_visible") ||
                          query.contains("current_user") || query.contains("session_user") ||
                          query.contains("CURRENT_USER") || query.contains("SESSION_USER") ||
-                         query.contains("current_schema") || query.contains("CURRENT_SCHEMA");
+                         query.contains("current_schema") || query.contains("CURRENT_SCHEMA") ||
+                         query.contains("current_database") || query.contains("CURRENT_DATABASE");
         
         if !quick_check {
             // Fast path - no translation needed
@@ -54,6 +56,7 @@ impl<'a> LazyQueryProcessor<'a> {
                 needs_pg_table_is_visible_translation: false,
                 needs_session_identifier_translation: false,
                 needs_current_schema_from_translation: false,
+                needs_current_database_from_translation: false,
             };
         }
         
@@ -75,6 +78,7 @@ impl<'a> LazyQueryProcessor<'a> {
             needs_pg_table_is_visible_translation: query.contains("pg_table_is_visible"),
             needs_session_identifier_translation: crate::translator::SessionIdentifierTranslator::needs_translation(query),
             needs_current_schema_from_translation: crate::translator::CurrentSchemaFromTranslator::needs_translation(query),
+            needs_current_database_from_translation: crate::translator::CurrentDatabaseFromTranslator::needs_translation(query),
         }
     }
     
@@ -128,6 +132,10 @@ impl<'a> LazyQueryProcessor<'a> {
         if self.needs_current_schema_from_translation {
             return true;
         }
+
+        if self.needs_current_database_from_translation {
+            return true;
+        }
         
         // Check decimal rewrite need if not already determined
         if let Some(needs_decimal) = self.needs_decimal_rewrite {
@@ -165,7 +173,7 @@ impl<'a> LazyQueryProcessor<'a> {
            !self.needs_array_translation && !self.needs_delete_using_translation &&
            !self.needs_batch_update_translation && !self.needs_datetime_translation &&
            !self.needs_pg_table_is_visible_translation && !self.needs_session_identifier_translation &&
-           !self.needs_current_schema_from_translation {
+           !self.needs_current_schema_from_translation && !self.needs_current_database_from_translation {
             // Check if this is an INSERT that might need decimal rewrite
             if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert) {
                 if let Some(table_name) = extract_insert_table_name(self.original_query)
@@ -192,6 +200,13 @@ impl<'a> LazyQueryProcessor<'a> {
             tracing::debug!("Before current_schema FROM translation: {}", current_query);
             let translated = crate::translator::CurrentSchemaFromTranslator::translate_query(&current_query);
             tracing::debug!("After current_schema FROM translation: {}", translated);
+            current_query = Cow::Owned(translated);
+        }
+
+        if self.needs_current_database_from_translation {
+            tracing::debug!("Before current_database FROM translation: {}", current_query);
+            let translated = crate::translator::CurrentDatabaseFromTranslator::translate_query(&current_query);
+            tracing::debug!("After current_database FROM translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
 

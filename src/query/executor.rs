@@ -75,6 +75,8 @@ async fn rewrite_session_functions(query: &str, session: &Arc<SessionState>) -> 
             .unwrap_or_else(|| "public".to_string())
     };
 
+    let current_database = session.database.clone();
+
     let timezone = {
         let params = session.parameters.read().await;
         params
@@ -113,8 +115,18 @@ async fn rewrite_session_functions(query: &str, session: &Arc<SessionState>) -> 
         return format!("SELECT '{}' AS current_schema{suffix}", escape_sql_literal(&current_schema));
     }
 
+    if CURRENT_DATABASE_ONLY_PATTERN.is_match(&result) {
+        let has_semicolon = result.trim_end().ends_with(';');
+        let suffix = if has_semicolon { ";" } else { "" };
+        return format!("SELECT '{}' AS current_database{suffix}", escape_sql_literal(&current_database));
+    }
+
     result = CURRENT_SCHEMA_FN_PATTERN
         .replace_all(&result, format!("'{}'", escape_sql_literal(&current_schema)))
+        .to_string();
+
+    result = CURRENT_DATABASE_FN_PATTERN
+        .replace_all(&result, format!("'{}'", escape_sql_literal(&current_database)))
         .to_string();
 
     result = replace_current_schema_bare(&result, &format!("'{}'", escape_sql_literal(&current_schema)));
@@ -199,6 +211,14 @@ static CURRENT_SCHEMA_FN_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bcurrent_schema\s*\(\s*\)").expect("regex compiles")
 });
 
+static CURRENT_DATABASE_ONLY_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?is)^\s*select\s+current_database\s*\(\s*\)\s*;?\s*$").expect("regex compiles")
+});
+
+static CURRENT_DATABASE_FN_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\bcurrent_database\s*\(\s*\)").expect("regex compiles")
+});
+
 static CURRENT_SCHEMAS_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?i)\bcurrent_schemas\s*\(\s*(true|false)\s*\)").expect("regex compiles")
 });
@@ -242,7 +262,7 @@ fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
                 let next = if i + target.len() < bytes.len() { Some(bytes[i + target.len()]) } else { None };
                 let prev_ok = prev.is_none_or(|p| !is_ident_byte(p) && p != b'.');
                 let next_ok = next.is_none_or(|n| !is_ident_byte(n) && n != b'(');
-                if prev_ok && next_ok {
+                if prev_ok && next_ok && !is_alias_keyword_before(bytes, i) {
                     output.push_str(replacement);
                     i += target.len();
                     continue;
@@ -258,6 +278,32 @@ fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
 
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_digit() || b.is_ascii_lowercase() || b.is_ascii_uppercase() || b == b'_'
+}
+
+fn is_alias_keyword_before(bytes: &[u8], start: usize) -> bool {
+    let mut i = start;
+    while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i < 2 {
+        return false;
+    }
+    let mut j = i;
+    while j > 0 && (bytes[j - 1].is_ascii_alphabetic()) {
+        j -= 1;
+    }
+    if i - j != 2 {
+        return false;
+    }
+    let word = &bytes[j..i];
+    if !word.eq_ignore_ascii_case(b"as") {
+        return false;
+    }
+    if j == 0 {
+        return true;
+    }
+    let prev = bytes[j - 1];
+    prev.is_ascii_whitespace() || prev == b',' || prev == b'(' || prev == b')'
 }
 
 async fn try_handle_select_set_config<T>(
@@ -1380,7 +1426,8 @@ impl QueryExecutor {
 
         let schema_mapped = crate::translator::SchemaPrefixTranslator::translate_query(effective_query.as_ref());
         let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(&schema_mapped);
-        let rewritten_session_query = rewrite_session_functions(&current_schema_from_rewritten, session).await;
+        let current_database_from_rewritten = crate::translator::CurrentDatabaseFromTranslator::translate_query(&current_schema_from_rewritten);
+        let rewritten_session_query = rewrite_session_functions(&current_database_from_rewritten, session).await;
         let query = rewritten_session_query.as_str();
 
         if try_handle_select_set_config(framed, session, query).await? {
@@ -1772,6 +1819,11 @@ impl QueryExecutor {
         if translation_flags.contains(crate::translator::TranslationFlags::CURRENT_SCHEMA_FROM) {
             translated_query = crate::translator::CurrentSchemaFromTranslator::translate_query(&translated_query);
             debug!("Query after current_schema FROM translation: {}", translated_query);
+        }
+
+        if translation_flags.contains(crate::translator::TranslationFlags::CURRENT_DATABASE_FROM) {
+            translated_query = crate::translator::CurrentDatabaseFromTranslator::translate_query(&translated_query);
+            debug!("Query after current_database FROM translation: {}", translated_query);
         }
         
         // Translate FTS operations if needed

@@ -20,6 +20,7 @@ bitflags! {
         const ROW_TO_JSON = 1 << 12;
         const ARITHMETIC = 1 << 13;
         const CURRENT_SCHEMA_FROM = 1 << 14;
+        const CURRENT_DATABASE_FROM = 1 << 15;
     }
 }
 
@@ -170,6 +171,10 @@ impl QueryAnalyzer {
 
         if query_lower.contains("current_schema") {
             flags |= TranslationFlags::CURRENT_SCHEMA_FROM;
+        }
+
+        if query_lower.contains("current_database") {
+            flags |= TranslationFlags::CURRENT_DATABASE_FROM;
         }
 
         // Check for arithmetic operations (only if SELECT query)
