@@ -21,6 +21,7 @@ bitflags! {
         const ARITHMETIC = 1 << 13;
         const CURRENT_SCHEMA_FROM = 1 << 14;
         const CURRENT_DATABASE_FROM = 1 << 15;
+        const VERSION_SELECT = 1 << 16;
     }
 }
 
@@ -175,6 +176,10 @@ impl QueryAnalyzer {
 
         if query_lower.contains("current_database") {
             flags |= TranslationFlags::CURRENT_DATABASE_FROM;
+        }
+
+        if query_lower.contains("select") && query_lower.contains("version()") {
+            flags |= TranslationFlags::VERSION_SELECT;
         }
 
         // Check for arithmetic operations (only if SELECT query)

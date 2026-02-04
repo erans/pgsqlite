@@ -23,6 +23,7 @@ bitflags! {
         const CREATE_TABLE = 0x400;
         const CURRENT_SCHEMA_FROM = 0x800;
         const CURRENT_DATABASE_FROM = 0x1000;
+        const VERSION_SELECT = 0x2000;
     }
 }
 
@@ -130,6 +131,12 @@ impl<'a> UnifiedProcessor<'a> {
         if memchr::memmem::find(query_bytes, b"current_database").is_some() ||
            memchr::memmem::find(query_bytes, b"CURRENT_DATABASE").is_some() {
             translations.insert(TranslationFlags::CURRENT_DATABASE_FROM);
+            complexity = ComplexityLevel::Moderate;
+        }
+
+        if memchr::memmem::find(query_bytes, b"version()").is_some() ||
+           memchr::memmem::find(query_bytes, b"VERSION()").is_some() {
+            translations.insert(TranslationFlags::VERSION_SELECT);
             complexity = ComplexityLevel::Moderate;
         }
 
@@ -408,6 +415,11 @@ fn process_complex_query<'a>(
 
     if processor.needs_translation(TranslationFlags::CURRENT_DATABASE_FROM) {
         let translated = crate::translator::CurrentDatabaseFromTranslator::translate_query(&result);
+        result = Cow::Owned(translated);
+    }
+
+    if processor.needs_translation(TranslationFlags::VERSION_SELECT) {
+        let translated = crate::translator::VersionSelectTranslator::translate_query(&result);
         result = Cow::Owned(translated);
     }
     

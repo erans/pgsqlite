@@ -151,6 +151,9 @@ impl ExtendedQueryHandler {
 
         // Strip schema prefixes from a safe allowlist of schema-qualified function calls.
         cleaned_query = crate::translator::SchemaPrefixTranslator::translate_query(&cleaned_query);
+
+        // Normalize SELECT version() to use a stable column alias.
+        cleaned_query = crate::translator::VersionSelectTranslator::translate_query(&cleaned_query);
         
         // Removed verbose debug logging for parsing
         

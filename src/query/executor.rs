@@ -1427,7 +1427,8 @@ impl QueryExecutor {
         let schema_mapped = crate::translator::SchemaPrefixTranslator::translate_query(effective_query.as_ref());
         let current_schema_from_rewritten = crate::translator::CurrentSchemaFromTranslator::translate_query(&schema_mapped);
         let current_database_from_rewritten = crate::translator::CurrentDatabaseFromTranslator::translate_query(&current_schema_from_rewritten);
-        let rewritten_session_query = rewrite_session_functions(&current_database_from_rewritten, session).await;
+        let version_select_rewritten = crate::translator::VersionSelectTranslator::translate_query(&current_database_from_rewritten);
+        let rewritten_session_query = rewrite_session_functions(&version_select_rewritten, session).await;
         let query = rewritten_session_query.as_str();
 
         if try_handle_select_set_config(framed, session, query).await? {
@@ -1824,6 +1825,11 @@ impl QueryExecutor {
         if translation_flags.contains(crate::translator::TranslationFlags::CURRENT_DATABASE_FROM) {
             translated_query = crate::translator::CurrentDatabaseFromTranslator::translate_query(&translated_query);
             debug!("Query after current_database FROM translation: {}", translated_query);
+        }
+
+        if translation_flags.contains(crate::translator::TranslationFlags::VERSION_SELECT) {
+            translated_query = crate::translator::VersionSelectTranslator::translate_query(&translated_query);
+            debug!("Query after version() select translation: {}", translated_query);
         }
         
         // Translate FTS operations if needed
