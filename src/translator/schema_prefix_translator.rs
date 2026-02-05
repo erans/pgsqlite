@@ -32,12 +32,14 @@ static SCHEMA_QUALIFIED_FUNCTION_CALL: Lazy<Regex> = Lazy::new(|| {
     .expect("regex compiles")
 });
 
+static CREATE_FUNCTION_STMT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)(^|;)\s*create\s+(?:or\s+replace\s+)?function\b"#).expect("regex compiles")
+});
+
 impl SchemaPrefixTranslator {
     /// Translate a query string by removing schema prefixes
     pub fn translate_query(query: &str) -> String {
-        let trimmed = query.trim_start();
-        let trimmed_upper = trimmed.to_uppercase();
-        if trimmed_upper.starts_with("CREATE") && trimmed_upper.contains("FUNCTION") {
+        if CREATE_FUNCTION_STMT.is_match(query) {
             return query.to_string();
         }
 
@@ -265,5 +267,12 @@ mod tests {
             translated,
             "SELECT * FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid"
         );
+    }
+
+    #[test]
+    fn test_create_function_skips_translation() {
+        let query = "CREATE OR REPLACE FUNCTION public.unaccent_immutable(input text) RETURNS text LANGUAGE sql AS $$ SELECT public.unaccent('public.unaccent'::regdictionary, input) $$;";
+        let translated = SchemaPrefixTranslator::translate_query(query);
+        assert_eq!(translated, query);
     }
 }
