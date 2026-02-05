@@ -774,16 +774,24 @@ pub(crate) async fn try_handle_create_or_replace_sql_function(
     let after_func = &q[func_pos + "FUNCTION".len()..];
     let after_func = after_func.trim_start();
 
-    // Find arg list
-    let name_end = after_func.find('(').ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing arg list".to_string()))?;
-    let name_part = after_func[..name_end].trim();
+    let after_func_upper = after_func.to_uppercase();
+    let returns_pos = after_func_upper
+        .find("RETURNS")
+        .ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing RETURNS".to_string()))?;
+    let signature_part = after_func[..returns_pos].trim_end();
+
+    // Find arg list (only within the signature before RETURNS)
+    let name_end = signature_part
+        .find('(')
+        .ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing arg list".to_string()))?;
+    let name_part = signature_part[..name_end].trim();
     let (schema_name, func_name) = parse_schema_qualified_name(name_part);
     if func_name.is_empty() {
         return Err(PgSqliteError::Protocol("Invalid function name".to_string()));
     }
 
-    let args_start = &after_func[name_end..];
-    let Some((args_inside, after_args)) = extract_parenthesized(args_start) else {
+    let args_start = &signature_part[name_end..];
+    let Some((args_inside, _after_args)) = extract_parenthesized(args_start) else {
         return Err(PgSqliteError::Protocol("Invalid function arg list".to_string()));
     };
     let arg_defs = split_top_level_commas(args_inside);
@@ -806,11 +814,7 @@ pub(crate) async fn try_handle_create_or_replace_sql_function(
     let nargs = arg_names.len() as i64;
 
     // RETURNS type
-    let after_args_upper = after_args.to_uppercase();
-    let returns_pos = after_args_upper
-        .find("RETURNS")
-        .ok_or_else(|| PgSqliteError::Protocol("CREATE FUNCTION missing RETURNS".to_string()))?;
-    let after_returns = after_args[returns_pos + "RETURNS".len()..].trim_start();
+    let after_returns = after_func[returns_pos + "RETURNS".len()..].trim_start();
     let after_returns_upper = after_returns.to_uppercase();
     let lang_pos = after_returns_upper
         .find("LANGUAGE")
