@@ -235,6 +235,11 @@ static SQL_DEALLOCATE_PATTERN: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"(?is)^\s*DEALLOCATE\b").expect("regex compiles")
 });
 
+static CREATE_FUNCTION_STMT: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)(^|;)\s*create\s+(?:or\s+replace\s+)?function\b"#)
+        .expect("regex compiles")
+});
+
 fn replace_current_schema_bare(input: &str, replacement: &str) -> String {
     let bytes = input.as_bytes();
     let target = b"current_schema";
@@ -914,6 +919,10 @@ pub(crate) async fn expand_user_sql_functions(
     session: &Arc<SessionState>,
     query: &str,
 ) -> Result<String, PgSqliteError> {
+    if CREATE_FUNCTION_STMT.is_match(query) {
+        return Ok(query.to_string());
+    }
+
     // Best-effort: if the table doesn't exist yet, do nothing.
     let rows = db
         .with_session_connection(&session.id, |conn| {
