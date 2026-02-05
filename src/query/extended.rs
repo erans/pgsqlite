@@ -1292,8 +1292,14 @@ impl ExtendedQueryHandler {
             }
         }
         
-        // Use translated query if available, otherwise use original query
-        let effective_query = translated_query.as_ref().unwrap_or(&query);
+        let mut translated_query = translated_query.unwrap_or_else(|| query.clone());
+        translated_query = crate::query::executor::expand_user_sql_functions(db, session, &translated_query).await?;
+        translated_query = crate::translator::SchemaPrefixTranslator::translate_query(&translated_query);
+        translated_query = crate::translator::VersionSelectTranslator::translate_query(&translated_query);
+        if CastTranslator::needs_translation(&translated_query) {
+            translated_query = CastTranslator::translate_query(&translated_query, None);
+        }
+        let translated_query = Some(translated_query);
         
         // Get parameter types from the prepared statement
         let param_types = if let Some(inferred) = inferred_param_types {
@@ -1643,8 +1649,8 @@ impl ExtendedQueryHandler {
         }
         
         // Try optimized extended fast path first for parameterized queries
-        if !bound_values.is_empty() && effective_query.contains('$') {
-            let query_type = super::extended_fast_path::QueryType::from_query(effective_query);
+        if !bound_values.is_empty() && query.contains('$') {
+            let query_type = super::extended_fast_path::QueryType::from_query(&query);
             
             // Early check: Skip fast path for SELECT with binary results
             if matches!(query_type, super::extended_fast_path::QueryType::Select) 
@@ -1655,7 +1661,7 @@ impl ExtendedQueryHandler {
             } else {
             
             // Get original types from cache if available
-            let original_types = if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(effective_query) {
+            let original_types = if let Some(cached_info) = GLOBAL_PARAMETER_CACHE.get(&query) {
                 cached_info.original_types
             } else {
                 param_types.clone()
@@ -1672,7 +1678,7 @@ impl ExtendedQueryHandler {
                         db,
                         session,
                         &portal,
-                        effective_query,
+                        &query,
                         &bound_values,
                         &param_formats,
                         &result_formats,

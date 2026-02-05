@@ -45,6 +45,14 @@ async fn test_unaccent_extension_and_wrapper_function() {
         .get(0);
     assert_eq!(v, "Hotel");
 
+    // Parameter binding with Unicode should work
+    let v: String = client
+        .query_one("SELECT public.unaccent_immutable($1)", &[&"Hôtel"])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(v, "Hotel");
+
     // Ensure it shows up in pg_proc as a user function
     let count: i64 = client
         .query_one("SELECT count(*) FROM pg_proc WHERE proname = 'unaccent_immutable'", &[])

@@ -864,7 +864,75 @@ impl DbHandler {
             // For other pg_catalog queries, let them go through LazyQueryProcessor
             // which will strip the schema prefix and allow them to query the views
         }
-        
+
+        if lower_query.contains("information_schema.triggers") {
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+            use sqlparser::ast::{Statement, SetExpr};
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && statements.len() == 1
+                && let Some(Statement::Query(query_ast)) = statements.pop()
+                && let SetExpr::Select(select) = query_ast.body.as_ref() {
+                    return crate::catalog::CatalogInterceptor::handle_information_schema_triggers_query_with_session(
+                        select,
+                        self,
+                        session_id,
+                    ).await;
+                }
+        }
+
+        if lower_query.contains("information_schema.views") {
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+            use sqlparser::ast::{Statement, SetExpr};
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && statements.len() == 1
+                && let Some(Statement::Query(query_ast)) = statements.pop()
+                && let SetExpr::Select(select) = query_ast.body.as_ref() {
+                    return crate::catalog::CatalogInterceptor::handle_information_schema_views_query_with_session(
+                        select,
+                        self,
+                        session_id,
+                    ).await;
+                }
+        }
+
+        if lower_query.contains("information_schema.views") {
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+            use sqlparser::ast::{Statement, SetExpr};
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && statements.len() == 1
+                && let Some(Statement::Query(query_ast)) = statements.pop()
+                && let SetExpr::Select(select) = query_ast.body.as_ref() {
+                    return crate::catalog::CatalogInterceptor::handle_information_schema_views_query_with_session(
+                        select,
+                        self,
+                        session_id,
+                    ).await;
+                }
+        }
+
+        if lower_query.contains("information_schema.views") {
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+            use sqlparser::ast::{Statement, SetExpr};
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && statements.len() == 1
+                && let Some(Statement::Query(query_ast)) = statements.pop()
+                && let SetExpr::Select(select) = query_ast.body.as_ref() {
+                    return crate::catalog::CatalogInterceptor::handle_information_schema_views_query_with_session(
+                        select,
+                        self,
+                        session_id,
+                    ).await;
+                }
+        }
+
         // Rewrite information_schema queries to use real SQLite views
         let rewritten_query = if lower_query.contains("information_schema") {
             self.rewrite_information_schema_query(query)
@@ -1204,6 +1272,40 @@ impl DbHandler {
         } else {
             query.to_string()
         };
+
+        if lower_query.contains("information_schema.triggers") {
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+            use sqlparser::ast::{Statement, SetExpr};
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && statements.len() == 1
+                && let Some(Statement::Query(query_ast)) = statements.pop()
+                && let SetExpr::Select(select) = query_ast.body.as_ref() {
+                    return crate::catalog::CatalogInterceptor::handle_information_schema_triggers_query_with_session(
+                        select,
+                        self,
+                        session_id,
+                    ).await;
+                }
+        }
+
+        if lower_query.contains("information_schema.views") {
+            use sqlparser::parser::Parser;
+            use sqlparser::dialect::PostgreSqlDialect;
+            use sqlparser::ast::{Statement, SetExpr};
+
+            if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect {}, query)
+                && statements.len() == 1
+                && let Some(Statement::Query(query_ast)) = statements.pop()
+                && let SetExpr::Select(select) = query_ast.body.as_ref() {
+                    return crate::catalog::CatalogInterceptor::handle_information_schema_views_query_with_session(
+                        select,
+                        self,
+                        session_id,
+                    ).await;
+                }
+        }
 
         self.connection_manager.execute_with_session(session_id, move |conn| {
             // Process query with fast path optimization
