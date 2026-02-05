@@ -35,6 +35,12 @@ static SCHEMA_QUALIFIED_FUNCTION_CALL: Lazy<Regex> = Lazy::new(|| {
 impl SchemaPrefixTranslator {
     /// Translate a query string by removing schema prefixes
     pub fn translate_query(query: &str) -> String {
+        let trimmed = query.trim_start();
+        let trimmed_upper = trimmed.to_uppercase();
+        if trimmed_upper.starts_with("CREATE") && trimmed_upper.contains("FUNCTION") {
+            return query.to_string();
+        }
+
         // Simple string replacement approach for known pg_catalog tables
         let mut result = query.to_string();
 
