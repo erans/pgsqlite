@@ -1,12 +1,12 @@
+use crate::cache::SchemaCache;
+use crate::query::{QueryType, QueryTypeDetector};
+use bitflags::bitflags;
+use lru::LruCache;
+use rusqlite::Connection;
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use rusqlite::Connection;
-use lru::LruCache;
 use std::num::NonZeroUsize;
-use bitflags::bitflags;
-use crate::cache::SchemaCache;
-use crate::query::{QueryTypeDetector, QueryType};
 
 bitflags! {
     struct TranslationFlags: u32 {
@@ -30,14 +30,14 @@ bitflags! {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(dead_code)]
 enum ComplexityLevel {
-    Simple,      // No translation needed at all
-    SimpleDML,   // Simple DML, possibly with RETURNING (just pass through)
-    Moderate,    // Needs one or two translations
-    Complex,     // Needs multiple translations
+    Simple,    // No translation needed at all
+    SimpleDML, // Simple DML, possibly with RETURNING (just pass through)
+    Moderate,  // Needs one or two translations
+    Complex,   // Needs multiple translations
 }
 
 thread_local! {
-    static COMPLEXITY_CACHE: RefCell<LruCache<u64, ComplexityLevel>> = 
+    static COMPLEXITY_CACHE: RefCell<LruCache<u64, ComplexityLevel>> =
         RefCell::new(LruCache::new(NonZeroUsize::new(1024).unwrap()));
 }
 
@@ -56,7 +56,7 @@ impl<'a> UnifiedProcessor<'a> {
         let query_bytes = query.as_bytes();
         let mut translations = TranslationFlags::empty();
         let mut complexity = ComplexityLevel::Simple;
-        
+
         // Quick length check
         if query.len() < 10 || query.len() > 10000 {
             return Self {
@@ -66,113 +66,126 @@ impl<'a> UnifiedProcessor<'a> {
                 translations_needed: TranslationFlags::all(),
             };
         }
-        
+
         // Ultra-fast checks using memchr
         if memchr::memmem::find(query_bytes, b"::").is_some() {
             translations.insert(TranslationFlags::CAST);
             complexity = ComplexityLevel::Moderate;
         }
-        
-        if memchr::memmem::find(query_bytes, b" ~ ").is_some() ||
-           memchr::memmem::find(query_bytes, b" !~ ").is_some() ||
-           memchr::memmem::find(query_bytes, b" ~* ").is_some() ||
-           memchr::memmem::find(query_bytes, b" !~* ").is_some() {
+
+        if memchr::memmem::find(query_bytes, b" ~ ").is_some()
+            || memchr::memmem::find(query_bytes, b" !~ ").is_some()
+            || memchr::memmem::find(query_bytes, b" ~* ").is_some()
+            || memchr::memmem::find(query_bytes, b" !~* ").is_some()
+        {
             translations.insert(TranslationFlags::REGEX);
             complexity = ComplexityLevel::Moderate;
         }
-        
-        if memchr::memmem::find(query_bytes, b"pg_catalog").is_some() ||
-           memchr::memmem::find(query_bytes, b"PG_CATALOG").is_some() {
+
+        if memchr::memmem::find(query_bytes, b"pg_catalog").is_some()
+            || memchr::memmem::find(query_bytes, b"PG_CATALOG").is_some()
+        {
             translations.insert(TranslationFlags::SCHEMA);
             complexity = ComplexityLevel::Moderate;
         }
-        
-        if (memchr::memmem::find(query_bytes, b"::NUMERIC").is_some() ||
-           memchr::memmem::find(query_bytes, b"::numeric").is_some() ||
-           memchr::memmem::find(query_bytes, b"CAST(").is_some() ||
-           memchr::memmem::find(query_bytes, b"cast(").is_some())
-            && (query.contains("NUMERIC") || query.contains("DECIMAL")) {
-                translations.insert(TranslationFlags::NUMERIC);
-                complexity = ComplexityLevel::Moderate;
-            }
-        
-        if memchr::memchr(b'[', query_bytes).is_some() ||
-           memchr::memmem::find(query_bytes, b"ANY(").is_some() ||
-           memchr::memmem::find(query_bytes, b"ALL(").is_some() ||
-           memchr::memmem::find(query_bytes, b" @> ").is_some() ||
-           memchr::memmem::find(query_bytes, b" <@ ").is_some() ||
-           memchr::memmem::find(query_bytes, b" && ").is_some() {
+
+        if (memchr::memmem::find(query_bytes, b"::NUMERIC").is_some()
+            || memchr::memmem::find(query_bytes, b"::numeric").is_some()
+            || memchr::memmem::find(query_bytes, b"CAST(").is_some()
+            || memchr::memmem::find(query_bytes, b"cast(").is_some())
+            && (query.contains("NUMERIC") || query.contains("DECIMAL"))
+        {
+            translations.insert(TranslationFlags::NUMERIC);
+            complexity = ComplexityLevel::Moderate;
+        }
+
+        if memchr::memchr(b'[', query_bytes).is_some()
+            || memchr::memmem::find(query_bytes, b"ANY(").is_some()
+            || memchr::memmem::find(query_bytes, b"ALL(").is_some()
+            || memchr::memmem::find(query_bytes, b" @> ").is_some()
+            || memchr::memmem::find(query_bytes, b" <@ ").is_some()
+            || memchr::memmem::find(query_bytes, b" && ").is_some()
+        {
             translations.insert(TranslationFlags::ARRAY);
             complexity = ComplexityLevel::Complex;
         }
-        
-        if memchr::memmem::find(query_bytes, b"NOW()").is_some() ||
-           memchr::memmem::find(query_bytes, b"CURRENT_").is_some() ||
-           memchr::memmem::find(query_bytes, b"AT TIME ZONE").is_some() {
+
+        if memchr::memmem::find(query_bytes, b"NOW()").is_some()
+            || memchr::memmem::find(query_bytes, b"CURRENT_").is_some()
+            || memchr::memmem::find(query_bytes, b"AT TIME ZONE").is_some()
+        {
             translations.insert(TranslationFlags::DATETIME);
             complexity = ComplexityLevel::Complex;
         }
 
         // Check for session identifiers that need function call conversion
-        if memchr::memmem::find(query_bytes, b"current_user").is_some() ||
-           memchr::memmem::find(query_bytes, b"CURRENT_USER").is_some() ||
-           memchr::memmem::find(query_bytes, b"session_user").is_some() ||
-           memchr::memmem::find(query_bytes, b"SESSION_USER").is_some() {
+        if memchr::memmem::find(query_bytes, b"current_user").is_some()
+            || memchr::memmem::find(query_bytes, b"CURRENT_USER").is_some()
+            || memchr::memmem::find(query_bytes, b"session_user").is_some()
+            || memchr::memmem::find(query_bytes, b"SESSION_USER").is_some()
+        {
             translations.insert(TranslationFlags::SESSION_IDENTIFIER);
             complexity = ComplexityLevel::Moderate;
         }
 
-        if memchr::memmem::find(query_bytes, b"current_schema").is_some() ||
-           memchr::memmem::find(query_bytes, b"CURRENT_SCHEMA").is_some() {
+        if memchr::memmem::find(query_bytes, b"current_schema").is_some()
+            || memchr::memmem::find(query_bytes, b"CURRENT_SCHEMA").is_some()
+        {
             translations.insert(TranslationFlags::CURRENT_SCHEMA_FROM);
             complexity = ComplexityLevel::Moderate;
         }
 
-        if memchr::memmem::find(query_bytes, b"current_database").is_some() ||
-           memchr::memmem::find(query_bytes, b"CURRENT_DATABASE").is_some() {
+        if memchr::memmem::find(query_bytes, b"current_database").is_some()
+            || memchr::memmem::find(query_bytes, b"CURRENT_DATABASE").is_some()
+        {
             translations.insert(TranslationFlags::CURRENT_DATABASE_FROM);
             complexity = ComplexityLevel::Moderate;
         }
 
-        if memchr::memmem::find(query_bytes, b"version()").is_some() ||
-           memchr::memmem::find(query_bytes, b"VERSION()").is_some() {
+        if memchr::memmem::find(query_bytes, b"version()").is_some()
+            || memchr::memmem::find(query_bytes, b"VERSION()").is_some()
+        {
             translations.insert(TranslationFlags::VERSION_SELECT);
             complexity = ComplexityLevel::Moderate;
         }
 
         // Note: CREATE TABLE statements are handled directly in execute_with_session
         // and don't need special translation flags in the unified processor
-        
+
         // Check for datetime patterns in INSERT/UPDATE statements
         if (query_bytes.starts_with(b"INSERT") || query_bytes.starts_with(b"UPDATE"))
-            && memchr::memchr(b'\'', query_bytes).is_some() {
-                // Check for date pattern YYYY-MM-DD or time pattern HH:MM:SS
-                if memchr::memchr(b'-', query_bytes).is_some() ||
-                   memchr::memchr(b':', query_bytes).is_some() {
-                    translations.insert(TranslationFlags::DATETIME);
-                    complexity = ComplexityLevel::Moderate;
-                }
+            && memchr::memchr(b'\'', query_bytes).is_some()
+        {
+            // Check for date pattern YYYY-MM-DD or time pattern HH:MM:SS
+            if memchr::memchr(b'-', query_bytes).is_some()
+                || memchr::memchr(b':', query_bytes).is_some()
+            {
+                translations.insert(TranslationFlags::DATETIME);
+                complexity = ComplexityLevel::Moderate;
             }
-        
+        }
+
         // Check for batch operations
         if let Some(delete_pos) = memchr::memmem::find(query_bytes, b"DELETE")
-            && memchr::memmem::find(&query_bytes[delete_pos..], b"USING").is_some() {
-                translations.insert(TranslationFlags::BATCH_DELETE);
-                complexity = ComplexityLevel::Complex;
-            }
-        
+            && memchr::memmem::find(&query_bytes[delete_pos..], b"USING").is_some()
+        {
+            translations.insert(TranslationFlags::BATCH_DELETE);
+            complexity = ComplexityLevel::Complex;
+        }
+
         if let Some(update_pos) = memchr::memmem::find(query_bytes, b"UPDATE")
             && let Some(set_pos) = memchr::memmem::find(&query_bytes[update_pos..], b" SET ")
-                && memchr::memmem::find(&query_bytes[update_pos + set_pos..], b" FROM ").is_some() {
-                    translations.insert(TranslationFlags::BATCH_UPDATE);
-                    complexity = ComplexityLevel::Complex;
-                }
-        
+            && memchr::memmem::find(&query_bytes[update_pos + set_pos..], b" FROM ").is_some()
+        {
+            translations.insert(TranslationFlags::BATCH_UPDATE);
+            complexity = ComplexityLevel::Complex;
+        }
+
         // If multiple translations needed, it's complex
         if translations.bits().count_ones() > 2 {
             complexity = ComplexityLevel::Complex;
         }
-        
+
         Self {
             _query: query,
             _query_bytes: query_bytes,
@@ -180,7 +193,7 @@ impl<'a> UnifiedProcessor<'a> {
             translations_needed: translations,
         }
     }
-    
+
     #[inline(always)]
     fn needs_translation(&self, flag: TranslationFlags) -> bool {
         self.translations_needed.contains(flag)
@@ -199,12 +212,12 @@ pub fn process_query<'a>(
     if !(10..=10000).contains(&len) {
         return process_complex_query(query, conn, schema_cache);
     }
-    
+
     let bytes = query.as_bytes();
-    
+
     // Ultra-fast first byte check for query type
     let first_byte = bytes[0].to_ascii_uppercase();
-    
+
     match first_byte {
         b'S' if len >= 7 && bytes[..7].eq_ignore_ascii_case(b"SELECT ") => {
             // SELECT queries - fast path for simple ones
@@ -218,18 +231,27 @@ pub fn process_query<'a>(
                 // Even with RETURNING, if it's simple, pass through
                 if let Some(ret_pos) = find_returning_fast(bytes) {
                     if is_simple_returning(&bytes[ret_pos..]) {
-                        tracing::debug!("UNIFIED: Simple INSERT with RETURNING using fast path: {}", query);
+                        tracing::debug!(
+                            "UNIFIED: Simple INSERT with RETURNING using fast path: {}",
+                            query
+                        );
                         return Ok(Cow::Borrowed(query));
                     }
                     tracing::debug!("UNIFIED: Complex RETURNING, needs processing: {}", query);
                     // Complex RETURNING, needs processing
                 } else {
                     // No RETURNING, simple INSERT
-                    tracing::debug!("UNIFIED: Simple INSERT without RETURNING using fast path: {}", query);
+                    tracing::debug!(
+                        "UNIFIED: Simple INSERT without RETURNING using fast path: {}",
+                        query
+                    );
                     return Ok(Cow::Borrowed(query));
                 }
             } else {
-                tracing::debug!("UNIFIED: INSERT has special patterns, needs processing: {}", query);
+                tracing::debug!(
+                    "UNIFIED: INSERT has special patterns, needs processing: {}",
+                    query
+                );
             }
         }
         b'U' if len >= 7 && bytes[..7].eq_ignore_ascii_case(b"UPDATE ") => {
@@ -260,7 +282,7 @@ pub fn process_query<'a>(
         }
         _ => {} // Fall through to complex processing
     }
-    
+
     // Complex query processing
     process_complex_query(query, conn, schema_cache)
 }
@@ -269,33 +291,34 @@ pub fn process_query<'a>(
 #[inline(always)]
 fn has_any_special_pattern_fast(bytes: &[u8]) -> bool {
     // Most common patterns that need translation
-    memchr::memmem::find(bytes, b"::").is_some() ||
-    memchr::memmem::find(bytes, b"NOW()").is_some() ||
-    memchr::memmem::find(bytes, b"CURRENT_").is_some() ||
-    memchr::memmem::find(bytes, b" ~ ").is_some() ||
-    memchr::memmem::find(bytes, b"pg_catalog").is_some() ||
-    memchr::memmem::find(bytes, b"PG_CATALOG").is_some() ||
-    memchr::memmem::find(bytes, b"CAST(").is_some() ||
-    memchr::memmem::find(bytes, b"cast(").is_some() ||
-    memchr::memchr(b'[', bytes).is_some() ||
-    memchr::memmem::find(bytes, b"ANY(").is_some() ||
-    memchr::memmem::find(bytes, b"ALL(").is_some() ||
-    memchr::memmem::find(bytes, b" @> ").is_some() ||
-    memchr::memmem::find(bytes, b" <@ ").is_some() ||
-    memchr::memmem::find(bytes, b" && ").is_some() ||
-    memchr::memmem::find(bytes, b"JOIN").is_some() ||
-    memchr::memmem::find(bytes, b"UNION").is_some() ||
-    memchr::memmem::find(bytes, b"(SELECT").is_some() ||
-    memchr::memmem::find(bytes, b"GROUP BY").is_some() ||
-    memchr::memmem::find(bytes, b"HAVING").is_some() ||
-    memchr::memmem::find(bytes, b"unnest").is_some() ||
-    memchr::memmem::find(bytes, b"UNNEST").is_some() ||
-    memchr::memmem::find(bytes, b"current_user").is_some() ||
-    memchr::memmem::find(bytes, b"CURRENT_USER").is_some() ||
-    memchr::memmem::find(bytes, b"session_user").is_some() ||
-    memchr::memmem::find(bytes, b"SESSION_USER").is_some() ||
-    memchr::memmem::find(bytes, b"current_schema").is_some() ||
-    memchr::memmem::find(bytes, b"CURRENT_SCHEMA").is_some()
+    memchr::memmem::find(bytes, b"::").is_some()
+        || memchr::memmem::find(bytes, b"NOW()").is_some()
+        || memchr::memmem::find(bytes, b"CURRENT_").is_some()
+        || memchr::memmem::find(bytes, b"AT TIME ZONE").is_some()
+        || memchr::memmem::find(bytes, b" ~ ").is_some()
+        || memchr::memmem::find(bytes, b"pg_catalog").is_some()
+        || memchr::memmem::find(bytes, b"PG_CATALOG").is_some()
+        || memchr::memmem::find(bytes, b"CAST(").is_some()
+        || memchr::memmem::find(bytes, b"cast(").is_some()
+        || memchr::memchr(b'[', bytes).is_some()
+        || memchr::memmem::find(bytes, b"ANY(").is_some()
+        || memchr::memmem::find(bytes, b"ALL(").is_some()
+        || memchr::memmem::find(bytes, b" @> ").is_some()
+        || memchr::memmem::find(bytes, b" <@ ").is_some()
+        || memchr::memmem::find(bytes, b" && ").is_some()
+        || memchr::memmem::find(bytes, b"JOIN").is_some()
+        || memchr::memmem::find(bytes, b"UNION").is_some()
+        || memchr::memmem::find(bytes, b"(SELECT").is_some()
+        || memchr::memmem::find(bytes, b"GROUP BY").is_some()
+        || memchr::memmem::find(bytes, b"HAVING").is_some()
+        || memchr::memmem::find(bytes, b"unnest").is_some()
+        || memchr::memmem::find(bytes, b"UNNEST").is_some()
+        || memchr::memmem::find(bytes, b"current_user").is_some()
+        || memchr::memmem::find(bytes, b"CURRENT_USER").is_some()
+        || memchr::memmem::find(bytes, b"session_user").is_some()
+        || memchr::memmem::find(bytes, b"SESSION_USER").is_some()
+        || memchr::memmem::find(bytes, b"current_schema").is_some()
+        || memchr::memmem::find(bytes, b"CURRENT_SCHEMA").is_some()
 }
 
 /// Check INSERT-specific patterns
@@ -303,15 +326,16 @@ fn has_any_special_pattern_fast(bytes: &[u8]) -> bool {
 fn has_insert_special_patterns(bytes: &[u8]) -> bool {
     // Check for datetime patterns (dates with - or times with :)
     if memchr::memchr(b'\'', bytes).is_some()
-        && (memchr::memchr(b'-', bytes).is_some() || memchr::memchr(b':', bytes).is_some()) {
+        && (memchr::memchr(b'-', bytes).is_some() || memchr::memchr(b':', bytes).is_some())
+    {
         return true;
     }
-    
+
     // Check for array literals
     if memchr::memchr(b'{', bytes).is_some() || memchr::memmem::find(bytes, b"ARRAY[").is_some() {
         return true;
     }
-    
+
     // Check common special patterns
     has_any_special_pattern_fast(bytes)
 }
@@ -321,10 +345,11 @@ fn has_insert_special_patterns(bytes: &[u8]) -> bool {
 fn has_update_special_patterns(bytes: &[u8]) -> bool {
     // Check for UPDATE ... FROM
     if let Some(set_pos) = memchr::memmem::find(bytes, b" SET ")
-        && memchr::memmem::find(&bytes[set_pos..], b" FROM ").is_some() {
-            return true;
-        }
-    
+        && memchr::memmem::find(&bytes[set_pos..], b" FROM ").is_some()
+    {
+        return true;
+    }
+
     has_any_special_pattern_fast(bytes)
 }
 
@@ -335,7 +360,7 @@ fn has_delete_special_patterns(bytes: &[u8]) -> bool {
     if memchr::memmem::find(bytes, b"USING").is_some() {
         return true;
     }
-    
+
     has_any_special_pattern_fast(bytes)
 }
 
@@ -343,8 +368,7 @@ fn has_delete_special_patterns(bytes: &[u8]) -> bool {
 #[inline(always)]
 fn find_returning_fast(bytes: &[u8]) -> Option<usize> {
     // Check both cases with SIMD-optimized search
-    memchr::memmem::find(bytes, b"RETURNING")
-        .or_else(|| memchr::memmem::find(bytes, b"returning"))
+    memchr::memmem::find(bytes, b"RETURNING").or_else(|| memchr::memmem::find(bytes, b"returning"))
 }
 
 /// Check if RETURNING clause is simple (just column names)
@@ -356,19 +380,19 @@ fn is_simple_returning(bytes: &[u8]) -> bool {
     } else {
         return false;
     };
-    
+
     // Skip whitespace
     let mut i = 0;
     while i < after_returning.len() && after_returning[i].is_ascii_whitespace() {
         i += 1;
     }
-    
+
     if i >= after_returning.len() {
         return false; // Empty RETURNING
     }
-    
+
     let content = &after_returning[i..];
-    
+
     // Special case: RETURNING * is simple
     if content.starts_with(b"*") {
         let after_star = &content[1..];
@@ -379,15 +403,24 @@ fn is_simple_returning(bytes: &[u8]) -> bool {
         }
         return true; // Just RETURNING *
     }
-    
+
     // Check if it's just column names (alphanumeric, underscore, comma, whitespace)
     for &b in content {
         match b {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b',' | b' ' | b'\t' | b'\n' | b'\r' | b';' => {},
+            b'a'..=b'z'
+            | b'A'..=b'Z'
+            | b'0'..=b'9'
+            | b'_'
+            | b','
+            | b' '
+            | b'\t'
+            | b'\n'
+            | b'\r'
+            | b';' => {}
             _ => return false, // Complex expression
         }
     }
-    
+
     true // Simple column list
 }
 
@@ -398,14 +431,14 @@ fn process_complex_query<'a>(
     schema_cache: &SchemaCache,
 ) -> Result<Cow<'a, str>, rusqlite::Error> {
     let processor = UnifiedProcessor::analyze(query);
-    
+
     // If no translations needed, return original
     if processor.translations_needed.is_empty() {
         return Ok(Cow::Borrowed(query));
     }
-    
+
     let mut result = Cow::Borrowed(query);
-    
+
     // Apply translations in optimal order (destructive ones first)
 
     if processor.needs_translation(TranslationFlags::CURRENT_SCHEMA_FROM) {
@@ -422,7 +455,7 @@ fn process_complex_query<'a>(
         let translated = crate::translator::VersionSelectTranslator::translate_query(&result);
         result = Cow::Owned(translated);
     }
-    
+
     // 1. Schema translation (changes table references)
     if processor.needs_translation(TranslationFlags::SCHEMA) {
         let translated = crate::translator::SchemaPrefixTranslator::translate_query(&result);
@@ -443,26 +476,25 @@ fn process_complex_query<'a>(
         let translated = crate::translator::NumericCastTranslator::translate_query(&result, conn);
         result = Cow::Owned(translated);
     }
-    
+
     // 3. Cast translation
     if processor.needs_translation(TranslationFlags::CAST) {
         // Check translation cache first
         if let Some(cached) = crate::cache::global_translation_cache().get(query) {
             result = Cow::Owned(cached);
         } else {
-            let translated = crate::translator::CastTranslator::translate_query(&result, Some(conn));
-            
+            let translated =
+                crate::translator::CastTranslator::translate_query(&result, Some(conn));
+
             // Cache if it's the original query
             if result.as_ref() == query {
-                crate::cache::global_translation_cache().insert(
-                    query.to_string(),
-                    translated.clone()
-                );
+                crate::cache::global_translation_cache()
+                    .insert(query.to_string(), translated.clone());
             }
             result = Cow::Owned(translated);
         }
     }
-    
+
     // 4. Regex translation
     if processor.needs_translation(TranslationFlags::REGEX) {
         match crate::translator::RegexTranslator::translate_query(&result) {
@@ -474,7 +506,7 @@ fn process_complex_query<'a>(
             }
         }
     }
-    
+
     // 5. Array translation
     if processor.needs_translation(TranslationFlags::ARRAY) {
         match crate::translator::ArrayTranslator::translate_array_operators(&result) {
@@ -488,68 +520,55 @@ fn process_complex_query<'a>(
             }
         }
     }
-    
+
     // 6. DELETE USING translation
     if processor.needs_translation(TranslationFlags::BATCH_DELETE) {
         use crate::translator::BatchDeleteTranslator;
-        use std::sync::Arc;
         use parking_lot::Mutex;
-        
+        use std::sync::Arc;
+
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let translator = BatchDeleteTranslator::new(cache);
         let translated = translator.translate(&result, &[]);
         result = Cow::Owned(translated);
     }
-    
+
     // 7. Batch UPDATE translation
     if processor.needs_translation(TranslationFlags::BATCH_UPDATE) {
         use crate::translator::BatchUpdateTranslator;
-        use std::sync::Arc;
         use parking_lot::Mutex;
-        
+        use std::sync::Arc;
+
         let cache = Arc::new(Mutex::new(HashMap::new()));
         let translator = BatchUpdateTranslator::new(cache);
         let translated = translator.translate(&result, &[]);
         result = Cow::Owned(translated);
     }
-    
+
     // 8. DateTime translation
     if processor.needs_translation(TranslationFlags::DATETIME) {
         let translated = crate::translator::DateTimeTranslator::translate_query(&result);
         result = Cow::Owned(translated);
     }
-    
+
     // 9. Decimal rewriting (always check for INSERT/SELECT)
     let query_type = QueryTypeDetector::detect_query_type(&result);
-    if matches!(query_type, QueryType::Insert | QueryType::Select) {
-        if let Some(table_name) = extract_table_name(&result) {
-            if schema_cache.has_decimal_columns(&table_name) {
-                match rewrite_query_for_decimal(&result, conn) {
-                    Ok(rewritten) => {
-                        if rewritten != result.as_ref() {
-                            result = Cow::Owned(rewritten);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to rewrite query for decimal: {}", e);
-                    }
+    if matches!(query_type, QueryType::Insert | QueryType::Select)
+        && let Some(table_name) = extract_table_name(&result)
+        && schema_cache.has_decimal_columns(&table_name)
+    {
+        match rewrite_query_for_decimal(&result, conn) {
+            Ok(rewritten) => {
+                if rewritten != result.as_ref() {
+                    result = Cow::Owned(rewritten);
                 }
             }
-        } else if matches!(query_type, QueryType::Select) {
-            // Conservative: always try decimal rewriting for SELECT
-            match rewrite_query_for_decimal(&result, conn) {
-                Ok(rewritten) => {
-                    if rewritten != result.as_ref() {
-                        result = Cow::Owned(rewritten);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to rewrite SELECT query for decimal: {}", e);
-                }
+            Err(e) => {
+                tracing::warn!("Failed to rewrite query for decimal: {}", e);
             }
         }
     }
-    
+
     Ok(result)
 }
 
@@ -565,7 +584,7 @@ fn rewrite_query_for_decimal(query: &str, conn: &Connection) -> Result<String, r
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_simple_queries_zero_allocation() {
         // These should all return Cow::Borrowed (no allocation)
@@ -577,13 +596,17 @@ mod tests {
             "DELETE FROM users WHERE id = $1",
             "SELECT * FROM benchmark_table_pg WHERE int_col > %s",
         ];
-        
+
         for query in &queries {
-            let result = process_query(query, &Connection::open_in_memory().unwrap(), &SchemaCache::new(300));
+            let result = process_query(
+                query,
+                &Connection::open_in_memory().unwrap(),
+                &SchemaCache::new(300),
+            );
             assert!(matches!(result, Ok(Cow::Borrowed(_))));
         }
     }
-    
+
     #[test]
     fn test_simple_returning_passthrough() {
         // Simple RETURNING should pass through
@@ -592,13 +615,17 @@ mod tests {
             "UPDATE users SET name = 'test' WHERE id = 1 RETURNING *",
             "DELETE FROM users WHERE id = 1 RETURNING id, name",
         ];
-        
+
         for query in &queries {
-            let result = process_query(query, &Connection::open_in_memory().unwrap(), &SchemaCache::new(300));
+            let result = process_query(
+                query,
+                &Connection::open_in_memory().unwrap(),
+                &SchemaCache::new(300),
+            );
             assert!(matches!(result, Ok(Cow::Borrowed(_))));
         }
     }
-    
+
     #[test]
     fn test_complex_queries_need_translation() {
         // These should need translation
@@ -608,7 +635,7 @@ mod tests {
             "SELECT * FROM users WHERE email ~ '@gmail.com'",
             "INSERT INTO logs (created) VALUES ('2024-01-01')",
         ];
-        
+
         for query in &queries {
             // Would need actual translation logic to test properly
             // For now just ensure they're detected as complex

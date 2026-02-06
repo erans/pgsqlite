@@ -1,4 +1,5 @@
 use crate::protocol::BackendMessage;
+use crate::query::ParameterParser;
 use crate::session::{DbHandler, SessionState};
 use crate::types::{DecimalHandler, PgType};
 use crate::cache::GLOBAL_PARAM_VALUE_CACHE;
@@ -96,21 +97,7 @@ impl ExtendedFastPath {
                 let type_start = cast_start + format!("CAST(${i} AS ").len();
                 if let Some(type_end) = query[type_start..].find(')') {
                     let type_name = &query[type_start..type_start + type_end];
-                    let type_oid = match type_name.to_uppercase().as_str() {
-                        "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => PgType::Timestamp.to_oid(),
-                        "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => PgType::Timestamptz.to_oid(),
-                        "DATE" => PgType::Date.to_oid(),
-                        "TIME" | "TIME WITHOUT TIME ZONE" => PgType::Time.to_oid(),
-                        "TIMETZ" | "TIME WITH TIME ZONE" => PgType::Timetz.to_oid(),
-                        "INTERVAL" => PgType::Interval.to_oid(),
-                        "VARCHAR" | "TEXT" => PgType::Text.to_oid(),
-                        "INTEGER" | "INT4" => PgType::Int4.to_oid(),
-                        "BIGINT" | "INT8" => PgType::Int8.to_oid(),
-                        "SMALLINT" | "INT2" => PgType::Int2.to_oid(),
-                        "NUMERIC" | "DECIMAL" => PgType::Numeric.to_oid(),
-                        "BOOLEAN" => PgType::Bool.to_oid(),
-                        _ => 0, // Unknown type
-                    };
+                    let type_oid = ParameterParser::cast_type_to_oid(type_name.trim());
                     if type_oid != 0 {
                         inferred_types[i - 1] = type_oid;
                         // Inferred parameter type from CAST

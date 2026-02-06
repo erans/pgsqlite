@@ -14,10 +14,10 @@ async fn test_unaccent_visible_in_pg_proc_and_information_schema() {
         .unwrap();
     let mut count: Option<i64> = None;
     for msg in msgs {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            if let Some(v) = row.get(0usize).or_else(|| row.get("count")) {
-                count = v.parse::<i64>().ok();
-            }
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg
+            && let Some(v) = row.get(0usize).or_else(|| row.get("count"))
+        {
+            count = v.parse::<i64>().ok();
         }
     }
     let count = count.unwrap_or(0);
@@ -25,15 +25,17 @@ async fn test_unaccent_visible_in_pg_proc_and_information_schema() {
 
     // information_schema.routines should list it
     let msgs = client
-        .simple_query("SELECT count(*) FROM information_schema.routines WHERE routine_name = 'unaccent'")
+        .simple_query(
+            "SELECT count(*) FROM information_schema.routines WHERE routine_name = 'unaccent'",
+        )
         .await
         .unwrap();
     let mut count: Option<i64> = None;
     for msg in msgs {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            if let Some(v) = row.get(0usize).or_else(|| row.get("count")) {
-                count = v.parse::<i64>().ok();
-            }
+        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg
+            && let Some(v) = row.get(0usize).or_else(|| row.get("count"))
+        {
+            count = v.parse::<i64>().ok();
         }
     }
     let count = count.unwrap_or(0);

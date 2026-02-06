@@ -1,7 +1,7 @@
-use rusqlite::Connection;
 use crate::cache::SchemaCache;
-use crate::query::{QueryTypeDetector, QueryType};
+use crate::query::{QueryType, QueryTypeDetector};
 use crate::translator::{BatchDeleteTranslator, BatchUpdateTranslator};
+use rusqlite::Connection;
 use std::borrow::Cow;
 
 /// Lazy query processor that combines cast translation, decimal rewriting, regex translation,
@@ -30,17 +30,31 @@ impl<'a> LazyQueryProcessor<'a> {
     pub fn new(query: &'a str) -> Self {
         // Fast path for simple queries - check if query contains any special characters
         // that might require translation
-        let quick_check = query.contains("::") || query.contains(" ~ ") || query.contains("pg_catalog") ||
-                         query.contains("PG_CATALOG") || query.contains("[") || query.contains("ANY(") ||
-                         query.contains("ALL(") || query.contains("@>") || query.contains("<@") ||
-                         query.contains("&&") || query.contains("DELETE") || query.contains("UPDATE") ||
-                         query.contains("AT TIME ZONE") || query.contains("pg_table_is_visible") ||
-                         query.contains("current_user") || query.contains("session_user") ||
-                         query.contains("CURRENT_USER") || query.contains("SESSION_USER") ||
-                         query.contains("current_schema") || query.contains("CURRENT_SCHEMA") ||
-                         query.contains("current_database") || query.contains("CURRENT_DATABASE") ||
-                         query.contains("version()") || query.contains("VERSION()");
-        
+        let quick_check = query.contains("::")
+            || query.contains(" ~ ")
+            || query.contains("pg_catalog")
+            || query.contains("PG_CATALOG")
+            || query.contains("[")
+            || query.contains("ANY(")
+            || query.contains("ALL(")
+            || query.contains("@>")
+            || query.contains("<@")
+            || query.contains("&&")
+            || query.contains("DELETE")
+            || query.contains("UPDATE")
+            || query.contains("AT TIME ZONE")
+            || query.contains("pg_table_is_visible")
+            || query.contains("current_user")
+            || query.contains("session_user")
+            || query.contains("CURRENT_USER")
+            || query.contains("SESSION_USER")
+            || query.contains("current_schema")
+            || query.contains("CURRENT_SCHEMA")
+            || query.contains("current_database")
+            || query.contains("CURRENT_DATABASE")
+            || query.contains("version()")
+            || query.contains("VERSION()");
+
         if !quick_check {
             // Fast path - no translation needed
             return Self {
@@ -62,69 +76,83 @@ impl<'a> LazyQueryProcessor<'a> {
                 needs_version_select_translation: false,
             };
         }
-        
+
         // Slow path - do detailed checks
         Self {
             original_query: query,
             translated_query: None,
             needs_cast_translation: crate::translator::CastTranslator::needs_translation(query),
             needs_decimal_rewrite: None,
-            needs_regex_translation: query.contains(" ~ ") || query.contains(" !~ ") || 
-                                     query.contains(" ~* ") || query.contains(" !~* "),
-            needs_schema_translation: query.contains("pg_catalog.") || query.contains("PG_CATALOG."),
-            needs_numeric_cast_translation: crate::translator::NumericCastTranslator::needs_translation(query),
-            needs_array_translation: query.contains("[") || query.contains("ANY(") || query.contains("ALL(") ||
-                                    query.contains("@>") || query.contains("<@") || query.contains("&&"),
+            needs_regex_translation: query.contains(" ~ ")
+                || query.contains(" !~ ")
+                || query.contains(" ~* ")
+                || query.contains(" !~* "),
+            needs_schema_translation: query.contains("pg_catalog.")
+                || query.contains("PG_CATALOG."),
+            needs_numeric_cast_translation:
+                crate::translator::NumericCastTranslator::needs_translation(query),
+            needs_array_translation: query.contains("[")
+                || query.contains("ANY(")
+                || query.contains("ALL(")
+                || query.contains("@>")
+                || query.contains("<@")
+                || query.contains("&&"),
             needs_delete_using_translation: BatchDeleteTranslator::contains_batch_delete(query),
             needs_batch_update_translation: BatchUpdateTranslator::contains_batch_update(query),
-            needs_datetime_translation: crate::translator::DateTimeTranslator::needs_translation(query),
+            needs_datetime_translation: crate::translator::DateTimeTranslator::needs_translation(
+                query,
+            ),
             needs_pg_table_is_visible_translation: query.contains("pg_table_is_visible"),
-            needs_session_identifier_translation: crate::translator::SessionIdentifierTranslator::needs_translation(query),
-            needs_current_schema_from_translation: crate::translator::CurrentSchemaFromTranslator::needs_translation(query),
-            needs_current_database_from_translation: crate::translator::CurrentDatabaseFromTranslator::needs_translation(query),
-            needs_version_select_translation: crate::translator::VersionSelectTranslator::needs_translation(query),
+            needs_session_identifier_translation:
+                crate::translator::SessionIdentifierTranslator::needs_translation(query),
+            needs_current_schema_from_translation:
+                crate::translator::CurrentSchemaFromTranslator::needs_translation(query),
+            needs_current_database_from_translation:
+                crate::translator::CurrentDatabaseFromTranslator::needs_translation(query),
+            needs_version_select_translation:
+                crate::translator::VersionSelectTranslator::needs_translation(query),
         }
     }
-    
+
     /// Get the query for cache lookup (original query if no translation needed)
     pub fn cache_key(&self) -> &str {
         self.original_query
     }
-    
+
     /// Check if the query needs any processing
     pub fn needs_processing(&self, schema_cache: &SchemaCache) -> bool {
         if self.needs_cast_translation {
             return true;
         }
-        
+
         if self.needs_regex_translation {
             return true;
         }
-        
+
         if self.needs_schema_translation {
             return true;
         }
-        
+
         if self.needs_numeric_cast_translation {
             return true;
         }
-        
+
         if self.needs_array_translation {
             return true;
         }
-        
+
         if self.needs_delete_using_translation {
             return true;
         }
-        
+
         if self.needs_batch_update_translation {
             return true;
         }
-        
+
         if self.needs_datetime_translation {
             return true;
         }
-        
+
         if self.needs_pg_table_is_visible_translation {
             return true;
         }
@@ -144,18 +172,21 @@ impl<'a> LazyQueryProcessor<'a> {
         if self.needs_version_select_translation {
             return true;
         }
-        
+
         // Check decimal rewrite need if not already determined
         if let Some(needs_decimal) = self.needs_decimal_rewrite {
             return needs_decimal;
         }
-        
+
         // For INSERT queries, check if table has decimal columns
-        if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert)
-            && let Some(table_name) = extract_insert_table_name(self.original_query) {
-                return schema_cache.has_decimal_columns(&table_name);
-            }
-        
+        if matches!(
+            QueryTypeDetector::detect_query_type(self.original_query),
+            QueryType::Insert
+        ) && let Some(table_name) = extract_insert_table_name(self.original_query)
+        {
+            return schema_cache.has_decimal_columns(&table_name);
+        }
+
         // For SELECT queries, always assume decimal rewrite might be needed
         // This is conservative but safe
         matches!(
@@ -163,65 +194,90 @@ impl<'a> LazyQueryProcessor<'a> {
             QueryType::Select
         )
     }
-    
+
     /// Process the query lazily - only do the work when needed
-    pub fn process(&mut self, conn: &Connection, _schema_cache: &SchemaCache) -> Result<&str, rusqlite::Error> {
+    pub fn process(
+        &mut self,
+        conn: &Connection,
+        _schema_cache: &SchemaCache,
+    ) -> Result<&str, rusqlite::Error> {
         // Re-enable translations now that wire protocol cache is disabled
         // tracing::info!("TESTING: All query translations disabled - returning original query: {}", self.original_query);
         // return Ok(self.original_query);
-        
+
         // If already processed, return the result
         if let Some(ref translated) = self.translated_query {
             return Ok(translated.as_ref());
         }
-        
+
         // Fast path - if no translation is needed, return original query directly
-        if !self.needs_cast_translation && !self.needs_regex_translation &&
-           !self.needs_schema_translation && !self.needs_numeric_cast_translation &&
-           !self.needs_array_translation && !self.needs_delete_using_translation &&
-           !self.needs_batch_update_translation && !self.needs_datetime_translation &&
-           !self.needs_pg_table_is_visible_translation && !self.needs_session_identifier_translation &&
-           !self.needs_current_schema_from_translation && !self.needs_current_database_from_translation &&
-           !self.needs_version_select_translation {
+        if !self.needs_cast_translation
+            && !self.needs_regex_translation
+            && !self.needs_schema_translation
+            && !self.needs_numeric_cast_translation
+            && !self.needs_array_translation
+            && !self.needs_delete_using_translation
+            && !self.needs_batch_update_translation
+            && !self.needs_datetime_translation
+            && !self.needs_pg_table_is_visible_translation
+            && !self.needs_session_identifier_translation
+            && !self.needs_current_schema_from_translation
+            && !self.needs_current_database_from_translation
+            && !self.needs_version_select_translation
+        {
             // Check if this is an INSERT that might need decimal rewrite
-            if matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Insert) {
+            if matches!(
+                QueryTypeDetector::detect_query_type(self.original_query),
+                QueryType::Insert
+            ) {
                 if let Some(table_name) = extract_insert_table_name(self.original_query)
-                    && !_schema_cache.has_decimal_columns(&table_name) {
-                        return Ok(self.original_query);
-                    }
-            } else if !matches!(QueryTypeDetector::detect_query_type(self.original_query), QueryType::Select) {
+                    && !_schema_cache.has_decimal_columns(&table_name)
+                {
+                    return Ok(self.original_query);
+                }
+            } else if !matches!(
+                QueryTypeDetector::detect_query_type(self.original_query),
+                QueryType::Select
+            ) {
                 // Not a SELECT or INSERT that needs decimal handling
                 return Ok(self.original_query);
             }
         }
-        
+
         let mut current_query = Cow::Borrowed(self.original_query);
-        
+
         // Step 1: pg_table_is_visible removal if needed (must come before array translation)
         if self.needs_pg_table_is_visible_translation {
             tracing::debug!("Before pg_table_is_visible translation: {}", current_query);
-            let translated = crate::translator::PgTableIsVisibleTranslator::translate(&current_query);
+            let translated =
+                crate::translator::PgTableIsVisibleTranslator::translate(&current_query);
             tracing::debug!("After pg_table_is_visible translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
 
         if self.needs_current_schema_from_translation {
             tracing::debug!("Before current_schema FROM translation: {}", current_query);
-            let translated = crate::translator::CurrentSchemaFromTranslator::translate_query(&current_query);
+            let translated =
+                crate::translator::CurrentSchemaFromTranslator::translate_query(&current_query);
             tracing::debug!("After current_schema FROM translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
 
         if self.needs_current_database_from_translation {
-            tracing::debug!("Before current_database FROM translation: {}", current_query);
-            let translated = crate::translator::CurrentDatabaseFromTranslator::translate_query(&current_query);
+            tracing::debug!(
+                "Before current_database FROM translation: {}",
+                current_query
+            );
+            let translated =
+                crate::translator::CurrentDatabaseFromTranslator::translate_query(&current_query);
             tracing::debug!("After current_database FROM translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
 
         if self.needs_version_select_translation {
             tracing::debug!("Before version select translation: {}", current_query);
-            let translated = crate::translator::VersionSelectTranslator::translate_query(&current_query);
+            let translated =
+                crate::translator::VersionSelectTranslator::translate_query(&current_query);
             tracing::debug!("After version select translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
@@ -229,7 +285,8 @@ impl<'a> LazyQueryProcessor<'a> {
         // Step 1.5: Session identifier translation if needed (add parentheses to current_user, session_user)
         if self.needs_session_identifier_translation {
             tracing::debug!("Before session identifier translation: {}", current_query);
-            let translated = crate::translator::SessionIdentifierTranslator::translate_query(&current_query);
+            let translated =
+                crate::translator::SessionIdentifierTranslator::translate_query(&current_query);
             tracing::debug!("After session identifier translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
@@ -237,51 +294,52 @@ impl<'a> LazyQueryProcessor<'a> {
         // Step 2: Schema prefix removal if needed
         if self.needs_schema_translation {
             tracing::debug!("Before schema translation: {}", current_query);
-            let translated = crate::translator::SchemaPrefixTranslator::translate_query(&current_query);
+            let translated =
+                crate::translator::SchemaPrefixTranslator::translate_query(&current_query);
             tracing::debug!("After schema translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
-        
+
         // Step 3: Numeric cast translation MUST come before general cast translation
         // to ensure CAST(x AS NUMERIC(p,s)) is handled properly
         if self.needs_numeric_cast_translation {
             tracing::debug!("Before numeric cast translation: {}", current_query);
-            let translated = crate::translator::NumericCastTranslator::translate_query(&current_query, conn);
+            let translated =
+                crate::translator::NumericCastTranslator::translate_query(&current_query, conn);
             tracing::debug!("After numeric cast translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
-        
+
         // Step 4: Cast translation if needed (after numeric cast translation)
         if self.needs_cast_translation {
             if cfg!(debug_assertions) && current_query.contains("casted_status") {
-                tracing::debug!("LazyQueryProcessor: processing cast translation for casted_status");
+                tracing::debug!(
+                    "LazyQueryProcessor: processing cast translation for casted_status"
+                );
             }
-            
+
             // Check translation cache first
-            if let Some(cached) = crate::cache::global_translation_cache().get(self.original_query) {
+            if let Some(cached) = crate::cache::global_translation_cache().get(self.original_query)
+            {
                 current_query = Cow::Owned(cached);
             } else {
                 tracing::debug!("Before cast translation: {}", current_query);
-                let translated = crate::translator::CastTranslator::translate_query(
-                    &current_query,
-                    Some(conn)
-                );
+                let translated =
+                    crate::translator::CastTranslator::translate_query(&current_query, Some(conn));
                 tracing::debug!("After cast translation: {}", translated);
                 // Cache the translation if it's the original query
                 if current_query.as_ref() == self.original_query {
-                    crate::cache::global_translation_cache().insert(
-                        self.original_query.to_string(),
-                        translated.clone()
-                    );
+                    crate::cache::global_translation_cache()
+                        .insert(self.original_query.to_string(), translated.clone());
                 }
                 current_query = Cow::Owned(translated);
             }
-            
+
             if cfg!(debug_assertions) && self.original_query.contains("casted_status") {
                 tracing::debug!("LazyQueryProcessor: completed cast translation for casted_status");
             }
         }
-        
+
         // Step 5: Regex translation if needed
         if self.needs_regex_translation {
             tracing::debug!("Before regex translation: {}", current_query);
@@ -296,7 +354,7 @@ impl<'a> LazyQueryProcessor<'a> {
                 }
             }
         }
-        
+
         // Step 6: Array translation if needed
         if self.needs_array_translation {
             tracing::debug!("Before array translation: {}", current_query);
@@ -313,35 +371,35 @@ impl<'a> LazyQueryProcessor<'a> {
                 }
             }
         }
-        
+
         // Step 7: DELETE USING translation if needed
         if self.needs_delete_using_translation {
             tracing::debug!("Before DELETE USING translation: {}", current_query);
-            use std::collections::HashMap;
             use parking_lot::Mutex;
+            use std::collections::HashMap;
             use std::sync::Arc;
-            
+
             let cache = Arc::new(Mutex::new(HashMap::new()));
             let translator = BatchDeleteTranslator::new(cache);
             let translated = translator.translate(&current_query, &[]);
             tracing::debug!("After DELETE USING translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
-        
+
         // Step 8: Batch UPDATE translation if needed
         if self.needs_batch_update_translation {
             tracing::debug!("Before batch UPDATE translation: {}", current_query);
-            use std::collections::HashMap;
             use parking_lot::Mutex;
+            use std::collections::HashMap;
             use std::sync::Arc;
-            
+
             let cache = Arc::new(Mutex::new(HashMap::new()));
             let translator = BatchUpdateTranslator::new(cache);
             let translated = translator.translate(&current_query, &[]);
             tracing::debug!("After batch UPDATE translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
-        
+
         // Step 9: DateTime translation if needed
         if self.needs_datetime_translation {
             tracing::debug!("Before datetime translation: {}", current_query);
@@ -349,56 +407,40 @@ impl<'a> LazyQueryProcessor<'a> {
             tracing::debug!("After datetime translation: {}", translated);
             current_query = Cow::Owned(translated);
         }
-        
-        // Step 10: Decimal rewriting if needed  
+
+        // Step 10: Decimal rewriting if needed
         let query_type = QueryTypeDetector::detect_query_type(&current_query);
-        
+
         // For performance, only rewrite when necessary
-        if matches!(query_type, QueryType::Insert | QueryType::Select) {
-            if let Some(table_name) = extract_insert_table_name(&current_query) {
-                if _schema_cache.has_decimal_columns(&table_name) {
-                    tracing::debug!("Before decimal rewriting: {}", current_query);
-                    match rewrite_query_for_decimal(&current_query, conn) {
-                        Ok(rewritten) => {
-                            if rewritten != current_query {
-                                tracing::debug!("After decimal rewriting: {}", rewritten);
-                                current_query = Cow::Owned(rewritten);
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to rewrite query for decimal: {}", e);
-                            // Continue with original query
-                        }
+        if matches!(query_type, QueryType::Insert | QueryType::Select)
+            && let Some(table_name) = extract_insert_table_name(&current_query)
+            && _schema_cache.has_decimal_columns(&table_name)
+        {
+            tracing::debug!("Before decimal rewriting: {}", current_query);
+            match rewrite_query_for_decimal(&current_query, conn) {
+                Ok(rewritten) => {
+                    if rewritten != current_query {
+                        tracing::debug!("After decimal rewriting: {}", rewritten);
+                        current_query = Cow::Owned(rewritten);
                     }
                 }
-            } else if matches!(query_type, QueryType::Select) {
-                // For SELECT queries, be conservative and always try decimal rewriting
-                tracing::debug!("Before decimal rewriting (SELECT): {}", current_query);
-                match rewrite_query_for_decimal(&current_query, conn) {
-                    Ok(rewritten) => {
-                        if rewritten != current_query {
-                            tracing::debug!("After decimal rewriting (SELECT): {}", rewritten);
-                            current_query = Cow::Owned(rewritten);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to rewrite SELECT query for decimal: {}", e);
-                        // Continue with original query
-                    }
+                Err(e) => {
+                    tracing::warn!("Failed to rewrite query for decimal: {}", e);
+                    // Continue with original query
                 }
             }
-            
+
             self.needs_decimal_rewrite = Some(true);
         } else {
             self.needs_decimal_rewrite = Some(false);
         }
-        
+
         // Store the processed query
         self.translated_query = Some(current_query);
-        
+
         Ok(self.translated_query.as_ref().unwrap().as_ref())
     }
-    
+
     /// Get the final query without processing (for fast path scenarios)
     pub fn get_unprocessed(&self) -> &str {
         self.original_query

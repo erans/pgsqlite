@@ -1,5 +1,5 @@
-use rusqlite::Connection;
 use crate::cache::SchemaCache;
+use rusqlite::Connection;
 
 // Feature flag to switch between old and new implementation
 #[cfg(feature = "unified_processor")]
@@ -7,10 +7,17 @@ use super::unified_processor;
 
 #[cfg(not(feature = "unified_processor"))]
 use super::lazy_processor::LazyQueryProcessor;
-#[cfg(not(feature = "unified_processor"))]
-use super::simple_query_detector::is_fast_path_simple_query;
 
 use tracing::debug;
+
+#[inline(always)]
+fn starts_with_create_table(query: &str) -> bool {
+    query
+        .trim_start()
+        .as_bytes()
+        .get(..12)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"CREATE TABLE"))
+}
 
 /// Process a query, using fast path when possible
 #[inline(always)]
@@ -20,7 +27,7 @@ pub fn process_query(
     schema_cache: &SchemaCache,
 ) -> Result<String, rusqlite::Error> {
     // Handle CREATE TABLE statements first - they need special translation regardless of processor type
-    if query.trim_start().to_uppercase().starts_with("CREATE TABLE") {
+    if starts_with_create_table(query) {
         use crate::translator::CreateTableTranslator;
         match CreateTableTranslator::translate_with_connection(query, Some(conn)) {
             Ok((translated, _type_mappings)) => {
@@ -42,23 +49,24 @@ pub fn process_query(
                 if is_borrowed {
                     debug!("Using UNIFIED FAST PATH (zero-alloc) for query: {}", query);
                 } else {
-                    debug!("Using UNIFIED PROCESSOR (with translation) for query: {}", query);
+                    debug!(
+                        "Using UNIFIED PROCESSOR (with translation) for query: {}",
+                        query
+                    );
                 }
                 Ok(cow.into_owned())
             }
             Err(e) => Err(e),
         }
     }
-    
+
     #[cfg(not(feature = "unified_processor"))]
     {
         // Old implementation - kept for A/B testing
-        if is_fast_path_simple_query(query) {
-            debug!("Using OLD FAST PATH for query: {}", query);
-            return Ok(query.to_string());
-        }
-        
-        debug!("Using OLD SLOW PATH (LazyQueryProcessor) for query: {}", query);
+        debug!(
+            "Using OLD SLOW PATH (LazyQueryProcessor) for query: {}",
+            query
+        );
         let mut processor = LazyQueryProcessor::new(query);
         Ok(processor.process(conn, schema_cache)?.to_string())
     }

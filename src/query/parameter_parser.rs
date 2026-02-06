@@ -5,6 +5,45 @@ use std::collections::HashSet;
 pub struct ParameterParser;
 
 impl ParameterParser {
+    /// Extract a PostgreSQL type token starting at `type_start` until a delimiter.
+    /// Delimiters are whitespace, comma, closing parenthesis, and semicolon.
+    pub fn extract_cast_type_name(sql: &str, type_start: usize) -> Option<&str> {
+        if type_start >= sql.len() {
+            return None;
+        }
+
+        let remaining = &sql[type_start..];
+        let rel_end = remaining
+            .find(|ch: char| ch.is_whitespace() || ch == ',' || ch == ')' || ch == ';')
+            .unwrap_or(remaining.len());
+
+        if rel_end == 0 {
+            None
+        } else {
+            Some(&remaining[..rel_end])
+        }
+    }
+
+    /// Map cast type names used in parameter inference to PostgreSQL OIDs.
+    /// Returns 0 when the type is unknown to preserve existing inference behavior.
+    pub fn cast_type_to_oid(type_name: &str) -> i32 {
+        match type_name.to_uppercase().as_str() {
+            "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE" => crate::types::PgType::Timestamp.to_oid(),
+            "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE" => crate::types::PgType::Timestamptz.to_oid(),
+            "DATE" => crate::types::PgType::Date.to_oid(),
+            "TIME" | "TIME WITHOUT TIME ZONE" => crate::types::PgType::Time.to_oid(),
+            "TIMETZ" | "TIME WITH TIME ZONE" => crate::types::PgType::Timetz.to_oid(),
+            "INTERVAL" => crate::types::PgType::Interval.to_oid(),
+            "VARCHAR" | "TEXT" => crate::types::PgType::Text.to_oid(),
+            "INTEGER" | "INT4" => crate::types::PgType::Int4.to_oid(),
+            "BIGINT" | "INT8" => crate::types::PgType::Int8.to_oid(),
+            "SMALLINT" | "INT2" => crate::types::PgType::Int2.to_oid(),
+            "NUMERIC" | "DECIMAL" => crate::types::PgType::Numeric.to_oid(),
+            "BOOLEAN" => crate::types::PgType::Bool.to_oid(),
+            _ => 0,
+        }
+    }
+
     /// Count the number of unique parameters in a SQL query, ignoring $ characters inside string literals
     pub fn count_parameters(sql: &str) -> usize {
         Self::find_parameters(sql).len()
@@ -387,6 +426,18 @@ mod tests {
         // Mixed case: real parameter and $ in string literal
         assert_eq!(ParameterParser::count_parameters("SELECT data->>'$.items[0]' FROM users WHERE id = $1"), 1);
         assert_eq!(ParameterParser::count_parameters("SELECT data->>'$1' FROM users WHERE id = $2"), 1);
+    }
+
+    #[test]
+    fn test_cast_type_helpers() {
+        let sql = "SELECT CAST($1 AS TIMESTAMP WITHOUT TIME ZONE)";
+        let start = sql.find("TIMESTAMP").unwrap();
+        let ty = ParameterParser::extract_cast_type_name(sql, start).unwrap();
+        assert_eq!(ty, "TIMESTAMP");
+
+        assert_eq!(ParameterParser::cast_type_to_oid("INTEGER"), crate::types::PgType::Int4.to_oid());
+        assert_eq!(ParameterParser::cast_type_to_oid("DECIMAL"), crate::types::PgType::Numeric.to_oid());
+        assert_eq!(ParameterParser::cast_type_to_oid("UNKNOWN_CUSTOM_TYPE"), 0);
     }
     
     #[test]

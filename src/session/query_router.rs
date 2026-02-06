@@ -1,6 +1,6 @@
-use crate::session::{DbHandler, ReadOnlyDbHandler, DbResponse, ReadOnlyError};
-use crate::session::state::SessionState;
 use crate::config::Config;
+use crate::session::state::SessionState;
+use crate::session::{DbHandler, DbResponse, ReadOnlyDbHandler, ReadOnlyError};
 use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info};
@@ -60,11 +60,12 @@ impl QueryRouter {
         read_handler: Arc<ReadOnlyDbHandler>,
         config: Arc<Config>,
     ) -> Self {
+        let pooling_enabled = config.use_pooling;
         Self {
             write_handler,
             read_handler,
             config,
-            pooling_enabled: true, // TODO: Make this configurable
+            pooling_enabled,
         }
     }
 
@@ -75,7 +76,11 @@ impl QueryRouter {
         session_state: &SessionState,
     ) -> Result<DbResponse, RouterError> {
         let route = self.determine_route(sql, session_state).await;
-        debug!("Query route: {:?} for SQL: {}", route, sql.chars().take(100).collect::<String>());
+        debug!(
+            "Query route: {:?} for SQL: {}",
+            route,
+            sql.chars().take(100).collect::<String>()
+        );
 
         match route {
             QueryRoute::ReadOnly => {
@@ -107,12 +112,62 @@ impl QueryRouter {
                 Ok(result)
             }
             QueryRoute::Write | QueryRoute::WriteTransaction => {
-                // For now, use the write handler for parameterized queries
-                // TODO: Implement parameterized queries in write handler
-                let result = self.write_handler.query(sql).await?;
-                Ok(result)
+                self.execute_query_with_params_on_write(sql, params, session_state)
+                    .await
             }
         }
+    }
+
+    async fn execute_query_with_params_on_write(
+        &self,
+        sql: &str,
+        params: &[&dyn rusqlite::ToSql],
+        session_state: &SessionState,
+    ) -> Result<DbResponse, RouterError> {
+        self.write_handler
+            .with_session_connection(&session_state.id, |conn| {
+                let mut stmt = conn.prepare(sql)?;
+                let column_names: Vec<String> =
+                    stmt.column_names().iter().map(|s| s.to_string()).collect();
+
+                if !column_names.is_empty() {
+                    let rows = stmt.query_map(params, |row| {
+                        let mut values = Vec::new();
+                        for i in 0..column_names.len() {
+                            let value = match row.get::<_, rusqlite::types::Value>(i)? {
+                                rusqlite::types::Value::Null => None,
+                                rusqlite::types::Value::Integer(i) => Some(i.to_string().into_bytes()),
+                                rusqlite::types::Value::Real(f) => Some(f.to_string().into_bytes()),
+                                rusqlite::types::Value::Text(s) => Some(s.into_bytes()),
+                                rusqlite::types::Value::Blob(b) => Some(b),
+                            };
+                            values.push(value);
+                        }
+                        Ok(values)
+                    })?;
+
+                    let mut result_rows = Vec::new();
+                    for row_result in rows {
+                        result_rows.push(row_result?);
+                    }
+                    let rows_affected = result_rows.len();
+
+                    Ok(DbResponse {
+                        columns: column_names,
+                        rows: result_rows,
+                        rows_affected,
+                    })
+                } else {
+                    let rows_affected = stmt.execute(params)?;
+                    Ok(DbResponse {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        rows_affected,
+                    })
+                }
+            })
+            .await
+            .map_err(|e| RouterError::Other(e.to_string()))
     }
 
     /// Determine which route to use for a query
@@ -128,7 +183,7 @@ impl QueryRouter {
         }
 
         let query_type = self.classify_query(sql);
-        
+
         match query_type {
             QueryType::Select | QueryType::Explain => {
                 // Use read-only pool for SELECT and EXPLAIN queries
@@ -152,7 +207,7 @@ impl QueryRouter {
     /// Classify the type of SQL query
     pub fn classify_query(&self, sql: &str) -> QueryType {
         let sql_trimmed = sql.trim().to_uppercase();
-        
+
         if sql_trimmed.starts_with("SELECT") || sql_trimmed.starts_with("WITH") {
             QueryType::Select
         } else if sql_trimmed.starts_with("INSERT") {
@@ -185,7 +240,7 @@ impl QueryRouter {
     /// Check if a PRAGMA statement is read-only
     fn is_read_only_pragma(&self, sql: &str) -> bool {
         let sql_upper = sql.to_uppercase();
-        
+
         // Read-only pragma statements (queries that read values, not set them)
         sql_upper.contains("PRAGMA TABLE_INFO") ||
         sql_upper.contains("PRAGMA INDEX_LIST") ||
@@ -217,7 +272,10 @@ impl QueryRouter {
     /// Enable or disable connection pooling
     pub fn set_pooling_enabled(&mut self, enabled: bool) {
         self.pooling_enabled = enabled;
-        info!("Connection pooling {}", if enabled { "enabled" } else { "disabled" });
+        info!(
+            "Connection pooling {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
     }
 }
 
@@ -234,27 +292,61 @@ mod tests {
     #[test]
     fn test_query_classification() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = Arc::new(crate::config::global_config().clone());
-        let write_db = format!("file::memory:?cache=shared&uri=true&test=classification_{timestamp}");
-        let read_db = format!("file::memory:?cache=shared&uri=true&test=classification_ro_{timestamp}");
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut cfg = crate::config::global_config().clone();
+        cfg.use_pooling = true;
+        let config = Arc::new(cfg);
+        let write_db =
+            format!("file::memory:?cache=shared&uri=true&test=classification_{timestamp}");
+        let read_db =
+            format!("file::memory:?cache=shared&uri=true&test=classification_ro_{timestamp}");
         let write_handler = Arc::new(DbHandler::new(&write_db).unwrap());
         let read_handler = Arc::new(ReadOnlyDbHandler::new(&read_db, config.clone()).unwrap());
         let router = QueryRouter::new(write_handler, read_handler, config);
 
-        assert_eq!(router.classify_query("SELECT * FROM users"), QueryType::Select);
-        assert_eq!(router.classify_query("  select id from table  "), QueryType::Select);
-        assert_eq!(router.classify_query("WITH cte AS (SELECT 1) SELECT * FROM cte"), QueryType::Select);
-        assert_eq!(router.classify_query("INSERT INTO users VALUES (1)"), QueryType::Insert);
-        assert_eq!(router.classify_query("UPDATE users SET name = 'test'"), QueryType::Update);
-        assert_eq!(router.classify_query("DELETE FROM users"), QueryType::Delete);
-        assert_eq!(router.classify_query("CREATE TABLE test (id INTEGER)"), QueryType::Create);
+        assert_eq!(
+            router.classify_query("SELECT * FROM users"),
+            QueryType::Select
+        );
+        assert_eq!(
+            router.classify_query("  select id from table  "),
+            QueryType::Select
+        );
+        assert_eq!(
+            router.classify_query("WITH cte AS (SELECT 1) SELECT * FROM cte"),
+            QueryType::Select
+        );
+        assert_eq!(
+            router.classify_query("INSERT INTO users VALUES (1)"),
+            QueryType::Insert
+        );
+        assert_eq!(
+            router.classify_query("UPDATE users SET name = 'test'"),
+            QueryType::Update
+        );
+        assert_eq!(
+            router.classify_query("DELETE FROM users"),
+            QueryType::Delete
+        );
+        assert_eq!(
+            router.classify_query("CREATE TABLE test (id INTEGER)"),
+            QueryType::Create
+        );
         assert_eq!(router.classify_query("DROP TABLE test"), QueryType::Drop);
         assert_eq!(router.classify_query("BEGIN TRANSACTION"), QueryType::Begin);
         assert_eq!(router.classify_query("COMMIT"), QueryType::Commit);
         assert_eq!(router.classify_query("ROLLBACK"), QueryType::Rollback);
-        assert_eq!(router.classify_query("PRAGMA table_info(users)"), QueryType::Pragma);
-        assert_eq!(router.classify_query("EXPLAIN SELECT * FROM users"), QueryType::Explain);
+        assert_eq!(
+            router.classify_query("PRAGMA table_info(users)"),
+            QueryType::Pragma
+        );
+        assert_eq!(
+            router.classify_query("EXPLAIN SELECT * FROM users"),
+            QueryType::Explain
+        );
     }
 
     #[test]
@@ -262,13 +354,18 @@ mod tests {
         // This test only tests logic, not actual database operations
         // Create minimal router without database connections that could cause migration conflicts
         use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = Arc::new(crate::config::global_config().clone());
-        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut cfg = crate::config::global_config().clone();
+        cfg.use_pooling = true;
+        let config = Arc::new(cfg);
+
         // Use completely unique temporary files instead of memory databases to avoid conflicts
         let write_db = format!("/tmp/test_pragma_write_{timestamp}.db");
         let read_db = format!("/tmp/test_pragma_read_{timestamp}.db");
-        
+
         let write_handler = match DbHandler::new(&write_db) {
             Ok(h) => Arc::new(h),
             Err(_) => {
@@ -281,7 +378,9 @@ mod tests {
             Ok(h) => Arc::new(h),
             Err(_) => {
                 // Skip this test if we can't create temp files
-                eprintln!("Skipping test_read_only_pragma_detection due to ReadOnly DB creation failure");
+                eprintln!(
+                    "Skipping test_read_only_pragma_detection due to ReadOnly DB creation failure"
+                );
                 return;
             }
         };
@@ -291,11 +390,11 @@ mod tests {
         assert!(router.is_read_only_pragma("PRAGMA INDEX_LIST(users)"));
         assert!(router.is_read_only_pragma("PRAGMA foreign_key_list(users)"));
         assert!(router.is_read_only_pragma("PRAGMA database_list"));
-        
+
         // These should be considered write operations (they don't match our read-only patterns)
         assert!(!router.is_read_only_pragma("PRAGMA journal_mode = WAL"));
         assert!(!router.is_read_only_pragma("PRAGMA synchronous = NORMAL"));
-        
+
         // Clean up
         std::fs::remove_file(&write_db).ok();
         std::fs::remove_file(&read_db).ok();
@@ -304,13 +403,18 @@ mod tests {
     #[tokio::test]
     async fn test_route_determination() {
         use std::time::{SystemTime, UNIX_EPOCH};
-        let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        let config = Arc::new(crate::config::global_config().clone());
-        
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut cfg = crate::config::global_config().clone();
+        cfg.use_pooling = true;
+        let config = Arc::new(cfg);
+
         // Use temporary files to avoid migration conflicts
         let write_db = format!("/tmp/test_route_write_{timestamp}.db");
         let read_db = format!("/tmp/test_route_read_{timestamp}.db");
-        
+
         let write_handler = match DbHandler::new(&write_db) {
             Ok(h) => Arc::new(h),
             Err(_) => {
@@ -326,25 +430,101 @@ mod tests {
             }
         };
         let router = QueryRouter::new(write_handler, read_handler, config);
-        
+
         let session_state = SessionState::new_test();
 
         // SELECT queries should use read-only pool
         assert_eq!(
-            router.determine_route("SELECT * FROM users", &session_state).await,
+            router
+                .determine_route("SELECT * FROM users", &session_state)
+                .await,
             QueryRoute::ReadOnly
         );
 
         // Write operations should use write handler
         assert_eq!(
-            router.determine_route("INSERT INTO users VALUES (1)", &session_state).await,
+            router
+                .determine_route("INSERT INTO users VALUES (1)", &session_state)
+                .await,
             QueryRoute::Write
         );
 
         // Read-only pragmas should use read-only pool
         assert_eq!(
-            router.determine_route("PRAGMA table_info(users)", &session_state).await,
+            router
+                .determine_route("PRAGMA table_info(users)", &session_state)
+                .await,
             QueryRoute::ReadOnly
         );
+    }
+
+    #[tokio::test]
+    async fn test_parameterized_write_query_executes() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut cfg = crate::config::global_config().clone();
+        cfg.use_pooling = true;
+        let config = Arc::new(cfg);
+
+        let write_db = format!("/tmp/test_param_write_route_{timestamp}.db");
+        let read_db = format!("/tmp/test_param_read_route_{timestamp}.db");
+
+        let write_handler = match DbHandler::new(&write_db) {
+            Ok(h) => Arc::new(h),
+            Err(_) => {
+                eprintln!(
+                    "Skipping test_parameterized_write_query_returns_error due to DB creation failure"
+                );
+                return;
+            }
+        };
+        let read_handler = match ReadOnlyDbHandler::new(&read_db, config.clone()) {
+            Ok(h) => Arc::new(h),
+            Err(_) => {
+                eprintln!(
+                    "Skipping test_parameterized_write_query_returns_error due to ReadOnly DB creation failure"
+                );
+                return;
+            }
+        };
+        let router = QueryRouter::new(write_handler, read_handler, config);
+        let session_state = SessionState::new_test();
+
+        // Create session connection for write handler route.
+        session_state
+            .set_db_handler(router.write_handler.clone())
+            .await;
+        session_state.initialize_connection().await.unwrap();
+
+        router
+            .write_handler
+            .with_session_connection(&session_state.id, |conn| {
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let id_value: &dyn rusqlite::ToSql = &1i64;
+        let name_value: &dyn rusqlite::ToSql = &"alice";
+        let result = router
+            .execute_query_with_params(
+                "INSERT INTO users(id, name) VALUES (?, ?)",
+                &[id_value, name_value],
+                &session_state,
+            )
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().rows_affected, 1);
+
+        std::fs::remove_file(&write_db).ok();
+        std::fs::remove_file(&read_db).ok();
     }
 }
