@@ -5,6 +5,7 @@ pub mod db_handler;
 pub mod db_handler_registry;
 pub mod read_only_handler;
 pub mod query_router;
+pub mod message_loop;
 pub mod portal_manager;
 pub mod connection_manager;
 pub mod thread_local_cache;

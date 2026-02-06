@@ -21,5 +21,6 @@ pub mod pg_cursors;
 pub mod system_functions;
 pub mod where_evaluator;
 pub mod constraint_populator;
+pub mod column_metadata;
 
 pub use query_interceptor::CatalogInterceptor;

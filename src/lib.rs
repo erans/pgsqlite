@@ -104,9 +104,12 @@ pub async fn handle_test_connection_with_pool(
     use futures::{SinkExt, StreamExt};
     use std::sync::Arc;
     use protocol::{PostgresCodec, FrontendMessage, BackendMessage, AuthenticationMessage, TransactionStatus, ErrorResponse};
-    use session::{SessionState, ReadOnlyDbHandler, QueryRouter};
-    use query::{QueryExecutor, ExtendedQueryHandler};
-    use tracing::{debug, info, warn};
+    use session::{
+        message_loop::{handle_extended_or_aux_message, ExtendedMessageOptions},
+        QueryRouter, ReadOnlyDbHandler, SessionState,
+    };
+    use query::QueryExecutor;
+    use tracing::{debug, info};
     
     let codec = PostgresCodec::new();
     let mut framed = Framed::new(stream, codec);
@@ -217,95 +220,16 @@ pub async fn handle_test_connection_with_pool(
                     // Flush to ensure ReadyForQuery is sent immediately
                     framed.flush().await?;
                 }
-                FrontendMessage::Parse { name, query, param_types } => {
-                    // TODO: Extended query protocol also needs router integration
-                    match ExtendedQueryHandler::handle_parse(&mut framed, &db_handler, &session, name, query, param_types).await {
-                        Ok(()) => {},
-                        Err(e) => {
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Parse failed: {e}"),
-                            );
-                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        }
-                    }
-                }
-                FrontendMessage::Bind { portal, statement, formats, values, result_formats } => {
-                    match ExtendedQueryHandler::handle_bind(&mut framed, &session, portal, statement, formats, values, result_formats).await {
-                        Ok(()) => {},
-                        Err(e) => {
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Bind failed: {e}"),
-                            );
-                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        }
-                    }
-                }
-                FrontendMessage::Execute { portal, max_rows } => {
-                    debug!("Executing extended protocol portal: '{}'", portal);
-                    match ExtendedQueryHandler::handle_execute(&mut framed, &db_handler, &session, portal, max_rows).await {
-                        Ok(()) => {},
-                        Err(e) => {
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Execute failed: {e}"),
-                            );
-                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        }
-                    }
-                }
-                FrontendMessage::Describe { typ, name } => {
-                    match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await {
-                        Ok(()) => {},
-                        Err(e) => {
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Describe failed: {e}"),
-                            );
-                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        }
-                    }
-                }
-                FrontendMessage::Close { typ, name } => {
-                    match ExtendedQueryHandler::handle_close(&mut framed, &session, typ, name).await {
-                        Ok(()) => {},
-                        Err(e) => {
-                            let err = ErrorResponse::new(
-                                "ERROR".to_string(),
-                                "42000".to_string(),
-                                format!("Close failed: {e}"),
-                            );
-                            framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        }
-                    }
-                }
-                FrontendMessage::Sync => {
-                    framed.send(BackendMessage::ReadyForQuery {
-                        status: *session.transaction_status.read().await,
-                    }).await?;
-                    // Flush to ensure ReadyForQuery is sent immediately
-                    framed.flush().await?;
-                }
-                FrontendMessage::Flush => {
-                    framed.flush().await?;
-                }
                 FrontendMessage::Terminate => break,
                 other => {
-                    warn!("Unhandled message: {other:?}");
-                    let err = ErrorResponse::new(
-                        "ERROR".to_string(),
-                        "0A000".to_string(),
-                        format!("Feature not supported: {other:?}"),
-                    );
-                    framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                    framed.send(BackendMessage::ReadyForQuery {
-                        status: *session.transaction_status.read().await,
-                    }).await?;
+                    let _handled = handle_extended_or_aux_message(
+                        &mut framed,
+                        &db_handler,
+                        &session,
+                        other,
+                        ExtendedMessageOptions::test_defaults(),
+                    )
+                    .await?;
                 }
             }
         }

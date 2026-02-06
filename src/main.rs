@@ -20,8 +20,11 @@ use pgsqlite::protocol::{
     TransactionStatus, check_global_rate_limit, record_global_failure,
 };
 use pgsqlite::security::events;
-use pgsqlite::query::{ExtendedQueryHandler, QueryExecutor};
-use pgsqlite::session::{SessionState, get_or_create_handler};
+use pgsqlite::query::QueryExecutor;
+use pgsqlite::session::{
+    message_loop::{handle_extended_or_aux_message, ExtendedMessageOptions},
+    get_or_create_handler, SessionState,
+};
 use pgsqlite::ssl::CertificateManager;
 use pgsqlite::migration::MigrationRunner;
 use pgsqlite::system_db::SystemDb;
@@ -480,7 +483,8 @@ where
 
     // Main message loop
     while let Some(msg) = framed.next().await {
-        match msg? {
+        let message = msg?;
+        match message {
             FrontendMessage::Query(sql) => {
                 debug!("Received query from {}: {}", connection_info, sql);
 
@@ -536,166 +540,6 @@ where
                 // Flush to ensure message is sent immediately
                 framed.flush().await?;
             }
-            FrontendMessage::Parse {
-                name,
-                query,
-                param_types,
-            } => {
-                info!("Received Parse from {}: query={}, name={}", connection_info, query, name);
-
-                // Check rate limiting for extended protocol operations
-                if let Err(e) = check_global_rate_limit(None) {
-                    error!("Parse rate limit exceeded for {}: {}", connection_info, e);
-                    let err = ErrorResponse::new(
-                        "ERROR".to_string(),
-                        "53300".to_string(),
-                        "Rate limit exceeded".to_string(),
-                    );
-                    framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                    continue;
-                }
-
-                match ExtendedQueryHandler::handle_parse(
-                    &mut framed,
-                    &db_handler,
-                    &session,
-                    name,
-                    query,
-                    param_types,
-                )
-                .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("Parse error: {}", e);
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Parse failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
-                    }
-                }
-            }
-            FrontendMessage::Bind {
-                portal,
-                statement,
-                formats,
-                values,
-                result_formats,
-            } => {
-                match ExtendedQueryHandler::handle_bind(
-                    &mut framed,
-                    &session,
-                    portal,
-                    statement,
-                    formats,
-                    values,
-                    result_formats,
-                )
-                .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("Bind error: {}", e);
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Bind failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
-                    }
-                }
-            }
-            FrontendMessage::Execute { portal, max_rows } => {
-                info!("Received Execute from {}: portal={}, max_rows={}", connection_info, portal, max_rows);
-                match ExtendedQueryHandler::handle_execute(
-                    &mut framed,
-                    &db_handler,
-                    &session,
-                    portal,
-                    max_rows,
-                )
-                .await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("Execute error: {}", e);
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Execute failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
-                    }
-                }
-            }
-            FrontendMessage::Describe { typ, name } => {
-                match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await
-                {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("Describe error: {}", e);
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Describe failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
-                    }
-                }
-            }
-            FrontendMessage::Close { typ, name } => {
-                match ExtendedQueryHandler::handle_close(&mut framed, &session, typ, name).await {
-                    Ok(()) => {}
-                    Err(e) => {
-                        error!("Close error: {}", e);
-                        let err = ErrorResponse::new(
-                            "ERROR".to_string(),
-                            "42000".to_string(),
-                            format!("Close failed: {e}"),
-                        );
-                        framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
-                    }
-                }
-            }
-            FrontendMessage::Sync => {
-                // Send ReadyForQuery to indicate we're ready for more commands
-                framed
-                    .send(BackendMessage::ReadyForQuery {
-                        status: *session.transaction_status.read().await,
-                    })
-                    .await?;
-            }
-            FrontendMessage::Flush => {
-                // Flush any pending messages
-                framed.flush().await?;
-            }
             FrontendMessage::Terminate => {
                 info!("Client {} requested termination", connection_info);
                 
@@ -711,7 +555,17 @@ where
                 break;
             }
             other => {
-                info!("Received unhandled message from {}: {:?}", connection_info, other);
+                let handled = handle_extended_or_aux_message(
+                    &mut framed,
+                    &db_handler,
+                    &session,
+                    other,
+                    ExtendedMessageOptions::server_defaults(),
+                )
+                .await?;
+                if !handled {
+                    info!("Received unhandled message from {}", connection_info);
+                }
             }
         }
     }
