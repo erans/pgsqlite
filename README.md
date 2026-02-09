@@ -152,7 +152,7 @@ pgsqlite \
 
 # Performance
 pgsqlite \
-  --journal-mode WAL    # Enable WAL mode for better concurrency
+  --pragma-journal-mode WAL    # Enable WAL mode for better concurrency
 
 # Connection Pooling (for concurrent workloads)
 PGSQLITE_USE_POOLING=true pgsqlite \
@@ -178,9 +178,9 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **PostgreSQL Functions**: Comprehensive function support including:
   - **String Functions**: `split_part()`, `string_agg()`, `translate()`, `ascii()`, `chr()`, `repeat()`, `reverse()`, `left()`, `right()`, `lpad()`, `rpad()`
   - **Math Functions**: `trunc()`, `round()`, `ceil()`, `floor()`, `sign()`, `abs()`, `mod()`, `power()`, `sqrt()`, `exp()`, `ln()`, `log()`, trigonometric functions, `random()`
-- **Array Types**: Full support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) with ARRAY literal syntax, ALL operator, and unnest() WITH ORDINALITY
-- **JSON Support**: Complete `JSON` and `JSONB` implementation with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`, `?`, `?|`, `?&`) and functions (json_agg, json_object_agg, row_to_json, json_populate_record, json_to_record, jsonb_insert, jsonb_delete, jsonb_pretty, etc.)
-- **Full-Text Search**: Complete PostgreSQL FTS implementation with `tsvector`/`tsquery` types, `@@` operator, `to_tsvector()`, `to_tsquery()`, `plainto_tsquery()` functions using SQLite FTS5 backend
+- **Array Types**: Extensive support for PostgreSQL arrays (e.g., `INTEGER[]`, `TEXT[][]`) with ARRAY literal syntax, ANY/ALL operators, and `unnest()` WITH ORDINALITY
+- **JSON Support**: Extensive `JSON`/`JSONB` support with operators (`->`, `->>`, `@>`, `<@`, `#>`, `#>>`, `?`, `?|`, `?&`) and common functions (e.g., `json_agg`, `json_object_agg`, `row_to_json`, `json_populate_record`, `json_to_record`, `jsonb_insert`, `jsonb_delete`, `jsonb_pretty`)
+- **Full-Text Search**: FTS compatibility layer backed by SQLite FTS5: `tsvector`/`tsquery` types, `@@` operator, and query functions (`to_tsvector()`, `to_tsquery()`, `plainto_tsquery()`, `phraseto_tsquery()`, `websearch_to_tsquery()`)
 - **ENUM Types**: `CREATE TYPE status AS ENUM ('active', 'pending', 'archived')`
 - **RETURNING Clauses**: `INSERT INTO users (email) VALUES ('test@example.com') RETURNING id`
 - **CTEs**: `WITH` and `WITH RECURSIVE` queries
@@ -188,7 +188,7 @@ For all configuration options, see the [Configuration Reference](docs/configurat
 - **VARCHAR/CHAR Constraints**: Length validation for `VARCHAR(n)` and `CHAR(n)` with proper padding
 - **NUMERIC/DECIMAL Constraints**: Precision and scale validation for `NUMERIC(p,s)` and `DECIMAL(p,s)`
 - **CREATE INDEX with Operator Classes**: Support for PostgreSQL operator classes like `varchar_pattern_ops`, `text_pattern_ops` (mapped to SQLite `COLLATE BINARY` for pattern matching optimization)
-- **psql Compatibility**: Enhanced psql support with `\d`, `\dt`, and `\d tablename` commands fully working
+- **psql Compatibility**: Improved system catalog compatibility for psql introspection (some meta-commands work; describing a specific table is still a work in progress)
 
 ### Security Features
 
@@ -252,13 +252,13 @@ For applications requiring microsecond-level performance, use pure SQLite. For P
 For concurrent read-heavy workloads, enable connection pooling to improve performance:
 
 ```bash
-# Enable connection pooling with default settings (5 connections)
+# Enable connection pooling with default settings (pool size: 8)
 PGSQLITE_USE_POOLING=true pgsqlite --database mydb.db
 
 # Custom pool configuration
 PGSQLITE_USE_POOLING=true \
 PGSQLITE_POOL_SIZE=10 \
-PGSQLITE_POOL_TIMEOUT=60 \
+PGSQLITE_POOL_CONNECTION_TIMEOUT_SECONDS=60 \
 pgsqlite --database mydb.db
 ```
 
@@ -271,9 +271,10 @@ pgsqlite --database mydb.db
 - ❌ Unix socket connections with low concurrency
 
 **Configuration options:**
-- `PGSQLITE_POOL_SIZE` - Maximum connections in read pool (default: 5)
-- `PGSQLITE_POOL_IDLE_TIMEOUT` - Idle connection timeout in seconds (default: 300)
-- `PGSQLITE_POOL_HEALTH_INTERVAL` - Health check interval in seconds (default: 60)
+- `PGSQLITE_POOL_SIZE` - Number of connections in the read-only pool (default: 8)
+- `PGSQLITE_POOL_CONNECTION_TIMEOUT_SECONDS` - Timeout for getting a connection from the pool (default: 30)
+- `PGSQLITE_POOL_IDLE_TIMEOUT_SECONDS` - Idle connection timeout in seconds (default: 300)
+- `PGSQLITE_POOL_HEALTH_CHECK_INTERVAL_SECONDS` - Health check interval in seconds (default: 60)
 
 Connection pooling automatically routes SELECT queries to the read pool while directing write operations (INSERT/UPDATE/DELETE) to the primary connection for consistency.
 
@@ -302,29 +303,28 @@ Track security events and potential threats:
 ```bash
 # Enable comprehensive security auditing
 PGSQLITE_AUDIT_ENABLED=true \
-PGSQLITE_AUDIT_SEVERITY=info \
-PGSQLITE_AUDIT_LOG_AUTH=true \
+PGSQLITE_AUDIT_MIN_SEVERITY=INFO \
+PGSQLITE_AUDIT_JSON_FORMAT=true \
 PGSQLITE_AUDIT_LOG_QUERIES=true \
-PGSQLITE_AUDIT_LOG_ERRORS=true \
 pgsqlite --database mydb.db
 ```
 
 Audit events include:
-- Authentication attempts (success/failure)
-- SQL injection attempts with detailed analysis
-- Permission violations
-- Rate limit violations
-- System errors and anomalies
+- Connection accept/reject (including rate-limit rejections)
+- Authentication successes
+- SQL injection attempts with analysis metadata
+- Rate limit and circuit breaker events
 
 ### Rate Limiting & DoS Protection
 
 Built-in rate limiting prevents abuse:
 
 ```bash
-# Configure rate limiting (default: 1000 req/sec per client)
-PGSQLITE_RATE_LIMIT_REQUESTS=1000 \
-PGSQLITE_RATE_LIMIT_WINDOW=1 \
-PGSQLITE_CIRCUIT_BREAKER_THRESHOLD=0.5 \
+# Configure rate limiting (defaults: 1000 requests / 60s window)
+PGSQLITE_RATE_LIMIT_MAX_REQUESTS=1000 \
+PGSQLITE_RATE_LIMIT_WINDOW_SECS=60 \
+PGSQLITE_RATE_LIMIT_PER_IP=true \
+PGSQLITE_CIRCUIT_BREAKER_ENABLED=true \
 pgsqlite --database mydb.db
 ```
 
@@ -363,7 +363,7 @@ cargo build --release
 cargo test
 
 # Run with debug logging
-RUST_LOG=debug ./target/release/pgsqlite
+./target/release/pgsqlite --log-level debug
 ```
 
 ### Running Integration Tests

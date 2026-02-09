@@ -31,8 +31,9 @@ pgsqlite looks for certificates in this order:
 
 1. **Command line paths**: `--ssl-cert` and `--ssl-key`
 2. **Environment variables**: `PGSQLITE_SSL_CERT` and `PGSQLITE_SSL_KEY`
-3. **Automatic discovery**: Looks next to database file
-   - For `mydb.sqlite` → looks for `mydb.crt` and `mydb.key`
+3. **Automatic discovery**:
+   - File mode (`--database ./mydb.sqlite`): looks next to the database file for `mydb.crt` and `mydb.key`
+   - Directory mode (`--database ./data`): looks in the data directory for `<default-database>.crt` and `<default-database>.key` (default database name defaults to `main`)
 4. **Auto-generation**: Creates self-signed certificates if not found
 
 ### Certificate Storage Behavior
@@ -40,8 +41,8 @@ pgsqlite looks for certificates in this order:
 | Database Type | Flag | Behavior |
 |--------------|------|----------|
 | In-memory | Any | Always uses ephemeral certificates (not saved) |
-| File-based | `--ssl-ephemeral` | Generates temporary certificates (not saved) |
-| File-based | No ephemeral flag | Generates and saves certificates next to database |
+| File/directory | `--ssl-ephemeral` | Generates temporary certificates (not saved) |
+| File/directory | No ephemeral flag | Generates and saves certificates in the database directory (file mode: next to the DB file; directory mode: inside the data dir) |
 
 ## Connection Examples
 
@@ -181,7 +182,7 @@ PostgreSQL clients support various SSL modes:
 
 ```bash
 # Enable debug logging
-RUST_LOG=debug pgsqlite --ssl
+pgsqlite --ssl --log-level debug
 
 # Test SSL connection
 openssl s_client -connect localhost:5432 -servername localhost

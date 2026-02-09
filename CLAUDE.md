@@ -176,7 +176,7 @@ pgsqlite --database mydb.db
 ```bash
 PGSQLITE_USE_POOLING=true PGSQLITE_POOL_SIZE=10 pgsqlite --database mydb.db
 ```
-Environment variables: `PGSQLITE_USE_POOLING` (default: false), `PGSQLITE_POOL_SIZE` (default: 5), `PGSQLITE_POOL_TIMEOUT` (default: 30s)
+Environment variables: `PGSQLITE_USE_POOLING` (default: false), `PGSQLITE_POOL_SIZE` (default: 8), `PGSQLITE_POOL_CONNECTION_TIMEOUT_SECONDS` (default: 30), `PGSQLITE_POOL_IDLE_TIMEOUT_SECONDS` (default: 300)
 
 ## Quality Standards
 - Test edge cases, not just happy paths

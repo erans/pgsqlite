@@ -43,8 +43,5 @@ SELECT text_value FROM regex_test WHERE text_value ~ '(SQL|pg_)';
 -- Clean up
 DROP TABLE regex_test;
 
--- Note: psql meta-commands like \d still fail due to:
--- 1. Missing pg_namespace and pg_am catalog tables
--- 2. No support for JOINs in catalog query handlers
--- 3. OPERATOR(pg_catalog.~) syntax not yet handled
--- But direct regex operators now work perfectly!
+-- Note: psql meta-command support varies by command and query shape.
+-- See tests/sql/meta/ for scripts that group meta-commands into known-working subsets.

@@ -1,445 +1,105 @@
-# pgsqlite Security Architecture
+# Security
 
-## Overview
+This document describes the security-related behavior that exists in the current pgsqlite codebase (not aspirational features).
 
-pgsqlite implements defense-in-depth security with multiple layers of protection against common attack vectors. This document details the security features, configuration options, and best practices for deploying pgsqlite in production environments.
+## Network Surface
 
-## Table of Contents
+### TCP Listener
 
-1. [SQL Injection Protection](#sql-injection-protection)
-2. [Security Audit Logging](#security-audit-logging)
-3. [Rate Limiting & DoS Protection](#rate-limiting--dos-protection)
-4. [Memory Safety](#memory-safety)
-5. [Input Validation](#input-validation)
-6. [Network Security](#network-security)
-7. [Configuration Best Practices](#configuration-best-practices)
-8. [Security Monitoring](#security-monitoring)
+- By default, pgsqlite listens on `0.0.0.0:<port>` (see `--port` / `PGSQLITE_PORT`).
+- There is currently no bind-address configuration option. If you need to restrict exposure, use firewall rules, container/network policy, or disable TCP entirely.
 
-## SQL Injection Protection
+### Unix Domain Socket (Unix Only)
 
-### Architecture
+- On Unix platforms, pgsqlite creates a PostgreSQL-compatible socket file named `.s.PGSQL.<port>` in `--socket-dir` (default: `/tmp`).
+- `--no-tcp` disables the TCP listener and leaves Unix sockets as the only listener.
 
-pgsqlite employs a sophisticated two-tier SQL injection detection system:
+See `docs/unix-sockets.md` for connection examples.
 
-1. **AST-based Analysis (Primary)**
-   - Parses SQL using `sqlparser` with PostgreSQL dialect
-   - Builds Abstract Syntax Tree for structural analysis
-   - Detects injection patterns at the semantic level
+### TLS/SSL (TCP Only)
 
-2. **Pattern Matching (Fallback)**
-   - Activates when SQL parsing fails
-   - High-confidence pattern detection
-   - Zero false positives for legitimate queries
+- `--ssl` enables PostgreSQL-style SSL negotiation (clients that send an `SSLRequest` will be upgraded to TLS).
+- TLS cannot be enabled when TCP is disabled (`--no-tcp`), because Unix sockets do not use TLS.
+- TLS support does not currently force encryption. Clients that do not request SSL can continue in plaintext even when `--ssl` is enabled. If you want to enforce encryption, configure clients with `sslmode=require` and/or block plaintext at the network layer.
 
-### Detection Capabilities
+Certificate behavior is implemented in `src/ssl/cert_manager.rs`:
 
-#### Tautology Detection
-Identifies always-true conditions commonly used in SQL injection:
-- Numeric tautologies: `1=1`, `2=2`, `1<>0`
-- String tautologies: `'a'='a'`, `"x"="x"`
-- Complex tautologies: `1=1 AND 2=2`
+- If `--ssl-cert` and `--ssl-key` (or `PGSQLITE_SSL_CERT`/`PGSQLITE_SSL_KEY`) are provided, those files are used.
+- Otherwise, pgsqlite looks for `<cert-stem>.crt` and `<cert-stem>.key` in the database directory (file mode: next to the database file; directory mode: inside the data directory using the default database name as the stem).
+- If no cert/key are found, pgsqlite generates self-signed certificates.
+  - In-memory databases (or `--ssl-ephemeral`) use ephemeral certs (not persisted).
+  - Otherwise, generated certs are written to `<cert-stem>.crt` / `<cert-stem>.key` in the database directory.
 
-#### Dangerous Function Detection
-Blocks execution of high-risk functions:
-- System commands: `exec`, `execute`, `system`, `shell`
-- Microsoft SQL Server: `xp_cmdshell`, `sp_executesql`
-- Generic: `eval`, `cmd`
+See `docs/ssl-setup.md` for usage.
 
-#### Union-based Attack Prevention
-- Limits UNION operations (default: 5)
-- Detects suspicious UNION with sensitive tables
-- Blocks `UNION SELECT password FROM admin` patterns
+## SQL Injection Detection
 
-#### Multi-statement Attack Prevention
-- Limits statement count per query (default: 3)
-- Prevents statement stacking attacks
-- Blocks `; DROP TABLE users; --` patterns
-
-### Configuration
-
-The SQL injection detector is always active but can be tuned:
-
-```rust
-// In code - for embedded use
-let detector = SqlInjectionDetector::new()
-    .with_max_depth(10)          // Maximum query nesting depth
-    .with_max_statements(3)       // Maximum statements per query
-    .with_max_unions(5);          // Maximum UNION operations
-```
-
-### Implementation Details
-
-Location: `/src/security/sql_injection_detector.rs`
-
-Key components:
-- `SqlInjectionDetector`: Main detection engine
-- `SqlAnalysisResult`: Analysis output with detailed findings
-- Integration with `DbHandler` for query validation
-- Automatic security event logging
+Queries are validated by `SqlInjectionDetector` before execution (see `src/security/sql_injection_detector.rs` and usage in `src/session/db_handler.rs`). There is currently no CLI/env configuration surface for tuning the detector; tuning is a code-level concern for embedded use.
 
 ## Security Audit Logging
 
-### Features
+Security-relevant events are logged via the global audit logger (see `src/security/audit_logger.rs`).
 
-Comprehensive logging of security-relevant events:
+Defaults:
 
-- **Authentication Events**: Login attempts, successes, failures
-- **SQL Injection Attempts**: Detailed analysis of blocked queries
-- **Permission Violations**: Unauthorized access attempts
-- **Rate Limit Violations**: DoS attempt detection
-- **System Anomalies**: Unexpected errors, resource exhaustion
+- Audit logging is enabled by default.
+- JSON output is enabled by default.
+- Query text is included by default.
+- Logs are emitted via `tracing` targets `security_audit` and `security_alert`.
 
-### Configuration
+Environment variables:
 
-Environment variables for audit configuration:
+| Variable | Default | Notes |
+|----------|---------|------|
+| `PGSQLITE_AUDIT_ENABLED` | `true` | `true/1` enables, `false/0` disables |
+| `PGSQLITE_AUDIT_JSON_FORMAT` | `true` | `true/1` JSON, `false/0` text |
+| `PGSQLITE_AUDIT_LOG_QUERIES` | `true` | Include query text in audit logs |
+| `PGSQLITE_AUDIT_MIN_SEVERITY` | `INFO` | One of `INFO`, `WARNING`, `HIGH`, `CRITICAL` |
+| `PGSQLITE_AUDIT_ENABLE_ALERTING` | `true` | Emits high-severity alerts to `security_alert` target |
+| `PGSQLITE_AUDIT_BUFFER_SIZE` | `100` | Buffer size for batching internal audit events |
 
-```bash
-# Enable/disable audit logging
-PGSQLITE_AUDIT_ENABLED=true
-
-# Minimum severity level (debug, info, warning, error, critical)
-PGSQLITE_AUDIT_SEVERITY=info
-
-# Specific event types
-PGSQLITE_AUDIT_LOG_AUTH=true       # Authentication events
-PGSQLITE_AUDIT_LOG_QUERIES=true    # Query execution
-PGSQLITE_AUDIT_LOG_ERRORS=true     # System errors
-PGSQLITE_AUDIT_LOG_ADMIN=true      # Administrative actions
-
-# Output configuration
-PGSQLITE_AUDIT_BUFFER_SIZE=1000    # Event buffer size
-PGSQLITE_AUDIT_MAX_QUERY_LENGTH=1000  # Query truncation
-```
-
-### Event Format
-
-Audit events are logged as structured JSON:
-
-```json
-{
-  "timestamp": 1758931844607131,
-  "event_type": "SqlInjectionAttempt",
-  "severity": "High",
-  "client_ip": "192.168.1.100",
-  "session_id": "abc123",
-  "database": "production",
-  "username": "webapp",
-  "query": "SELECT * FROM users WHERE id = 1 OR 1=1",
-  "message": "SQL injection attempt detected: tautology",
-  "metadata": {
-    "detected_pattern": "tautology",
-    "detection_method": "ast_analysis"
-  },
-  "process_id": 1234,
-  "thread_id": 5678
-}
-```
-
-### Alert System
-
-High-severity events trigger immediate alerts:
-- SQL injection attempts
-- Authentication failures (repeated)
-- Rate limit violations
-- System resource exhaustion
-
-## Rate Limiting & DoS Protection
-
-### Architecture
-
-Multi-layered protection against denial-of-service attacks:
-
-1. **Per-Client Rate Limiting**
-   - Token bucket algorithm
-   - Configurable limits per IP
-   - Sliding window tracking
-
-2. **Circuit Breaker Pattern**
-   - Automatic client isolation
-   - Failure threshold detection
-   - Graduated recovery
-
-3. **Resource Protection**
-   - Query size limits
-   - Nesting depth limits
-   - Statement count limits
-
-### Configuration
+Example:
 
 ```bash
-# Rate limiting
-PGSQLITE_RATE_LIMIT_ENABLED=true
-PGSQLITE_RATE_LIMIT_REQUESTS=1000    # Requests per window
-PGSQLITE_RATE_LIMIT_WINDOW=1         # Window in seconds
-PGSQLITE_RATE_LIMIT_BURST=100        # Burst capacity
-
-# Circuit breaker
-PGSQLITE_CIRCUIT_BREAKER_ENABLED=true
-PGSQLITE_CIRCUIT_BREAKER_THRESHOLD=0.5  # Failure rate threshold
-PGSQLITE_CIRCUIT_BREAKER_WINDOW=60      # Evaluation window (seconds)
-PGSQLITE_CIRCUIT_BREAKER_COOLDOWN=300   # Recovery time (seconds)
-
-# Resource limits
-PGSQLITE_MAX_QUERY_SIZE=1048576         # 1MB max query
-PGSQLITE_MAX_QUERY_DEPTH=100            # Max nesting
-PGSQLITE_MAX_STATEMENTS=10              # Max statements per query
+PGSQLITE_AUDIT_ENABLED=true \
+PGSQLITE_AUDIT_MIN_SEVERITY=WARNING \
+PGSQLITE_AUDIT_LOG_QUERIES=false \
+pgsqlite --database ./data
 ```
 
-### Implementation
+## Rate Limiting and Circuit Breaker
 
-Location: `/src/security/rate_limiter.rs`
+Rate limiting and a circuit breaker are enforced through `src/protocol/rate_limiter.rs` and are used in the TCP connection path and query path (see `src/main.rs`).
 
-Features:
-- Lock-free atomic operations for performance
-- Memory-efficient sliding window
-- Automatic cleanup of old entries
-- Statistics and metrics collection
+Notes:
 
-## Memory Safety
+- There is no single "disable rate limiting" switch. If you want it effectively disabled, increase the limits.
+- The circuit breaker can be disabled via env var.
 
-### Rust Safety Guarantees
+Environment variables:
 
-pgsqlite leverages Rust's ownership system for memory safety:
+| Variable | Default | Notes |
+|----------|---------|------|
+| `PGSQLITE_RATE_LIMIT_MAX_REQUESTS` | `1000` | Max requests per window |
+| `PGSQLITE_RATE_LIMIT_WINDOW_SECS` | `60` | Window size in seconds |
+| `PGSQLITE_RATE_LIMIT_PER_IP` | `true` | If `true`, applies limits per-client-IP (when IP is known) |
+| `PGSQLITE_RATE_LIMIT_MAX_IPS` | `10000` | Max tracked IPs for per-IP limiting |
+| `PGSQLITE_CIRCUIT_BREAKER_ENABLED` | `true` | `true/1` enables, `false/0` disables |
+| `PGSQLITE_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `50` | Failures before opening circuit |
+| `PGSQLITE_CIRCUIT_BREAKER_TIMEOUT_SECS` | `60` | Time to keep circuit open |
+| `PGSQLITE_CIRCUIT_BREAKER_SUCCESS_THRESHOLD` | `10` | Successes required to close circuit |
 
-- **No buffer overflows**: Bounds checking at compile time
-- **No use-after-free**: Ownership tracking prevents dangling pointers
-- **No data races**: Send/Sync traits ensure thread safety
-- **No null pointer dereferences**: Option types for nullable values
-
-### Memory Optimization
-
-Advanced memory management for performance:
-
-1. **Copy-on-Write Strings** (`Cow<str>`)
-   - Avoids unnecessary allocations
-   - Reduces memory fragmentation
-   - Improves cache locality
-
-2. **Arena Allocators**
-   - Bulk allocation for related objects
-   - Reduced allocation overhead
-   - Improved cleanup performance
-
-3. **TTL-based Caching**
-   - Automatic eviction of stale entries
-   - Memory pressure handling
-   - Configurable size limits
-
-### Memory Leak Prevention
-
-- Smart pointers (`Arc`, `Rc`) for reference counting
-- RAII pattern for resource management
-- Automatic cleanup on scope exit
-- No manual memory management
-
-## Input Validation
-
-### Protocol-Level Validation
-
-All PostgreSQL wire protocol messages are validated:
-
-- Message size limits
-- Type checking
-- Format verification
-- Sequence validation
-
-### Query Parameter Validation
-
-- Type safety for prepared statements
-- Length validation for strings
-- Range checking for numerics
-- Format validation for specialized types
-
-### Connection Validation
-
-- Authentication verification
-- SSL/TLS certificate validation
-- Client IP allowlisting (optional)
-- Connection limit enforcement
-
-## Network Security
-
-### SSL/TLS Support
-
-Full TLS 1.2+ support for encrypted connections:
+Example:
 
 ```bash
-# Generate certificates
-pgsqlite --generate-certs --cert-dir ./certs
-
-# Run with TLS
-pgsqlite --ssl --cert ./certs/server.crt --key ./certs/server.key
+PGSQLITE_RATE_LIMIT_MAX_REQUESTS=10000 \
+PGSQLITE_RATE_LIMIT_WINDOW_SECS=60 \
+PGSQLITE_CIRCUIT_BREAKER_ENABLED=false \
+pgsqlite --database ./data
 ```
 
-Features:
-- Certificate-based authentication
-- Perfect forward secrecy
-- Modern cipher suites only
-- Optional client certificate verification
+## Operational Recommendations
 
-### Unix Socket Support
-
-For local connections with enhanced security:
-
-```bash
-# Use Unix socket (more secure for local connections)
-pgsqlite --unix-socket /var/run/pgsqlite.sock
-```
-
-Benefits:
-- No network exposure
-- File system permissions
-- Lower latency
-- Reduced attack surface
-
-## Configuration Best Practices
-
-### Production Deployment
-
-```bash
-#!/bin/bash
-# Production configuration example
-
-# Core settings
-export PGSQLITE_DATABASE="/secure/path/data"
-export PGSQLITE_DEFAULT_DATABASE="database"
-export PGSQLITE_BIND_ADDRESS="127.0.0.1"  # Local only
-export PGSQLITE_PORT=5432
-
-# Security
-export PGSQLITE_SSL=true
-export PGSQLITE_SSL_CERT="/secure/certs/server.crt"
-export PGSQLITE_SSL_KEY="/secure/certs/server.key"
-export PGSQLITE_REQUIRE_SSL=true  # Force SSL connections
-
-# Audit logging
-export PGSQLITE_AUDIT_ENABLED=true
-export PGSQLITE_AUDIT_SEVERITY=info
-export PGSQLITE_AUDIT_LOG_AUTH=true
-export PGSQLITE_AUDIT_LOG_QUERIES=false  # Only for debugging
-
-# Rate limiting
-export PGSQLITE_RATE_LIMIT_ENABLED=true
-export PGSQLITE_RATE_LIMIT_REQUESTS=100
-export PGSQLITE_RATE_LIMIT_WINDOW=1
-
-# Resource limits
-export PGSQLITE_MAX_CONNECTIONS=100
-export PGSQLITE_CONNECTION_TIMEOUT=300
-
-# Start with restricted permissions
-umask 077
-pgsqlite
-```
-
-### Security Checklist
-
-- [ ] Enable SSL/TLS for network connections
-- [ ] Configure audit logging
-- [ ] Set appropriate rate limits
-- [ ] Use Unix sockets for local connections
-- [ ] Restrict file permissions on database files
-- [ ] Enable connection limits
-- [ ] Configure firewall rules
-- [ ] Monitor audit logs
-- [ ] Regular security updates
-- [ ] Backup strategy in place
-
-## Security Monitoring
-
-### Key Metrics to Monitor
-
-1. **Authentication Metrics**
-   - Failed login attempts
-   - Successful authentications
-   - Authentication latency
-
-2. **SQL Injection Metrics**
-   - Blocked queries count
-   - Detection method distribution
-   - Attack pattern trends
-
-3. **Rate Limiting Metrics**
-   - Rate limit violations
-   - Circuit breaker trips
-   - Client distribution
-
-4. **Resource Metrics**
-   - Memory usage
-   - Connection count
-   - Query execution time
-
-### Integration with Monitoring Systems
-
-Export metrics to monitoring systems:
-
-```bash
-# Prometheus metrics endpoint (planned)
-PGSQLITE_METRICS_ENABLED=true
-PGSQLITE_METRICS_PORT=9090
-
-# StatsD integration (planned)
-PGSQLITE_STATSD_HOST=localhost
-PGSQLITE_STATSD_PORT=8125
-```
-
-### Alert Configuration
-
-Critical alerts to configure:
-
-1. **High SQL injection attempt rate** (> 10/min)
-2. **Authentication failure spike** (> 50/min)
-3. **Circuit breaker activation**
-4. **Memory usage > 90%**
-5. **Connection pool exhaustion**
-
-## Security Updates
-
-Stay informed about security updates:
-
-- Watch the [GitHub repository](https://github.com/erans/pgsqlite) for security advisories
-- Enable GitHub security alerts
-- Subscribe to release notifications
-- Review the changelog for security fixes
-
-## Reporting Security Issues
-
-If you discover a security vulnerability:
-
-1. **Do not** create a public GitHub issue
-2. Email security details to the maintainers
-3. Include:
-   - Description of the vulnerability
-   - Steps to reproduce
-   - Potential impact
-   - Suggested fix (if available)
-
-## Compliance Considerations
-
-pgsqlite's security features support compliance with:
-
-- **PCI DSS**: SQL injection protection, audit logging
-- **HIPAA**: Encryption in transit, audit trails
-- **GDPR**: Data protection, audit logging
-- **SOC 2**: Security controls, monitoring
-
-Note: pgsqlite itself is not certified for these standards. Compliance depends on your overall implementation and controls.
-
-## Future Security Enhancements
-
-Planned security improvements:
-
-- [ ] Row-level security (RLS) support
-- [ ] Column-level encryption
-- [ ] Advanced threat detection with ML
-- [ ] Security scanning integration
-- [ ] Automated security testing
-- [ ] Certificate rotation support
-- [ ] OAuth/SAML authentication
-- [ ] Audit log shipping to SIEM
-
-## Conclusion
-
-pgsqlite provides comprehensive security features suitable for production deployments. By following the configuration guidelines and best practices in this document, you can deploy pgsqlite with confidence in security-sensitive environments.
-
-Remember: Security is a shared responsibility. While pgsqlite provides the tools, proper configuration, monitoring, and operational practices are essential for maintaining a secure deployment.
+- Prefer Unix sockets + `--no-tcp` for local-only deployments.
+- If TCP is required, use `--ssl` and configure clients with `sslmode=require` for encryption-in-transit.
+- Use `--max-connections` / `PGSQLITE_MAX_CONNECTIONS` to cap concurrent sessions.

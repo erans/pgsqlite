@@ -5,7 +5,8 @@ pgsqlite supports Unix domain sockets for local connections, providing lower lat
 ## Quick Start
 
 ```bash
-# Enable Unix socket (default: /tmp)
+# On Unix, pgsqlite creates a Unix socket by default (default dir: /tmp).
+# Use --socket-dir to choose a different directory.
 pgsqlite --socket-dir /tmp
 
 # Connect with psql
@@ -17,7 +18,7 @@ pgsqlite --socket-dir /var/run/pgsqlite --no-tcp
 
 ## How It Works
 
-When Unix socket support is enabled, pgsqlite creates a socket file named `.s.PGSQL.{port}` in the specified directory. This follows PostgreSQL's naming convention, ensuring compatibility with all PostgreSQL clients.
+pgsqlite creates a socket file named `.s.PGSQL.{port}` in the configured directory. This follows PostgreSQL's naming convention, ensuring compatibility with PostgreSQL clients.
 
 ## Configuration Options
 

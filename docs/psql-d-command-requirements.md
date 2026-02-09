@@ -1,6 +1,6 @@
 # psql \d Command Requirements
 
-This document captures the exact SQL queries that psql sends when executing the `\d` command, based on PostgreSQL source code and testing.
+This document captures the SQL queries that psql sends when executing the `\d` command, and notes what pgsqlite needs to support those queries.
 
 ## Overview
 
@@ -10,42 +10,34 @@ The psql `\d` command is used to:
 
 ## Required pg_catalog Tables
 
-### Currently Implemented
-- `pg_class` - Table/relation information
-- `pg_namespace` - Schema information  
-- `pg_attribute` - Column information
-- `pg_type` - Data type information
-- `pg_enum` - Enum type values
+pgsqlite implements a number of `pg_catalog` relations that psql introspection relies on. The exact completeness depends on the specific query shape psql issues.
 
-### Missing Tables
-1. **pg_constraint** - Constraint definitions (PRIMARY KEY, FOREIGN KEY, CHECK, etc.)
-2. **pg_attrdef** - Column default values
-3. **pg_collation** - Collation information
-4. **pg_index** - Index information
-5. **pg_description** - Comments on database objects
+Notable catalog relations used by `\d` and related commands:
+
+- `pg_class`, `pg_namespace`, `pg_attribute`, `pg_type`, `pg_enum`
+- `pg_constraint`, `pg_attrdef`, `pg_index`, `pg_description`
+- `pg_proc` (used by `\\df` and some `\d` output)
 
 ## Required System Functions
 
-### Currently Implemented
-- `pg_table_is_visible(oid)` - Check if table is in search path
-- `format_type(oid, integer)` - Format type name with modifiers
-- `pg_get_constraintdef(oid, boolean)` - Get constraint definition
-- `pg_get_userbyid(oid)` - Get username from user ID
-- `pg_get_expr(pg_node_tree, oid)` - Deparse expression trees
-- `pg_get_indexdef(oid, integer, boolean)` - Get index definition
+psql uses several `pg_catalog.*` helper functions in its queries. pgsqlite includes compatibility implementations for a subset of these.
 
-### Missing/Incomplete Functions
-- Full support for `format_type` with type modifiers (e.g., varchar(255))
-- `pg_get_expr` for complex default expressions
-- `array_to_string` for array handling
-- `substring` function for string manipulation
+Commonly observed:
+
+- `pg_table_is_visible(oid)`
+- `format_type(oid, integer)`
+- `pg_get_constraintdef(oid, boolean)`
+- `pg_get_userbyid(oid)`
+- `pg_get_expr(pg_node_tree, oid)`
+- `pg_get_indexdef(oid, integer, boolean)`
+
+Note: function behavior may be simplified compared to PostgreSQL, but is sufficient for common introspection patterns.
 
 ## Required Type Support
 
-### Missing Type Features
-1. **regclass** type casting - `'table_name'::regclass` converts table name to OID
-2. **pg_node_tree** type - For storing parsed expression trees
-3. **oid** type - Proper OID type handling (currently returned as text)
+psql commonly uses regclass casts like `'table_name'::regclass` inside catalog queries. pgsqlite includes special handling for these patterns in its catalog query interception layer.
+
+Note: some catalog OID values are represented as TEXT internally for convenience, which can affect edge-case query shapes.
 
 ## Actual psql Queries
 
@@ -132,18 +124,14 @@ ORDER BY i.indisprimary DESC, i.indisunique DESC, c2.relname;
 
 ## Current Limitations
 
-1. **JOIN Queries**: Currently only pg_type JOIN queries are specially handled. Need generic JOIN support for catalog tables.
+`\\d`-family commands are sensitive to subtle catalog-query differences. Even with many catalog relations present, some `\\d table_name` queries may not fully work yet depending on the join shape, regclass casting, and the specific columns requested.
 
-2. **Type System**: OID values are returned as text, which causes type mismatches with some PostgreSQL clients.
-
-3. **Missing Columns**: pg_attribute is missing several columns that psql expects (atthasdef, attidentity, attgenerated).
-
-4. **Schema Filtering**: The queries filter by schema (pg_catalog, information_schema, pg_toast) which we don't fully support.
+For a practical view of what currently works well, see the SQL scripts under `tests/sql/meta/` (they group psql meta-commands into "supported" / "working" subsets).
 
 ## Testing Approach
 
 To test psql compatibility:
-1. Start pgsqlite with debug logging: `RUST_LOG=debug cargo run -- --in-memory`
+1. Start pgsqlite with debug logging: `cargo run -- --in-memory --log-level debug`
 2. Connect with psql: `psql -h localhost -p 5432 -U postgres test`
 3. Create test tables and run `\d` commands
 4. Capture the exact SQL queries from debug logs

@@ -185,7 +185,7 @@ python tests/python/test_psycopg3_network_binary.py
 
 Enable debug logging to see binary format details:
 ```bash
-RUST_LOG=pgsqlite::protocol::binary=debug pgsqlite --database mydb.db
+pgsqlite --database mydb.db --log-level "pgsqlite::protocol::binary=debug"
 ```
 
 ## Future Enhancements
