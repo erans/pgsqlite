@@ -22,6 +22,22 @@ use once_cell::sync::Lazy;
 use uuid::Uuid;
 use regex::Regex;
 
+static PG_SHOW_ALL_SETTINGS_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)pg_show_all_settings\(\s*\)").unwrap()
+});
+
+static SET_CONFIG_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)set_config\(\s*'([^']+)'\s*,\s*'([^']*)'\s*,\s*(true|false)\s*\)").unwrap()
+});
+
+fn preprocess_query(query: &str) -> String {
+    if PG_SHOW_ALL_SETTINGS_PATTERN.is_match(query) {
+        PG_SHOW_ALL_SETTINGS_PATTERN.replace_all(query, "pg_settings").to_string()
+    } else {
+        query.to_string()
+    }
+}
+
 /// Combined schema information for a table
 #[derive(Clone)]
 struct TableSchemaInfo {
@@ -261,6 +277,47 @@ impl QueryExecutor {
                 ));
             }
         }
+        // Preprocess query: rewrite pg_show_all_settings() → pg_settings
+        let query = preprocess_query(query);
+        let query: &str = query.as_str();
+
+        // Handle set_config() function calls
+        if let Some(caps) = SET_CONFIG_PATTERN.captures(query) {
+            let param_name = caps[1].to_string();
+            let param_value = caps[2].to_string();
+            // is_local (caps[3]) is ignored — pgsqlite doesn't support transaction-scoped settings
+
+            debug!("Handling set_config('{}', '{}', ...)", param_name, param_value);
+
+            // Set the parameter in the session
+            let mut params = session.parameters.write().await;
+            params.insert(param_name.to_uppercase(), param_value.clone());
+            drop(params);
+
+            // Send synthetic response: RowDescription + DataRow + CommandComplete
+            let field = FieldDescription {
+                name: "set_config".to_string(),
+                table_oid: 0,
+                column_id: 1,
+                type_oid: PgType::Text.to_oid(),
+                type_size: -1,
+                type_modifier: -1,
+                format: 0,
+            };
+            framed.send(BackendMessage::RowDescription(vec![field])).await
+                .map_err(PgSqliteError::Io)?;
+
+            let row = vec![Some(param_value.as_bytes().to_vec())];
+            framed.send(BackendMessage::DataRow(row)).await
+                .map_err(PgSqliteError::Io)?;
+
+            framed.send(BackendMessage::CommandComplete {
+                tag: "SELECT 1".to_string()
+            }).await.map_err(PgSqliteError::Io)?;
+
+            return Ok(());
+        }
+
         // Ultra-fast path: Skip all translation if query is simple enough
         let is_ultra_simple = crate::query::simple_query_detector::is_ultra_simple_query(query);
         // Checking if query is ultra-simple
@@ -2783,5 +2840,76 @@ mod tests {
         let result_data = &converted[0][0].as_ref().unwrap();
         let result_str = String::from_utf8_lossy(result_data);
         assert_eq!(result_str, r#"{"a","b","c"}"#);
+    }
+
+    #[test]
+    fn test_pg_show_all_settings_rewrite() {
+        let query = "SELECT set_config('bytea_output','hex',false) FROM pg_show_all_settings() WHERE name = 'bytea_output'";
+        let rewritten = preprocess_query(query);
+        assert!(rewritten.contains("pg_settings"));
+        assert!(!rewritten.contains("pg_show_all_settings()"));
+    }
+
+    #[test]
+    fn test_pg_show_all_settings_case_insensitive() {
+        let query = "SELECT * FROM PG_SHOW_ALL_SETTINGS() WHERE name = 'timezone'";
+        let rewritten = preprocess_query(query);
+        assert!(rewritten.contains("pg_settings"));
+    }
+
+    #[test]
+    fn test_no_rewrite_when_not_present() {
+        let query = "SELECT * FROM pg_settings WHERE name = 'timezone'";
+        let rewritten = preprocess_query(query);
+        assert_eq!(rewritten, query);
+    }
+
+    #[test]
+    fn test_set_config_detection() {
+        let query = "SELECT set_config('bytea_output','hex',false) FROM pg_settings WHERE name = 'bytea_output'";
+        assert!(SET_CONFIG_PATTERN.is_match(query));
+    }
+
+    #[test]
+    fn test_set_config_captures() {
+        let query = "SELECT set_config('bytea_output','hex',false)";
+        let caps = SET_CONFIG_PATTERN.captures(query).unwrap();
+        assert_eq!(&caps[1], "bytea_output");
+        assert_eq!(&caps[2], "hex");
+        assert_eq!(&caps[3], "false");
+    }
+
+    #[test]
+    fn test_set_config_empty_value() {
+        let query = "SELECT set_config('application_name','',false)";
+        let caps = SET_CONFIG_PATTERN.captures(query).unwrap();
+        assert_eq!(&caps[1], "application_name");
+        assert_eq!(&caps[2], "");
+        assert_eq!(&caps[3], "false");
+    }
+
+    #[test]
+    fn test_set_config_with_spaces() {
+        let query = "SELECT set_config( 'timezone' , 'UTC' , true )";
+        let caps = SET_CONFIG_PATTERN.captures(query).unwrap();
+        assert_eq!(&caps[1], "timezone");
+        assert_eq!(&caps[2], "UTC");
+        assert_eq!(&caps[3], "true");
+    }
+
+    #[test]
+    fn test_pgadmin4_full_query_preprocessing() {
+        let query = "SELECT set_config('bytea_output','hex',false) FROM pg_show_all_settings() WHERE name = 'bytea_output'";
+
+        let rewritten = preprocess_query(query);
+        assert_eq!(
+            rewritten,
+            "SELECT set_config('bytea_output','hex',false) FROM pg_settings WHERE name = 'bytea_output'"
+        );
+
+        let caps = SET_CONFIG_PATTERN.captures(&rewritten).unwrap();
+        assert_eq!(&caps[1], "bytea_output");
+        assert_eq!(&caps[2], "hex");
+        assert_eq!(&caps[3], "false");
     }
 }

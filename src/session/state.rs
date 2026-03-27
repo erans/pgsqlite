@@ -55,7 +55,7 @@ pub struct Portal {
 impl SessionState {
     pub fn new(database: String, user: String) -> Self {
         let mut parameters = HashMap::new();
-        parameters.insert("server_version".to_string(), "14.0 (SQLite wrapper)".to_string());
+        parameters.insert("server_version".to_string(), "16.0".to_string());
         parameters.insert("server_encoding".to_string(), "UTF8".to_string());
         parameters.insert("client_encoding".to_string(), "UTF8".to_string());
         parameters.insert("DateStyle".to_string(), "ISO, MDY".to_string());

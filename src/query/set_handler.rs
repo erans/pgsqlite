@@ -13,7 +13,7 @@ static SET_TIMEZONE_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 static SET_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*SET\s+(\w+)\s+(?:TO|=)\s+(.+)$").unwrap()
+    Regex::new(r"(?i)^\s*SET\s+(\w+)(?:\s*=\s*|\s+TO\s+)(.+)$").unwrap()
 });
 
 static SHOW_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
@@ -107,8 +107,8 @@ impl SetHandler {
                 "TRANSACTION ISOLATION LEVEL" => "read committed".to_string(),
                 "DEFAULT_TRANSACTION_ISOLATION" => "read committed".to_string(), 
                 "TRANSACTION_ISOLATION" => "read committed".to_string(),
-                "SERVER_VERSION" => "15.0".to_string(),
-                "SERVER_VERSION_NUM" => "150000".to_string(),
+                "SERVER_VERSION" => "16.0".to_string(),
+                "SERVER_VERSION_NUM" => "160000".to_string(),
                 "IS_SUPERUSER" => "on".to_string(),
                 "SESSION_AUTHORIZATION" => "postgres".to_string(),
                 "STANDARD_CONFORMING_STRINGS" => "on".to_string(),
@@ -221,8 +221,43 @@ mod tests {
     fn test_show_parameter_pattern() {
         let query = "SHOW TimeZone";
         assert!(SHOW_PARAMETER_PATTERN.is_match(query));
-        
+
         let query = "show search_path";
         assert!(SHOW_PARAMETER_PATTERN.is_match(query));
+    }
+
+    #[test]
+    fn test_set_parameter_pattern_equals_no_spaces() {
+        // Issue #71: pgAdmin4 sends SET DateStyle=ISO
+        assert!(SET_PARAMETER_PATTERN.is_match("SET DateStyle=ISO"));
+        assert!(SET_PARAMETER_PATTERN.is_match("SET client_min_messages=notice"));
+        assert!(SET_PARAMETER_PATTERN.is_match("SET client_encoding='utf-8'"));
+    }
+
+    #[test]
+    fn test_set_parameter_pattern_equals_with_spaces() {
+        assert!(SET_PARAMETER_PATTERN.is_match("SET DateStyle = ISO"));
+        assert!(SET_PARAMETER_PATTERN.is_match("SET client_encoding = 'UTF8'"));
+    }
+
+    #[test]
+    fn test_set_parameter_pattern_to_keyword() {
+        assert!(SET_PARAMETER_PATTERN.is_match("SET search_path TO public"));
+        assert!(SET_PARAMETER_PATTERN.is_match("SET client_encoding TO 'UTF8'"));
+    }
+
+    #[test]
+    fn test_set_parameter_pattern_captures() {
+        let caps = SET_PARAMETER_PATTERN.captures("SET DateStyle=ISO").unwrap();
+        assert_eq!(&caps[1], "DateStyle");
+        assert_eq!(&caps[2], "ISO");
+
+        let caps = SET_PARAMETER_PATTERN.captures("SET client_encoding = 'UTF8'").unwrap();
+        assert_eq!(&caps[1], "client_encoding");
+        assert_eq!(&caps[2], "'UTF8'");
+
+        let caps = SET_PARAMETER_PATTERN.captures("SET search_path TO public").unwrap();
+        assert_eq!(&caps[1], "search_path");
+        assert_eq!(&caps[2], "public");
     }
 }
