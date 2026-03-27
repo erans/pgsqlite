@@ -38,6 +38,7 @@ impl QueryTypeDetector {
             match &bytes[0..5] {
                 b"ALTER" | b"alter" | b"Alter" => return QueryType::Alter,
                 b"BEGIN" | b"begin" | b"Begin" => return QueryType::Begin,
+                b"START" | b"start" | b"Start" => return QueryType::Begin,
                 _ => {}
             }
         }
@@ -83,6 +84,8 @@ impl QueryTypeDetector {
         } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("TRUNCATE") {
             QueryType::Truncate
         } else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("BEGIN") {
+            QueryType::Begin
+        } else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("START") {
             QueryType::Begin
         } else if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("COMMIT") {
             QueryType::Commit
@@ -232,6 +235,12 @@ mod tests {
         assert_eq!(QueryTypeDetector::detect_query_type("ROLLBACK"), QueryType::Rollback);
         assert_eq!(QueryTypeDetector::detect_query_type("rollback"), QueryType::Rollback);
         
+        // START TRANSACTION (issue #70)
+        assert_eq!(QueryTypeDetector::detect_query_type("START TRANSACTION"), QueryType::Begin);
+        assert_eq!(QueryTypeDetector::detect_query_type("start transaction"), QueryType::Begin);
+        assert_eq!(QueryTypeDetector::detect_query_type("Start Transaction"), QueryType::Begin);
+        assert_eq!(QueryTypeDetector::detect_query_type("START TRANSACTION ISOLATION LEVEL REPEATABLE READ"), QueryType::Begin);
+
         assert_eq!(QueryTypeDetector::detect_query_type("EXPLAIN SELECT * FROM test"), QueryType::Other);
         assert_eq!(QueryTypeDetector::detect_query_type("   SELECT * FROM test"), QueryType::Select);
         
