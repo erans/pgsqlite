@@ -42,7 +42,16 @@ impl QueryTypeDetector {
                 _ => {}
             }
         }
-        
+
+        if bytes.len() >= 3 {
+            let first3 = &bytes[0..3];
+            if (first3 == b"END" || first3 == b"end" || first3 == b"End")
+                && (bytes.len() == 3 || bytes[3].is_ascii_whitespace())
+            {
+                return QueryType::Commit;
+            }
+        }
+
         if bytes.len() >= 6 {
             match &bytes[0..6] {
                 b"COMMIT" | b"commit" | b"Commit" => return QueryType::Commit,
@@ -88,6 +97,9 @@ impl QueryTypeDetector {
         } else if trimmed.len() >= 5 && trimmed[..5].eq_ignore_ascii_case("START") {
             QueryType::Begin
         } else if trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("COMMIT") {
+            QueryType::Commit
+        } else if trimmed.len() >= 3 && trimmed[..3].eq_ignore_ascii_case("END")
+            && (trimmed.len() == 3 || trimmed.as_bytes()[3].is_ascii_whitespace()) {
             QueryType::Commit
         } else if trimmed.len() >= 8 && trimmed[..8].eq_ignore_ascii_case("ROLLBACK") {
             QueryType::Rollback
@@ -241,6 +253,15 @@ mod tests {
         assert_eq!(QueryTypeDetector::detect_query_type("Start Transaction"), QueryType::Begin);
         assert_eq!(QueryTypeDetector::detect_query_type("START TRANSACTION ISOLATION LEVEL REPEATABLE READ"), QueryType::Begin);
 
+        // END / END TRANSACTION (issue #70)
+        assert_eq!(QueryTypeDetector::detect_query_type("END"), QueryType::Commit);
+        assert_eq!(QueryTypeDetector::detect_query_type("end"), QueryType::Commit);
+        assert_eq!(QueryTypeDetector::detect_query_type("END TRANSACTION"), QueryType::Commit);
+        assert_eq!(QueryTypeDetector::detect_query_type("end transaction"), QueryType::Commit);
+        // Word boundary guard — END must not match identifiers starting with "END"
+        assert_ne!(QueryTypeDetector::detect_query_type("ENDLESS"), QueryType::Commit);
+        assert_ne!(QueryTypeDetector::detect_query_type("ENDTABLE"), QueryType::Commit);
+
         assert_eq!(QueryTypeDetector::detect_query_type("EXPLAIN SELECT * FROM test"), QueryType::Other);
         assert_eq!(QueryTypeDetector::detect_query_type("   SELECT * FROM test"), QueryType::Select);
         
@@ -251,6 +272,17 @@ mod tests {
         assert_eq!(QueryTypeDetector::detect_query_type("WiTh cte AS (SELECT 1) SELECT * FROM cte"), QueryType::Select);
     }
     
+    #[test]
+    fn test_is_transaction_with_synonyms() {
+        assert!(QueryTypeDetector::is_transaction("BEGIN"));
+        assert!(QueryTypeDetector::is_transaction("START TRANSACTION"));
+        assert!(QueryTypeDetector::is_transaction("COMMIT"));
+        assert!(QueryTypeDetector::is_transaction("END"));
+        assert!(QueryTypeDetector::is_transaction("END TRANSACTION"));
+        assert!(QueryTypeDetector::is_transaction("ROLLBACK"));
+        assert!(!QueryTypeDetector::is_transaction("SELECT 1"));
+    }
+
     #[test]
     fn test_is_ddl() {
         assert!(QueryTypeDetector::is_ddl("CREATE TABLE test"));
