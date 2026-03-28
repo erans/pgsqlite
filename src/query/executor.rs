@@ -1087,7 +1087,10 @@ impl QueryExecutor {
             
             if let Some(ref table) = table_name {
                 debug!("Type inference: Found table name '{}', looking up schema for {} columns", table, response.columns.len());
-                
+
+                // Pre-fetch PRAGMA table_info as fallback for tables without __pgsqlite_schema
+                let pragma_types = db.get_column_types_from_pragma(&session.id, table).await.unwrap_or_default();
+
                 // Extract column mappings from query if possible
                 let column_mappings = extract_column_mappings_from_query(query, table);
                 
@@ -1160,6 +1163,13 @@ impl QueryExecutor {
                             }
                         
                         debug!("Type inference: No schema type found for '{}.{}'", table, col_name);
+                    }
+                    // PRAGMA table_info fallback for pre-existing SQLite tables
+                    if !schema_types.contains_key(col_name) {
+                        if let Some(pg_type) = pragma_types.get(col_name) {
+                            debug!("Type inference: Found PRAGMA type for '{}.{}' -> {}", table, col_name, pg_type);
+                            schema_types.insert(col_name.clone(), pg_type.clone());
+                        }
                     }
                 }
             } else {
