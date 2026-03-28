@@ -1862,8 +1862,10 @@ impl ExtendedQueryHandler {
             || query_starts_with_ignore_case(&final_query, "DROP") 
             || query_starts_with_ignore_case(&final_query, "ALTER") {
             Self::execute_ddl(framed, db, session, &final_query).await?;
-        } else if query_starts_with_ignore_case(&final_query, "BEGIN") 
-            || query_starts_with_ignore_case(&final_query, "COMMIT") 
+        } else if query_starts_with_ignore_case(&final_query, "BEGIN")
+            || query_starts_with_ignore_case(&final_query, "START")
+            || query_starts_with_ignore_case(&final_query, "COMMIT")
+            || query_starts_with_ignore_case(&final_query, "END")
             || query_starts_with_ignore_case(&final_query, "ROLLBACK") {
             Self::execute_transaction(framed, db, session, &final_query).await?;
         } else if crate::query::SetHandler::is_set_command(&final_query) {
@@ -5632,11 +5634,13 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
-        if query_starts_with_ignore_case(query, "BEGIN") {
+        if query_starts_with_ignore_case(query, "BEGIN")
+            || query_starts_with_ignore_case(query, "START") {
             db.begin_with_session(&session.id).await?;
             framed.send(BackendMessage::CommandComplete { tag: "BEGIN".to_string() }).await
                 .map_err(PgSqliteError::Io)?;
-        } else if query_starts_with_ignore_case(query, "COMMIT") {
+        } else if query_starts_with_ignore_case(query, "COMMIT")
+            || query_starts_with_ignore_case(query, "END") {
             db.commit_with_session(&session.id).await?;
             framed.send(BackendMessage::CommandComplete { tag: "COMMIT".to_string() }).await
                 .map_err(PgSqliteError::Io)?;
