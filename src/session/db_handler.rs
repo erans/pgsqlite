@@ -2270,7 +2270,38 @@ impl DbHandler {
             }
         }
     }
-    
+
+    /// Get column types from PRAGMA table_info for tables without __pgsqlite_schema metadata.
+    /// Returns a HashMap mapping column names to PostgreSQL type name strings.
+    pub async fn get_column_types_from_pragma(
+        &self,
+        session_id: &Uuid,
+        table_name: &str,
+    ) -> Result<std::collections::HashMap<String, String>, PgSqliteError> {
+        let table_name = table_name.to_string();
+        self.with_session_connection(session_id, move |conn| {
+            let mut result = std::collections::HashMap::new();
+            let query = format!("PRAGMA table_info(\"{}\")", table_name);
+            let mut stmt = conn.prepare(&query)?;
+            let mut rows = stmt.query_map([], |row| {
+                let col_name: String = row.get(1)?;
+                let col_type: String = row.get(2)?;
+                Ok((col_name, col_type))
+            })?;
+            while let Some(Ok((col_name, col_type))) = rows.next() {
+                if col_type.is_empty() {
+                    continue;
+                }
+                let pg_type_name = crate::types::sqlite_type_info::sqlite_type_to_pg_type_name(&col_type);
+                if pg_type_name == "text" {
+                    continue;
+                }
+                result.insert(col_name, pg_type_name.to_string());
+            }
+            Ok(result)
+        }).await
+    }
+
     /// Try fast path execution with parameters
     pub async fn try_execute_fast_path_with_params(
         &self,

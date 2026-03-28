@@ -115,6 +115,59 @@ pub fn sqlite_type_to_pg_oid(sqlite_type: &str) -> i32 {
     PgType::Text.to_oid() // text
 }
 
+/// Convert SQLite type declaration to PostgreSQL type name string
+pub fn sqlite_type_to_pg_type_name(sqlite_type: &str) -> &'static str {
+    let type_upper = sqlite_type.to_uppercase();
+
+    if type_upper.contains("BLOB") {
+        return "bytea";
+    }
+
+    if type_upper.contains("REAL") || type_upper.contains("FLOAT") || type_upper.contains("DOUBLE") {
+        return "double precision";
+    }
+
+    if type_upper.contains("INT") {
+        if type_upper.contains("INT2") || type_upper.contains("SMALLINT") {
+            return "smallint";
+        } else if type_upper.contains("INT8") || type_upper.contains("BIGINT") {
+            return "bigint";
+        } else {
+            return "integer";
+        }
+    }
+
+    if type_upper.contains("BOOL") {
+        return "boolean";
+    }
+
+    if type_upper.contains("DATE") && !type_upper.contains("TIME") {
+        return "date";
+    }
+
+    if type_upper.contains("TIME") && !type_upper.contains("STAMP") {
+        return "time";
+    }
+
+    if type_upper.contains("TIMESTAMP") {
+        return "timestamp";
+    }
+
+    if type_upper.contains("NUMERIC") || type_upper.contains("DECIMAL") {
+        return "numeric";
+    }
+
+    if type_upper.contains("UUID") {
+        return "uuid";
+    }
+
+    if type_upper.contains("JSON") {
+        return "json";
+    }
+
+    "text"
+}
+
 /// Infer PostgreSQL type from a text value
 pub fn infer_pg_type_from_text(value: &str) -> i32 {
     // Try boolean - but be careful not to confuse with regular integers
@@ -161,7 +214,38 @@ pub fn infer_pg_type_from_text(value: &str) -> i32 {
     
     // For date/time patterns, return text type since SQLite stores them as text
     // and we can't be sure about the format without more context
-    
+
     // Default to text
     PgType::Text.to_oid() // text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sqlite_type_to_pg_type_name() {
+        assert_eq!(sqlite_type_to_pg_type_name("INTEGER"), "integer");
+        assert_eq!(sqlite_type_to_pg_type_name("integer"), "integer");
+        assert_eq!(sqlite_type_to_pg_type_name("INT"), "integer");
+        assert_eq!(sqlite_type_to_pg_type_name("BIGINT"), "bigint");
+        assert_eq!(sqlite_type_to_pg_type_name("INT8"), "bigint");
+        assert_eq!(sqlite_type_to_pg_type_name("SMALLINT"), "smallint");
+        assert_eq!(sqlite_type_to_pg_type_name("INT2"), "smallint");
+        assert_eq!(sqlite_type_to_pg_type_name("REAL"), "double precision");
+        assert_eq!(sqlite_type_to_pg_type_name("FLOAT"), "double precision");
+        assert_eq!(sqlite_type_to_pg_type_name("DOUBLE PRECISION"), "double precision");
+        assert_eq!(sqlite_type_to_pg_type_name("BOOLEAN"), "boolean");
+        assert_eq!(sqlite_type_to_pg_type_name("BOOL"), "boolean");
+        assert_eq!(sqlite_type_to_pg_type_name("TEXT"), "text");
+        assert_eq!(sqlite_type_to_pg_type_name("VARCHAR(50)"), "text");
+        assert_eq!(sqlite_type_to_pg_type_name("BLOB"), "bytea");
+        assert_eq!(sqlite_type_to_pg_type_name("DATE"), "date");
+        assert_eq!(sqlite_type_to_pg_type_name("TIMESTAMP"), "timestamp");
+        assert_eq!(sqlite_type_to_pg_type_name("NUMERIC"), "numeric");
+        assert_eq!(sqlite_type_to_pg_type_name("DECIMAL"), "numeric");
+        assert_eq!(sqlite_type_to_pg_type_name("UUID"), "uuid");
+        assert_eq!(sqlite_type_to_pg_type_name("JSON"), "json");
+        assert_eq!(sqlite_type_to_pg_type_name("SOMETHING_UNKNOWN"), "text");
+    }
 }

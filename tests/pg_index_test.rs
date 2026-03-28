@@ -37,10 +37,10 @@ async fn test_pg_index_basic() {
     for row in &rows {
         let indexrelid: i32 = row.get(0);
         let indrelid: i32 = row.get(1);
-        let indnatts: i32 = row.get(2);
-        let indnkeyatts: i32 = row.get(3);
-        let indisunique: i32 = row.get(4);
-        let indisprimary: i32 = row.get(5);
+        let indnatts: i16 = row.get(2);
+        let indnkeyatts: i16 = row.get(3);
+        let indisunique: bool = row.get(4);
+        let indisprimary: bool = row.get(5);
         let indkey: Option<String> = row.get(6);
         let indkey_str = indkey.unwrap_or_else(|| "NULL".to_string());
 
