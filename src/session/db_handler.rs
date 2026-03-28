@@ -2289,7 +2289,13 @@ impl DbHandler {
                 Ok((col_name, col_type))
             })?;
             while let Some(Ok((col_name, col_type))) = rows.next() {
+                if col_type.is_empty() {
+                    continue;
+                }
                 let pg_type_name = crate::types::sqlite_type_info::sqlite_type_to_pg_type_name(&col_type);
+                if pg_type_name == "text" {
+                    continue;
+                }
                 result.insert(col_name, pg_type_name.to_string());
             }
             Ok(result)

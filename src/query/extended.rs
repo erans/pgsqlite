@@ -563,6 +563,7 @@ impl ExtendedQueryHandler {
                         let mut schema_types = std::collections::HashMap::new();
                         if let Some(ref table) = table_name {
                             info!("PARSE: Fetching schema types for table '{}'", table);
+                            let pragma_types = db.get_column_types_from_pragma(&session.id, table).await.unwrap_or_default();
                             // For aliased columns, try to find the source column
                             for col_name in &response.columns {
                                 // First try direct lookup
@@ -646,13 +647,25 @@ impl ExtendedQueryHandler {
                                         }
                                     }
                                 }
+                                // PRAGMA table_info fallback
+                                if !schema_types.contains_key(col_name) {
+                                    if let Some(pg_type) = pragma_types.get(col_name) {
+                                        info!("PARSE: Found PRAGMA type for '{}.{}' -> {}", table, col_name, pg_type);
+                                        schema_types.insert(col_name.clone(), pg_type.clone());
+                                    }
+                                }
                             }
                         }
-                        
+
                         // Try to infer types from the first row if available
                         // We need to handle this asynchronously for schema lookup
                         let mut inferred_types = Vec::new();
-                        
+                        let pragma_types_for_inferred = if let Some(ref table) = table_name {
+                            db.get_column_types_from_pragma(&session.id, table).await.unwrap_or_default()
+                        } else {
+                            std::collections::HashMap::new()
+                        };
+
                         for (i, col_name) in response.columns.iter().enumerate() {
                             info!("PARSE: Processing column {}: '{}'", i, col_name);
                             let inferred_type = {
@@ -846,13 +859,23 @@ impl ExtendedQueryHandler {
                                             inferred_types.push(type_oid);
                                         }
                                         Ok(None) => {
-                                            info!("Column '{}': no schema type found for '{}.{}', defaulting to text", 
-                                                  col_name, source_table, source_col);
-                                            inferred_types.push(PgType::Text.to_oid());
+                                            if let Some(pg_type) = pragma_types_for_inferred.get(col_name.as_str()) {
+                                                let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                                info!("Column '{}': resolved type from PRAGMA -> {} (OID {})", col_name, pg_type, type_oid);
+                                                inferred_types.push(type_oid);
+                                            } else {
+                                                info!("Column '{}': no schema type found for '{}.{}', defaulting to text",
+                                                      col_name, source_table, source_col);
+                                                inferred_types.push(PgType::Text.to_oid());
+                                            }
                                         }
                                         Err(_) => {
-                                            // Schema lookup error, defaulting to text
-                                            inferred_types.push(PgType::Text.to_oid());
+                                            if let Some(pg_type) = pragma_types_for_inferred.get(col_name.as_str()) {
+                                                let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                                inferred_types.push(type_oid);
+                                            } else {
+                                                inferred_types.push(PgType::Text.to_oid());
+                                            }
                                         }
                                     }
                                 } else {
@@ -894,13 +917,23 @@ impl ExtendedQueryHandler {
                                                     inferred_types.push(type_oid);
                                                 }
                                                 Ok(None) => {
-                                                    info!("Column '{}': no schema type found for '{}.{}', defaulting to text", 
-                                                          col_name, table_name, col_name);
-                                                    inferred_types.push(PgType::Text.to_oid());
+                                                    if let Some(pg_type) = pragma_types_for_inferred.get(col_name.as_str()) {
+                                                        let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                                        info!("Column '{}': resolved type from PRAGMA -> {} (OID {})", col_name, pg_type, type_oid);
+                                                        inferred_types.push(type_oid);
+                                                    } else {
+                                                        info!("Column '{}': no schema type found for '{}.{}', defaulting to text",
+                                                              col_name, table_name, col_name);
+                                                        inferred_types.push(PgType::Text.to_oid());
+                                                    }
                                                 }
                                                 Err(_) => {
-                                                    // Schema lookup error, defaulting to text
-                                                    inferred_types.push(PgType::Text.to_oid());
+                                                    if let Some(pg_type) = pragma_types_for_inferred.get(col_name.as_str()) {
+                                                        let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+                                                        inferred_types.push(type_oid);
+                                                    } else {
+                                                        inferred_types.push(PgType::Text.to_oid());
+                                                    }
                                                 }
                                             }
                                         } else {
@@ -4486,6 +4519,7 @@ impl ExtendedQueryHandler {
                 // Pre-fetch schema types for all columns if we have a table name
                 let mut schema_types = std::collections::HashMap::new();
                 if let Some(ref table) = table_name {
+                    let pragma_types = db.get_column_types_from_pragma(&session.id, table).await.unwrap_or_default();
                     for col_name in &response.columns {
                         // Try direct lookup first
                         if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, col_name).await {
@@ -4507,6 +4541,13 @@ impl ExtendedQueryHandler {
                                                     schema_types.insert(col_name.clone(), pg_type);
                                                 }
                                         }
+                        }
+                        // PRAGMA table_info fallback
+                        if !schema_types.contains_key(col_name) {
+                            if let Some(pg_type) = pragma_types.get(col_name) {
+                                info!("Found PRAGMA type for '{}.{}' -> {}", table, col_name, pg_type);
+                                schema_types.insert(col_name.clone(), pg_type.clone());
+                            }
                         }
                     }
                 }
