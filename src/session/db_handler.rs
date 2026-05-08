@@ -14,6 +14,7 @@ use crate::session::ConnectionManager;
 use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
 use crate::security::{events, SqlInjectionDetector};
+use crate::query::column_sanitizer::sanitize_column_name;
 use tracing::{debug, info, error, warn};
 
 /// Security limits for query validation
@@ -526,7 +527,7 @@ impl DbHandler {
                     let column_count = stmt.column_count();
                     let mut columns = Vec::with_capacity(column_count);
                     for i in 0..column_count {
-                        columns.push(stmt.column_name(i)?.to_string());
+                        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                     }
                     
                     let rows: Result<Vec<_>, _> = stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
@@ -661,7 +662,7 @@ impl DbHandler {
                 let column_count = stmt.column_count();
                 let mut columns = Vec::new();
                 for i in 0..column_count {
-                    columns.push(stmt.column_name(i)?.to_string());
+                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                 }
 
                 let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
@@ -774,7 +775,7 @@ impl DbHandler {
                                 let column_count = stmt.column_count();
                                 let mut columns = Vec::with_capacity(column_count);
                                 for i in 0..column_count {
-                                    columns.push(stmt.column_name(i)?.to_string());
+                                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                                 }
 
                                 let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
@@ -892,7 +893,7 @@ impl DbHandler {
             let column_count = stmt.column_count();
             let mut columns = Vec::with_capacity(column_count);
             for i in 0..column_count {
-                columns.push(stmt.column_name(i)?.to_string());
+                columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
             }
             
             let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
@@ -1239,7 +1240,7 @@ impl DbHandler {
                     let column_count = stmt.column_count();
                     let mut columns = Vec::with_capacity(column_count);
                     for i in 0..column_count {
-                        columns.push(stmt.column_name(i)?.to_string());
+                        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                     }
                     
                     let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
@@ -1450,7 +1451,7 @@ impl DbHandler {
                                         let column_count = stmt.column_count();
                                         let mut columns = Vec::with_capacity(column_count);
                                         for i in 0..column_count {
-                                            columns.push(stmt.column_name(i)?.to_string());
+                                            columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                                         }
 
                                         let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
@@ -1719,7 +1720,7 @@ impl DbHandler {
             let column_count = stmt.column_count();
             let mut columns = Vec::with_capacity(column_count);
             for i in 0..column_count {
-                columns.push(stmt.column_name(i)?.to_string());
+                columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
             }
             
             let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
@@ -2323,7 +2324,7 @@ impl DbHandler {
                     let column_count = stmt.column_count();
                     let mut column_names = Vec::with_capacity(column_count);
                     for i in 0..column_count {
-                        column_names.push(stmt.column_name(i).unwrap_or("").to_string());
+                        column_names.push(sanitize_column_name(stmt.column_name(i).unwrap_or("")).to_string());
                     }
                     
                     // Build datetime column info for conversion
@@ -2421,7 +2422,7 @@ impl DbHandler {
                         let column_count = stmt.column_count();
                         let mut column_names = Vec::with_capacity(column_count);
                         for i in 0..column_count {
-                            column_names.push(stmt.column_name(i).unwrap_or("").to_string());
+                            column_names.push(sanitize_column_name(stmt.column_name(i).unwrap_or("")).to_string());
                         }
                         
                         // Build datetime column info for conversion
