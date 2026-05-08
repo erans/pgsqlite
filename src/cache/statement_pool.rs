@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, Statement, Params};
 use once_cell::sync::Lazy;
 use crate::config::CONFIG;
+use crate::query::column_sanitizer::sanitize_column_name;
 
 /// A pool of prepared SQLite statements for reuse
 /// This avoids the overhead of preparing the same statement multiple times
@@ -194,7 +195,7 @@ impl StatementPool {
         let mut column_types = Vec::new();
 
         for i in 0..column_count {
-            column_names.push(stmt.column_name(i)?.to_string());
+            column_names.push(sanitize_column_name(stmt.column_name(i)?).to_string());
             // We can't easily get PostgreSQL types here, so we'll leave them as None
             // They can be filled in later by the caller if needed
             column_types.push(None);

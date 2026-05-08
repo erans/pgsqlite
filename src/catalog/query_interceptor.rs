@@ -3,6 +3,7 @@ use uuid::Uuid;
 use crate::session::SessionState;
 use crate::PgSqliteError;
 use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
+use crate::query::column_sanitizer::sanitize_column_name;
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -271,7 +272,7 @@ impl CatalogInterceptor {
                                 let column_count = stmt.column_count();
                                 let mut columns = Vec::new();
                                 for i in 0..column_count {
-                                    columns.push(stmt.column_name(i)?.to_string());
+                                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                                 }
 
                                 let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
@@ -412,7 +413,7 @@ impl CatalogInterceptor {
                                         let column_count = stmt.column_count();
                                         let mut columns = Vec::new();
                                         for i in 0..column_count {
-                                            columns.push(stmt.column_name(i)?.to_string());
+                                            columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                                         }
 
                                         let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {

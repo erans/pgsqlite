@@ -3,6 +3,7 @@ use regex::Regex;
 use once_cell::sync::Lazy;
 use crate::cache::SchemaCache;
 use crate::session::db_handler::DbResponse;
+use crate::query::column_sanitizer::sanitize_column_name;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -374,7 +375,7 @@ pub fn query_fast_path(
                 // Get column names
                 let mut columns = Vec::new();
                 for i in 0..column_count {
-                    columns.push(stmt.column_name(i)?.to_string());
+                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
                 }
                 
                 // Check for boolean columns in the schema using cache
@@ -616,7 +617,7 @@ fn execute_fast_select_with_params(
     // Get column names
     let mut columns = Vec::new();
     for i in 0..column_count {
-        columns.push(stmt.column_name(i)?.to_string());
+        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
     }
     
     // Check for boolean columns in the schema using cache
@@ -734,7 +735,7 @@ fn execute_fast_select(
     // Get column names
     let mut columns = Vec::new();
     for i in 0..column_count {
-        columns.push(stmt.column_name(i)?.to_string());
+        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
     }
     
     // Check for boolean columns in the schema using cache
