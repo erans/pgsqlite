@@ -1,9 +1,9 @@
-use crate::session::db_handler::{DbHandler, DbResponse};
-use crate::PgSqliteError;
-use sqlparser::ast::{Select, SelectItem, Expr};
-use tracing::debug;
-use std::collections::HashMap;
 use super::where_evaluator::WhereEvaluator;
+use crate::PgSqliteError;
+use crate::session::db_handler::{DbHandler, DbResponse};
+use sqlparser::ast::{Expr, Select, SelectItem};
+use std::collections::HashMap;
+use tracing::debug;
 
 pub struct PgRolesHandler;
 
@@ -31,7 +31,7 @@ impl PgRolesHandler {
             "rolconfig".to_string(),
         ];
 
-        // Determine which columns to return
+        // Determine which output columns to return and which source columns supply values
         let selected_columns = Self::get_selected_columns(&select.projection, &all_columns);
 
         // Build default roles (since SQLite doesn't have role management)
@@ -39,7 +39,7 @@ impl PgRolesHandler {
 
         // Apply WHERE clause filtering if present
         let filtered_roles = if let Some(where_clause) = &select.selection {
-            Self::apply_where_filter(&roles, where_clause, &selected_columns)?
+            Self::apply_where_filter(&roles, where_clause)?
         } else {
             roles
         };
@@ -48,8 +48,11 @@ impl PgRolesHandler {
         let mut rows = Vec::new();
         for role in filtered_roles {
             let mut row = Vec::new();
-            for column in &selected_columns {
-                let value = role.get(column).cloned().unwrap_or_else(|| b"".to_vec());
+            for (_, source_column) in &selected_columns {
+                let value = role
+                    .get(source_column)
+                    .cloned()
+                    .unwrap_or_else(|| b"".to_vec());
                 row.push(Some(value));
             }
             rows.push(row);
@@ -57,43 +60,68 @@ impl PgRolesHandler {
 
         let rows_count = rows.len();
         Ok(DbResponse {
-            columns: selected_columns,
+            columns: selected_columns
+                .into_iter()
+                .map(|(output_column, _)| output_column)
+                .collect(),
             rows,
             rows_affected: rows_count,
         })
     }
 
-    fn get_selected_columns(projection: &[SelectItem], all_columns: &[String]) -> Vec<String> {
+    fn get_selected_columns(
+        projection: &[SelectItem],
+        all_columns: &[String],
+    ) -> Vec<(String, String)> {
         let mut selected = Vec::new();
 
         for item in projection {
             match item {
                 SelectItem::Wildcard(_) => {
-                    selected.extend_from_slice(all_columns);
+                    selected.extend(
+                        all_columns
+                            .iter()
+                            .map(|column| (column.clone(), column.clone())),
+                    );
                     break;
                 }
-                SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
-                    let col_name = ident.value.to_lowercase();
-                    if all_columns.contains(&col_name) {
-                        selected.push(col_name);
+                SelectItem::UnnamedExpr(expr) => {
+                    if let Some(col_name) = Self::extract_source_column(expr) {
+                        if all_columns.contains(&col_name) {
+                            selected.push((col_name.clone(), col_name));
+                        }
                     }
                 }
-                SelectItem::ExprWithAlias { expr: Expr::Identifier(ident), alias } => {
-                    let col_name = ident.value.to_lowercase();
-                    if all_columns.contains(&col_name) {
-                        selected.push(alias.value.clone());
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    if let Some(col_name) = Self::extract_source_column(expr) {
+                        if all_columns.contains(&col_name) {
+                            selected.push((alias.value.clone(), col_name));
+                        }
                     }
                 }
                 SelectItem::QualifiedWildcard(_, _) => {
                     // For qualified wildcard like pg_roles.*, return all columns
-                    selected.extend_from_slice(all_columns);
+                    selected.extend(
+                        all_columns
+                            .iter()
+                            .map(|column| (column.clone(), column.clone())),
+                    );
                     break;
                 }
-                _ => {}
             }
         }
 
         selected
+    }
+
+    fn extract_source_column(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(ident) => Some(ident.value.to_lowercase()),
+            Expr::CompoundIdentifier(parts) => parts.last().map(|ident| ident.value.to_lowercase()),
+            Expr::Cast { expr, .. } => Self::extract_source_column(expr),
+            Expr::Nested(expr) => Self::extract_source_column(expr),
+            _ => None,
+        }
     }
 
     fn get_default_roles() -> Vec<HashMap<String, Vec<u8>>> {
@@ -156,7 +184,6 @@ impl PgRolesHandler {
     fn apply_where_filter(
         roles: &[HashMap<String, Vec<u8>>],
         where_clause: &Expr,
-        _selected_columns: &[String],
     ) -> Result<Vec<HashMap<String, Vec<u8>>>, PgSqliteError> {
         let mut filtered = Vec::new();
 

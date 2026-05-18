@@ -1054,10 +1054,11 @@ impl CatalogInterceptor {
         }
     }
 
-    fn handle_pg_namespace_query(_select: &Select) -> DbResponse {
-        // Return basic namespaces
-        let columns = vec!["oid".to_string(), "nspname".to_string()];
-        let rows = vec![
+    fn handle_pg_namespace_query(select: &Select) -> DbResponse {
+        let all_columns = vec!["oid".to_string(), "nspname".to_string()];
+        let (columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        let full_rows = vec![
             vec![
                 Some("11".to_string().into_bytes()),
                 Some("pg_catalog".to_string().into_bytes()),
@@ -1067,6 +1068,15 @@ impl CatalogInterceptor {
                 Some("public".to_string().into_bytes()),
             ],
         ];
+        let rows: Vec<Vec<Option<Vec<u8>>>> = full_rows
+            .into_iter()
+            .map(|full_row| {
+                column_indices
+                    .iter()
+                    .map(|&idx| full_row[idx].clone())
+                    .collect()
+            })
+            .collect();
 
         let rows_affected = rows.len();
         debug!("Returning {} rows for pg_type query with {} columns: {:?}", rows_affected, columns.len(), columns);
@@ -1713,10 +1723,13 @@ impl CatalogInterceptor {
         })
     }
 
-    /// Extract selected columns from a SELECT query for information_schema views
+    /// Extract selected output columns and source indices from a SELECT query.
     fn extract_selected_columns(select: &Select, all_columns: &[String]) -> (Vec<String>, Vec<usize>) {
         if select.projection.len() == 1
-            && let SelectItem::Wildcard(_) = &select.projection[0] {
+            && matches!(
+                &select.projection[0],
+                SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _)
+            ) {
                 // SELECT * - return all columns
                 return (all_columns.to_vec(), (0..all_columns.len()).collect::<Vec<_>>());
             }
@@ -1726,27 +1739,42 @@ impl CatalogInterceptor {
         let mut indices = Vec::new();
         for item in &select.projection {
             match item {
-                SelectItem::UnnamedExpr(Expr::Identifier(ident)) => {
-                    let col_name = ident.value.to_string();
-                    if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                        cols.push(col_name);
-                        indices.push(idx);
-                    }
-                }
-                SelectItem::UnnamedExpr(Expr::CompoundIdentifier(parts)) => {
-                    // Handle compound identifiers like c.table_name
-                    if let Some(last_part) = parts.last() {
-                        let col_name = last_part.value.to_string();
+                SelectItem::UnnamedExpr(expr) => {
+                    if let Some(col_name) = Self::extract_projection_source_column(expr) {
                         if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                            cols.push(col_name);
+                            cols.push(all_columns[idx].clone());
                             indices.push(idx);
                         }
                     }
                 }
-                _ => {}
+                SelectItem::ExprWithAlias { expr, alias } => {
+                    if let Some(col_name) = Self::extract_projection_source_column(expr) {
+                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
+                            cols.push(alias.value.clone());
+                            indices.push(idx);
+                        }
+                    }
+                }
+                SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
+                    cols.extend_from_slice(all_columns);
+                    indices.extend(0..all_columns.len());
+                    break;
+                }
             }
         }
         (cols, indices)
+    }
+
+    fn extract_projection_source_column(expr: &Expr) -> Option<String> {
+        match expr {
+            Expr::Identifier(ident) => Some(ident.value.to_lowercase()),
+            Expr::CompoundIdentifier(parts) => {
+                parts.last().map(|ident| ident.value.to_lowercase())
+            }
+            Expr::Cast { expr, .. } => Self::extract_projection_source_column(expr),
+            Expr::Nested(expr) => Self::extract_projection_source_column(expr),
+            _ => None,
+        }
     }
 
     async fn handle_information_schema_schemata_query(select: &Select, _db: &DbHandler) -> DbResponse {
