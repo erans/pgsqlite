@@ -1,4 +1,6 @@
-use crate::types::PgType;
+use std::collections::HashMap;
+use crate::types::{PgType, SchemaTypeMapper};
+use crate::translator::TranslationMetadata;
 use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -14,7 +16,7 @@ pub struct AliasItem {
 /// Parse the projection alias view. Returns None when the query has no `AS`
 /// (so the zero-alloc fast path never pays a parse). On parse error, None.
 pub fn parse_alias_view(query: &str) -> Option<Vec<AliasItem>> {
-    if !query.to_uppercase().contains(" AS ") { return None; }
+    if !query.split_whitespace().any(|w| w.eq_ignore_ascii_case("AS")) { return None; }
     let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query).ok()?;
     let stmt = parsed.into_iter().next()?;
     let body = match stmt { Statement::Query(q) => q, _ => return None };
@@ -93,6 +95,88 @@ pub fn is_arg_preserving(fn_name_lower: &str) -> bool {
     matches!(fn_name_lower, "min" | "max" | "sum" | "first" | "last")
 }
 
+pub struct ResolveCtx<'a> {
+    pub schema_types: &'a HashMap<String, String>,
+    pub hints: &'a TranslationMetadata,
+    pub alias_view: Option<&'a [AliasItem]>,
+    pub legacy: bool,
+}
+
+pub struct ProjectionResolver;
+
+impl ProjectionResolver {
+    pub fn resolve(raw_name: &str, position: usize, ctx: &ResolveCtx) -> ColumnMeta {
+        // Step 1: schema match on the raw name (real column — correct case already).
+        if let Some(pg_type) = ctx.schema_types.get(raw_name) {
+            return ColumnMeta {
+                wire_name: raw_name.to_string(),
+                type_oid: SchemaTypeMapper::pg_type_string_to_oid(pg_type),
+                datetime_flag: is_datetime_type(pg_type),
+            };
+        }
+
+        // Step 2: function-call shape (raw name contains `(`).
+        if let Some(shape) = fn_shape(raw_name) {
+            let name = shape.name.trim();
+            let lower = name.to_lowercase();
+            let wire_name = if ctx.legacy { name.to_string() } else { lower.clone() };
+            let (type_oid, datetime_flag) = resolve_function_type(&lower, &shape.inner, ctx);
+            return ColumnMeta { wire_name, type_oid, datetime_flag };
+        }
+
+        // Step 3: alias (position maps to an ExprWithAlias item).
+        if let Some(item) = ctx.alias_view.and_then(|view| view.iter().find(|a| a.position == position)) {
+            let wire_name = if item.is_quoted || ctx.legacy {
+                item.alias.clone()
+            } else {
+                item.alias.to_lowercase()
+            };
+            let type_oid = ctx.hints.get_hint(&item.alias)
+                .and_then(|h| h.suggested_type.map(|t| t.to_oid()))
+                .unwrap_or(PgType::Text.to_oid());
+            return ColumnMeta { wire_name, type_oid, datetime_flag: false };
+        }
+
+        // Step 4: unnamed non-function expression -> ?column?.
+        if raw_name.is_empty() || looks_unnamed_expr(raw_name) {
+            return ColumnMeta {
+                wire_name: "?column?".to_string(),
+                type_oid: ctx.hints.get_hint(raw_name)
+                    .and_then(|h| h.suggested_type.map(|t| t.to_oid()))
+                    .unwrap_or(PgType::Text.to_oid()),
+                datetime_flag: false,
+            };
+        }
+
+        // Step 5: fallback — raw name, lowercased unless legacy.
+        let wire_name = if ctx.legacy { raw_name.to_string() } else { raw_name.to_lowercase() };
+        ColumnMeta { wire_name, type_oid: PgType::Text.to_oid(), datetime_flag: false }
+    }
+}
+
+fn is_datetime_type(pg_type: &str) -> bool {
+    let u = pg_type.to_uppercase();
+    u.contains("TIMESTAMP") || u.contains("DATE") || u.contains("TIME")
+}
+
+fn looks_unnamed_expr(name: &str) -> bool {
+    // SQLite emits the verbatim expression text for unaliased expressions.
+    // Heuristic: contains an operator, a space, or is purely numeric/literal.
+    name.chars().any(|c| matches!(c, '+'|'-'|'*'|'/'|' '|'=')) || name.parse::<f64>().is_ok()
+}
+
+fn resolve_function_type(lower_fn: &str, inner: &str, ctx: &ResolveCtx) -> (i32, bool) {
+    if is_arg_preserving(lower_fn) {
+        if let Some(pg_type) = ctx.schema_types.get(inner.trim()) {
+            let oid = SchemaTypeMapper::pg_type_string_to_oid(pg_type);
+            return (oid, is_datetime_type(pg_type));
+        }
+        // sum generic fallback is numeric; min/max fallback is text.
+        return (function_generic_oid(lower_fn).unwrap_or(PgType::Text.to_oid()), false);
+    }
+    (function_generic_oid(lower_fn).unwrap_or(PgType::Text.to_oid()), false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +238,61 @@ mod tests {
         let v = parse_alias_view("SELECT id AS a, name AS b FROM users").unwrap();
         assert_eq!(v[0].position, 0);
         assert_eq!(v[1].position, 1);
+    }
+    #[test]
+    fn alias_view_as_with_tab_newline_whitespace() {
+        // Hardened AS-gate must match `AS` separated by tab/newline, not just spaces.
+        let v = parse_alias_view("SELECT id\tAS\nuser_id FROM users").unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].alias, "user_id");
+        assert!(!v[0].is_quoted);
+    }
+
+    use std::collections::HashMap;
+    use crate::translator::TranslationMetadata;
+
+    fn ctx_no_aliases<'a>(schema: &'a HashMap<String,String>, legacy: bool) -> ResolveCtx<'a> {
+        static EMPTY: once_cell::sync::Lazy<TranslationMetadata> = once_cell::sync::Lazy::new(TranslationMetadata::new);
+        ResolveCtx { schema_types: schema, hints: &EMPTY, alias_view: None, legacy }
+    }
+
+    #[test]
+    fn schema_match_keeps_paren_name() {
+        let mut schema = HashMap::new();
+        schema.insert("price(usd)".to_string(), "INT4".to_string());
+        let m = ProjectionResolver::resolve("price(usd)", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.wire_name, "price(usd)");
+        assert_eq!(m.type_oid, PgType::Int4.to_oid());
+    }
+    #[test]
+    fn function_shape_lowers_and_types() {
+        let schema = HashMap::new();
+        let m = ProjectionResolver::resolve("count(*)", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.wire_name, "count");
+        assert_eq!(m.type_oid, PgType::Int8.to_oid());
+        assert!(!m.datetime_flag);
+    }
+    #[test]
+    fn min_over_timestamp_is_datetime() {
+        let mut schema = HashMap::new();
+        schema.insert("created_at".to_string(), "TIMESTAMP".to_string());
+        let m = ProjectionResolver::resolve("max(created_at)", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.wire_name, "max");
+        assert_eq!(m.type_oid, PgType::Timestamp.to_oid());
+        assert!(m.datetime_flag);
+    }
+    #[test]
+    fn min_over_int4_no_datetime() {
+        let mut schema = HashMap::new();
+        schema.insert("qty".to_string(), "INT4".to_string());
+        let m = ProjectionResolver::resolve("max(qty)", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.type_oid, PgType::Int4.to_oid());
+        assert!(!m.datetime_flag);
+    }
+    #[test]
+    fn unnamed_expr_gets_question_column() {
+        let schema = HashMap::new();
+        let m = ProjectionResolver::resolve("1+1", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.wire_name, "?column?");
     }
 }
