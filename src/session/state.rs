@@ -39,6 +39,7 @@ pub struct PreparedStatement {
     pub param_formats: Vec<i16>,
     pub field_descriptions: Vec<crate::protocol::FieldDescription>,
     pub translation_metadata: Option<crate::translator::TranslationMetadata>, // Type hints from query translation
+    pub projection_metadata: Option<Vec<crate::query::projection_resolver::AliasItem>>,
 }
 
 #[derive(Clone)]

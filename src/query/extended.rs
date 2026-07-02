@@ -127,6 +127,7 @@ impl ExtendedQueryHandler {
                     param_formats: vec![0; cached_info.param_types.len()],
                     field_descriptions: Vec::new(), // Will be populated during bind/execute
                     translation_metadata: None,
+                    projection_metadata: None,
                 };
                 
                 // Store as unnamed statement
@@ -276,6 +277,7 @@ impl ExtendedQueryHandler {
                     vec![]
                 },
                 translation_metadata: None, // SET commands don't need translation metadata
+                projection_metadata: None,
             };
             
             session.prepared_statements.write().await.insert(name.clone(), stmt);
@@ -1018,6 +1020,7 @@ impl ExtendedQueryHandler {
             } else {
                 Some(translation_metadata)
             },
+            projection_metadata: None,
         };
         
         session.prepared_statements.write().await.insert(name.clone(), stmt);

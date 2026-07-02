@@ -1,4 +1,37 @@
 use crate::types::PgType;
+use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
+
+#[derive(Debug, Clone)]
+pub struct AliasItem {
+    pub position: usize,
+    pub alias: String,
+    pub is_quoted: bool,
+    pub source_expr: Expr,
+}
+
+/// Parse the projection alias view. Returns None when the query has no `AS`
+/// (so the zero-alloc fast path never pays a parse). On parse error, None.
+pub fn parse_alias_view(query: &str) -> Option<Vec<AliasItem>> {
+    if !query.to_uppercase().contains(" AS ") { return None; }
+    let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query).ok()?;
+    let stmt = parsed.into_iter().next()?;
+    let body = match stmt { Statement::Query(q) => q, _ => return None };
+    let select = match &*body.body { SetExpr::Select(s) => s, _ => return None };
+    let items: Vec<AliasItem> = select.projection.iter().enumerate()
+        .filter_map(|(i, item)| match item {
+            SelectItem::ExprWithAlias { expr, alias } => Some(AliasItem {
+                position: i,
+                alias: alias.value.clone(),
+                is_quoted: alias.quote_style.is_some(),
+                source_expr: expr.clone(),
+            }),
+            _ => None,
+        })
+        .collect();
+    Some(items)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ColumnMeta {
@@ -97,5 +130,29 @@ mod tests {
     fn arg_preserving_flags() {
         assert!(is_arg_preserving("max") && is_arg_preserving("sum"));
         assert!(!is_arg_preserving("count"));
+    }
+    #[test]
+    fn alias_view_none_when_no_as() {
+        assert!(parse_alias_view("SELECT id, name FROM users").is_none());
+    }
+    #[test]
+    fn alias_view_unquoted_alias() {
+        let v = parse_alias_view("SELECT id AS user_id FROM users").unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].alias, "user_id");
+        assert!(!v[0].is_quoted);
+    }
+    #[test]
+    fn alias_view_quoted_alias_preserved() {
+        let v = parse_alias_view(r#"SELECT id AS "UserId" FROM users"#).unwrap();
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].alias, "UserId");
+        assert!(v[0].is_quoted);
+    }
+    #[test]
+    fn alias_view_position_indexed() {
+        let v = parse_alias_view("SELECT id AS a, name AS b FROM users").unwrap();
+        assert_eq!(v[0].position, 0);
+        assert_eq!(v[1].position, 1);
     }
 }
