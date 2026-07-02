@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use anyhow::Result;
 use crate::types::{PgType, SchemaTypeMapper};
 use crate::translator::TranslationMetadata;
 use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement};
@@ -177,6 +178,67 @@ fn resolve_function_type(lower_fn: &str, inner: &str, ctx: &ResolveCtx) -> (i32,
     (function_generic_oid(lower_fn).unwrap_or(PgType::Text.to_oid()), false)
 }
 
+/// Resolve all columns of a prepared statement into PG-conformant metadata.
+/// Convergence point for DbHandler, ReadOnlyDbHandler, and extended paths.
+pub async fn resolve_columns(
+    stmt: &rusqlite::Statement<'_>,
+    query: &str,
+    schema_types: &HashMap<String, String>,
+    hints: &TranslationMetadata,
+    session: &crate::session::SessionState,
+) -> Result<Vec<ColumnMeta>> {
+    let legacy = session.legacy_result_columns().await;
+    let alias_view = parse_alias_view(query);
+    let view_ref = alias_view.as_deref();
+    let count = stmt.column_count();
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let raw = stmt.column_name(i)?.to_string();
+        let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
+        let meta = ProjectionResolver::resolve(&raw, i, &ctx);
+        out.push(meta);
+    }
+    dedup_question_columns(&mut out);
+    Ok(out)
+}
+
+/// Resolve a list of column-name strings (from DbResponse.columns) into PG-conformant
+/// metadata. Used by execute_select, which only has the column-name strings, not the stmt.
+/// Same precedence and ?column?N dedup as [`resolve_columns`].
+pub async fn resolve_columns_from_names(
+    names: &[String],
+    query: &str,
+    schema_types: &HashMap<String, String>,
+    hints: &TranslationMetadata,
+    session: &crate::session::SessionState,
+) -> Result<Vec<ColumnMeta>> {
+    let legacy = session.legacy_result_columns().await;
+    let alias_view = parse_alias_view(query);
+    let view_ref = alias_view.as_deref();
+    let mut out = Vec::with_capacity(names.len());
+    for (i, raw) in names.iter().enumerate() {
+        let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
+        let meta = ProjectionResolver::resolve(raw, i, &ctx);
+        out.push(meta);
+    }
+    dedup_question_columns(&mut out);
+    Ok(out)
+}
+
+/// Apply PostgreSQL's `?column?N` dedup to consecutive unnamed-expression columns.
+/// First unnamed stays `?column?`; the second becomes `?column?2`, third `?column?3`, etc.
+fn dedup_question_columns(metas: &mut [ColumnMeta]) {
+    let mut count: usize = 0;
+    for meta in metas.iter_mut() {
+        if meta.wire_name == "?column?" {
+            count += 1;
+            if count > 1 {
+                meta.wire_name = format!("?column?{}", count);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,5 +408,34 @@ mod tests {
         let m = ProjectionResolver::resolve("array_agg(x)", 0, &ctx_no_aliases(&schema, false));
         assert_eq!(m.wire_name, "array_agg");
         assert_eq!(m.type_oid, PgType::Text.to_oid());
+    }
+
+    #[test]
+    fn question_column_dedup_numbering() {
+        // Two unnamed expressions at positions 0 and 1 should both yield ?column?
+        // in the single-column resolve() (dedup happens at resolve_columns level),
+        // but resolve_columns is async+DB-bound; tested via integration in Task 8.
+        // Here we only assert the base name for one unnamed expr:
+        let schema = HashMap::new();
+        let m = ProjectionResolver::resolve("a+b", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.wire_name, "?column?");
+    }
+
+    #[tokio::test]
+    async fn resolve_columns_from_names_dedup_numbering() {
+        // Unit test for the shared ?column?N dedup: two unnamed expressions
+        // -> first is ?column?, second is ?column?2.
+        let schema = HashMap::new();
+        let hints = TranslationMetadata::new();
+        let session = crate::session::SessionState::new("db".into(), "user".into());
+        let names = vec!["a+b".to_string(), "c+d".to_string()];
+        let metas = resolve_columns_from_names(
+            &names, "SELECT a+b, c+d FROM t", &schema, &hints, &session,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metas.len(), 2);
+        assert_eq!(metas[0].wire_name, "?column?");
+        assert_eq!(metas[1].wire_name, "?column?2");
     }
 }
