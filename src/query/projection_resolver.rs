@@ -188,6 +188,21 @@ pub async fn resolve_columns(
     session: &crate::session::SessionState,
 ) -> Result<Vec<ColumnMeta>> {
     let legacy = session.legacy_result_columns().await;
+    Ok(resolve_columns_with_legacy(stmt, query, schema_types, hints, legacy)?)
+}
+
+/// Sync, session-free variant of [`resolve_columns`]: the caller supplies the
+/// `legacy` flag directly instead of a session handle. Used by DbHandler SELECT
+/// sites that run inside `execute_with_session` sync closures (no `.await`, no
+/// `&SessionState` in scope). The GUC default is conformant (`legacy = false`);
+/// Task 7/8 wires the real session at the executor level for GUC honoring.
+pub fn resolve_columns_with_legacy(
+    stmt: &rusqlite::Statement<'_>,
+    query: &str,
+    schema_types: &HashMap<String, String>,
+    hints: &TranslationMetadata,
+    legacy: bool,
+) -> rusqlite::Result<Vec<ColumnMeta>> {
     let alias_view = parse_alias_view(query);
     let view_ref = alias_view.as_deref();
     let count = stmt.column_count();
@@ -195,8 +210,7 @@ pub async fn resolve_columns(
     for i in 0..count {
         let raw = stmt.column_name(i)?.to_string();
         let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
-        let meta = ProjectionResolver::resolve(&raw, i, &ctx);
-        out.push(meta);
+        out.push(ProjectionResolver::resolve(&raw, i, &ctx));
     }
     dedup_question_columns(&mut out);
     Ok(out)

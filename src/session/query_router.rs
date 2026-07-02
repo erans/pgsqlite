@@ -80,7 +80,7 @@ impl QueryRouter {
         match route {
             QueryRoute::ReadOnly => {
                 info!("Executing query via read-only pool");
-                let result = self.read_handler.query(sql).await?;
+                let result = self.read_handler.query(sql, session_state).await?;
                 Ok(result)
             }
             QueryRoute::Write | QueryRoute::WriteTransaction => {
@@ -103,7 +103,7 @@ impl QueryRouter {
 
         match route {
             QueryRoute::ReadOnly => {
-                let result = self.read_handler.query_with_params(sql, params).await?;
+                let result = self.read_handler.query_with_params(sql, params, session_state).await?;
                 Ok(result)
             }
             QueryRoute::Write | QueryRoute::WriteTransaction => {
