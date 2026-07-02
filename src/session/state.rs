@@ -81,6 +81,16 @@ impl SessionState {
         }
     }
 
+    /// Read the legacy result-column GUC. Default off (conformant).
+    /// Only casing in resolver steps 3 & 5 honors this; the paren-corruption,
+    /// empty-name, and datetime fixes are always applied.
+    pub async fn legacy_result_columns(&self) -> bool {
+        self.parameters.read().await
+            .get("pgsqlite.legacy_result_columns")
+            .map(|v| v.eq_ignore_ascii_case("on"))
+            .unwrap_or(false)
+    }
+
     /// Create a new session with default database and user (for testing)
     #[cfg(test)]
     pub fn new_test() -> Self {
@@ -160,5 +170,32 @@ impl Drop for SessionState {
         
         // Decrement active session count when session is destroyed
         ACTIVE_SESSION_COUNT.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod legacy_guc_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_legacy_default_off() {
+        let s = SessionState::new("db".into(), "user".into());
+        assert!(!s.legacy_result_columns().await);
+    }
+
+    #[tokio::test]
+    async fn test_legacy_on_when_set_on() {
+        let s = SessionState::new("db".into(), "user".into());
+        s.parameters.write().await.insert(
+            "pgsqlite.legacy_result_columns".to_string(), "on".to_string());
+        assert!(s.legacy_result_columns().await);
+    }
+
+    #[tokio::test]
+    async fn test_legacy_off_explicit() {
+        let s = SessionState::new("db".into(), "user".into());
+        s.parameters.write().await.insert(
+            "pgsqlite.legacy_result_columns".to_string(), "off".to_string());
+        assert!(!s.legacy_result_columns().await);
     }
 }
