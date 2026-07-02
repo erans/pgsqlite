@@ -119,7 +119,7 @@ impl ProjectionResolver {
         if let Some(shape) = fn_shape(raw_name) {
             let name = shape.name.trim();
             let lower = name.to_lowercase();
-            let wire_name = if ctx.legacy { name.to_string() } else { lower.clone() };
+            let wire_name = lower.clone();
             let (type_oid, datetime_flag) = resolve_function_type(&lower, &shape.inner, ctx);
             return ColumnMeta { wire_name, type_oid, datetime_flag };
         }
@@ -256,6 +256,11 @@ mod tests {
         ResolveCtx { schema_types: schema, hints: &EMPTY, alias_view: None, legacy }
     }
 
+    fn ctx_with_aliases<'a>(schema: &'a HashMap<String,String>, alias_view: &'a [AliasItem], legacy: bool) -> ResolveCtx<'a> {
+        static EMPTY: once_cell::sync::Lazy<TranslationMetadata> = once_cell::sync::Lazy::new(TranslationMetadata::new);
+        ResolveCtx { schema_types: schema, hints: &EMPTY, alias_view: Some(alias_view), legacy }
+    }
+
     #[test]
     fn schema_match_keeps_paren_name() {
         let mut schema = HashMap::new();
@@ -294,5 +299,52 @@ mod tests {
         let schema = HashMap::new();
         let m = ProjectionResolver::resolve("1+1", 0, &ctx_no_aliases(&schema, false));
         assert_eq!(m.wire_name, "?column?");
+    }
+
+    #[test]
+    fn step2_function_call_ignores_legacy() {
+        // Guard: legacy affects only steps 3 & 5. A COUNT(*) projection must
+        // always emit conformant wire-name `count` even when legacy=true.
+        let schema = HashMap::new();
+        let m = ProjectionResolver::resolve("COUNT(*)", 0, &ctx_no_aliases(&schema, true));
+        assert_eq!(m.wire_name, "count", "legacy must not leak into step 2 casing");
+        assert_eq!(m.type_oid, PgType::Int8.to_oid());
+    }
+
+    #[test]
+    fn step3_unquoted_alias_legacy_preserves_case() {
+        // Step 3 honors legacy: an unquoted alias is preserved as-written when
+        // legacy=true, and lowercased when legacy=false.
+        let schema = HashMap::new();
+        let items = vec![AliasItem {
+            position: 0,
+            alias: "MyAlias".to_string(),
+            is_quoted: false,
+            source_expr: Expr::Identifier(sqlparser::ast::Ident::new("id")),
+        }];
+        let legacy_m = ProjectionResolver::resolve("id", 0, &ctx_with_aliases(&schema, &items, true));
+        assert_eq!(legacy_m.wire_name, "MyAlias", "legacy preserves unquoted alias as-written");
+        let conformant_m = ProjectionResolver::resolve("id", 0, &ctx_with_aliases(&schema, &items, false));
+        assert_eq!(conformant_m.wire_name, "myalias", "conformant lowercases unquoted alias");
+    }
+
+    #[test]
+    fn step5_fallback_legacy_preserves_case() {
+        // Step 5 honors legacy: fallback casing preserves the raw name when
+        // legacy=true and lowercases it when legacy=false.
+        let schema = HashMap::new();
+        let legacy_m = ProjectionResolver::resolve("MyCol", 0, &ctx_no_aliases(&schema, true));
+        assert_eq!(legacy_m.wire_name, "MyCol", "legacy preserves fallback name as-written");
+        let conformant_m = ProjectionResolver::resolve("MyCol", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(conformant_m.wire_name, "mycol", "conformant lowercases fallback name");
+    }
+
+    #[test]
+    fn array_agg_returns_text_oid() {
+        // MUST-FIX #3: array_agg returns Text (JSON array storage).
+        let schema = HashMap::new();
+        let m = ProjectionResolver::resolve("array_agg(x)", 0, &ctx_no_aliases(&schema, false));
+        assert_eq!(m.wire_name, "array_agg");
+        assert_eq!(m.type_oid, PgType::Text.to_oid());
     }
 }
