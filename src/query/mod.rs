@@ -16,6 +16,7 @@ pub mod pattern_optimizer;
 pub mod query_handler;
 pub mod join_type_inference;
 pub mod column_sanitizer;
+pub mod projection_resolver;
 
 pub use executor::QueryExecutor;
 pub use query_handler::{QueryHandler, QueryHandlerImpl};
