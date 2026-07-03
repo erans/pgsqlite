@@ -1,4 +1,5 @@
 use tokio_postgres::{Client, NoTls};
+use tokio_postgres::types::Json;
 use tokio::net::TcpListener;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -62,14 +63,15 @@ async fn test_row_to_json_basic_subquery() {
         &[]
     ).await.expect("Failed to insert data");
     
-    // Test row_to_json with subquery
+    // Test row_to_json with subquery over the extended protocol.
     let rows = client.query(
         "SELECT row_to_json(t) FROM (SELECT name, age FROM users WHERE id = 1) t",
         &[]
     ).await.expect("Failed to execute query");
     
     assert_eq!(rows.len(), 1);
-    let json_result: String = rows[0].get(0);
+    let Json(json_value): Json<serde_json::Value> = rows[0].get(0);
+    let json_result = json_value.to_string();
     
     // The result should be a JSON object with name and age
     assert!(json_result.contains("\"name\":\"Alice\"") || json_result.contains("\"name\": \"Alice\""));
@@ -103,7 +105,8 @@ async fn test_row_to_json_multiple_columns() {
     ).await.expect("Failed to execute query");
     
     assert_eq!(rows.len(), 1);
-    let json_result: String = rows[0].get(0);
+    let Json(json_value): Json<serde_json::Value> = rows[0].get(0);
+    let json_result = json_value.to_string();
     
     println!("Multi-column row to JSON result: {json_result}");
     
@@ -141,7 +144,8 @@ async fn test_row_to_json_with_aliases() {
     ).await.expect("Failed to execute query");
     
     assert_eq!(rows.len(), 1);
-    let json_result: String = rows[0].get(0);
+    let Json(json_value): Json<serde_json::Value> = rows[0].get(0);
+    let json_result = json_value.to_string();
     
     // Verify aliases are used in the JSON
     assert!(json_result.contains("\"fname\":\"John\"") || json_result.contains("\"fname\": \"John\""));
@@ -200,8 +204,10 @@ async fn test_row_to_json_multiple_rows() {
     
     assert_eq!(rows.len(), 2);
     
-    let json_result1: String = rows[0].get(0);
-    let json_result2: String = rows[1].get(0);
+    let Json(json_value1): Json<serde_json::Value> = rows[0].get(0);
+    let Json(json_value2): Json<serde_json::Value> = rows[1].get(0);
+    let json_result1 = json_value1.to_string();
+    let json_result2 = json_value2.to_string();
     
     // Verify both rows are correctly converted
     assert!(json_result1.contains("\"name\":\"Apple\"") || json_result1.contains("\"name\": \"Apple\""));

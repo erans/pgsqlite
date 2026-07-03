@@ -3,7 +3,8 @@ use std::sync::Mutex;
 use rusqlite::{Connection, Statement, Params};
 use once_cell::sync::Lazy;
 use crate::config::CONFIG;
-use crate::query::column_sanitizer::sanitize_column_name;
+use crate::query::projection_resolver::resolve_columns_with_legacy;
+use crate::translator::TranslationMetadata;
 
 /// A pool of prepared SQLite statements for reuse
 /// This avoids the overhead of preparing the same statement multiple times
@@ -190,16 +191,15 @@ impl StatementPool {
 
     /// Extract metadata from a prepared statement
     fn extract_metadata(&self, stmt: &Statement, query: &str) -> Result<StatementMetadata, rusqlite::Error> {
-        let column_count = stmt.column_count();
-        let mut column_names = Vec::new();
+        let column_names: Vec<String> = resolve_columns_with_legacy(
+            stmt,
+            query,
+            &HashMap::new(),
+            &TranslationMetadata::new(),
+            false,
+        )?.into_iter().map(|m| m.wire_name).collect();
         let mut column_types = Vec::new();
-
-        for i in 0..column_count {
-            column_names.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-            // We can't easily get PostgreSQL types here, so we'll leave them as None
-            // They can be filled in later by the caller if needed
-            column_types.push(None);
-        }
+        column_types.resize(column_names.len(), None);
 
         let parameter_count = stmt.parameter_count();
         let is_select = query.trim().to_uppercase().starts_with("SELECT");

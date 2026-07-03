@@ -14,7 +14,7 @@ use crate::session::ConnectionManager;
 use crate::ddl::CommentDdlHandler;
 use crate::PgSqliteError;
 use crate::security::{events, SqlInjectionDetector};
-use crate::query::column_sanitizer::sanitize_column_name;
+use crate::query::projection_resolver::resolve_columns_with_legacy;
 use tracing::{debug, info, error, warn};
 
 /// Security limits for query validation
@@ -525,10 +525,10 @@ impl DbHandler {
             let result = match query_type {
                 QueryType::Select => {
                     let column_count = stmt.column_count();
-                    let mut columns = Vec::with_capacity(column_count);
-                    for i in 0..column_count {
-                        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                    }
+                    let columns: Vec<String> = resolve_columns_with_legacy(
+                        &stmt, query, &std::collections::HashMap::new(),
+                        &crate::translator::TranslationMetadata::new(), false,
+                    )?.iter().map(|m| m.wire_name.clone()).collect();
                     
                     let rows: Result<Vec<_>, _> = stmt.query_map(rusqlite::params_from_iter(values.iter()), |row| {
                         let mut row_data = Vec::with_capacity(column_count);
@@ -660,10 +660,10 @@ impl DbHandler {
                 // Now execute the actual query against the temp table
                 let mut stmt = temp_conn.prepare(query)?;
                 let column_count = stmt.column_count();
-                let mut columns = Vec::new();
-                for i in 0..column_count {
-                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                }
+                let columns: Vec<String> = resolve_columns_with_legacy(
+                    &stmt, query, &std::collections::HashMap::new(),
+                    &crate::translator::TranslationMetadata::new(), false,
+                )?.iter().map(|m| m.wire_name.clone()).collect();
 
                 let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
                     let mut values = Vec::new();
@@ -773,10 +773,10 @@ impl DbHandler {
                                 // Now execute the original query against the temp table
                                 let mut stmt = temp_conn.prepare(query)?;
                                 let column_count = stmt.column_count();
-                                let mut columns = Vec::with_capacity(column_count);
-                                for i in 0..column_count {
-                                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                                }
+                                let columns: Vec<String> = resolve_columns_with_legacy(
+                                    &stmt, query, &std::collections::HashMap::new(),
+                                    &crate::translator::TranslationMetadata::new(), false,
+                                )?.iter().map(|m| m.wire_name.clone()).collect();
 
                                 let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
                                     let mut row_data = Vec::with_capacity(column_count);
@@ -891,10 +891,10 @@ impl DbHandler {
             
             let mut stmt = conn.prepare(&processed_query)?;
             let column_count = stmt.column_count();
-            let mut columns = Vec::with_capacity(column_count);
-            for i in 0..column_count {
-                columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-            }
+            let columns: Vec<String> = resolve_columns_with_legacy(
+                &stmt, query, &std::collections::HashMap::new(),
+                &crate::translator::TranslationMetadata::new(), false,
+            )?.iter().map(|m| m.wire_name.clone()).collect();
             
             let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
                 let mut row_data = Vec::with_capacity(column_count);
@@ -1238,10 +1238,10 @@ impl DbHandler {
                     
                     let mut stmt = conn.prepare(&processed_query)?;
                     let column_count = stmt.column_count();
-                    let mut columns = Vec::with_capacity(column_count);
-                    for i in 0..column_count {
-                        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                    }
+                    let columns: Vec<String> = resolve_columns_with_legacy(
+                        &stmt, query, &std::collections::HashMap::new(),
+                        &crate::translator::TranslationMetadata::new(), false,
+                    )?.iter().map(|m| m.wire_name.clone()).collect();
                     
                     let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
                         let mut row_data = Vec::with_capacity(column_count);
@@ -1449,10 +1449,10 @@ impl DbHandler {
                                         let processed_query = process_query(query, conn, &self.schema_cache)?;
                                         let mut stmt = conn.prepare(&processed_query)?;
                                         let column_count = stmt.column_count();
-                                        let mut columns = Vec::with_capacity(column_count);
-                                        for i in 0..column_count {
-                                            columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                                        }
+                                        let columns: Vec<String> = resolve_columns_with_legacy(
+                                            &stmt, query, &std::collections::HashMap::new(),
+                                            &crate::translator::TranslationMetadata::new(), false,
+                                        )?.iter().map(|m| m.wire_name.clone()).collect();
 
                                         let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
                                             let mut row_data = Vec::with_capacity(column_count);
@@ -1718,10 +1718,10 @@ impl DbHandler {
             
             let mut stmt = conn.prepare(&processed_query)?;
             let column_count = stmt.column_count();
-            let mut columns = Vec::with_capacity(column_count);
-            for i in 0..column_count {
-                columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-            }
+            let columns: Vec<String> = resolve_columns_with_legacy(
+                &stmt, query, &std::collections::HashMap::new(),
+                &crate::translator::TranslationMetadata::new(), false,
+            )?.iter().map(|m| m.wire_name.clone()).collect();
             
             let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
                 let mut row_data = Vec::with_capacity(column_count);
@@ -2322,10 +2322,10 @@ impl DbHandler {
             let response: Result<DbResponse, rusqlite::Error> = match query_type {
                 QueryType::Select => {
                     let column_count = stmt.column_count();
-                    let mut column_names = Vec::with_capacity(column_count);
-                    for i in 0..column_count {
-                        column_names.push(sanitize_column_name(stmt.column_name(i).unwrap_or("")).to_string());
-                    }
+                    let column_names: Vec<String> = resolve_columns_with_legacy(
+                        &stmt, query, &std::collections::HashMap::new(),
+                        &crate::translator::TranslationMetadata::new(), false,
+                    )?.iter().map(|m| m.wire_name.clone()).collect();
                     
                     // Build datetime column info for conversion
                     let mut datetime_columns = std::collections::HashMap::new();
@@ -2420,10 +2420,10 @@ impl DbHandler {
                     if query.contains("RETURNING") {
                         // Handle RETURNING clause
                         let column_count = stmt.column_count();
-                        let mut column_names = Vec::with_capacity(column_count);
-                        for i in 0..column_count {
-                            column_names.push(sanitize_column_name(stmt.column_name(i).unwrap_or("")).to_string());
-                        }
+                        let column_names: Vec<String> = resolve_columns_with_legacy(
+                            &stmt, query, &std::collections::HashMap::new(),
+                            &crate::translator::TranslationMetadata::new(), false,
+                        )?.iter().map(|m| m.wire_name.clone()).collect();
                         
                         // Build datetime column info for conversion
                         let mut datetime_columns = std::collections::HashMap::new();

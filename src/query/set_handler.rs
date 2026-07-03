@@ -13,7 +13,7 @@ static SET_TIMEZONE_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 static SET_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)^\s*SET\s+(\w+)(?:\s*=\s*|\s+TO\s+)(.+)$").unwrap()
+    Regex::new(r"(?i)^\s*SET\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\s*=\s*|\s+TO\s+)(.+)$").unwrap()
 });
 
 static SHOW_PARAMETER_PATTERN: Lazy<Regex> = Lazy::new(|| {
@@ -82,8 +82,8 @@ impl SetHandler {
         
         // Handle general SET parameter
         if let Some(caps) = SET_PARAMETER_PATTERN.captures(trimmed) {
-            let param_name = caps[1].to_uppercase();
-            let param_value = caps[2].trim().trim_matches('\'').trim_matches('"');
+            let param_name = Self::normalize_parameter_name(&caps[1]);
+            let param_value = Self::normalize_parameter_value(&caps[2]);
             
             // Update session parameter
             let mut params = session.parameters.write().await;
@@ -99,7 +99,7 @@ impl SetHandler {
         
         // Handle SHOW parameter
         if let Some(caps) = SHOW_PARAMETER_PATTERN.captures(trimmed) {
-            let param_name = caps[1].to_uppercase();
+            let param_name = Self::normalize_parameter_name(&caps[1]);
             info!("SHOW parameter: {}", param_name);
             
             // Handle special PostgreSQL SHOW commands
@@ -155,6 +155,25 @@ impl SetHandler {
         Err(PgSqliteError::Protocol(format!("Unrecognized SET command: {query}")))
     }
     
+    fn normalize_parameter_name(name: &str) -> String {
+        let name = name.trim().trim_end_matches(';').trim();
+        if name.contains('.') {
+            name.to_ascii_lowercase()
+        } else {
+            name.to_ascii_uppercase()
+        }
+    }
+
+    fn normalize_parameter_value(value: &str) -> String {
+        value
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string()
+    }
+
     /// Set the session timezone
     async fn set_timezone(session: &Arc<SessionState>, timezone: &str) -> Result<(), PgSqliteError> {
         // Validate timezone (basic validation)
@@ -244,6 +263,30 @@ mod tests {
     fn test_set_parameter_pattern_to_keyword() {
         assert!(SET_PARAMETER_PATTERN.is_match("SET search_path TO public"));
         assert!(SET_PARAMETER_PATTERN.is_match("SET client_encoding TO 'UTF8'"));
+    }
+
+    #[test]
+    fn test_set_parameter_pattern_dotted_pgsqlite_guc() {
+        let caps = SET_PARAMETER_PATTERN
+            .captures("SET pgsqlite.legacy_result_columns = on")
+            .unwrap();
+        assert_eq!(&caps[1], "pgsqlite.legacy_result_columns");
+        assert_eq!(&caps[2], "on");
+        assert_eq!(SetHandler::normalize_parameter_name("pgsqlite.legacy_result_columns"), "pgsqlite.legacy_result_columns");
+    }
+
+    #[test]
+    fn test_set_and_show_parameter_patterns_ignore_semicolon() {
+        let set_caps = SET_PARAMETER_PATTERN
+            .captures("SET pgsqlite.legacy_result_columns = on;")
+            .unwrap();
+        assert_eq!(SetHandler::normalize_parameter_name(&set_caps[1]), "pgsqlite.legacy_result_columns");
+        assert_eq!(SetHandler::normalize_parameter_value(&set_caps[2]), "on");
+
+        let show_caps = SHOW_PARAMETER_PATTERN
+            .captures("SHOW pgsqlite.legacy_result_columns;")
+            .unwrap();
+        assert_eq!(SetHandler::normalize_parameter_name(&show_caps[1]), "pgsqlite.legacy_result_columns");
     }
 
     #[test]

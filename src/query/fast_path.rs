@@ -3,7 +3,8 @@ use regex::Regex;
 use once_cell::sync::Lazy;
 use crate::cache::SchemaCache;
 use crate::session::db_handler::DbResponse;
-use crate::query::column_sanitizer::sanitize_column_name;
+use crate::query::projection_resolver::resolve_columns_with_legacy;
+use crate::translator::TranslationMetadata;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -373,10 +374,13 @@ pub fn query_fast_path(
                 let column_count = stmt.column_count();
                 
                 // Get column names
-                let mut columns = Vec::new();
-                for i in 0..column_count {
-                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                }
+                let columns: Vec<String> = resolve_columns_with_legacy(
+                    &stmt,
+                    query,
+                    &HashMap::new(),
+                    &TranslationMetadata::new(),
+                    false,
+                )?.into_iter().map(|m| m.wire_name).collect();
                 
                 // Check for boolean columns in the schema using cache
                 let mut column_types = Vec::new();
@@ -615,10 +619,13 @@ fn execute_fast_select_with_params(
     let column_count = stmt.column_count();
     
     // Get column names
-    let mut columns = Vec::new();
-    for i in 0..column_count {
-        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-    }
+    let columns: Vec<String> = resolve_columns_with_legacy(
+        &stmt,
+        query,
+        &HashMap::new(),
+        &TranslationMetadata::new(),
+        false,
+    )?.into_iter().map(|m| m.wire_name).collect();
     
     // Check for boolean columns in the schema using cache
     let mut column_types = Vec::new();
@@ -733,10 +740,13 @@ fn execute_fast_select(
     let column_count = stmt.column_count();
     
     // Get column names
-    let mut columns = Vec::new();
-    for i in 0..column_count {
-        columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-    }
+    let columns: Vec<String> = resolve_columns_with_legacy(
+        &stmt,
+        query,
+        &HashMap::new(),
+        &TranslationMetadata::new(),
+        false,
+    )?.into_iter().map(|m| m.wire_name).collect();
     
     // Check for boolean columns in the schema using cache
     let mut column_types = Vec::new();

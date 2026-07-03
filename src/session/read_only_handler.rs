@@ -4,6 +4,10 @@ use crate::config::Config;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use crate::session::SessionState;
+use crate::query::projection_resolver::resolve_columns_with_legacy;
+use crate::translator::TranslationMetadata;
+use std::collections::HashMap;
 
 #[derive(Error, Debug)]
 pub enum ReadOnlyError {
@@ -59,19 +63,22 @@ impl ReadOnlyDbHandler {
     }
 
     /// Execute a SELECT query using a pooled connection
-    pub async fn query(&self, sql: &str) -> Result<DbResponse, ReadOnlyError> {
+    pub async fn query(&self, sql: &str, session: &SessionState) -> Result<DbResponse, ReadOnlyError> {
         // Ensure this is a read-only operation
         if !is_read_only_query(sql) {
             return Err(ReadOnlyError::WriteNotAllowed);
         }
 
+        let legacy = session.legacy_result_columns().await;
         let conn = self.pool.acquire().await?;
         
         // Execute query using rusqlite
         let mut stmt = conn.prepare(sql)?;
-        let column_names: Vec<String> = stmt.column_names()
+        let column_names: Vec<String> = resolve_columns_with_legacy(
+            &stmt, sql, &HashMap::new(), &TranslationMetadata::new(), legacy,
+        )?
             .iter()
-            .map(|s| s.to_string())
+            .map(|m| m.wire_name.clone())
             .collect();
 
         let rows = stmt.query_map([], |row| {
@@ -107,19 +114,23 @@ impl ReadOnlyDbHandler {
     pub async fn query_with_params(
         &self, 
         sql: &str, 
-        params: &[&dyn rusqlite::ToSql]
+        params: &[&dyn rusqlite::ToSql],
+        session: &SessionState
     ) -> Result<DbResponse, ReadOnlyError> {
         // Ensure this is a read-only operation
         if !is_read_only_query(sql) {
             return Err(ReadOnlyError::WriteNotAllowed);
         }
 
+        let legacy = session.legacy_result_columns().await;
         let conn = self.pool.acquire().await?;
         
         let mut stmt = conn.prepare(sql)?;
-        let column_names: Vec<String> = stmt.column_names()
+        let column_names: Vec<String> = resolve_columns_with_legacy(
+            &stmt, sql, &HashMap::new(), &TranslationMetadata::new(), legacy,
+        )?
             .iter()
-            .map(|s| s.to_string())
+            .map(|m| m.wire_name.clone())
             .collect();
 
         let rows = stmt.query_map(params, |row| {
@@ -206,7 +217,8 @@ mod tests {
         let config = Arc::new(Config::load());
         let handler = ReadOnlyDbHandler::new(":memory:", config).unwrap();
         
-        let result = handler.query("INSERT INTO test VALUES (1)").await;
+        let session = SessionState::new_test();
+        let result = handler.query("INSERT INTO test VALUES (1)", &session).await;
         assert!(matches!(result, Err(ReadOnlyError::WriteNotAllowed)));
     }
 }

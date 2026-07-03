@@ -1254,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "pgsqlite"
-version = "0.0.21"
+version = "0.0.22"
 dependencies = [
  "anyhow",
  "arbitrary",
@@ -1408,6 +1408,8 @@ dependencies = [
  "chrono",
  "fallible-iterator 0.2.0",
  "postgres-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

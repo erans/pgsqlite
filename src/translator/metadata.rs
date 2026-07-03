@@ -70,7 +70,12 @@ impl TranslationMetadata {
     
     /// Get type hint for a column (if any)
     pub fn get_hint(&self, column_name: &str) -> Option<&ColumnTypeHint> {
-        self.column_mappings.get(column_name)
+        self.column_mappings.get(column_name).or_else(|| {
+            self.column_mappings
+                .iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(column_name))
+                .map(|(_, hint)| hint)
+        })
     }
     
     /// Merge another metadata instance into this one
@@ -168,6 +173,17 @@ mod tests {
         assert_eq!(hint.suggested_type, Some(PgType::Timestamp));
     }
     
+    #[test]
+    fn test_get_hint_matches_conformant_lowercase_alias() {
+        let mut metadata = TranslationMetadata::new();
+        metadata.add_hint(
+            "TotalPrice".to_string(),
+            ColumnTypeHint::arithmetic_on_float("price".to_string()),
+        );
+
+        assert!(metadata.get_hint("totalprice").is_some());
+    }
+
     #[test]
     fn test_metadata_merge() {
         let mut metadata1 = TranslationMetadata::new();

@@ -2,8 +2,8 @@ use crate::session::db_handler::{DbHandler, DbResponse};
 use uuid::Uuid;
 use crate::session::SessionState;
 use crate::PgSqliteError;
-use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
-use crate::query::column_sanitizer::sanitize_column_name;
+use crate::translator::{RegexTranslator, SchemaPrefixTranslator, TranslationMetadata};
+use crate::query::projection_resolver::resolve_columns_with_legacy;
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -270,10 +270,13 @@ impl CatalogInterceptor {
                                 // Execute the translated query
                                 let mut stmt = conn.prepare(&query_str)?;
                                 let column_count = stmt.column_count();
-                                let mut columns = Vec::new();
-                                for i in 0..column_count {
-                                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                                }
+                                let columns: Vec<String> = resolve_columns_with_legacy(
+                                    &stmt,
+                                    &query_str,
+                                    &HashMap::new(),
+                                    &TranslationMetadata::new(),
+                                    false,
+                                )?.into_iter().map(|m| m.wire_name).collect();
 
                                 let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
                                     let mut values = Vec::new();
@@ -411,10 +414,13 @@ impl CatalogInterceptor {
                                         // Execute the query directly with the session's connection
                                         let mut stmt = conn.prepare(&query_str)?;
                                         let column_count = stmt.column_count();
-                                        let mut columns = Vec::new();
-                                        for i in 0..column_count {
-                                            columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                                        }
+                                        let columns: Vec<String> = resolve_columns_with_legacy(
+                                            &stmt,
+                                            &query_str,
+                                            &HashMap::new(),
+                                            &TranslationMetadata::new(),
+                                            false,
+                                        )?.into_iter().map(|m| m.wire_name).collect();
 
                                         let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
                                             let mut values = Vec::new();
@@ -1068,6 +1074,10 @@ impl CatalogInterceptor {
                 Some("public".to_string().into_bytes()),
             ],
         ];
+        if columns.is_empty() && Self::is_count_star_projection(&select.projection) {
+            return Self::count_response(full_rows.len());
+        }
+
         let rows: Vec<Vec<Option<Vec<u8>>>> = full_rows
             .into_iter()
             .map(|full_row| {
@@ -1079,7 +1089,7 @@ impl CatalogInterceptor {
             .collect();
 
         let rows_affected = rows.len();
-        debug!("Returning {} rows for pg_type query with {} columns: {:?}", rows_affected, columns.len(), columns);
+        debug!("Returning {} rows for pg_namespace query with {} columns: {:?}", rows_affected, columns.len(), columns);
         DbResponse {
             columns,
             rows,
@@ -1740,25 +1750,28 @@ impl CatalogInterceptor {
         for item in &select.projection {
             match item {
                 SelectItem::UnnamedExpr(expr) => {
-                    if let Some(col_name) = Self::extract_projection_source_column(expr) {
-                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                            cols.push(all_columns[idx].clone());
-                            indices.push(idx);
-                        }
+                    if let Some(col_name) = Self::extract_projection_source_column(expr)
+                        && let Some(idx) = all_columns.iter().position(|c| c == &col_name)
+                    {
+                        cols.push(all_columns[idx].clone());
+                        indices.push(idx);
                     }
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    if let Some(col_name) = Self::extract_projection_source_column(expr) {
-                        if let Some(idx) = all_columns.iter().position(|c| c == &col_name) {
-                            cols.push(alias.value.clone());
-                            indices.push(idx);
-                        }
+                    if let Some(col_name) = Self::extract_projection_source_column(expr)
+                        && let Some(idx) = all_columns.iter().position(|c| c == &col_name)
+                    {
+                        cols.push(Self::alias_output_name(alias));
+                        indices.push(idx);
                     }
                 }
-                SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _) => {
+                SelectItem::Wildcard(_) => {
                     cols.extend_from_slice(all_columns);
                     indices.extend(0..all_columns.len());
-                    break;
+                }
+                SelectItem::QualifiedWildcard(_, _) => {
+                    cols.extend_from_slice(all_columns);
+                    indices.extend(0..all_columns.len());
                 }
             }
         }
@@ -1773,7 +1786,63 @@ impl CatalogInterceptor {
             }
             Expr::Cast { expr, .. } => Self::extract_projection_source_column(expr),
             Expr::Nested(expr) => Self::extract_projection_source_column(expr),
+            Expr::Function(f) => Self::function_name(f),
             _ => None,
+        }
+    }
+
+    fn alias_output_name(alias: &sqlparser::ast::Ident) -> String {
+        if alias.quote_style.is_some() {
+            alias.value.clone()
+        } else {
+            alias.value.to_lowercase()
+        }
+    }
+
+    fn function_name(function: &sqlparser::ast::Function) -> Option<String> {
+        function
+            .name
+            .0
+            .last()
+            .and_then(|part| part.as_ident())
+            .map(|ident| ident.value.to_lowercase())
+    }
+
+    fn is_count_star_projection(projection: &[SelectItem]) -> bool {
+        if projection.len() != 1 {
+            return false;
+        }
+
+        let expr = match &projection[0] {
+            SelectItem::UnnamedExpr(expr) => expr,
+            SelectItem::ExprWithAlias { expr, .. } => expr,
+            _ => return false,
+        };
+
+        let Expr::Function(function) = expr else {
+            return false;
+        };
+
+        if Self::function_name(function).as_deref() != Some("count") {
+            return false;
+        }
+
+        matches!(
+            &function.args,
+            sqlparser::ast::FunctionArguments::List(arg_list)
+                if arg_list.args.len() == 1
+                    && matches!(
+                        &arg_list.args[0],
+                        FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
+                    )
+        )
+    }
+
+    fn count_response(count: usize) -> DbResponse {
+        DbResponse {
+            columns: vec!["count".to_string()],
+            rows: vec![vec![Some(count.to_string().into_bytes())]],
+            rows_affected: 1,
         }
     }
 

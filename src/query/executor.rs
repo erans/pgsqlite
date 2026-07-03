@@ -326,12 +326,28 @@ impl QueryExecutor {
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
                     // Route query through query router if available and appropriate
-                    let response = if let Some(router) = query_router {
+                    let mut response = if let Some(router) = query_router {
                         router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
                     } else {
                         let cached_conn = Self::get_or_cache_connection(session, db).await;
                         db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
                     };
+                    if session.legacy_result_columns().await {
+                        let schema_types = std::collections::HashMap::new();
+                        let hints = crate::translator::TranslationMetadata::new();
+                        response.columns = crate::query::projection_resolver::resolve_columns_from_names(
+                            &response.columns,
+                            query,
+                            &schema_types,
+                            &hints,
+                            session,
+                        )
+                        .await
+                        .map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+                        .into_iter()
+                        .map(|m| m.wire_name)
+                        .collect();
+                    }
                     
                     // Always check for type conversion to handle datetime columns
                     let needs_type_conversion = true;
@@ -1322,8 +1338,9 @@ impl QueryExecutor {
                 // Also check for direct MAX/MIN without subquery
                 // Pattern: MAX(created_at) or MIN(created_at)
                 let direct_pattern = r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)";
+                // Match against the query (parens intact), not the sanitized col_name (F2).
                 if let Ok(re) = regex::Regex::new(direct_pattern)
-                    && let Some(captures) = re.captures(col_name)
+                    && let Some(captures) = re.captures(query)
                         && let Some(inner_col) = captures.get(1) {
                             let inner_col_name = inner_col.as_str();
                             info!("Non-ultra path: Found direct aggregate: {}", col_name);
@@ -2921,5 +2938,25 @@ mod tests {
         assert_eq!(&caps[1], "bytea_output");
         assert_eq!(&caps[2], "hex");
         assert_eq!(&caps[3], "false");
+    }
+
+    // Regression guard for F2: SELECT max(created_at) must still receive datetime
+    // conversion. Column-name sanitization strips parens, so the wire name is the
+    // bare "max"; the aggregate pattern must therefore be matched against the
+    // original query text (parens intact), not the sanitized column name.
+    #[test]
+    fn test_direct_aggregate_pattern_matches_query_not_sanitized_name() {
+        let direct_pattern = r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)";
+        let re = regex::Regex::new(direct_pattern).unwrap();
+
+        // Matching the original query extracts the inner datetime column.
+        let caps = re.captures("SELECT max(created_at) FROM t")
+            .expect("direct aggregate pattern must match the query text");
+        assert_eq!(caps.get(1).unwrap().as_str(), "created_at");
+
+        // The sanitized column name ("max", parens stripped) can never match —
+        // this is the F2 regression: matching the stripped name drops conversion.
+        assert!(re.captures("max").is_none());
+        assert!(re.captures("MAX").is_none());
     }
 }

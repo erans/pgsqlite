@@ -2,6 +2,42 @@ use rusqlite::Connection;
 use crate::types::PgType;
 use crate::metadata::EnumMetadata;
 use regex;
+use sqlparser::ast::{Expr, ObjectName, ObjectNamePart, SelectItem, SetExpr, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
+
+fn parse_select_projection(query: &str) -> Option<Vec<SelectItem>> {
+    let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query).ok()?;
+    let Statement::Query(query) = parsed.into_iter().next()? else {
+        return None;
+    };
+    let SetExpr::Select(select) = *query.body else {
+        return None;
+    };
+    Some(select.projection)
+}
+
+fn select_projection_has_unaliased_function(query: &str, function_name: &str) -> bool {
+    if function_name.is_empty() {
+        return false;
+    }
+
+    let Some(projection) = parse_select_projection(query) else {
+        return false;
+    };
+
+    projection.iter().any(|item| match item {
+        SelectItem::UnnamedExpr(Expr::Function(function)) => object_name_last_part_lower(&function.name)
+            .is_some_and(|projected| projected.eq_ignore_ascii_case(function_name)),
+        _ => false,
+    })
+}
+
+fn object_name_last_part_lower(name: &ObjectName) -> Option<String> {
+    name.0.last().map(|part| match part {
+        ObjectNamePart::Identifier(ident) => ident.value.to_lowercase(),
+    })
+}
 
 /// Maps between PostgreSQL and SQLite types using actual schema information
 pub struct SchemaTypeMapper;
@@ -336,41 +372,11 @@ impl SchemaTypeMapper {
     ) -> Option<i32> {
         let upper = function_name.to_uppercase();
 
-        // Handle bare function names (without parentheses).
-        // Column names may arrive without parentheses after sanitization strips them,
-        // e.g. "json_extract" instead of "json_extract(data, '$[0]')".
-        // Match known function names by exact equality to avoid false positives
-        // on columns named like "year_col" or "hour_trunc".
+        // Bare function names (no parens/spaces) arrive after column-name sanitization
+        // strips parentheses. Without query context we cannot safely type them, so fall
+        // through to the query-regex below (or None when unmatched / no query).
+        // NOTE: legacy=on db_handler-site type-chain consistency is tracked for later.
         if !function_name.contains('(') && !function_name.contains(' ') {
-            match upper.as_str() {
-                "COUNT" => return Some(PgType::Int8.to_oid()),
-                "SUM" | "AVG" => return Some(PgType::Numeric.to_oid()),
-                "MAX" | "MIN" => {
-                    // Need schema lookup for proper type — fall through to query-based detection below
-                }
-                "JSON_ARRAY_LENGTH" => return Some(PgType::Int4.to_oid()),
-                "JSON_GROUP_ARRAY" | "JSON_ARRAY" | "JSON_OBJECT" | "JSON_EXTRACT"
-                | "JSON_AGG" | "JSON_OBJECT_AGG" | "JSONB_AGG" | "JSONB_OBJECT_AGG" | "ROW_TO_JSON"
-                | "JSON_EXTRACT_PATH" | "JSON_EXTRACT_PATH_TEXT" => return Some(PgType::Text.to_oid()),
-                "ARRAY_LENGTH" | "ARRAY_UPPER" | "ARRAY_LOWER" | "ARRAY_NDIMS" | "ARRAY_POSITION" => return Some(PgType::Int4.to_oid()),
-                "ARRAY_APPEND" | "ARRAY_PREPEND" | "ARRAY_CAT" | "ARRAY_REMOVE"
-                | "ARRAY_REPLACE" | "ARRAY_SLICE" | "STRING_TO_ARRAY"
-                | "ARRAY_POSITIONS" | "ARRAY_TO_STRING" | "UNNEST"
-                | "ARRAY_AGG" => return Some(PgType::Text.to_oid()),
-                "ARRAY_CONTAINS" | "ARRAY_CONTAINED" | "ARRAY_OVERLAP" => return Some(PgType::Bool.to_oid()),
-                "NOW" => return Some(PgType::Timestamptz.to_oid()),
-                "CURRENT_TIMESTAMP" => return Some(PgType::Timestamptz.to_oid()),
-                "CURRENT_DATE" => return Some(PgType::Text.to_oid()),
-                "CURRENT_TIME" => return Some(PgType::Time.to_oid()),
-                "EXTRACT" => return Some(PgType::Float8.to_oid()),
-                "DATE_TRUNC" | "TO_TIMESTAMP" => return Some(PgType::Timestamp.to_oid()),
-                "MAKE_DATE" => return Some(PgType::Date.to_oid()),
-                "MAKE_TIME" => return Some(PgType::Time.to_oid()),
-                "AGE" => return Some(PgType::Interval.to_oid()),
-                "EPOCH" => return Some(PgType::Timestamp.to_oid()),
-                "DECIMAL_ADD" | "DECIMAL_SUB" | "DECIMAL_MUL" | "DECIMAL_DIV" | "DECIMAL_FROM_TEXT" => return Some(PgType::Numeric.to_oid()),
-                _ => {}
-            }
 
             // If we have the query, try to find what function produces this alias
             if let Some(q) = query {
@@ -393,6 +399,28 @@ impl SchemaTypeMapper {
                         }
                     }
                 
+                // If the conformant column name is the bare function name for an
+                // unaliased call (e.g. json_extract(...)), recover the function
+                // return type from the SELECT projection AST only.
+                let function_name_lower = function_name.to_ascii_lowercase();
+                let projection_matches = select_projection_has_unaliased_function(q, function_name)
+                    || (parse_select_projection(q).is_some_and(|projection| projection.len() == 1)
+                        && ((function_name_lower == "current_timestamp" && select_projection_has_unaliased_function(q, "now"))
+                            || (function_name_lower == "now" && select_projection_has_unaliased_function(q, "current_timestamp"))));
+
+                if projection_matches {
+                    let function_call = if matches!(
+                        function_name_lower.as_str(),
+                        "now" | "current_timestamp" | "current_time" | "epoch"
+                    ) {
+                        format!("{function_name}()")
+                    } else {
+                        format!("{function_name}(")
+                    };
+                    return Self::get_aggregate_return_type_with_query(
+                        &function_call, conn, table_name, None);
+                }
+
                 // Also check for array concatenation operator pattern: column || array AS alias
                 // NOTE: For now, we return TEXT instead of TextArray because:
                 // 1. The data is stored as JSON strings in SQLite
@@ -550,5 +578,140 @@ impl SchemaTypeMapper {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // F5: bare function names with NO query context must return None. The old
+    // bare-name OID block mis-typed aliased non-aggregates (e.g. `upper(name) AS
+    // count`) as int8. With the block deleted, bare names fall through to the
+    // query-regex (None when there's no query / no match).
+    #[test]
+    fn test_bare_aggregate_no_query_context_returns_none() {
+        for name in ["count", "sum", "avg", "max", "min", "json_extract",
+                     "array_length", "now", "current_timestamp", "date_trunc", "age"] {
+            assert_eq!(
+                SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, None),
+                None,
+                "bare '{name}' without query context should resolve to None"
+            );
+        }
+    }
+
+    #[test]
+    fn test_bare_json_extract_with_query_context_resolves_text() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT json_extract(data, '$[0]') FROM array_ops"),
+            ),
+            Some(PgType::Text.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT id, json_extract(data, '$[0]') FROM array_ops"),
+            ),
+            Some(PgType::Text.to_oid()),
+        );
+    }
+
+    #[test]
+    fn test_bare_zero_arg_datetime_functions_with_query_context_resolve_timestamp() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "now",
+                None,
+                None,
+                Some("SELECT now()"),
+            ),
+            Some(PgType::Timestamptz.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "current_timestamp",
+                None,
+                None,
+                Some("SELECT current_timestamp()"),
+            ),
+            Some(PgType::Timestamptz.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "current_timestamp",
+                None,
+                None,
+                Some("SELECT now()"),
+            ),
+            Some(PgType::Timestamptz.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "current_timestamp",
+                None,
+                None,
+                Some("SELECT now(), 'x' AS current_timestamp"),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_bare_json_extract_alias_with_where_call_does_not_resolve_text() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT upper(name) AS json_extract FROM t WHERE json_extract(data, '$.x') IS NOT NULL"),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_bare_json_extract_alias_with_where_comma_call_does_not_resolve_text() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT upper(name) AS json_extract FROM t WHERE x IN (1, json_extract(data, '$.x'))"),
+            ),
+            None,
+        );
+    }
+
+    // The query-regex fallback (kept) still resolves aliased aggregates with query context.
+    #[test]
+    fn test_bare_aggregate_with_query_context_still_resolves() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "count", None, None, Some("SELECT count(*) AS count FROM t")),
+            Some(PgType::Int8.to_oid())
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "total", None, None, Some("SELECT sum(amount) AS total FROM t")),
+            Some(PgType::Numeric.to_oid())
+        );
+    }
+
+    // F5 root cause: an aliased NON-aggregate like `upper(name) AS count` must NOT
+    // be typed as int8 just because the alias happens to be "count".
+    #[test]
+    fn test_aliased_nonaggregate_bare_name_not_mistyped() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "count", None, None, Some("SELECT upper(name) AS count FROM t")),
+            None
+        );
     }
 }

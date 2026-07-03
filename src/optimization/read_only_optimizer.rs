@@ -5,7 +5,8 @@ use rusqlite::Connection;
 use crate::cache::SchemaCache;
 use crate::session::db_handler::DbResponse;
 use crate::query::QueryComplexity;
-use crate::query::column_sanitizer::sanitize_column_name;
+use crate::query::projection_resolver::resolve_columns_with_legacy;
+use crate::translator::TranslationMetadata;
 use tracing::{debug, info};
 
 /// Direct read-only access optimizer for SELECT queries
@@ -255,13 +256,14 @@ impl ReadOnlyOptimizer {
 
         // Prepare statement to get column information
         let stmt = conn.prepare(query)?;
-        let column_count = stmt.column_count();
-        
         // Get column names
-        let mut columns = Vec::new();
-        for i in 0..column_count {
-            columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-        }
+        let columns: Vec<String> = resolve_columns_with_legacy(
+            &stmt,
+            query,
+            &HashMap::new(),
+            &TranslationMetadata::new(),
+            false,
+        )?.into_iter().map(|m| m.wire_name).collect();
 
         // Get column types from schema cache
         let mut column_types = Vec::new();
