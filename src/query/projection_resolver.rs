@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use crate::types::{PgType, SchemaTypeMapper};
 use crate::translator::TranslationMetadata;
-use sqlparser::ast::{Expr, SelectItem, SetExpr, Statement};
+use sqlparser::ast::{Expr, ObjectName, ObjectNamePart, SelectItem, SetExpr, Statement};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
@@ -51,6 +51,20 @@ fn parse_quoted_projection_names(query: &str) -> Option<Vec<Option<String>>> {
             .map(|ident| ident.value.clone()),
         _ => None,
     }).collect())
+}
+
+fn parse_function_projection_names(query: &str) -> Option<Vec<Option<String>>> {
+    let select = parse_select_projection(query)?;
+    Some(select.projection.iter().map(|item| match item {
+        SelectItem::UnnamedExpr(Expr::Function(function)) => object_name_last_part_lower(&function.name),
+        _ => None,
+    }).collect())
+}
+
+fn object_name_last_part_lower(name: &ObjectName) -> Option<String> {
+    name.0.last().map(|part| match part {
+        ObjectNamePart::Identifier(ident) => ident.value.to_lowercase(),
+    })
 }
 
 fn quoted_projection_name<'a>(quoted_projection_names: Option<&'a [Option<String>]>, position: usize, raw_name: &str) -> Option<&'a str> {
@@ -125,6 +139,7 @@ pub struct ResolveCtx<'a> {
     pub schema_types: &'a HashMap<String, String>,
     pub hints: &'a TranslationMetadata,
     pub alias_view: Option<&'a [AliasItem]>,
+    pub function_projection_names: Option<&'a [Option<String>]>,
     pub legacy: bool,
 }
 
@@ -142,12 +157,12 @@ impl ProjectionResolver {
         }
 
         // Step 2: function-call shape (raw name contains `(`), only when the
-        // original query actually contains that function call. SQLite also
-        // returns raw real-column names here for quoted identifiers like
-        // "price(usd)" in SELECT * projections.
+        // same SELECT projection position is actually that function call.
+        // SQLite also returns raw real-column names here for quoted identifiers
+        // like "price(usd)" in SELECT * projections.
         if let Some(shape) = fn_shape(raw_name) {
             let name = shape.name.trim();
-            if query_contains_function_call(ctx.query, name) {
+            if projection_function_matches(ctx, position, name) {
                 let lower = name.to_lowercase();
                 let wire_name = lower.clone();
                 let (type_oid, datetime_flag) = resolve_function_type(&lower, &shape.inner, ctx);
@@ -201,12 +216,21 @@ fn looks_unnamed_expr(name: &str) -> bool {
     name.chars().any(|c| matches!(c, '+'|'-'|'*'|'/'|' '|'=')) || name.parse::<f64>().is_ok()
 }
 
-fn query_contains_function_call(query: &str, fn_name: &str) -> bool {
-    if query.is_empty() || fn_name.is_empty() {
+fn projection_function_matches(ctx: &ResolveCtx, position: usize, fn_name: &str) -> bool {
+    if fn_name.is_empty() {
         return false;
     }
-    let pattern = format!(r"(?i)(?:^|[^\w]){}\s*\(", regex::escape(fn_name));
-    regex::Regex::new(&pattern).is_ok_and(|re| re.is_match(query))
+
+    if let Some(names) = ctx.function_projection_names {
+        return names
+            .get(position)
+            .and_then(|name| name.as_deref())
+            .is_some_and(|projected| projected.eq_ignore_ascii_case(fn_name));
+    }
+
+    parse_function_projection_names(ctx.query)
+        .and_then(|names| names.get(position).cloned().flatten())
+        .is_some_and(|projected| projected.eq_ignore_ascii_case(fn_name))
 }
 
 fn resolve_function_type(lower_fn: &str, inner: &str, ctx: &ResolveCtx) -> (i32, bool) {
@@ -250,6 +274,8 @@ pub fn resolve_columns_with_legacy(
     let view_ref = alias_view.as_deref();
     let quoted_projection_names = parse_quoted_projection_names(query);
     let quoted_ref = quoted_projection_names.as_deref();
+    let function_projection_names = parse_function_projection_names(query);
+    let function_ref = function_projection_names.as_deref();
     let count = stmt.column_count();
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
@@ -265,7 +291,7 @@ pub fn resolve_columns_with_legacy(
             });
             continue;
         }
-        let ctx = ResolveCtx { query, schema_types, hints, alias_view: view_ref, legacy };
+        let ctx = ResolveCtx { query, schema_types, hints, alias_view: view_ref, function_projection_names: function_ref, legacy };
         out.push(ProjectionResolver::resolve(&raw, i, &ctx));
     }
     dedup_question_columns(&mut out);
@@ -287,6 +313,8 @@ pub async fn resolve_columns_from_names(
     let view_ref = alias_view.as_deref();
     let quoted_projection_names = parse_quoted_projection_names(query);
     let quoted_ref = quoted_projection_names.as_deref();
+    let function_projection_names = parse_function_projection_names(query);
+    let function_ref = function_projection_names.as_deref();
     let mut out = Vec::with_capacity(names.len());
     for (i, raw) in names.iter().enumerate() {
         if let Some(quoted_name) = quoted_projection_name(quoted_ref, i, raw) {
@@ -300,7 +328,7 @@ pub async fn resolve_columns_from_names(
             });
             continue;
         }
-        let ctx = ResolveCtx { query, schema_types, hints, alias_view: view_ref, legacy };
+        let ctx = ResolveCtx { query, schema_types, hints, alias_view: view_ref, function_projection_names: function_ref, legacy };
         let meta = ProjectionResolver::resolve(raw, i, &ctx);
         out.push(meta);
     }
@@ -402,12 +430,12 @@ mod tests {
 
     fn ctx_no_aliases_for_query<'a>(schema: &'a HashMap<String,String>, legacy: bool, query: &'a str) -> ResolveCtx<'a> {
         static EMPTY: once_cell::sync::Lazy<TranslationMetadata> = once_cell::sync::Lazy::new(TranslationMetadata::new);
-        ResolveCtx { query, schema_types: schema, hints: &EMPTY, alias_view: None, legacy }
+        ResolveCtx { query, schema_types: schema, hints: &EMPTY, alias_view: None, function_projection_names: None, legacy }
     }
 
     fn ctx_with_aliases<'a>(schema: &'a HashMap<String,String>, alias_view: &'a [AliasItem], legacy: bool) -> ResolveCtx<'a> {
         static EMPTY: once_cell::sync::Lazy<TranslationMetadata> = once_cell::sync::Lazy::new(TranslationMetadata::new);
-        ResolveCtx { query: "", schema_types: schema, hints: &EMPTY, alias_view: Some(alias_view), legacy }
+        ResolveCtx { query: "", schema_types: schema, hints: &EMPTY, alias_view: Some(alias_view), function_projection_names: None, legacy }
     }
 
     #[test]
@@ -545,5 +573,52 @@ mod tests {
         assert_eq!(metas.len(), 2);
         assert_eq!(metas[0].wire_name, "?column?");
         assert_eq!(metas[1].wire_name, "?column?2");
+    }
+
+    #[tokio::test]
+    async fn resolve_columns_from_names_preserves_wildcard_paren_column_without_schema_map() {
+        let schema = HashMap::new();
+        let hints = TranslationMetadata::new();
+        let session = crate::session::SessionState::new("db".into(), "user".into());
+        let names = vec!["price(usd)".to_string()];
+        let metas = resolve_columns_from_names(
+            &names, "SELECT * FROM t", &schema, &hints, &session,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metas[0].wire_name, "price(usd)");
+        assert_eq!(metas[0].type_oid, PgType::Text.to_oid());
+    }
+
+    #[tokio::test]
+    async fn resolve_columns_from_names_ignores_unrelated_where_function_for_wildcard_column() {
+        let schema = HashMap::new();
+        let hints = TranslationMetadata::new();
+        let session = crate::session::SessionState::new("db".into(), "user".into());
+        let names = vec!["max(value)".to_string()];
+        let metas = resolve_columns_from_names(
+            &names, "SELECT * FROM t WHERE max(other_value) > 0", &schema, &hints, &session,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metas[0].wire_name, "max(value)");
+        assert_eq!(metas[0].type_oid, PgType::Text.to_oid());
+    }
+
+    #[tokio::test]
+    async fn resolve_columns_from_names_resolves_matching_function_projection() {
+        let mut schema = HashMap::new();
+        schema.insert("created_at".to_string(), "TIMESTAMP".to_string());
+        let hints = TranslationMetadata::new();
+        let session = crate::session::SessionState::new("db".into(), "user".into());
+        let names = vec!["max(created_at)".to_string()];
+        let metas = resolve_columns_from_names(
+            &names, "SELECT max(created_at) FROM t", &schema, &hints, &session,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metas[0].wire_name, "max");
+        assert_eq!(metas[0].type_oid, PgType::Timestamp.to_oid());
+        assert!(metas[0].datetime_flag);
     }
 }

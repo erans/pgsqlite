@@ -2,6 +2,37 @@ use rusqlite::Connection;
 use crate::types::PgType;
 use crate::metadata::EnumMetadata;
 use regex;
+use sqlparser::ast::{Expr, ObjectName, ObjectNamePart, SelectItem, SetExpr, Statement};
+use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::parser::Parser;
+
+fn select_projection_has_unaliased_function(query: &str, function_name: &str) -> bool {
+    if function_name.is_empty() {
+        return false;
+    }
+
+    let Ok(parsed) = Parser::parse_sql(&PostgreSqlDialect {}, query) else {
+        return false;
+    };
+    let Some(Statement::Query(query)) = parsed.into_iter().next() else {
+        return false;
+    };
+    let SetExpr::Select(select) = *query.body else {
+        return false;
+    };
+
+    select.projection.iter().any(|item| match item {
+        SelectItem::UnnamedExpr(Expr::Function(function)) => object_name_last_part_lower(&function.name)
+            .is_some_and(|projected| projected.eq_ignore_ascii_case(function_name)),
+        _ => false,
+    })
+}
+
+fn object_name_last_part_lower(name: &ObjectName) -> Option<String> {
+    name.0.last().map(|part| match part {
+        ObjectNamePart::Identifier(ident) => ident.value.to_lowercase(),
+    })
+}
 
 /// Maps between PostgreSQL and SQLite types using actual schema information
 pub struct SchemaTypeMapper;
@@ -365,13 +396,11 @@ impl SchemaTypeMapper {
                 
                 // If the conformant column name is the bare function name for an
                 // unaliased call (e.g. json_extract(...)), recover the function
-                // return type from the query text.
-                let direct_call_pattern = format!(r"(?i)(?:^|\bSELECT\s+|,)\s*{}\s*\(", regex::escape(function_name));
-                if let Ok(re) = regex::Regex::new(&direct_call_pattern)
-                    && re.is_match(q) {
-                        return Self::get_aggregate_return_type_with_query(
-                            &format!("{function_name}("), conn, table_name, None);
-                    }
+                // return type from the SELECT projection AST only.
+                if select_projection_has_unaliased_function(q, function_name) {
+                    return Self::get_aggregate_return_type_with_query(
+                        &format!("{function_name}("), conn, table_name, None);
+                }
 
                 // Also check for array concatenation operator pattern: column || array AS alias
                 // NOTE: For now, we return TEXT instead of TextArray because:
@@ -583,6 +612,19 @@ mod tests {
                 None,
                 None,
                 Some("SELECT upper(name) AS json_extract FROM t WHERE json_extract(data, '$.x') IS NOT NULL"),
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_bare_json_extract_alias_with_where_comma_call_does_not_resolve_text() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT upper(name) AS json_extract FROM t WHERE x IN (1, json_extract(data, '$.x'))"),
             ),
             None,
         );
