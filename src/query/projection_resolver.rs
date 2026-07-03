@@ -18,10 +18,7 @@ pub struct AliasItem {
 /// (so the zero-alloc fast path never pays a parse). On parse error, None.
 pub fn parse_alias_view(query: &str) -> Option<Vec<AliasItem>> {
     if !query.split_whitespace().any(|w| w.eq_ignore_ascii_case("AS")) { return None; }
-    let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query).ok()?;
-    let stmt = parsed.into_iter().next()?;
-    let body = match stmt { Statement::Query(q) => q, _ => return None };
-    let select = match &*body.body { SetExpr::Select(s) => s, _ => return None };
+    let select = parse_select_projection(query)?;
     let items: Vec<AliasItem> = select.projection.iter().enumerate()
         .filter_map(|(i, item)| match item {
             SelectItem::ExprWithAlias { expr, alias } => Some(AliasItem {
@@ -34,6 +31,33 @@ pub fn parse_alias_view(query: &str) -> Option<Vec<AliasItem>> {
         })
         .collect();
     Some(items)
+}
+
+fn parse_select_projection(query: &str) -> Option<Box<sqlparser::ast::Select>> {
+    let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query).ok()?;
+    let stmt = parsed.into_iter().next()?;
+    let body = match stmt { Statement::Query(q) => q, _ => return None };
+    match *body.body { SetExpr::Select(s) => Some(s), _ => None }
+}
+
+fn parse_quoted_projection_names(query: &str) -> Option<Vec<Option<String>>> {
+    let select = parse_select_projection(query)?;
+    Some(select.projection.iter().map(|item| match item {
+        SelectItem::UnnamedExpr(Expr::Identifier(ident)) if ident.quote_style.is_some() => {
+            Some(ident.value.clone())
+        }
+        SelectItem::UnnamedExpr(Expr::CompoundIdentifier(idents)) => idents.last()
+            .filter(|ident| ident.quote_style.is_some())
+            .map(|ident| ident.value.clone()),
+        _ => None,
+    }).collect())
+}
+
+fn quoted_projection_name<'a>(quoted_projection_names: Option<&'a [Option<String>]>, position: usize, raw_name: &str) -> Option<&'a str> {
+    quoted_projection_names?
+        .get(position)?
+        .as_deref()
+        .filter(|quoted| *quoted == raw_name)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,10 +229,23 @@ pub fn resolve_columns_with_legacy(
 ) -> rusqlite::Result<Vec<ColumnMeta>> {
     let alias_view = parse_alias_view(query);
     let view_ref = alias_view.as_deref();
+    let quoted_projection_names = parse_quoted_projection_names(query);
+    let quoted_ref = quoted_projection_names.as_deref();
     let count = stmt.column_count();
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let raw = stmt.column_name(i)?.to_string();
+        if let Some(quoted_name) = quoted_projection_name(quoted_ref, i, &raw) {
+            let pg_type = schema_types.get(quoted_name);
+            out.push(ColumnMeta {
+                wire_name: quoted_name.to_string(),
+                type_oid: pg_type
+                    .map(|pg_type| SchemaTypeMapper::pg_type_string_to_oid(pg_type))
+                    .unwrap_or(PgType::Text.to_oid()),
+                datetime_flag: pg_type.is_some_and(|pg_type| is_datetime_type(pg_type)),
+            });
+            continue;
+        }
         let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
         out.push(ProjectionResolver::resolve(&raw, i, &ctx));
     }
@@ -229,8 +266,21 @@ pub async fn resolve_columns_from_names(
     let legacy = session.legacy_result_columns().await;
     let alias_view = parse_alias_view(query);
     let view_ref = alias_view.as_deref();
+    let quoted_projection_names = parse_quoted_projection_names(query);
+    let quoted_ref = quoted_projection_names.as_deref();
     let mut out = Vec::with_capacity(names.len());
     for (i, raw) in names.iter().enumerate() {
+        if let Some(quoted_name) = quoted_projection_name(quoted_ref, i, raw) {
+            let pg_type = schema_types.get(quoted_name);
+            out.push(ColumnMeta {
+                wire_name: quoted_name.to_string(),
+                type_oid: pg_type
+                    .map(|pg_type| SchemaTypeMapper::pg_type_string_to_oid(pg_type))
+                    .unwrap_or(PgType::Text.to_oid()),
+                datetime_flag: pg_type.is_some_and(|pg_type| is_datetime_type(pg_type)),
+            });
+            continue;
+        }
         let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
         let meta = ProjectionResolver::resolve(raw, i, &ctx);
         out.push(meta);
@@ -433,6 +483,19 @@ mod tests {
         let schema = HashMap::new();
         let m = ProjectionResolver::resolve("a+b", 0, &ctx_no_aliases(&schema, false));
         assert_eq!(m.wire_name, "?column?");
+    }
+
+    #[test]
+    fn resolve_columns_preserves_quoted_paren_identifier_without_schema_map() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute(r#"CREATE TABLE t1 ("price(usd)" INT)"#, []).unwrap();
+        let stmt = conn.prepare(r#"SELECT "price(usd)" FROM t1"#).unwrap();
+        let schema = HashMap::new();
+        let hints = TranslationMetadata::new();
+        let metas = resolve_columns_with_legacy(
+            &stmt, r#"SELECT "price(usd)" FROM t1"#, &schema, &hints, false,
+        ).unwrap();
+        assert_eq!(metas[0].wire_name, "price(usd)");
     }
 
     #[tokio::test]

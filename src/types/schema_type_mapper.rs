@@ -363,6 +363,16 @@ impl SchemaTypeMapper {
                         }
                     }
                 
+                // If the conformant column name is the bare function name for an
+                // unaliased call (e.g. json_extract(...)), recover the function
+                // return type from the query text.
+                let direct_call_pattern = format!(r"(?i)\b{}\s*\(", regex::escape(function_name));
+                if let Ok(re) = regex::Regex::new(&direct_call_pattern)
+                    && re.is_match(q) {
+                        return Self::get_aggregate_return_type_with_query(
+                            &format!("{function_name}("), conn, table_name, None);
+                    }
+
                 // Also check for array concatenation operator pattern: column || array AS alias
                 // NOTE: For now, we return TEXT instead of TextArray because:
                 // 1. The data is stored as JSON strings in SQLite
@@ -541,6 +551,19 @@ mod tests {
                 "bare '{name}' without query context should resolve to None"
             );
         }
+    }
+
+    #[test]
+    fn test_bare_json_extract_with_query_context_resolves_text() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT json_extract(data, '$[0]') FROM array_ops"),
+            ),
+            Some(PgType::Text.to_oid()),
+        );
     }
 
     // The query-regex fallback (kept) still resolves aliased aggregates with query context.

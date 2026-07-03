@@ -676,8 +676,9 @@ impl ExtendedQueryHandler {
                                     Self::cast_type_to_oid(cast_type)
                                 }
                                 // For parameter columns (NULL from SELECT $1), try to match with parameters
-                                else if col_name == "NULL" || col_name == "?column?" {
-                                    // For queries like SELECT $1, $2, the columns correspond to parameters
+                                else if col_name == "NULL" || (col_name == "?column?" && is_simple_param_select) {
+                                    // For queries like SELECT $1, $2, the columns correspond to parameters.
+                                    // Other ?column? expressions must continue to value/query inference below.
                                     if is_simple_param_select {
                                         // Count which parameter this column represents
                                         // For SELECT $1, $2, column 0 = param 0, column 1 = param 1
@@ -716,7 +717,7 @@ impl ExtendedQueryHandler {
                                             PgType::Text.to_oid()
                                         }
                                     } else {
-                                        // For other queries with NULL columns, default to TEXT
+                                        // For NULL literal columns, default to TEXT.
                                         PgType::Text.to_oid()
                                     }
                                 }

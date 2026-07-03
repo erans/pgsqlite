@@ -2,8 +2,8 @@ use crate::session::db_handler::{DbHandler, DbResponse};
 use uuid::Uuid;
 use crate::session::SessionState;
 use crate::PgSqliteError;
-use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
-use crate::query::column_sanitizer::sanitize_column_name;
+use crate::translator::{RegexTranslator, SchemaPrefixTranslator, TranslationMetadata};
+use crate::query::projection_resolver::resolve_columns_with_legacy;
 use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -270,10 +270,13 @@ impl CatalogInterceptor {
                                 // Execute the translated query
                                 let mut stmt = conn.prepare(&query_str)?;
                                 let column_count = stmt.column_count();
-                                let mut columns = Vec::new();
-                                for i in 0..column_count {
-                                    columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                                }
+                                let columns: Vec<String> = resolve_columns_with_legacy(
+                                    &stmt,
+                                    &query_str,
+                                    &HashMap::new(),
+                                    &TranslationMetadata::new(),
+                                    false,
+                                )?.into_iter().map(|m| m.wire_name).collect();
 
                                 let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
                                     let mut values = Vec::new();
@@ -411,10 +414,13 @@ impl CatalogInterceptor {
                                         // Execute the query directly with the session's connection
                                         let mut stmt = conn.prepare(&query_str)?;
                                         let column_count = stmt.column_count();
-                                        let mut columns = Vec::new();
-                                        for i in 0..column_count {
-                                            columns.push(sanitize_column_name(stmt.column_name(i)?).to_string());
-                                        }
+                                        let columns: Vec<String> = resolve_columns_with_legacy(
+                                            &stmt,
+                                            &query_str,
+                                            &HashMap::new(),
+                                            &TranslationMetadata::new(),
+                                            false,
+                                        )?.into_iter().map(|m| m.wire_name).collect();
 
                                         let rows_result: rusqlite::Result<Vec<Vec<Option<Vec<u8>>>>> = stmt.query_map([], |row| {
                                             let mut values = Vec::new();
