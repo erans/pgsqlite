@@ -93,6 +93,57 @@ async fn test_catalog_count_star_returns_static_dataset_count() {
 }
 
 #[tokio::test]
+async fn test_pg_roles_unquoted_aliases_fold_to_lowercase_and_quoted_aliases_preserve_case() {
+    let response = catalog_query(
+        "SELECT rolname AS DisplayName, oid AS \"RoleOid\" FROM pg_roles",
+    )
+    .await;
+
+    assert_eq!(response.columns, vec!["displayname", "RoleOid"]);
+    assert_eq!(response.rows.len(), 3);
+    assert_eq!(text_cell(&response.rows[0], 0), "postgres");
+    assert_eq!(text_cell(&response.rows[0], 1), "10");
+}
+
+#[tokio::test]
+async fn test_pg_namespace_cast_projection_uses_inner_source_column() {
+    let response = catalog_query("SELECT CAST(oid AS text) AS o FROM pg_catalog.pg_namespace").await;
+
+    assert_eq!(response.columns, vec!["o"]);
+    assert_eq!(response.rows.len(), 2);
+    assert_eq!(text_cell(&response.rows[0], 0), "11");
+    assert_eq!(text_cell(&response.rows[1], 0), "2200");
+}
+
+#[tokio::test]
+async fn test_pg_namespace_compound_identifier_projection_uses_leaf_column() {
+    let response = catalog_query("SELECT n.nspname FROM pg_catalog.pg_namespace AS n").await;
+
+    assert_eq!(response.columns, vec!["nspname"]);
+    assert_eq!(response.rows.len(), 2);
+    assert_eq!(text_cell(&response.rows[0], 0), "pg_catalog");
+    assert_eq!(text_cell(&response.rows[1], 0), "public");
+}
+
+#[tokio::test]
+async fn test_pg_roles_where_filter_with_alias_free_projection() {
+    let response = catalog_query("SELECT rolname FROM pg_roles WHERE rolname = 'postgres'").await;
+
+    assert_eq!(response.columns, vec!["rolname"]);
+    assert_eq!(response.rows.len(), 1);
+    assert_eq!(text_cell(&response.rows[0], 0), "postgres");
+}
+
+#[tokio::test]
+async fn test_pg_namespace_unknown_source_column_projects_no_columns() {
+    let response = catalog_query("SELECT nonexistent FROM pg_catalog.pg_namespace").await;
+
+    assert!(response.columns.is_empty());
+    assert_eq!(response.rows.len(), 2);
+    assert!(response.rows.iter().all(Vec::is_empty));
+}
+
+#[tokio::test]
 async fn test_information_schema_schemata_alias_projection() {
     let response = catalog_query("SELECT catalog_name AS x FROM information_schema.schemata").await;
 
