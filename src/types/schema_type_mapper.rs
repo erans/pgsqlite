@@ -336,41 +336,11 @@ impl SchemaTypeMapper {
     ) -> Option<i32> {
         let upper = function_name.to_uppercase();
 
-        // Handle bare function names (without parentheses).
-        // Column names may arrive without parentheses after sanitization strips them,
-        // e.g. "json_extract" instead of "json_extract(data, '$[0]')".
-        // Match known function names by exact equality to avoid false positives
-        // on columns named like "year_col" or "hour_trunc".
+        // Bare function names (no parens/spaces) arrive after column-name sanitization
+        // strips parentheses. Without query context we cannot safely type them, so fall
+        // through to the query-regex below (or None when unmatched / no query).
+        // NOTE: legacy=on db_handler-site type-chain consistency is tracked for later.
         if !function_name.contains('(') && !function_name.contains(' ') {
-            match upper.as_str() {
-                "COUNT" => return Some(PgType::Int8.to_oid()),
-                "SUM" | "AVG" => return Some(PgType::Numeric.to_oid()),
-                "MAX" | "MIN" => {
-                    // Need schema lookup for proper type — fall through to query-based detection below
-                }
-                "JSON_ARRAY_LENGTH" => return Some(PgType::Int4.to_oid()),
-                "JSON_GROUP_ARRAY" | "JSON_ARRAY" | "JSON_OBJECT" | "JSON_EXTRACT"
-                | "JSON_AGG" | "JSON_OBJECT_AGG" | "JSONB_AGG" | "JSONB_OBJECT_AGG" | "ROW_TO_JSON"
-                | "JSON_EXTRACT_PATH" | "JSON_EXTRACT_PATH_TEXT" => return Some(PgType::Text.to_oid()),
-                "ARRAY_LENGTH" | "ARRAY_UPPER" | "ARRAY_LOWER" | "ARRAY_NDIMS" | "ARRAY_POSITION" => return Some(PgType::Int4.to_oid()),
-                "ARRAY_APPEND" | "ARRAY_PREPEND" | "ARRAY_CAT" | "ARRAY_REMOVE"
-                | "ARRAY_REPLACE" | "ARRAY_SLICE" | "STRING_TO_ARRAY"
-                | "ARRAY_POSITIONS" | "ARRAY_TO_STRING" | "UNNEST"
-                | "ARRAY_AGG" => return Some(PgType::Text.to_oid()),
-                "ARRAY_CONTAINS" | "ARRAY_CONTAINED" | "ARRAY_OVERLAP" => return Some(PgType::Bool.to_oid()),
-                "NOW" => return Some(PgType::Timestamptz.to_oid()),
-                "CURRENT_TIMESTAMP" => return Some(PgType::Timestamptz.to_oid()),
-                "CURRENT_DATE" => return Some(PgType::Text.to_oid()),
-                "CURRENT_TIME" => return Some(PgType::Time.to_oid()),
-                "EXTRACT" => return Some(PgType::Float8.to_oid()),
-                "DATE_TRUNC" | "TO_TIMESTAMP" => return Some(PgType::Timestamp.to_oid()),
-                "MAKE_DATE" => return Some(PgType::Date.to_oid()),
-                "MAKE_TIME" => return Some(PgType::Time.to_oid()),
-                "AGE" => return Some(PgType::Interval.to_oid()),
-                "EPOCH" => return Some(PgType::Timestamp.to_oid()),
-                "DECIMAL_ADD" | "DECIMAL_SUB" | "DECIMAL_MUL" | "DECIMAL_DIV" | "DECIMAL_FROM_TEXT" => return Some(PgType::Numeric.to_oid()),
-                _ => {}
-            }
 
             // If we have the query, try to find what function produces this alias
             if let Some(q) = query {
@@ -550,5 +520,52 @@ impl SchemaTypeMapper {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // F5: bare function names with NO query context must return None. The old
+    // bare-name OID block mis-typed aliased non-aggregates (e.g. `upper(name) AS
+    // count`) as int8. With the block deleted, bare names fall through to the
+    // query-regex (None when there's no query / no match).
+    #[test]
+    fn test_bare_aggregate_no_query_context_returns_none() {
+        for name in ["count", "sum", "avg", "max", "min", "json_extract",
+                     "array_length", "now", "current_timestamp", "date_trunc", "age"] {
+            assert_eq!(
+                SchemaTypeMapper::get_aggregate_return_type_with_query(name, None, None, None),
+                None,
+                "bare '{name}' without query context should resolve to None"
+            );
+        }
+    }
+
+    // The query-regex fallback (kept) still resolves aliased aggregates with query context.
+    #[test]
+    fn test_bare_aggregate_with_query_context_still_resolves() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "count", None, None, Some("SELECT count(*) AS count FROM t")),
+            Some(PgType::Int8.to_oid())
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "total", None, None, Some("SELECT sum(amount) AS total FROM t")),
+            Some(PgType::Numeric.to_oid())
+        );
+    }
+
+    // F5 root cause: an aliased NON-aggregate like `upper(name) AS count` must NOT
+    // be typed as int8 just because the alias happens to be "count".
+    #[test]
+    fn test_aliased_nonaggregate_bare_name_not_mistyped() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "count", None, None, Some("SELECT upper(name) AS count FROM t")),
+            None
+        );
     }
 }

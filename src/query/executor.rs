@@ -1322,8 +1322,9 @@ impl QueryExecutor {
                 // Also check for direct MAX/MIN without subquery
                 // Pattern: MAX(created_at) or MIN(created_at)
                 let direct_pattern = r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)";
+                // Match against the query (parens intact), not the sanitized col_name (F2).
                 if let Ok(re) = regex::Regex::new(direct_pattern)
-                    && let Some(captures) = re.captures(col_name)
+                    && let Some(captures) = re.captures(query)
                         && let Some(inner_col) = captures.get(1) {
                             let inner_col_name = inner_col.as_str();
                             info!("Non-ultra path: Found direct aggregate: {}", col_name);
@@ -2921,5 +2922,25 @@ mod tests {
         assert_eq!(&caps[1], "bytea_output");
         assert_eq!(&caps[2], "hex");
         assert_eq!(&caps[3], "false");
+    }
+
+    // Regression guard for F2: SELECT max(created_at) must still receive datetime
+    // conversion. Column-name sanitization strips parens, so the wire name is the
+    // bare "max"; the aggregate pattern must therefore be matched against the
+    // original query text (parens intact), not the sanitized column name.
+    #[test]
+    fn test_direct_aggregate_pattern_matches_query_not_sanitized_name() {
+        let direct_pattern = r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)";
+        let re = regex::Regex::new(direct_pattern).unwrap();
+
+        // Matching the original query extracts the inner datetime column.
+        let caps = re.captures("SELECT max(created_at) FROM t")
+            .expect("direct aggregate pattern must match the query text");
+        assert_eq!(caps.get(1).unwrap().as_str(), "created_at");
+
+        // The sanitized column name ("max", parens stripped) can never match —
+        // this is the F2 regression: matching the stripped name drops conversion.
+        assert!(re.captures("max").is_none());
+        assert!(re.captures("MAX").is_none());
     }
 }
