@@ -397,9 +397,22 @@ impl SchemaTypeMapper {
                 // If the conformant column name is the bare function name for an
                 // unaliased call (e.g. json_extract(...)), recover the function
                 // return type from the SELECT projection AST only.
-                if select_projection_has_unaliased_function(q, function_name) {
+                let function_name_lower = function_name.to_ascii_lowercase();
+                let projection_matches = select_projection_has_unaliased_function(q, function_name)
+                    || (function_name_lower == "current_timestamp" && select_projection_has_unaliased_function(q, "now"))
+                    || (function_name_lower == "now" && select_projection_has_unaliased_function(q, "current_timestamp"));
+
+                if projection_matches {
+                    let function_call = if matches!(
+                        function_name_lower.as_str(),
+                        "now" | "current_timestamp" | "current_time" | "current_date" | "epoch"
+                    ) {
+                        format!("{function_name}()")
+                    } else {
+                        format!("{function_name}(")
+                    };
                     return Self::get_aggregate_return_type_with_query(
-                        &format!("{function_name}("), conn, table_name, None);
+                        &function_call, conn, table_name, None);
                 }
 
                 // Also check for array concatenation operator pattern: column || array AS alias
@@ -601,6 +614,37 @@ mod tests {
                 Some("SELECT id, json_extract(data, '$[0]') FROM array_ops"),
             ),
             Some(PgType::Text.to_oid()),
+        );
+    }
+
+    #[test]
+    fn test_bare_zero_arg_datetime_functions_with_query_context_resolve_timestamp() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "now",
+                None,
+                None,
+                Some("SELECT now()"),
+            ),
+            Some(PgType::Timestamptz.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "current_timestamp",
+                None,
+                None,
+                Some("SELECT current_timestamp()"),
+            ),
+            Some(PgType::Timestamptz.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "current_timestamp",
+                None,
+                None,
+                Some("SELECT now()"),
+            ),
+            Some(PgType::Timestamptz.to_oid()),
         );
     }
 

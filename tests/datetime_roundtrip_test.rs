@@ -40,15 +40,15 @@ async fn test_datetime_roundtrip() {
     
     // Verify storage is INTEGER
     let storage = client.simple_query(
-        "SELECT typeof(date_col), typeof(time_col), typeof(timestamp_col) FROM roundtrip_test WHERE id = 1"
+        "SELECT typeof(date_col) AS date_storage_type, typeof(time_col) AS time_storage_type, typeof(timestamp_col) AS timestamp_storage_type FROM roundtrip_test WHERE id = 1"
     ).await.unwrap();
     
     if let Some(msg) = storage.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_))) {
         if let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
             println!("\nStorage types:");
-            println!("  date: {}", data.get("typeof(date_col)").unwrap());
-            println!("  time: {}", data.get("typeof(time_col)").unwrap());
-            println!("  timestamp: {}", data.get("typeof(timestamp_col)").unwrap());
+            println!("  date: {}", data.get("date_storage_type").unwrap());
+            println!("  time: {}", data.get("time_storage_type").unwrap());
+            println!("  timestamp: {}", data.get("timestamp_storage_type").unwrap());
         }
     }
     

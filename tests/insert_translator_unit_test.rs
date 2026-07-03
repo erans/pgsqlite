@@ -25,13 +25,13 @@ async fn test_insert_execution_path() {
     
     // Check storage type
     let type_check = server.client.simple_query(
-        "SELECT typeof(date_col), typeof(time_col) FROM test_table WHERE id = 1"
+        "SELECT typeof(date_col) AS date_storage_type, typeof(time_col) AS time_storage_type FROM test_table WHERE id = 1"
     ).await.unwrap();
     
     if let Some(row) = type_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_)))
         && let tokio_postgres::SimpleQueryMessage::Row(data) = row {
-            let date_type = data.get("typeof(date_col)").unwrap();
-            let time_type = data.get("typeof(time_col)").unwrap();
+            let date_type = data.get("date_storage_type").unwrap();
+            let time_type = data.get("time_storage_type").unwrap();
 
             eprintln!("Storage types:");
             eprintln!("  Date: {date_type}");

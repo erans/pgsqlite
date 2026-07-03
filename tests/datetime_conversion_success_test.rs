@@ -19,13 +19,13 @@ async fn test_datetime_conversion_success() {
     
     // Verify storage is INTEGER
     let storage_check = client.simple_query(
-        "SELECT typeof(date_col), typeof(time_col) FROM dt_test WHERE id = 1"
+        "SELECT typeof(date_col) AS date_storage_type, typeof(time_col) AS time_storage_type FROM dt_test WHERE id = 1"
     ).await.unwrap();
     
     if let Some(msg) = storage_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_)))
         && let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
-            let date_type = data.get("typeof(date_col)").unwrap();
-            let time_type = data.get("typeof(time_col)").unwrap();
+            let date_type = data.get("date_storage_type").unwrap();
+            let time_type = data.get("time_storage_type").unwrap();
 
             println!("Storage check:");
             println!("  Date type: {date_type}");

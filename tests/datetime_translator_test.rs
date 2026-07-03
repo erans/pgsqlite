@@ -112,12 +112,12 @@ async fn test_insert_translator_conversion() {
     
     // Check storage type
     let type_check = client.simple_query(
-        "SELECT typeof(date_col) FROM translator_test WHERE id = 1"
+        "SELECT typeof(date_col) AS date_storage_type FROM translator_test WHERE id = 1"
     ).await.unwrap();
     
     if let Some(msg) = type_check.into_iter().find(|m| matches!(m, tokio_postgres::SimpleQueryMessage::Row(_)))
         && let tokio_postgres::SimpleQueryMessage::Row(data) = msg {
-            let col_type = data.get("typeof(date_col)").unwrap();
+            let col_type = data.get("date_storage_type").unwrap();
             println!("Storage type after InsertTranslator: {col_type}");
             assert_eq!(col_type, "integer", "InsertTranslator should convert to INTEGER");
         }
