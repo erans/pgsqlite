@@ -68,9 +68,18 @@ DROP TABLE IF EXISTS t4;
 CREATE TABLE t4 (id INT);
 INSERT INTO t4 VALUES (7);
 SET pgsqlite.legacy_result_columns = on;
--- Smoke: SET accepts the dotted GUC. This psql/simple sync path still resolves columns
--- with conformant defaults, so resolver/unit tests cover legacy header behavior.
-SELECT id AS MyAlias FROM t4;
+\unset legacy_MyAlias
+\unset legacy_myalias
+SELECT id AS MyAlias FROM t4 \gset legacy_
+\if :{?legacy_MyAlias}
+\else
+SELECT pgsqlite_column_conformance_c2_legacy_alias_failed;
+\endif
 SET pgsqlite.legacy_result_columns = off;
--- Legacy off/conformant default: unquoted alias casing is lower-case myalias.
-SELECT id AS MyAlias FROM t4;
+\unset conform_MyAlias
+\unset conform_myalias
+SELECT id AS MyAlias FROM t4 \gset conform_
+\if :{?conform_myalias}
+\else
+SELECT pgsqlite_column_conformance_c2_conform_alias_failed;
+\endif

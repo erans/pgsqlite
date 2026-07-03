@@ -366,7 +366,7 @@ impl SchemaTypeMapper {
                 // If the conformant column name is the bare function name for an
                 // unaliased call (e.g. json_extract(...)), recover the function
                 // return type from the query text.
-                let direct_call_pattern = format!(r"(?i)\b{}\s*\(", regex::escape(function_name));
+                let direct_call_pattern = format!(r"(?i)(?:^|\bSELECT\s+|,)\s*{}\s*\(", regex::escape(function_name));
                 if let Ok(re) = regex::Regex::new(&direct_call_pattern)
                     && re.is_match(q) {
                         return Self::get_aggregate_return_type_with_query(
@@ -563,6 +563,28 @@ mod tests {
                 Some("SELECT json_extract(data, '$[0]') FROM array_ops"),
             ),
             Some(PgType::Text.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT id, json_extract(data, '$[0]') FROM array_ops"),
+            ),
+            Some(PgType::Text.to_oid()),
+        );
+    }
+
+    #[test]
+    fn test_bare_json_extract_alias_with_where_call_does_not_resolve_text() {
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "json_extract",
+                None,
+                None,
+                Some("SELECT upper(name) AS json_extract FROM t WHERE json_extract(data, '$.x') IS NOT NULL"),
+            ),
+            None,
         );
     }
 

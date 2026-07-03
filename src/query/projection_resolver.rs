@@ -121,6 +121,7 @@ pub fn is_arg_preserving(fn_name_lower: &str) -> bool {
 }
 
 pub struct ResolveCtx<'a> {
+    pub query: &'a str,
     pub schema_types: &'a HashMap<String, String>,
     pub hints: &'a TranslationMetadata,
     pub alias_view: Option<&'a [AliasItem]>,
@@ -140,13 +141,23 @@ impl ProjectionResolver {
             };
         }
 
-        // Step 2: function-call shape (raw name contains `(`).
+        // Step 2: function-call shape (raw name contains `(`), only when the
+        // original query actually contains that function call. SQLite also
+        // returns raw real-column names here for quoted identifiers like
+        // "price(usd)" in SELECT * projections.
         if let Some(shape) = fn_shape(raw_name) {
             let name = shape.name.trim();
-            let lower = name.to_lowercase();
-            let wire_name = lower.clone();
-            let (type_oid, datetime_flag) = resolve_function_type(&lower, &shape.inner, ctx);
-            return ColumnMeta { wire_name, type_oid, datetime_flag };
+            if query_contains_function_call(ctx.query, name) {
+                let lower = name.to_lowercase();
+                let wire_name = lower.clone();
+                let (type_oid, datetime_flag) = resolve_function_type(&lower, &shape.inner, ctx);
+                return ColumnMeta { wire_name, type_oid, datetime_flag };
+            }
+            return ColumnMeta {
+                wire_name: raw_name.to_string(),
+                type_oid: PgType::Text.to_oid(),
+                datetime_flag: false,
+            };
         }
 
         // Step 3: alias (position maps to an ExprWithAlias item).
@@ -188,6 +199,14 @@ fn looks_unnamed_expr(name: &str) -> bool {
     // SQLite emits the verbatim expression text for unaliased expressions.
     // Heuristic: contains an operator, a space, or is purely numeric/literal.
     name.chars().any(|c| matches!(c, '+'|'-'|'*'|'/'|' '|'=')) || name.parse::<f64>().is_ok()
+}
+
+fn query_contains_function_call(query: &str, fn_name: &str) -> bool {
+    if query.is_empty() || fn_name.is_empty() {
+        return false;
+    }
+    let pattern = format!(r"(?i)(?:^|[^\w]){}\s*\(", regex::escape(fn_name));
+    regex::Regex::new(&pattern).is_ok_and(|re| re.is_match(query))
 }
 
 fn resolve_function_type(lower_fn: &str, inner: &str, ctx: &ResolveCtx) -> (i32, bool) {
@@ -246,7 +265,7 @@ pub fn resolve_columns_with_legacy(
             });
             continue;
         }
-        let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
+        let ctx = ResolveCtx { query, schema_types, hints, alias_view: view_ref, legacy };
         out.push(ProjectionResolver::resolve(&raw, i, &ctx));
     }
     dedup_question_columns(&mut out);
@@ -281,7 +300,7 @@ pub async fn resolve_columns_from_names(
             });
             continue;
         }
-        let ctx = ResolveCtx { schema_types, hints, alias_view: view_ref, legacy };
+        let ctx = ResolveCtx { query, schema_types, hints, alias_view: view_ref, legacy };
         let meta = ProjectionResolver::resolve(raw, i, &ctx);
         out.push(meta);
     }
@@ -378,13 +397,17 @@ mod tests {
     use crate::translator::TranslationMetadata;
 
     fn ctx_no_aliases<'a>(schema: &'a HashMap<String,String>, legacy: bool) -> ResolveCtx<'a> {
+        ctx_no_aliases_for_query(schema, legacy, "")
+    }
+
+    fn ctx_no_aliases_for_query<'a>(schema: &'a HashMap<String,String>, legacy: bool, query: &'a str) -> ResolveCtx<'a> {
         static EMPTY: once_cell::sync::Lazy<TranslationMetadata> = once_cell::sync::Lazy::new(TranslationMetadata::new);
-        ResolveCtx { schema_types: schema, hints: &EMPTY, alias_view: None, legacy }
+        ResolveCtx { query, schema_types: schema, hints: &EMPTY, alias_view: None, legacy }
     }
 
     fn ctx_with_aliases<'a>(schema: &'a HashMap<String,String>, alias_view: &'a [AliasItem], legacy: bool) -> ResolveCtx<'a> {
         static EMPTY: once_cell::sync::Lazy<TranslationMetadata> = once_cell::sync::Lazy::new(TranslationMetadata::new);
-        ResolveCtx { schema_types: schema, hints: &EMPTY, alias_view: Some(alias_view), legacy }
+        ResolveCtx { query: "", schema_types: schema, hints: &EMPTY, alias_view: Some(alias_view), legacy }
     }
 
     #[test]
@@ -395,10 +418,18 @@ mod tests {
         assert_eq!(m.wire_name, "price(usd)");
         assert_eq!(m.type_oid, PgType::Int4.to_oid());
     }
+
+    #[test]
+    fn star_projection_preserves_paren_column_without_schema_map() {
+        let schema = HashMap::new();
+        let m = ProjectionResolver::resolve("price(usd)", 0, &ctx_no_aliases_for_query(&schema, false, "SELECT * FROM t"));
+        assert_eq!(m.wire_name, "price(usd)");
+    }
+
     #[test]
     fn function_shape_lowers_and_types() {
         let schema = HashMap::new();
-        let m = ProjectionResolver::resolve("count(*)", 0, &ctx_no_aliases(&schema, false));
+        let m = ProjectionResolver::resolve("count(*)", 0, &ctx_no_aliases_for_query(&schema, false, "SELECT count(*) FROM t"));
         assert_eq!(m.wire_name, "count");
         assert_eq!(m.type_oid, PgType::Int8.to_oid());
         assert!(!m.datetime_flag);
@@ -407,7 +438,7 @@ mod tests {
     fn min_over_timestamp_is_datetime() {
         let mut schema = HashMap::new();
         schema.insert("created_at".to_string(), "TIMESTAMP".to_string());
-        let m = ProjectionResolver::resolve("max(created_at)", 0, &ctx_no_aliases(&schema, false));
+        let m = ProjectionResolver::resolve("max(created_at)", 0, &ctx_no_aliases_for_query(&schema, false, "SELECT max(created_at) FROM t"));
         assert_eq!(m.wire_name, "max");
         assert_eq!(m.type_oid, PgType::Timestamp.to_oid());
         assert!(m.datetime_flag);
@@ -416,7 +447,7 @@ mod tests {
     fn min_over_int4_no_datetime() {
         let mut schema = HashMap::new();
         schema.insert("qty".to_string(), "INT4".to_string());
-        let m = ProjectionResolver::resolve("max(qty)", 0, &ctx_no_aliases(&schema, false));
+        let m = ProjectionResolver::resolve("max(qty)", 0, &ctx_no_aliases_for_query(&schema, false, "SELECT max(qty) FROM t"));
         assert_eq!(m.type_oid, PgType::Int4.to_oid());
         assert!(!m.datetime_flag);
     }
@@ -432,7 +463,7 @@ mod tests {
         // Guard: legacy affects only steps 3 & 5. A COUNT(*) projection must
         // always emit conformant wire-name `count` even when legacy=true.
         let schema = HashMap::new();
-        let m = ProjectionResolver::resolve("COUNT(*)", 0, &ctx_no_aliases(&schema, true));
+        let m = ProjectionResolver::resolve("COUNT(*)", 0, &ctx_no_aliases_for_query(&schema, true, "SELECT COUNT(*) FROM t"));
         assert_eq!(m.wire_name, "count", "legacy must not leak into step 2 casing");
         assert_eq!(m.type_oid, PgType::Int8.to_oid());
     }
@@ -469,7 +500,7 @@ mod tests {
     fn array_agg_returns_text_oid() {
         // MUST-FIX #3: array_agg returns Text (JSON array storage).
         let schema = HashMap::new();
-        let m = ProjectionResolver::resolve("array_agg(x)", 0, &ctx_no_aliases(&schema, false));
+        let m = ProjectionResolver::resolve("array_agg(x)", 0, &ctx_no_aliases_for_query(&schema, false, "SELECT array_agg(x) FROM t"));
         assert_eq!(m.wire_name, "array_agg");
         assert_eq!(m.type_oid, PgType::Text.to_oid());
     }

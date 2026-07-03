@@ -83,7 +83,7 @@ impl SetHandler {
         // Handle general SET parameter
         if let Some(caps) = SET_PARAMETER_PATTERN.captures(trimmed) {
             let param_name = Self::normalize_parameter_name(&caps[1]);
-            let param_value = caps[2].trim().trim_matches('\'').trim_matches('"');
+            let param_value = Self::normalize_parameter_value(&caps[2]);
             
             // Update session parameter
             let mut params = session.parameters.write().await;
@@ -156,11 +156,22 @@ impl SetHandler {
     }
     
     fn normalize_parameter_name(name: &str) -> String {
+        let name = name.trim().trim_end_matches(';').trim();
         if name.contains('.') {
             name.to_ascii_lowercase()
         } else {
             name.to_ascii_uppercase()
         }
+    }
+
+    fn normalize_parameter_value(value: &str) -> String {
+        value
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .trim_matches('\'')
+            .trim_matches('"')
+            .to_string()
     }
 
     /// Set the session timezone
@@ -262,6 +273,20 @@ mod tests {
         assert_eq!(&caps[1], "pgsqlite.legacy_result_columns");
         assert_eq!(&caps[2], "on");
         assert_eq!(SetHandler::normalize_parameter_name("pgsqlite.legacy_result_columns"), "pgsqlite.legacy_result_columns");
+    }
+
+    #[test]
+    fn test_set_and_show_parameter_patterns_ignore_semicolon() {
+        let set_caps = SET_PARAMETER_PATTERN
+            .captures("SET pgsqlite.legacy_result_columns = on;")
+            .unwrap();
+        assert_eq!(SetHandler::normalize_parameter_name(&set_caps[1]), "pgsqlite.legacy_result_columns");
+        assert_eq!(SetHandler::normalize_parameter_value(&set_caps[2]), "on");
+
+        let show_caps = SHOW_PARAMETER_PATTERN
+            .captures("SHOW pgsqlite.legacy_result_columns;")
+            .unwrap();
+        assert_eq!(SetHandler::normalize_parameter_name(&show_caps[1]), "pgsqlite.legacy_result_columns");
     }
 
     #[test]

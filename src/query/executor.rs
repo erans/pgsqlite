@@ -326,12 +326,28 @@ impl QueryExecutor {
             match QueryTypeDetector::detect_query_type(query) {
                 QueryType::Select => {
                     // Route query through query router if available and appropriate
-                    let response = if let Some(router) = query_router {
+                    let mut response = if let Some(router) = query_router {
                         router.execute_query(query, session).await.map_err(|e| PgSqliteError::Protocol(e.to_string()))?
                     } else {
                         let cached_conn = Self::get_or_cache_connection(session, db).await;
                         db.query_with_session_cached(query, &session.id, cached_conn.as_ref()).await?
                     };
+                    if session.legacy_result_columns().await {
+                        let schema_types = std::collections::HashMap::new();
+                        let hints = crate::translator::TranslationMetadata::new();
+                        response.columns = crate::query::projection_resolver::resolve_columns_from_names(
+                            &response.columns,
+                            query,
+                            &schema_types,
+                            &hints,
+                            session,
+                        )
+                        .await
+                        .map_err(|e| PgSqliteError::Protocol(e.to_string()))?
+                        .into_iter()
+                        .map(|m| m.wire_name)
+                        .collect();
+                    }
                     
                     // Always check for type conversion to handle datetime columns
                     let needs_type_conversion = true;
