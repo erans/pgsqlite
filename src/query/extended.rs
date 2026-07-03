@@ -794,6 +794,21 @@ impl ExtendedQueryHandler {
                             
                             // Third priority: Check for aggregate functions
                             let col_lower = col_name.to_lowercase();
+
+                            // Direct (non-subquery) MAX/MIN datetime handling for prepared statements (F2):
+                            // handle_parse populates field_descriptions; BLOCK 2 later copies those oids into
+                            // field_types for encode_row, which performs INTEGER microseconds -> datetime text
+                            // conversion based on the datetime type oid.
+                            if let Some(inner_col) = direct_aggregate_inner_column(&col_lower, &cleaned_query)
+                                && let Some(ref table) = table_name
+                                && let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, &inner_col).await
+                                && let Some(type_oid) = datetime_oid_from_type_str(&pg_type) {
+                                    info!("PARSE: Direct aggregate {}({}) from table {} has datetime type {} (OID {})",
+                                          col_lower, inner_col, table, pg_type, type_oid);
+                                    inferred_types.push(type_oid);
+                                    continue;
+                                }
+
                             if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(&col_lower, None, None, Some(&cleaned_query)) {
                                 info!("Column '{}' identified with type OID {} from aggregate detection", col_name, oid);
                                 inferred_types.push(oid);
@@ -804,8 +819,7 @@ impl ExtendedQueryHandler {
                             // Gate on the query so a non-aggregate aliased to "count" (e.g. upper(name) AS count)
                             // is NOT mis-typed as int8 (F5). Only a real count(...) aggregate gets int8.
                             // Parallel instance at ~line 4820 (execute_select) is gated the same way.
-                            if (col_lower == "count(*)" || col_lower == "count")
-                                && cleaned_query.to_lowercase().contains("count(") {
+                            if count_backstop_applies(&col_lower, &cleaned_query) {
                                 info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
                                 inferred_types.push(PgType::Int8.to_oid());
                                 continue;
@@ -4575,10 +4589,7 @@ impl ExtendedQueryHandler {
                     // avg(col) is bare "max"/"min"/"sum"/"avg" (parens stripped). Trigger the async
                     // lookup on those bare names too, so direct-aggregate handling below resolves the
                     // inner column's type from the QUERY text (F2 on the extended path).
-                    if col_lower.contains("max(") || col_lower.contains("min(") ||
-                       col_lower.contains("sum(") || col_lower.contains("avg(") ||
-                       col_lower == "max" || col_lower == "min" ||
-                       col_lower == "sum" || col_lower == "avg" {
+                    if is_bare_aggregate_candidate(&col_lower) {
                         async_lookups_needed.push((i, col_name.clone()));
                     }
                 }
@@ -4853,8 +4864,7 @@ impl ExtendedQueryHandler {
                     // Gate on the query (portal.query here) so a non-aggregate aliased to "count"
                     // (e.g. upper(name) AS count) is NOT mis-typed as int8 (F5). Parallel instance
                     // of the handle_parse backstop above (~line 804).
-                    if (col_lower == "count(*)" || col_lower == "count")
-                        && portal.query.to_lowercase().contains("count(") {
+                    if count_backstop_applies(&col_lower, &portal.query) {
                         info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
                         field_types.push(PgType::Int8.to_oid());
                         continue;
@@ -6316,9 +6326,58 @@ fn extract_table_name_from_create(query: &str) -> Option<String> {
     }
 }
 
+// --- Direct-aggregate / count-backstop helpers (F2/F5 on the extended path) ---
+// Pure predicates extracted so the production handlers (handle_parse + execute_select) and
+// the unit tests share one implementation (reviewer: prior tests asserted local copies).
+
+/// Direct (non-subquery) MAX/MIN detection for the F2 fix on the prepared-statement path.
+/// `col_lower` is the lowercased result-column name (after Task 6 sanitization strips parens,
+/// so "max"/"min"). The aggregate pattern is matched against the QUERY text (parens intact),
+/// never the sanitized name. Returns the inner column name when matched, else None.
+fn direct_aggregate_inner_column(col_lower: &str, query: &str) -> Option<String> {
+    if col_lower != "max" && col_lower != "min" {
+        return None;
+    }
+    let re = regex::Regex::new(r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)").ok()?;
+    re.captures(query).and_then(|c| c.get(1).map(|m| m.as_str().to_string()))
+}
+
+/// Map a resolved schema type string to a datetime OID when it is a DATE/TIME/TIMESTAMP
+/// variant; returns None for non-datetime types so they fall through to the generic
+/// aggregate path (preserves max(price) -> NUMERIC etc.).
+fn datetime_oid_from_type_str(pg_type: &str) -> Option<i32> {
+    let upper = pg_type.to_uppercase();
+    if upper.contains("TIMESTAMP") || upper.contains("DATE") || upper.contains("TIME") {
+        Some(crate::types::SchemaTypeMapper::pg_type_string_to_oid(pg_type))
+    } else {
+        None
+    }
+}
+
+/// F5 count(*) backstop: only a real count(...) aggregate (gate on the query containing
+/// "count(") gets int8, so a non-aggregate aliased to "count" is NOT mis-typed. Shared by
+/// handle_parse (cleaned_query) and execute_select (portal.query).
+fn count_backstop_applies(col_lower: &str, query: &str) -> bool {
+    (col_lower == "count(*)" || col_lower == "count") && query.to_lowercase().contains("count(")
+}
+
+/// Gate for the extended Execute-path aggregate async lookup: fires on the bare sanitized
+/// names "max"/"min"/"sum"/"avg" (parens stripped by Task 6) and the parens-in-name form.
+fn is_bare_aggregate_candidate(col_lower: &str) -> bool {
+    col_lower.contains("max(") || col_lower.contains("min(")
+        || col_lower.contains("sum(") || col_lower.contains("avg(")
+        || col_lower == "max" || col_lower == "min"
+        || col_lower == "sum" || col_lower == "avg"
+}
+
 #[cfg(test)]
 mod tests {
     use regex::Regex;
+    use super::{
+        count_backstop_applies, datetime_oid_from_type_str, direct_aggregate_inner_column,
+        is_bare_aggregate_candidate,
+    };
+    use crate::types::PgType;
 
     // Fix B (F2): the direct-aggregate regex must be matched against the QUERY text
     // (parens intact), never the sanitized column name ("max"/"min", parens stripped by
@@ -6339,42 +6398,80 @@ mod tests {
         assert!(re.captures("MIN").is_none());
     }
 
-    // Fix B (F2): after Task 6 sanitization the wire names for max/min/sum/avg are bare
+    // F2 production behavior: for SELECT max(created_at) FROM t the handle_parse direct-pattern
+    // handler must resolve a datetime oid into field_descriptions (so BLOCK 2's else-branch
+    // feeds it to encode_row -> microseconds->timestamp). handle_parse itself is async + DB +
+    // portal (end-to-end deferred to Task 8), so this asserts the pure production helpers the
+    // handler calls. FAILS if the datetime oid isn't produced for max(created_at).
+    #[test]
+    fn test_handle_parse_direct_aggregate_datetime_oid() {
+        // 1. The bare sanitized name is "max"; the inner column is captured from the QUERY.
+        let inner = direct_aggregate_inner_column("max", "SELECT max(created_at) FROM t")
+            .expect("direct-pattern must capture inner column from the query");
+        assert_eq!(inner, "created_at");
+
+        // 2. A TIMESTAMP inner column resolves to the Timestamp oid (datetime conversion).
+        let oid = datetime_oid_from_type_str("TIMESTAMP")
+            .expect("TIMESTAMP must map to a datetime oid");
+        assert_eq!(oid, PgType::Timestamp.to_oid());
+
+        // Other datetime variants also map.
+        assert_eq!(datetime_oid_from_type_str("TIMESTAMPTZ").unwrap(), PgType::Timestamptz.to_oid());
+        assert_eq!(datetime_oid_from_type_str("DATE").unwrap(), PgType::Date.to_oid());
+        assert_eq!(datetime_oid_from_type_str("TIME").unwrap(), PgType::Time.to_oid());
+
+        // 3. A non-datetime column must NOT produce a datetime oid — it falls through to the
+        // generic aggregate path, preserving max(price) -> NUMERIC etc.
+        assert!(datetime_oid_from_type_str("INTEGER").is_none());
+        assert!(datetime_oid_from_type_str("NUMERIC").is_none());
+        assert!(datetime_oid_from_type_str("TEXT").is_none());
+
+        // 4. min(created_at) likewise captures the inner column.
+        assert_eq!(
+            direct_aggregate_inner_column("min", "SELECT min(created_at) FROM t").unwrap(),
+            "created_at"
+        );
+
+        // 5. The sanitized bare name (parens stripped) must never match — matching it would
+        // silently drop datetime conversion (the F2 regression).
+        assert!(direct_aggregate_inner_column("max", "max").is_none());
+
+        // 6. Non max/min bare names are not direct-aggregate candidates here (sum/avg use the
+        // generic aggregate path, not the datetime handler).
+        assert!(direct_aggregate_inner_column("sum", "SELECT sum(x) FROM t").is_none());
+        assert!(direct_aggregate_inner_column("avg", "SELECT avg(x) FROM t").is_none());
+    }
+
+    // Fix B (F2 gate): after Task 6 sanitization the wire names for max/min/sum/avg are bare
     // (parens stripped); the async-lookup gate must fire on those bare names so the
-    // direct-aggregate handling runs. The pre-fix (parens-in-name) gate must NOT.
+    // direct-aggregate handling runs. Asserts the PRODUCTION gate helper.
     #[test]
     fn test_extended_aggregate_gate_triggers_on_sanitized_bare_names() {
         for n in ["max", "min", "sum", "avg"] {
-            let col_lower = n.to_lowercase();
-            let widened = col_lower.contains("max(") || col_lower.contains("min(")
-                || col_lower.contains("sum(") || col_lower.contains("avg(")
-                || col_lower == "max" || col_lower == "min"
-                || col_lower == "sum" || col_lower == "avg";
-            assert!(widened, "gate must fire on sanitized bare name {:?}", n);
-
-            let pre_fix = col_lower.contains("max(") || col_lower.contains("min(")
-                || col_lower.contains("sum(") || col_lower.contains("avg(");
-            assert!(!pre_fix, "pre-fix gate must not fire on bare name {:?}", n);
+            assert!(is_bare_aggregate_candidate(n), "gate must fire on sanitized bare name {:?}", n);
+            assert!(
+                is_bare_aggregate_candidate(&format!("{}(col)", n)),
+                "gate must fire on parens-in-name {:?}(col)",
+                n
+            );
         }
+        // A non-aggregate bare name must not trigger the gate; count is handled by its backstop.
+        assert!(!is_bare_aggregate_candidate("name"));
+        assert!(!is_bare_aggregate_candidate("count"));
     }
 
     // Fix A (F5): the COUNT(*) backstop must only fire when the query actually contains a
     // count(...) aggregate, so a non-aggregate aliased to "count" (e.g. upper(name) AS count)
-    // is NOT mis-typed as int8. Applied at both the handle_parse site (cleaned_query) and the
-    // execute_select site (portal.query) — same predicate, different in-scope query variable.
+    // is NOT mis-typed as int8. Asserts the PRODUCTION backstop helper shared by handle_parse
+    // (cleaned_query) and execute_select (portal.query).
     #[test]
     fn test_extended_count_backstop_gated_on_query_count_paren() {
-        let backstop_applies = |col_lower: &str, query: &str| -> bool {
-            (col_lower == "count(*)" || col_lower == "count")
-                && query.to_lowercase().contains("count(")
-        };
-
         // Real count(*) stays int8.
-        assert!(backstop_applies("count", "SELECT count(*) FROM t"));
-        assert!(backstop_applies("count(*)", "SELECT COUNT(*) FROM t"));
+        assert!(count_backstop_applies("count", "SELECT count(*) FROM t"));
+        assert!(count_backstop_applies("count(*)", "SELECT COUNT(*) FROM t"));
 
         // Aliased non-aggregate upper(name) AS count must NOT be int8.
-        assert!(!backstop_applies("count", "SELECT upper(name) AS count FROM t"));
-        assert!(!backstop_applies("count", "SELECT max(x) AS count FROM t"));
+        assert!(!count_backstop_applies("count", "SELECT upper(name) AS count FROM t"));
+        assert!(!count_backstop_applies("count", "SELECT max(x) AS count FROM t"));
     }
 }
