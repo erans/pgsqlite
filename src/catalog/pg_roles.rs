@@ -44,6 +44,14 @@ impl PgRolesHandler {
             roles
         };
 
+        if selected_columns.is_empty() && Self::is_count_star_projection(&select.projection) {
+            return Ok(DbResponse {
+                columns: vec!["count".to_string()],
+                rows: vec![vec![Some(filtered_roles.len().to_string().into_bytes())]],
+                rows_affected: 1,
+            });
+        }
+
         // Build response
         let mut rows = Vec::new();
         for role in filtered_roles {
@@ -83,20 +91,19 @@ impl PgRolesHandler {
                             .iter()
                             .map(|column| (column.clone(), column.clone())),
                     );
-                    break;
                 }
                 SelectItem::UnnamedExpr(expr) => {
-                    if let Some(col_name) = Self::extract_source_column(expr) {
-                        if all_columns.contains(&col_name) {
-                            selected.push((col_name.clone(), col_name));
-                        }
+                    if let Some(col_name) = Self::extract_source_column(expr)
+                        && all_columns.contains(&col_name)
+                    {
+                        selected.push((col_name.clone(), col_name));
                     }
                 }
                 SelectItem::ExprWithAlias { expr, alias } => {
-                    if let Some(col_name) = Self::extract_source_column(expr) {
-                        if all_columns.contains(&col_name) {
-                            selected.push((alias.value.clone(), col_name));
-                        }
+                    if let Some(col_name) = Self::extract_source_column(expr)
+                        && all_columns.contains(&col_name)
+                    {
+                        selected.push((Self::alias_output_name(alias), col_name));
                     }
                 }
                 SelectItem::QualifiedWildcard(_, _) => {
@@ -106,7 +113,6 @@ impl PgRolesHandler {
                             .iter()
                             .map(|column| (column.clone(), column.clone())),
                     );
-                    break;
                 }
             }
         }
@@ -120,8 +126,58 @@ impl PgRolesHandler {
             Expr::CompoundIdentifier(parts) => parts.last().map(|ident| ident.value.to_lowercase()),
             Expr::Cast { expr, .. } => Self::extract_source_column(expr),
             Expr::Nested(expr) => Self::extract_source_column(expr),
+            Expr::Function(function) => Self::function_name(function),
             _ => None,
         }
+    }
+
+    fn alias_output_name(alias: &sqlparser::ast::Ident) -> String {
+        if alias.quote_style.is_some() {
+            alias.value.clone()
+        } else {
+            alias.value.to_lowercase()
+        }
+    }
+
+    fn function_name(function: &sqlparser::ast::Function) -> Option<String> {
+        function
+            .name
+            .0
+            .last()
+            .and_then(|part| part.as_ident())
+            .map(|ident| ident.value.to_lowercase())
+    }
+
+    fn is_count_star_projection(projection: &[SelectItem]) -> bool {
+        if projection.len() != 1 {
+            return false;
+        }
+
+        let expr = match &projection[0] {
+            SelectItem::UnnamedExpr(expr) => expr,
+            SelectItem::ExprWithAlias { expr, .. } => expr,
+            _ => return false,
+        };
+
+        let Expr::Function(function) = expr else {
+            return false;
+        };
+
+        if Self::function_name(function).as_deref() != Some("count") {
+            return false;
+        }
+
+        matches!(
+            &function.args,
+            sqlparser::ast::FunctionArguments::List(arg_list)
+                if arg_list.args.len() == 1
+                    && matches!(
+                        &arg_list.args[0],
+                        sqlparser::ast::FunctionArg::Unnamed(
+                            sqlparser::ast::FunctionArgExpr::Wildcard
+                        )
+                    )
+        )
     }
 
     fn get_default_roles() -> Vec<HashMap<String, Vec<u8>>> {
