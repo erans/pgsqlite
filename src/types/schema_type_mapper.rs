@@ -6,22 +6,27 @@ use sqlparser::ast::{Expr, ObjectName, ObjectNamePart, SelectItem, SetExpr, Stat
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 
+fn parse_select_projection(query: &str) -> Option<Vec<SelectItem>> {
+    let parsed = Parser::parse_sql(&PostgreSqlDialect {}, query).ok()?;
+    let Statement::Query(query) = parsed.into_iter().next()? else {
+        return None;
+    };
+    let SetExpr::Select(select) = *query.body else {
+        return None;
+    };
+    Some(select.projection)
+}
+
 fn select_projection_has_unaliased_function(query: &str, function_name: &str) -> bool {
     if function_name.is_empty() {
         return false;
     }
 
-    let Ok(parsed) = Parser::parse_sql(&PostgreSqlDialect {}, query) else {
-        return false;
-    };
-    let Some(Statement::Query(query)) = parsed.into_iter().next() else {
-        return false;
-    };
-    let SetExpr::Select(select) = *query.body else {
+    let Some(projection) = parse_select_projection(query) else {
         return false;
     };
 
-    select.projection.iter().any(|item| match item {
+    projection.iter().any(|item| match item {
         SelectItem::UnnamedExpr(Expr::Function(function)) => object_name_last_part_lower(&function.name)
             .is_some_and(|projected| projected.eq_ignore_ascii_case(function_name)),
         _ => false,
@@ -399,13 +404,14 @@ impl SchemaTypeMapper {
                 // return type from the SELECT projection AST only.
                 let function_name_lower = function_name.to_ascii_lowercase();
                 let projection_matches = select_projection_has_unaliased_function(q, function_name)
-                    || (function_name_lower == "current_timestamp" && select_projection_has_unaliased_function(q, "now"))
-                    || (function_name_lower == "now" && select_projection_has_unaliased_function(q, "current_timestamp"));
+                    || (parse_select_projection(q).is_some_and(|projection| projection.len() == 1)
+                        && ((function_name_lower == "current_timestamp" && select_projection_has_unaliased_function(q, "now"))
+                            || (function_name_lower == "now" && select_projection_has_unaliased_function(q, "current_timestamp"))));
 
                 if projection_matches {
                     let function_call = if matches!(
                         function_name_lower.as_str(),
-                        "now" | "current_timestamp" | "current_time" | "current_date" | "epoch"
+                        "now" | "current_timestamp" | "current_time" | "epoch"
                     ) {
                         format!("{function_name}()")
                     } else {
@@ -645,6 +651,15 @@ mod tests {
                 Some("SELECT now()"),
             ),
             Some(PgType::Timestamptz.to_oid()),
+        );
+        assert_eq!(
+            SchemaTypeMapper::get_aggregate_return_type_with_query(
+                "current_timestamp",
+                None,
+                None,
+                Some("SELECT now(), 'x' AS current_timestamp"),
+            ),
+            None,
         );
     }
 
