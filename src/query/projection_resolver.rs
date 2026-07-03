@@ -53,12 +53,58 @@ fn parse_quoted_projection_names(query: &str) -> Option<Vec<Option<String>>> {
     }).collect())
 }
 
-fn parse_function_projection_names(query: &str) -> Option<Vec<Option<String>>> {
+fn parse_function_projection_names(query: &str, result_column_count: usize) -> Option<Vec<Option<String>>> {
     let select = parse_select_projection(query)?;
-    Some(select.projection.iter().map(|item| match item {
+    Some(function_projection_names_for_result_columns(&select.projection, result_column_count))
+}
+
+fn function_projection_names_for_result_columns(projection: &[SelectItem], result_column_count: usize) -> Vec<Option<String>> {
+    let non_wildcard_count = projection.iter().filter(|item| !is_wildcard_projection(item)).count();
+    let wildcard_count = projection.len() - non_wildcard_count;
+
+    if wildcard_count > 1 {
+        let mut names = Vec::with_capacity(result_column_count);
+        for item in projection {
+            if is_wildcard_projection(item) {
+                names.truncate(result_column_count);
+                names.resize(result_column_count, None);
+                return names;
+            }
+            names.push(function_projection_name(item));
+        }
+        names.truncate(result_column_count);
+        names.resize(result_column_count, None);
+        return names;
+    }
+
+    let wildcard_expansion = if wildcard_count == 1 {
+        result_column_count.saturating_sub(non_wildcard_count)
+    } else {
+        0
+    };
+
+    let mut names = Vec::with_capacity(result_column_count.max(projection.len()));
+    for item in projection {
+        if is_wildcard_projection(item) {
+            names.resize(names.len() + wildcard_expansion, None);
+        } else {
+            names.push(function_projection_name(item));
+        }
+    }
+    names.truncate(result_column_count);
+    names.resize(result_column_count, None);
+    names
+}
+
+fn function_projection_name(item: &SelectItem) -> Option<String> {
+    match item {
         SelectItem::UnnamedExpr(Expr::Function(function)) => object_name_last_part_lower(&function.name),
         _ => None,
-    }).collect())
+    }
+}
+
+fn is_wildcard_projection(item: &SelectItem) -> bool {
+    matches!(item, SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _))
 }
 
 fn object_name_last_part_lower(name: &ObjectName) -> Option<String> {
@@ -228,8 +274,16 @@ fn projection_function_matches(ctx: &ResolveCtx, position: usize, fn_name: &str)
             .is_some_and(|projected| projected.eq_ignore_ascii_case(fn_name));
     }
 
-    parse_function_projection_names(ctx.query)
-        .and_then(|names| names.get(position).cloned().flatten())
+    let select = match parse_select_projection(ctx.query) {
+        Some(select) => select,
+        None => return false,
+    };
+    if select.projection.iter().any(is_wildcard_projection) {
+        return false;
+    }
+    function_projection_names_for_result_columns(&select.projection, position + 1)
+        .get(position)
+        .and_then(|name| name.as_deref())
         .is_some_and(|projected| projected.eq_ignore_ascii_case(fn_name))
 }
 
@@ -274,9 +328,9 @@ pub fn resolve_columns_with_legacy(
     let view_ref = alias_view.as_deref();
     let quoted_projection_names = parse_quoted_projection_names(query);
     let quoted_ref = quoted_projection_names.as_deref();
-    let function_projection_names = parse_function_projection_names(query);
-    let function_ref = function_projection_names.as_deref();
     let count = stmt.column_count();
+    let function_projection_names = parse_function_projection_names(query, count);
+    let function_ref = function_projection_names.as_deref();
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let raw = stmt.column_name(i)?.to_string();
@@ -313,7 +367,7 @@ pub async fn resolve_columns_from_names(
     let view_ref = alias_view.as_deref();
     let quoted_projection_names = parse_quoted_projection_names(query);
     let quoted_ref = quoted_projection_names.as_deref();
-    let function_projection_names = parse_function_projection_names(query);
+    let function_projection_names = parse_function_projection_names(query, names.len());
     let function_ref = function_projection_names.as_deref();
     let mut out = Vec::with_capacity(names.len());
     for (i, raw) in names.iter().enumerate() {
@@ -614,6 +668,40 @@ mod tests {
         let names = vec!["max(created_at)".to_string()];
         let metas = resolve_columns_from_names(
             &names, "SELECT max(created_at) FROM t", &schema, &hints, &session,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metas[0].wire_name, "max");
+        assert_eq!(metas[0].type_oid, PgType::Timestamp.to_oid());
+        assert!(metas[0].datetime_flag);
+    }
+
+    #[tokio::test]
+    async fn resolve_columns_from_names_resolves_function_after_wildcard_expansion() {
+        let mut schema = HashMap::new();
+        schema.insert("created_at".to_string(), "TIMESTAMP".to_string());
+        let hints = TranslationMetadata::new();
+        let session = crate::session::SessionState::new("db".into(), "user".into());
+        let names = vec!["id".to_string(), "name".to_string(), "max(created_at)".to_string()];
+        let metas = resolve_columns_from_names(
+            &names, "SELECT *, max(created_at) FROM t", &schema, &hints, &session,
+        )
+        .await
+        .unwrap();
+        assert_eq!(metas[2].wire_name, "max");
+        assert_eq!(metas[2].type_oid, PgType::Timestamp.to_oid());
+        assert!(metas[2].datetime_flag);
+    }
+
+    #[tokio::test]
+    async fn resolve_columns_from_names_resolves_function_before_wildcard_expansion() {
+        let mut schema = HashMap::new();
+        schema.insert("created_at".to_string(), "TIMESTAMP".to_string());
+        let hints = TranslationMetadata::new();
+        let session = crate::session::SessionState::new("db".into(), "user".into());
+        let names = vec!["max(created_at)".to_string(), "id".to_string(), "name".to_string()];
+        let metas = resolve_columns_from_names(
+            &names, "SELECT max(created_at), * FROM t", &schema, &hints, &session,
         )
         .await
         .unwrap();
