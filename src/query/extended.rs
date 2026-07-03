@@ -800,8 +800,12 @@ impl ExtendedQueryHandler {
                                 continue;  // Important: continue here to prevent value-based inference from overriding
                             }
 
-                            // Special case for COUNT(*) which might have a different column name
-                            if col_lower == "count(*)" || col_lower == "count" {
+                            // Special case for COUNT(*) whose column name is sanitized to "count".
+                            // Gate on the query so a non-aggregate aliased to "count" (e.g. upper(name) AS count)
+                            // is NOT mis-typed as int8 (F5). Only a real count(...) aggregate gets int8.
+                            // Parallel instance at ~line 4820 (execute_select) is gated the same way.
+                            if (col_lower == "count(*)" || col_lower == "count")
+                                && cleaned_query.to_lowercase().contains("count(") {
                                 info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
                                 inferred_types.push(PgType::Int8.to_oid());
                                 continue;
@@ -4567,8 +4571,14 @@ impl ExtendedQueryHandler {
                 let mut async_lookups_needed = Vec::new();
                 for (i, col_name) in response.columns.iter().enumerate() {
                     let col_lower = col_name.to_lowercase();
-                    if col_lower.contains("max(") || col_lower.contains("min(") || 
-                       col_lower.contains("sum(") || col_lower.contains("avg(") {
+                    // After Task 6 sanitization the wire name for max(col)/min(col)/sum(col)/
+                    // avg(col) is bare "max"/"min"/"sum"/"avg" (parens stripped). Trigger the async
+                    // lookup on those bare names too, so direct-aggregate handling below resolves the
+                    // inner column's type from the QUERY text (F2 on the extended path).
+                    if col_lower.contains("max(") || col_lower.contains("min(") ||
+                       col_lower.contains("sum(") || col_lower.contains("avg(") ||
+                       col_lower == "max" || col_lower == "min" ||
+                       col_lower == "sum" || col_lower == "avg" {
                         async_lookups_needed.push((i, col_name.clone()));
                     }
                 }
@@ -4579,6 +4589,8 @@ impl ExtendedQueryHandler {
                 // Pre-compile regex patterns to avoid recompilation in loop
                 let max_regex = regex::Regex::new(r"\(\s*SELECT\s+MAX\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)").ok();
                 let min_regex = regex::Regex::new(r"\(\s*SELECT\s+MIN\s*\(\s*(\w+)\s*\)\s+FROM\s+(\w+)\s*\)").ok();
+                // Direct (non-subquery) MAX/MIN, matched against the QUERY (parens intact) — F2.
+                let direct_regex = regex::Regex::new(r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)").ok();
 
                 for (idx, col_name) in async_lookups_needed {
                     // Extract the aggregate function and column
@@ -4626,6 +4638,27 @@ impl ExtendedQueryHandler {
                                 }
                             }
                     
+                    // Direct (non-subquery) MAX/MIN datetime handling (F2 on the extended path):
+                    // SELECT max(created_at) FROM t has no scalar subquery, so extract the inner
+                    // column from the QUERY and, if it's a datetime type, record its oid so the
+                    // downstream value converter (gated on type_oid) reformats INTEGER microseconds.
+                    if let Some(re) = &direct_regex
+                        && let Some(captures) = re.captures(query)
+                            && let Some(inner_col) = captures.get(1) {
+                                let inner_col_name = inner_col.as_str();
+                                if let Some(ref table) = table_name
+                                    && let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table, inner_col_name).await {
+                                        let upper_type = pg_type.to_uppercase();
+                                        if upper_type.contains("TIMESTAMP") || upper_type.contains("DATE") || upper_type.contains("TIME") {
+                                            let type_oid = crate::types::SchemaTypeMapper::pg_type_string_to_oid(&pg_type);
+                                            info!("Direct aggregate {}({}) from table {} has datetime type {} (OID {})",
+                                                  col_lower, inner_col_name, table, pg_type, type_oid);
+                                            aggregate_types.insert(idx, type_oid);
+                                            continue;
+                                        }
+                                    }
+                            }
+
                     // Fallback to generic aggregate type detection
                     if let Some(oid) = crate::types::SchemaTypeMapper::get_aggregate_return_type_with_query(
                         &col_lower, None, lookup_table.as_deref(), Some(query)
@@ -4816,8 +4849,12 @@ impl ExtendedQueryHandler {
                         continue;
                     }
 
-                    // Special case for COUNT(*) which might have a different column name
-                    if col_lower == "count(*)" || col_lower == "count" {
+                    // Special case for COUNT(*) whose column name is sanitized to "count".
+                    // Gate on the query (portal.query here) so a non-aggregate aliased to "count"
+                    // (e.g. upper(name) AS count) is NOT mis-typed as int8 (F5). Parallel instance
+                    // of the handle_parse backstop above (~line 804).
+                    if (col_lower == "count(*)" || col_lower == "count")
+                        && portal.query.to_lowercase().contains("count(") {
                         info!("Column '{}' is COUNT aggregate, using INT8 type", col_name);
                         field_types.push(PgType::Int8.to_oid());
                         continue;
@@ -6276,5 +6313,68 @@ fn extract_table_name_from_create(query: &str) -> Option<String> {
         }
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use regex::Regex;
+
+    // Fix B (F2): the direct-aggregate regex must be matched against the QUERY text
+    // (parens intact), never the sanitized column name ("max"/"min", parens stripped by
+    // Task 6). Mirrors executor.rs::test_direct_aggregate_pattern_matches_query_not_sanitized_name.
+    // The live extended handler is async + needs a session/DB (deferred to Task 8); this
+    // guards the regex contract the direct-pattern handling relies on.
+    #[test]
+    fn test_extended_direct_aggregate_pattern_matches_query() {
+        let re = Regex::new(r"(?i)(?:MAX|MIN)\s*\(\s*(\w+)\s*\)").unwrap();
+
+        let caps = re.captures("SELECT max(created_at) FROM t")
+            .expect("direct aggregate pattern must match the query text");
+        assert_eq!(caps.get(1).unwrap().as_str(), "created_at");
+
+        // The sanitized names can never match — matching the stripped name would drop
+        // datetime conversion (the F2 regression on the extended path).
+        assert!(re.captures("max").is_none());
+        assert!(re.captures("MIN").is_none());
+    }
+
+    // Fix B (F2): after Task 6 sanitization the wire names for max/min/sum/avg are bare
+    // (parens stripped); the async-lookup gate must fire on those bare names so the
+    // direct-aggregate handling runs. The pre-fix (parens-in-name) gate must NOT.
+    #[test]
+    fn test_extended_aggregate_gate_triggers_on_sanitized_bare_names() {
+        for n in ["max", "min", "sum", "avg"] {
+            let col_lower = n.to_lowercase();
+            let widened = col_lower.contains("max(") || col_lower.contains("min(")
+                || col_lower.contains("sum(") || col_lower.contains("avg(")
+                || col_lower == "max" || col_lower == "min"
+                || col_lower == "sum" || col_lower == "avg";
+            assert!(widened, "gate must fire on sanitized bare name {:?}", n);
+
+            let pre_fix = col_lower.contains("max(") || col_lower.contains("min(")
+                || col_lower.contains("sum(") || col_lower.contains("avg(");
+            assert!(!pre_fix, "pre-fix gate must not fire on bare name {:?}", n);
+        }
+    }
+
+    // Fix A (F5): the COUNT(*) backstop must only fire when the query actually contains a
+    // count(...) aggregate, so a non-aggregate aliased to "count" (e.g. upper(name) AS count)
+    // is NOT mis-typed as int8. Applied at both the handle_parse site (cleaned_query) and the
+    // execute_select site (portal.query) — same predicate, different in-scope query variable.
+    #[test]
+    fn test_extended_count_backstop_gated_on_query_count_paren() {
+        let backstop_applies = |col_lower: &str, query: &str| -> bool {
+            (col_lower == "count(*)" || col_lower == "count")
+                && query.to_lowercase().contains("count(")
+        };
+
+        // Real count(*) stays int8.
+        assert!(backstop_applies("count", "SELECT count(*) FROM t"));
+        assert!(backstop_applies("count(*)", "SELECT COUNT(*) FROM t"));
+
+        // Aliased non-aggregate upper(name) AS count must NOT be int8.
+        assert!(!backstop_applies("count", "SELECT upper(name) AS count FROM t"));
+        assert!(!backstop_applies("count", "SELECT max(x) AS count FROM t"));
     }
 }
