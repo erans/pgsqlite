@@ -116,6 +116,15 @@ async fn test_pg_namespace_cast_projection_uses_inner_source_column() {
 }
 
 #[tokio::test]
+async fn test_pg_namespace_nested_projection_uses_inner_source_column() {
+    let response = catalog_query("SELECT (oid) AS o FROM pg_catalog.pg_namespace").await;
+
+    assert_eq!(response.columns, vec!["o"]);
+    assert_eq!(response.rows.len(), 2);
+    assert_eq!(response.rows[0][0].as_deref(), Some(b"11".as_ref()));
+}
+
+#[tokio::test]
 async fn test_pg_namespace_compound_identifier_projection_uses_leaf_column() {
     let response = catalog_query("SELECT n.nspname FROM pg_catalog.pg_namespace AS n").await;
 
