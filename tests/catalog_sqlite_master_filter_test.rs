@@ -23,6 +23,10 @@ async fn setup() -> common::TestServer {
             // pg_catalog tables. It must still be returned, proving the filter
             // is an exact-set match and not a `pg_%` wildcard.
             db.execute("CREATE TABLE pg_indexes (id INTEGER PRIMARY KEY)").await?;
+            // A user VIEW whose name is `pg_*` but is NOT one of the reserved
+            // materialized pg_catalog / information_schema views. It must still
+            // be returned, proving the view filter is exact-set, not `pg_%`.
+            db.execute("CREATE VIEW pg_my_report AS SELECT id FROM customers").await?;
             Ok(())
         })
     })
@@ -38,6 +42,37 @@ fn names(rows: &[tokio_postgres::Row]) -> Vec<String> {
 const MATERIALIZED_PG_CATALOG_TABLES: [&str; 4] =
     ["pg_attrdef", "pg_constraint", "pg_depend", "pg_index"];
 
+/// The pg_catalog / information_schema compatibility views pgsqlite materializes
+/// as real SQLite views (source of truth: src/migration/registry.rs, the only
+/// place these are `CREATE VIEW`d). None of these should leak. Mirrors the
+/// private `PG_CATALOG_INTERNAL_VIEWS` const in the interceptor.
+const MATERIALIZED_PG_CATALOG_VIEWS: [&str; 24] = [
+    "information_schema_columns",
+    "information_schema_key_column_usage",
+    "information_schema_referential_constraints",
+    "information_schema_schemata",
+    "information_schema_table_constraints",
+    "information_schema_tables",
+    "pg_am",
+    "pg_attribute",
+    "pg_class",
+    "pg_database",
+    "pg_description",
+    "pg_enum",
+    "pg_foreign_data_wrapper",
+    "pg_namespace",
+    "pg_proc",
+    "pg_roles",
+    "pg_stat_activity",
+    "pg_stat_all_indexes",
+    "pg_stat_all_tables",
+    "pg_stat_database",
+    "pg_stat_user_indexes",
+    "pg_stat_user_tables",
+    "pg_type",
+    "pg_user",
+];
+
 fn assert_no_internal(names: &[String]) {
     for name in names {
         assert!(
@@ -47,6 +82,10 @@ fn assert_no_internal(names: &[String]) {
         assert!(
             !MATERIALIZED_PG_CATALOG_TABLES.contains(&name.as_str()),
             "materialized pg_catalog table leaked to client: {name} (all: {names:?})"
+        );
+        assert!(
+            !MATERIALIZED_PG_CATALOG_VIEWS.contains(&name.as_str()),
+            "materialized pg_catalog view leaked to client: {name} (all: {names:?})"
         );
         // Indexes pgsqlite creates on its internal enum bookkeeping table.
         assert!(
@@ -128,7 +167,8 @@ async fn indexes_and_views_are_returned_without_internal_leak() {
 
     // assert_no_internal also rejects any idx_enum_values_* internal index,
     // which pgsqlite creates on __pgsqlite_enum_values, so a raw index scan
-    // stays clean.
+    // stays clean. It also rejects every materialized pg_catalog view, so a
+    // type='view' scan shows only the user's own views.
     assert_no_internal(&names);
     assert!(
         names.contains(&"idx_customers_name".to_string()),
@@ -138,6 +178,39 @@ async fn indexes_and_views_are_returned_without_internal_leak() {
         names.contains(&"customer_names".to_string()),
         "user view missing: {names:?}"
     );
+    // A user view named `pg_*` that is NOT reserved is still returned.
+    assert!(
+        names.contains(&"pg_my_report".to_string()),
+        "user pg_* view missing: {names:?}"
+    );
+
+    server.abort();
+}
+
+#[tokio::test]
+async fn view_scan_hides_materialized_pg_catalog_views() {
+    let server = setup().await;
+    // A plain type='view' scan is exactly what an external client uses to list
+    // views. Every reserved pg_catalog / information_schema view must be hidden;
+    // only the user's own views come back.
+    let rows = server
+        .client
+        .query("SELECT name FROM sqlite_master WHERE type = 'view' ORDER BY name", &[])
+        .await
+        .expect("sqlite_master view scan should succeed");
+    let names = names(&rows);
+
+    assert_no_internal(&names);
+    // Belt-and-suspenders: assert each reserved view name is absent by name.
+    for reserved in MATERIALIZED_PG_CATALOG_VIEWS {
+        assert!(
+            !names.contains(&reserved.to_string()),
+            "reserved view {reserved} leaked: {names:?}"
+        );
+    }
+    // The user's own views are present, including the exact-set proof view.
+    assert!(names.contains(&"customer_names".to_string()), "user view missing: {names:?}");
+    assert!(names.contains(&"pg_my_report".to_string()), "user pg_* view missing: {names:?}");
 
     server.abort();
 }
@@ -165,6 +238,10 @@ async fn select_star_hides_internal_tables_and_their_indexes() {
     assert!(
         names.contains(&"customer_names".to_string()),
         "user view missing: {names:?}"
+    );
+    assert!(
+        names.contains(&"pg_my_report".to_string()),
+        "user pg_* view missing: {names:?}"
     );
 
     server.abort();

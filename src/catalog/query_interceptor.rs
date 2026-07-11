@@ -29,6 +29,42 @@ type ProcessExpressionFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Box<dy
 const PG_CATALOG_INTERNAL_TABLES: [&str; 4] =
     ["pg_attrdef", "pg_constraint", "pg_depend", "pg_index"];
 
+/// The pg_catalog / information_schema compatibility views pgsqlite materializes
+/// as real SQLite views. Source of truth: `src/migration/registry.rs`, the only
+/// place these are `CREATE VIEW`d. Like the tables above, every one is a
+/// pgsqlite-reserved name a user cannot own, so this is a closed, exact-name set
+/// (never a `pg_%` / `information_schema_%` wildcard, which would also hide a
+/// user's own `pg_my_report` view). Filter them out of client-issued
+/// `sqlite_master` / `sqlite_schema` queries so a raw `type = 'view'` scan (or an
+/// unqualified `SELECT *`) shows only the user's own schema. Keep this in step
+/// with the registry.
+const PG_CATALOG_INTERNAL_VIEWS: [&str; 24] = [
+    "information_schema_columns",
+    "information_schema_key_column_usage",
+    "information_schema_referential_constraints",
+    "information_schema_schemata",
+    "information_schema_table_constraints",
+    "information_schema_tables",
+    "pg_am",
+    "pg_attribute",
+    "pg_class",
+    "pg_database",
+    "pg_description",
+    "pg_enum",
+    "pg_foreign_data_wrapper",
+    "pg_namespace",
+    "pg_proc",
+    "pg_roles",
+    "pg_stat_activity",
+    "pg_stat_all_indexes",
+    "pg_stat_all_tables",
+    "pg_stat_database",
+    "pg_stat_user_indexes",
+    "pg_stat_user_tables",
+    "pg_type",
+    "pg_user",
+];
+
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
 
@@ -320,22 +356,29 @@ impl CatalogInterceptor {
     /// Build the pgsqlite-reserved-name filter predicate by parsing it, so the
     /// exact AST shape stays in step with the sqlparser version in use. The
     /// predicate keeps only rows whose `name` and `tbl_name` are neither
-    /// `__pgsqlite_*` bookkeeping tables nor one of the materialized pg_catalog
-    /// tables. Filtering on `tbl_name` as well as `name` hides the indexes and
-    /// triggers that belong to an internal table, so an unqualified
-    /// `SELECT * FROM sqlite_master` (not just a `type = 'table'` scan) comes
-    /// back clean. Returns `None` if it cannot be parsed.
+    /// `__pgsqlite_*` bookkeeping tables, one of the materialized pg_catalog
+    /// tables, nor one of the materialized pg_catalog / information_schema views.
+    /// Filtering on `tbl_name` as well as `name` hides the indexes and triggers
+    /// that belong to an internal object, so an unqualified
+    /// `SELECT * FROM sqlite_master` (not just a `type = 'table'` / `'view'`
+    /// scan) comes back clean. Returns `None` if it cannot be parsed.
     fn pgsqlite_name_filter_expr(qualifier: &str) -> Option<Expr> {
-        let list = PG_CATALOG_INTERNAL_TABLES
-            .iter()
-            .map(|name| format!("'{name}'"))
-            .collect::<Vec<_>>()
-            .join(", ");
+        let quote = |names: &[&str]| {
+            names
+                .iter()
+                .map(|name| format!("'{name}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let table_list = quote(&PG_CATALOG_INTERNAL_TABLES);
+        let view_list = quote(&PG_CATALOG_INTERNAL_VIEWS);
         let sql = format!(
             "SELECT 1 WHERE {qualifier}.name NOT LIKE '__pgsqlite_%' \
-             AND {qualifier}.name NOT IN ({list}) \
+             AND {qualifier}.name NOT IN ({table_list}) \
+             AND {qualifier}.name NOT IN ({view_list}) \
              AND {qualifier}.tbl_name NOT LIKE '__pgsqlite_%' \
-             AND {qualifier}.tbl_name NOT IN ({list})"
+             AND {qualifier}.tbl_name NOT IN ({table_list}) \
+             AND {qualifier}.tbl_name NOT IN ({view_list})"
         );
         let dialect = PostgreSqlDialect {};
         let statements = Parser::parse_sql(&dialect, &sql).ok()?;
@@ -4067,6 +4110,35 @@ mod tests {
             "rewritten = {rewritten}"
         );
         assert!(rewritten.contains("sqlite_master.tbl_name NOT IN"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn materialized_pg_catalog_views_are_filtered_by_name_and_tbl_name() {
+        let rewritten =
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_master")
+                .expect("plain sqlite_master query should be rewritten");
+        // Every reserved pg_catalog / information_schema view is excluded.
+        // Generated from the const so the test cannot drift from the source list.
+        for name in PG_CATALOG_INTERNAL_VIEWS {
+            assert!(rewritten.contains(&format!("'{name}'")), "missing {name}: {rewritten}");
+        }
+        // Both name and tbl_name carry the view exclusion, so an unqualified
+        // SELECT * (not just a type='view' scan) stays clean.
+        assert!(rewritten.contains("sqlite_master.name NOT IN"), "rewritten = {rewritten}");
+        assert!(rewritten.contains("sqlite_master.tbl_name NOT IN"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn user_named_pg_view_not_in_reserved_set_is_not_filtered() {
+        // A user object whose name is `pg_*` but NOT in the reserved set must
+        // NOT appear in the exclusion list: the filter is exact-name, not a
+        // `pg_%` wildcard.
+        let rewritten =
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_master")
+                .expect("plain sqlite_master query should be rewritten");
+        assert!(!PG_CATALOG_INTERNAL_VIEWS.contains(&"pg_my_report"));
+        assert!(!PG_CATALOG_INTERNAL_TABLES.contains(&"pg_my_report"));
+        assert!(!rewritten.contains("'pg_my_report'"), "rewritten = {rewritten}");
     }
 
     #[test]
