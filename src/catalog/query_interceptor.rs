@@ -18,6 +18,17 @@ use std::collections::HashMap;
 /// Type alias for the complex Future type returned by process_expression
 type ProcessExpressionFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
 
+/// The pg_catalog tables that pgsqlite physically materializes as real SQLite
+/// tables. Source of truth: `src/migration/registry.rs`, which is the only place
+/// these are `CREATE TABLE`d. Every other `pg_*` / `information_schema_*` name is
+/// a function or an interceptor-synthesized virtual result, so only these four
+/// show up in a raw `sqlite_master` scan. They are pgsqlite-reserved names a user
+/// cannot own, and this is a closed set: filter them out of client-issued
+/// `sqlite_master` / `sqlite_schema` queries alongside the `__pgsqlite_*`
+/// bookkeeping tables. Keep this in step with the registry.
+const PG_CATALOG_INTERNAL_TABLES: [&str; 4] =
+    ["pg_attrdef", "pg_constraint", "pg_depend", "pg_index"];
+
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
 
@@ -269,8 +280,10 @@ impl CatalogInterceptor {
             return None;
         }
 
-        // AND `<qualifier>.name NOT LIKE '__pgsqlite_%'` into the WHERE clause
-        // for each referenced sqlite_master relation.
+        // AND the pgsqlite-reserved-name filter into the WHERE clause for each
+        // referenced sqlite_master relation (hides the __pgsqlite_* bookkeeping
+        // tables, the materialized pg_catalog tables, and any index/trigger that
+        // belongs to one of them).
         for qualifier in qualifiers {
             if let Some(filter) = Self::pgsqlite_name_filter_expr(&qualifier) {
                 select.selection = Some(match select.selection.take() {
@@ -304,11 +317,26 @@ impl CatalogInterceptor {
         }
     }
 
-    /// Build the `<qualifier>.name NOT LIKE '__pgsqlite_%'` predicate by parsing
-    /// it, so the exact AST shape stays in step with the sqlparser version in
-    /// use. Returns `None` if it cannot be parsed.
+    /// Build the pgsqlite-reserved-name filter predicate by parsing it, so the
+    /// exact AST shape stays in step with the sqlparser version in use. The
+    /// predicate keeps only rows whose `name` and `tbl_name` are neither
+    /// `__pgsqlite_*` bookkeeping tables nor one of the materialized pg_catalog
+    /// tables. Filtering on `tbl_name` as well as `name` hides the indexes and
+    /// triggers that belong to an internal table, so an unqualified
+    /// `SELECT * FROM sqlite_master` (not just a `type = 'table'` scan) comes
+    /// back clean. Returns `None` if it cannot be parsed.
     fn pgsqlite_name_filter_expr(qualifier: &str) -> Option<Expr> {
-        let sql = format!("SELECT 1 WHERE {qualifier}.name NOT LIKE '__pgsqlite_%'");
+        let list = PG_CATALOG_INTERNAL_TABLES
+            .iter()
+            .map(|name| format!("'{name}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "SELECT 1 WHERE {qualifier}.name NOT LIKE '__pgsqlite_%' \
+             AND {qualifier}.name NOT IN ({list}) \
+             AND {qualifier}.tbl_name NOT LIKE '__pgsqlite_%' \
+             AND {qualifier}.tbl_name NOT IN ({list})"
+        );
         let dialect = PostgreSqlDialect {};
         let statements = Parser::parse_sql(&dialect, &sql).ok()?;
         let Statement::Query(query) = statements.into_iter().next()? else {
@@ -4020,6 +4048,25 @@ mod tests {
                 .expect("plain sqlite_master query should be rewritten");
         assert!(rewritten.contains(FILTER), "rewritten = {rewritten}");
         assert!(rewritten.contains("sqlite_master.name"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn materialized_pg_catalog_tables_are_filtered_by_name_and_tbl_name() {
+        let rewritten =
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_master")
+                .expect("plain sqlite_master query should be rewritten");
+        // Each of the four materialized pg_catalog tables is excluded by name.
+        for name in ["pg_attrdef", "pg_constraint", "pg_depend", "pg_index"] {
+            assert!(rewritten.contains(&format!("'{name}'")), "missing {name}: {rewritten}");
+        }
+        assert!(rewritten.contains("sqlite_master.name NOT IN"), "rewritten = {rewritten}");
+        // tbl_name is filtered too, so indexes/triggers owned by an internal
+        // table are hidden even in a SELECT * (non type='table') scan.
+        assert!(
+            rewritten.contains("sqlite_master.tbl_name NOT LIKE '__pgsqlite_%'"),
+            "rewritten = {rewritten}"
+        );
+        assert!(rewritten.contains("sqlite_master.tbl_name NOT IN"), "rewritten = {rewritten}");
     }
 
     #[test]
