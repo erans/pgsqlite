@@ -46,7 +46,21 @@ impl CatalogInterceptor {
            lower_query.trim() == "select version()" {
             return None;
         }
-        
+
+        // Filter pgsqlite's internal bookkeeping tables (__pgsqlite_*) out of
+        // client-issued sqlite_master / sqlite_schema queries. pgsqlite's own
+        // synthesized catalog queries already exclude these tables, but a query
+        // written by the client is otherwise passed through verbatim and leaks
+        // the internal metadata tables. This runs before the pg_catalog /
+        // information_schema gate below because a sqlite_master query contains
+        // none of those substrings. Fails open (returns None) on any parse
+        // failure or when sqlite_master is not an actual FROM relation.
+        if lower_query.contains("sqlite_master") || lower_query.contains("sqlite_schema") {
+            if let Some(result) = Self::intercept_sqlite_master_query(query, &db).await {
+                return Some(result);
+            }
+        }
+
         // Check for catalog tables
         let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
            lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
@@ -206,6 +220,104 @@ impl CatalogInterceptor {
         }
 
         None
+    }
+
+    /// Rewrite a client-issued `sqlite_master` / `sqlite_schema` query so that
+    /// pgsqlite's internal `__pgsqlite_*` bookkeeping tables are excluded, then
+    /// execute it. Returns `None` (letting the original query run unmodified) if
+    /// the query cannot be parsed as a single SELECT or does not actually select
+    /// from a `sqlite_master` relation, so this fails open in every ambiguous
+    /// case.
+    async fn intercept_sqlite_master_query(query: &str, db: &Arc<DbHandler>) -> Option<Result<DbResponse, PgSqliteError>> {
+        let rewritten = Self::rewrite_sqlite_master_query(query)?;
+        match db.query(&rewritten).await {
+            Ok(response) => Some(Ok(response)),
+            Err(e) => Some(Err(PgSqliteError::Sqlite(e))),
+        }
+    }
+
+    /// Rewrite a `sqlite_master` / `sqlite_schema` SELECT so that pgsqlite's
+    /// internal `__pgsqlite_*` bookkeeping tables are excluded, returning the
+    /// rewritten SQL. Returns `None` (fail open, run the original query) when the
+    /// input is not a single SELECT or does not select from a `sqlite_master`
+    /// relation.
+    fn rewrite_sqlite_master_query(query: &str) -> Option<String> {
+        let dialect = PostgreSqlDialect {};
+        let mut statements = Parser::parse_sql(&dialect, query).ok()?;
+        if statements.len() != 1 {
+            return None;
+        }
+        let Statement::Query(query_stmt) = &mut statements[0] else {
+            return None;
+        };
+        let SetExpr::Select(select) = &mut *query_stmt.body else {
+            return None;
+        };
+
+        // Collect a column qualifier for every sqlite_master / sqlite_schema
+        // relation referenced in the FROM clause (alias-aware and JOIN-safe).
+        let mut qualifiers: Vec<String> = Vec::new();
+        for table in &select.from {
+            Self::collect_sqlite_master_qualifiers(&table.relation, &mut qualifiers);
+            for join in &table.joins {
+                Self::collect_sqlite_master_qualifiers(&join.relation, &mut qualifiers);
+            }
+        }
+        if qualifiers.is_empty() {
+            // "sqlite_master" only appeared in a literal or column name, not as
+            // a FROM relation. Leave the query untouched.
+            return None;
+        }
+
+        // AND `<qualifier>.name NOT LIKE '__pgsqlite_%'` into the WHERE clause
+        // for each referenced sqlite_master relation.
+        for qualifier in qualifiers {
+            if let Some(filter) = Self::pgsqlite_name_filter_expr(&qualifier) {
+                select.selection = Some(match select.selection.take() {
+                    Some(existing) => Expr::BinaryOp {
+                        left: Box::new(existing),
+                        op: sqlparser::ast::BinaryOperator::And,
+                        right: Box::new(filter),
+                    },
+                    None => filter,
+                });
+            }
+        }
+
+        Some(statements[0].to_string())
+    }
+
+    /// If `factor` is a `sqlite_master` / `sqlite_schema` table, push the column
+    /// qualifier to use for it (its alias when present, otherwise the bare table
+    /// name) onto `qualifiers`.
+    fn collect_sqlite_master_qualifiers(factor: &TableFactor, qualifiers: &mut Vec<String>) {
+        if let TableFactor::Table { name, alias, .. } = factor {
+            let full_name = name.to_string().to_lowercase();
+            let bare_name = full_name.rsplit('.').next().unwrap_or(&full_name);
+            if bare_name == "sqlite_master" || bare_name == "sqlite_schema" {
+                let qualifier = match alias {
+                    Some(alias) => alias.name.to_string(),
+                    None => bare_name.to_string(),
+                };
+                qualifiers.push(qualifier);
+            }
+        }
+    }
+
+    /// Build the `<qualifier>.name NOT LIKE '__pgsqlite_%'` predicate by parsing
+    /// it, so the exact AST shape stays in step with the sqlparser version in
+    /// use. Returns `None` if it cannot be parsed.
+    fn pgsqlite_name_filter_expr(qualifier: &str) -> Option<Expr> {
+        let sql = format!("SELECT 1 WHERE {qualifier}.name NOT LIKE '__pgsqlite_%'");
+        let dialect = PostgreSqlDialect {};
+        let statements = Parser::parse_sql(&dialect, &sql).ok()?;
+        let Statement::Query(query) = statements.into_iter().next()? else {
+            return None;
+        };
+        let SetExpr::Select(select) = *query.body else {
+            return None;
+        };
+        select.selection
     }
 
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
@@ -3892,5 +4004,88 @@ impl CatalogInterceptor {
         }
 
         Ok(filtered)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FILTER: &str = "NOT LIKE '__pgsqlite_%'";
+
+    #[test]
+    fn plain_sqlite_master_select_is_filtered() {
+        let rewritten =
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_master")
+                .expect("plain sqlite_master query should be rewritten");
+        assert!(rewritten.contains(FILTER), "rewritten = {rewritten}");
+        assert!(rewritten.contains("sqlite_master.name"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn existing_where_clause_is_preserved_with_and() {
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(
+            "SELECT name FROM sqlite_master WHERE type = 'table'",
+        )
+        .expect("query with WHERE should be rewritten");
+        assert!(rewritten.contains("type = 'table'"), "rewritten = {rewritten}");
+        assert!(rewritten.contains(" AND "), "rewritten = {rewritten}");
+        assert!(rewritten.contains(FILTER), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn aliased_sqlite_master_uses_the_alias_qualifier() {
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(
+            "SELECT m.name FROM sqlite_master m WHERE m.type = 'table'",
+        )
+        .expect("aliased sqlite_master query should be rewritten");
+        assert!(rewritten.contains("m.name NOT LIKE '__pgsqlite_%'"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn joined_sqlite_master_is_filtered_and_join_safe() {
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(
+            "SELECT sm.name FROM sqlite_master sm JOIN pragma_table_info('t') pti",
+        )
+        .expect("joined sqlite_master query should be rewritten");
+        // The qualifier is the alias, keeping the filter unambiguous across the join.
+        assert!(rewritten.contains("sm.name NOT LIKE '__pgsqlite_%'"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn sqlite_schema_alias_is_filtered() {
+        let rewritten =
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_schema")
+                .expect("sqlite_schema query should be rewritten");
+        assert!(rewritten.contains(FILTER), "rewritten = {rewritten}");
+        assert!(rewritten.contains("sqlite_schema.name"), "rewritten = {rewritten}");
+    }
+
+    #[test]
+    fn unparseable_sql_fails_open() {
+        assert!(
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT FROM WHERE sqlite_master ???")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sqlite_master_only_as_a_literal_is_left_untouched() {
+        // The substring appears, but not as a FROM relation, so nothing is rewritten.
+        assert!(
+            CatalogInterceptor::rewrite_sqlite_master_query(
+                "SELECT 'sqlite_master' AS label FROM users"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn similarly_named_table_is_not_matched() {
+        // A user table whose name merely contains the substring must not be filtered.
+        assert!(
+            CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_master_backup")
+                .is_none()
+        );
     }
 }
