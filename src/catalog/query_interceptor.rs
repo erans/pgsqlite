@@ -4,7 +4,7 @@ use crate::session::SessionState;
 use crate::PgSqliteError;
 use crate::translator::{RegexTranslator, SchemaPrefixTranslator};
 use crate::query::column_sanitizer::sanitize_column_name;
-use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr};
+use sqlparser::ast::{Statement, TableFactor, Select, SetExpr, SelectItem, Expr, FunctionArg, FunctionArgExpr, Spanned};
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
@@ -284,20 +284,34 @@ impl CatalogInterceptor {
     }
 
     /// Rewrite a `sqlite_master` / `sqlite_schema` SELECT so that pgsqlite's
-    /// internal `__pgsqlite_*` bookkeeping tables are excluded, returning the
-    /// rewritten SQL. Returns `None` (fail open, run the original query) when the
-    /// input is not a single SELECT or does not select from a `sqlite_master`
-    /// relation.
+    /// internal `__pgsqlite_*` bookkeeping tables (and the materialized
+    /// pg_catalog objects) are excluded, returning the rewritten SQL. Returns
+    /// `None` (fail open, run the original query) when the input is not a single
+    /// SELECT, does not select from a `sqlite_master` relation, or cannot be
+    /// spliced with confidence.
+    ///
+    /// The rewrite NEVER re-serializes the user's original statement. An earlier
+    /// implementation parsed the query, injected filter predicates into the AST,
+    /// and re-serialized the WHOLE statement back to SQL text; that full
+    /// round-trip silently corrupted moderately complex predicates (a large
+    /// `name NOT IN (...)` list, `ESCAPE '\'`, JOINs to `pragma_table_info`) and
+    /// returned zero rows for the web console's own list-tables query. Instead we
+    /// use sqlparser ONLY to ANALYZE the statement (confirm it is a single SELECT
+    /// over sqlite_master, capture the alias, and locate the WHERE condition /
+    /// FROM clause by byte span), then produce the output by STRING-level
+    /// splicing onto the ORIGINAL query text, so every user token is preserved
+    /// byte-for-byte. A final re-parse gate makes any low-confidence splice fail
+    /// open.
     fn rewrite_sqlite_master_query(query: &str) -> Option<String> {
         let dialect = PostgreSqlDialect {};
-        let mut statements = Parser::parse_sql(&dialect, query).ok()?;
+        let statements = Parser::parse_sql(&dialect, query).ok()?;
         if statements.len() != 1 {
             return None;
         }
-        let Statement::Query(query_stmt) = &mut statements[0] else {
+        let Statement::Query(query_stmt) = &statements[0] else {
             return None;
         };
-        let SetExpr::Select(select) = &mut *query_stmt.body else {
+        let SetExpr::Select(select) = &*query_stmt.body else {
             return None;
         };
 
@@ -316,24 +330,100 @@ impl CatalogInterceptor {
             return None;
         }
 
-        // AND the pgsqlite-reserved-name filter into the WHERE clause for each
-        // referenced sqlite_master relation (hides the __pgsqlite_* bookkeeping
-        // tables, the materialized pg_catalog tables, and any index/trigger that
-        // belongs to one of them).
-        for qualifier in qualifiers {
-            if let Some(filter) = Self::pgsqlite_name_filter_expr(&qualifier) {
-                select.selection = Some(match select.selection.take() {
-                    Some(existing) => Expr::BinaryOp {
-                        left: Box::new(existing),
-                        op: sqlparser::ast::BinaryOperator::And,
-                        right: Box::new(filter),
-                    },
-                    None => filter,
-                });
+        // Build the combined reserved-name filter as plain SQL text: one
+        // predicate group per referenced sqlite_master relation, ANDed together.
+        // This text is the ONLY thing we generate; the user's own SQL is spliced
+        // in verbatim, never re-serialized.
+        let filter = qualifiers
+            .iter()
+            .map(|qualifier| Self::pgsqlite_name_filter_text(qualifier))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+
+        let rewritten = match &select.selection {
+            Some(existing) => {
+                // Wrap the existing WHERE condition and AND our filter, splicing
+                // by byte offset so the original predicate text (ESCAPE clauses,
+                // big IN lists, etc.) is preserved exactly.
+                let span = existing.span();
+                let start = Self::location_to_byte_offset(query, &span.start)?;
+                let end = Self::location_to_byte_offset(query, &span.end)?;
+                if start >= end || end > query.len() {
+                    return None;
+                }
+                format!(
+                    "{}({}) AND ({}){}",
+                    &query[..start],
+                    &query[start..end],
+                    filter,
+                    &query[end..],
+                )
             }
+            None => {
+                // No WHERE clause: insert one immediately after the FROM clause
+                // (before any GROUP BY / ORDER BY / LIMIT), located by the byte
+                // span of the FROM relations so no user tokens are disturbed.
+                let mut from_end: Option<usize> = None;
+                for table in &select.from {
+                    let end = Self::location_to_byte_offset(query, &table.span().end)?;
+                    from_end = Some(from_end.map_or(end, |cur| cur.max(end)));
+                }
+                let insert_at = from_end?;
+                if insert_at > query.len() {
+                    return None;
+                }
+                format!(
+                    "{} WHERE ({}){}",
+                    &query[..insert_at],
+                    filter,
+                    &query[insert_at..],
+                )
+            }
+        };
+
+        // Sanity gate: the spliced text must still parse as exactly one
+        // statement. Anything that does not (an unexpected span, an exotic query
+        // shape) fails open so the ORIGINAL query runs unmodified. Failing open
+        // is safe because the web console already filters internals itself; our
+        // filter is a bonus for raw external clients, never load-bearing.
+        let reparsed = Parser::parse_sql(&dialect, &rewritten).ok()?;
+        if reparsed.len() != 1 {
+            return None;
         }
 
-        Some(statements[0].to_string())
+        Some(rewritten)
+    }
+
+    /// Convert a 1-based `(line, column)` character position reported by
+    /// sqlparser into a byte offset into `query`. Mirrors the tokenizer's own
+    /// location bookkeeping (column counts characters and resets to 1 after a
+    /// `\n`), so it is correct for multi-byte UTF-8 input. The end location of a
+    /// token span is exclusive (it points at the position just past the last
+    /// character), which slices correctly with `&query[start..end]`. Returns
+    /// `None` for the empty-span sentinel (line/column 0) or an unresolvable
+    /// position.
+    fn location_to_byte_offset(query: &str, loc: &Location) -> Option<usize> {
+        if loc.line == 0 || loc.column == 0 {
+            return None;
+        }
+        let mut line: u64 = 1;
+        let mut column: u64 = 1;
+        for (offset, ch) in query.char_indices() {
+            if line == loc.line && column == loc.column {
+                return Some(offset);
+            }
+            if ch == '\n' {
+                line += 1;
+                column = 1;
+            } else {
+                column += 1;
+            }
+        }
+        // An exclusive end span at end-of-input points one past the last char.
+        if line == loc.line && column == loc.column {
+            return Some(query.len());
+        }
+        None
     }
 
     /// If `factor` is a `sqlite_master` / `sqlite_schema` table, push the column
@@ -353,16 +443,17 @@ impl CatalogInterceptor {
         }
     }
 
-    /// Build the pgsqlite-reserved-name filter predicate by parsing it, so the
-    /// exact AST shape stays in step with the sqlparser version in use. The
+    /// Build the pgsqlite-reserved-name filter predicate as plain SQL text,
+    /// qualified by `qualifier` (an alias or the bare `sqlite_master` name). The
     /// predicate keeps only rows whose `name` and `tbl_name` are neither
     /// `__pgsqlite_*` bookkeeping tables, one of the materialized pg_catalog
     /// tables, nor one of the materialized pg_catalog / information_schema views.
     /// Filtering on `tbl_name` as well as `name` hides the indexes and triggers
     /// that belong to an internal object, so an unqualified
     /// `SELECT * FROM sqlite_master` (not just a `type = 'table'` / `'view'`
-    /// scan) comes back clean. Returns `None` if it cannot be parsed.
-    fn pgsqlite_name_filter_expr(qualifier: &str) -> Option<Expr> {
+    /// scan) comes back clean. The text is spliced onto the original query; it is
+    /// never parsed-and-re-serialized (see `rewrite_sqlite_master_query`).
+    fn pgsqlite_name_filter_text(qualifier: &str) -> String {
         let quote = |names: &[&str]| {
             names
                 .iter()
@@ -372,23 +463,14 @@ impl CatalogInterceptor {
         };
         let table_list = quote(&PG_CATALOG_INTERNAL_TABLES);
         let view_list = quote(&PG_CATALOG_INTERNAL_VIEWS);
-        let sql = format!(
-            "SELECT 1 WHERE {qualifier}.name NOT LIKE '__pgsqlite_%' \
+        format!(
+            "{qualifier}.name NOT LIKE '__pgsqlite_%' \
              AND {qualifier}.name NOT IN ({table_list}) \
              AND {qualifier}.name NOT IN ({view_list}) \
              AND {qualifier}.tbl_name NOT LIKE '__pgsqlite_%' \
              AND {qualifier}.tbl_name NOT IN ({table_list}) \
              AND {qualifier}.tbl_name NOT IN ({view_list})"
-        );
-        let dialect = PostgreSqlDialect {};
-        let statements = Parser::parse_sql(&dialect, &sql).ok()?;
-        let Statement::Query(query) = statements.into_iter().next()? else {
-            return None;
-        };
-        let SetExpr::Select(select) = *query.body else {
-            return None;
-        };
-        select.selection
+        )
     }
 
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
@@ -4205,6 +4287,126 @@ mod tests {
         assert!(
             CatalogInterceptor::rewrite_sqlite_master_query("SELECT name FROM sqlite_master_backup")
                 .is_none()
+        );
+    }
+
+    /// A curated stand-in for the web console's ~85-name NOT IN list. 30+ names
+    /// is well past the N>=17 threshold where the old AST re-serialization
+    /// started dropping rows, so this locks the regression.
+    const CONSOLE_NOT_IN_NAMES: [&str; 32] = [
+        "pg_aggregate", "pg_am", "pg_amop", "pg_amproc", "pg_attrdef", "pg_attribute",
+        "pg_authid", "pg_auth_members", "pg_cast", "pg_class", "pg_collation",
+        "pg_constraint", "pg_conversion", "pg_database", "pg_depend", "pg_description",
+        "pg_enum", "pg_event_trigger", "pg_extension", "pg_foreign_data_wrapper",
+        "pg_foreign_server", "pg_foreign_table", "pg_index", "pg_inherits",
+        "pg_language", "pg_namespace", "pg_opclass", "pg_operator", "pg_proc",
+        "pg_range", "pg_rewrite", "pg_type",
+    ];
+
+    /// Build the exact SHAPE that broke in production: a `type='table'` scan with
+    /// a `name NOT LIKE '\_%' ESCAPE '\'` clause and a large `name NOT IN (...)`
+    /// list, ordered by name. This is the console's own list-tables query.
+    fn console_list_tables_query() -> String {
+        let in_list = CONSOLE_NOT_IN_NAMES
+            .iter()
+            .map(|n| format!("'{n}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "SELECT name FROM sqlite_master WHERE type='table' \
+             AND name NOT LIKE '\\_%' ESCAPE '\\' \
+             AND name NOT IN ({in_list}) ORDER BY name"
+        )
+    }
+
+    #[test]
+    fn console_list_tables_query_is_rewritten_without_corruption() {
+        // The regression: this exact shape returned zero rows once the NOT IN
+        // grew past ~16 entries, because the whole statement was re-serialized.
+        // The splice-based rewrite must (a) return Some, (b) preserve every
+        // original token byte-for-byte, and (c) still parse.
+        let query = console_list_tables_query();
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(&query)
+            .expect("console list-tables query must be rewritten, not dropped");
+
+        // The ESCAPE clause survives byte-for-byte (the round-trip mangled this).
+        assert!(
+            rewritten.contains("name NOT LIKE '\\_%' ESCAPE '\\'"),
+            "ESCAPE clause corrupted: {rewritten}"
+        );
+        // Every name in the original NOT IN list is still present, in order,
+        // exactly as written - i.e. the user's whole original predicate is intact.
+        let original_where_tail = query
+            .split_once("WHERE ")
+            .map(|(_, tail)| tail)
+            .expect("query has a WHERE");
+        let original_predicate = original_where_tail
+            .rsplit_once(" ORDER BY")
+            .map(|(head, _)| head)
+            .expect("query has ORDER BY");
+        assert!(
+            rewritten.contains(original_predicate),
+            "original predicate not preserved verbatim.\noriginal: {original_predicate}\nrewritten: {rewritten}"
+        );
+        // ORDER BY is preserved and stays after the spliced filter.
+        assert!(rewritten.contains("ORDER BY name"), "ORDER BY lost: {rewritten}");
+        // Our reserved-name filter was appended.
+        assert!(
+            rewritten.contains("sqlite_master.name NOT LIKE '__pgsqlite_%'"),
+            "reserved-name filter missing: {rewritten}"
+        );
+        // The wrap keeps the original condition parenthesized and ANDed.
+        assert!(rewritten.contains(") AND ("), "filter not ANDed onto original: {rewritten}");
+
+        // Sanity: it round-trips through the parser (also enforced inside the fn).
+        let dialect = PostgreSqlDialect {};
+        assert!(
+            Parser::parse_sql(&dialect, &rewritten).is_ok(),
+            "rewritten query does not parse: {rewritten}"
+        );
+    }
+
+    #[test]
+    fn large_not_in_list_survives_verbatim() {
+        // A 20+ entry NOT IN with no other clauses. The old code corrupted big
+        // IN lists on re-serialization; the splice must reproduce it exactly.
+        let names: Vec<String> = (0..24).map(|i| format!("'name_{i:02}'")).collect();
+        let in_list = names.join(", ");
+        let query = format!("SELECT name FROM sqlite_master WHERE name NOT IN ({in_list})");
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(&query)
+            .expect("large NOT IN query must be rewritten");
+        assert!(
+            rewritten.contains(&format!("name NOT IN ({in_list})")),
+            "large IN list not preserved verbatim: {rewritten}"
+        );
+        for name in &names {
+            assert!(rewritten.contains(name.as_str()), "dropped {name}: {rewritten}");
+        }
+    }
+
+    #[test]
+    fn no_where_clause_inserts_before_order_by() {
+        // The WHERE must be inserted after FROM and before ORDER BY.
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(
+            "SELECT name FROM sqlite_master ORDER BY name",
+        )
+        .expect("no-WHERE query with ORDER BY should be rewritten");
+        let where_pos = rewritten.find("WHERE").expect("WHERE inserted");
+        let order_pos = rewritten.find("ORDER BY").expect("ORDER BY kept");
+        assert!(where_pos < order_pos, "WHERE not before ORDER BY: {rewritten}");
+        assert!(rewritten.ends_with("ORDER BY name"), "ORDER BY moved: {rewritten}");
+    }
+
+    #[test]
+    fn original_predicate_is_preserved_byte_for_byte_with_where() {
+        // The user's exact WHERE text (odd spacing included) is spliced in
+        // verbatim; only wrapping parens and our AND-ed filter are added.
+        let query = "SELECT name FROM sqlite_master WHERE type   =   'table'";
+        let rewritten = CatalogInterceptor::rewrite_sqlite_master_query(query)
+            .expect("query should be rewritten");
+        assert!(
+            rewritten.starts_with("SELECT name FROM sqlite_master WHERE (type   =   'table') AND ("),
+            "original spacing/tokens not preserved: {rewritten}"
         );
     }
 }

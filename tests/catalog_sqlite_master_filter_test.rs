@@ -247,6 +247,64 @@ async fn select_star_hides_internal_tables_and_their_indexes() {
     server.abort();
 }
 
+/// The exact shape of the web console's list-tables query that broke in
+/// production: a `type='table'` scan with a `name NOT LIKE '\_%' ESCAPE '\'`
+/// clause plus a large `name NOT IN (...)` list of pg_* names, ordered by name.
+/// The previous AST re-serialization returned ZERO rows once the NOT IN list
+/// grew past ~16 entries; the splice-based rewrite must return the user's table.
+#[tokio::test]
+async fn console_list_tables_query_returns_user_tables() {
+    let server = setup().await;
+
+    // 32 pg_* names - well past the N>=17 threshold where the old code broke.
+    // Deliberately EXCLUDES the four names pgsqlite materializes as real tables
+    // (pg_attrdef, pg_constraint, pg_depend, pg_index). Those do not start with
+    // '_', so the client's own `\_%` filter cannot hide them: only our rewrite
+    // can. If the rewrite regressed to fail-open, they would leak here and
+    // assert_no_internal would catch it - so this test is strictly discriminating.
+    let pg_names = [
+        "pg_aggregate", "pg_am", "pg_amop", "pg_amproc", "pg_attribute",
+        "pg_authid", "pg_auth_members", "pg_cast", "pg_class", "pg_collation",
+        "pg_conversion", "pg_database", "pg_description",
+        "pg_enum", "pg_event_trigger", "pg_extension", "pg_foreign_data_wrapper",
+        "pg_foreign_server", "pg_foreign_table", "pg_inherits",
+        "pg_language", "pg_namespace", "pg_opclass", "pg_operator", "pg_proc",
+        "pg_range", "pg_rewrite", "pg_shdepend", "pg_statistic", "pg_tablespace",
+        "pg_trigger", "pg_type",
+    ];
+    let in_list = pg_names
+        .iter()
+        .map(|n| format!("'{n}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!(
+        "SELECT name FROM sqlite_master WHERE type = 'table' \
+         AND name NOT LIKE '\\_%' ESCAPE '\\' \
+         AND name NOT IN ({in_list}) ORDER BY name"
+    );
+
+    let rows = server
+        .client
+        .query(query.as_str(), &[])
+        .await
+        .expect("console list-tables query should succeed");
+    let names = names(&rows);
+
+    // The regression: this MUST return the user's tables, not zero rows.
+    assert!(
+        names.contains(&"customers".to_string()),
+        "customers missing (the production regression): {names:?}"
+    );
+    assert!(names.contains(&"orders".to_string()), "orders missing: {names:?}");
+    // Internals stay hidden, and a pg_* name NOT in the client's own NOT IN
+    // list (pg_indexes) is still returned - the rewrite did not corrupt the
+    // client's own exclusions either.
+    assert_no_internal(&names);
+    assert!(names.contains(&"pg_indexes".to_string()), "pg_indexes missing: {names:?}");
+
+    server.abort();
+}
+
 #[tokio::test]
 async fn non_sqlite_master_query_is_untouched() {
     let server = setup().await;
