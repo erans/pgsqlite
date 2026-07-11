@@ -13,10 +13,59 @@ use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_const
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Type alias for the complex Future type returned by process_expression
 type ProcessExpressionFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
+
+/// The `__pgsqlite_*` prefix marks pgsqlite's internal bookkeeping objects
+/// (schema registry, enum values, sequence state, etc.). A user cannot own a
+/// name in this namespace, so it is safe to hide from a client-issued
+/// `sqlite_master` / `sqlite_schema` scan.
+const PGSQLITE_INTERNAL_PREFIX: &str = "__pgsqlite_";
+
+/// The pg_catalog tables that pgsqlite physically materializes as real SQLite
+/// tables. Source of truth: `src/migration/registry.rs`, the only place these
+/// are `CREATE TABLE`d. Every other `pg_*` / `information_schema_*` name is a
+/// function or an interceptor-synthesized virtual result, so only these four
+/// show up in a raw `sqlite_master` scan. They are pgsqlite-reserved names a
+/// user cannot own, and this is a closed set. Kept as an exact-name set (never
+/// a `pg_%` wildcard) so a user-owned table such as `pg_indexes` still shows.
+const PG_CATALOG_INTERNAL_TABLES: [&str; 4] =
+    ["pg_attrdef", "pg_constraint", "pg_depend", "pg_index"];
+
+/// The pg_catalog / information_schema compatibility views pgsqlite materializes
+/// as real SQLite views. Source of truth: `src/migration/registry.rs`, the only
+/// place these are `CREATE VIEW`d. Like the tables above, every one is a
+/// pgsqlite-reserved name a user cannot own, so this is a closed, exact-name set
+/// (never a `pg_%` / `information_schema_%` wildcard, which would also hide a
+/// user's own `pg_my_report` view). Keep this in step with the registry.
+const PG_CATALOG_INTERNAL_VIEWS: [&str; 24] = [
+    "information_schema_columns",
+    "information_schema_key_column_usage",
+    "information_schema_referential_constraints",
+    "information_schema_schemata",
+    "information_schema_table_constraints",
+    "information_schema_tables",
+    "pg_am",
+    "pg_attribute",
+    "pg_class",
+    "pg_database",
+    "pg_description",
+    "pg_enum",
+    "pg_foreign_data_wrapper",
+    "pg_namespace",
+    "pg_proc",
+    "pg_roles",
+    "pg_stat_activity",
+    "pg_stat_all_indexes",
+    "pg_stat_all_tables",
+    "pg_stat_database",
+    "pg_stat_user_indexes",
+    "pg_stat_user_tables",
+    "pg_type",
+    "pg_user",
+];
 
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
@@ -42,11 +91,29 @@ impl CatalogInterceptor {
         }
         
         // Special case: pg_catalog.version() should be handled by SQLite function, not catalog interceptor
-        if lower_query.trim() == "select pg_catalog.version()" || 
+        if lower_query.trim() == "select pg_catalog.version()" ||
            lower_query.trim() == "select version()" {
             return None;
         }
-        
+
+        // Post-execution result filter for client-issued sqlite_master /
+        // sqlite_schema scans. pgsqlite exposes its internal bookkeeping tables
+        // (__pgsqlite_*) and the pg_catalog objects it materializes as real
+        // SQLite tables/views; a raw sqlite_master scan from an external client
+        // (psql, TablePlus, DBeaver) would otherwise leak them. This runs BEFORE
+        // the pg_catalog / information_schema gate below because a bare
+        // sqlite_master query contains none of those substrings. It runs the
+        // client's ORIGINAL query verbatim and drops internal rows from the
+        // result, so the query text is never modified and can never be
+        // corrupted. Fails open (returns None -> original query runs) on any
+        // uncertainty. See intercept_sqlite_master_query for the full rationale
+        // and the documented boundary.
+        if lower_query.contains("sqlite_master") || lower_query.contains("sqlite_schema") {
+            if let Some(result) = Self::intercept_sqlite_master_query(query, &db).await {
+                return Some(result);
+            }
+        }
+
         // Check for catalog tables
         let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
            lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
@@ -766,6 +833,212 @@ impl CatalogInterceptor {
         }
         println!("INTERCEPT: Reached end of intercept_query, returning None");
         None
+    }
+
+    /// Handle a client-issued `sqlite_master` / `sqlite_schema` SELECT by running
+    /// it VERBATIM and then dropping result rows that name pgsqlite's internal
+    /// objects (`__pgsqlite_*` bookkeeping tables, the materialized pg_catalog
+    /// tables/views, and any index/trigger owned by one of them).
+    ///
+    /// Why post-execution filtering and not query rewriting: an earlier approach
+    /// modified the query text (re-serializing the parsed AST, then splicing
+    /// filter predicates by byte span). Both variants silently corrupted
+    /// moderately complex predicates: a large `name NOT IN (...)` list and an
+    /// `ESCAPE '\'` clause could come back with wrong or zero rows. Because this
+    /// path executes the client's ORIGINAL, UNMODIFIED text and only removes rows
+    /// afterwards, no client query can ever be corrupted by it.
+    ///
+    /// Fails open in every ambiguous case (returns `None`, so the original query
+    /// runs through the normal path unchanged). Failing open is safe: the filter
+    /// is a courtesy for raw external clients, never a correctness guarantee.
+    ///
+    /// DOCUMENTED BOUNDARY: the query runs verbatim, so a query whose TEXT itself
+    /// trips an earlier interceptor branch (for example the old web-console
+    /// list-tables query that embedded ~85 `pg_*` names in a `NOT IN`, which made
+    /// pgsqlite return `pg_tablespace` content instead of `sqlite_master` rows)
+    /// still returns that hijacked content. Result-filtering cannot repair a
+    /// query that never reached `sqlite_master`. That is acceptable: external
+    /// tools issue a simple `SELECT * FROM sqlite_master`, which this branch
+    /// handles cleanly, and any console sending a pathological query is fixed at
+    /// the source.
+    async fn intercept_sqlite_master_query(
+        query: &str,
+        db: &Arc<DbHandler>,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        // Analyze only (never rewrite): confirm this is a single plain SELECT
+        // whose FROM actually references sqlite_master / sqlite_schema. Anything
+        // else (a set operation, a CTE, sqlite_master appearing only inside a
+        // string literal, a parse failure) fails open.
+        if !Self::query_selects_from_sqlite_master(query) {
+            return None;
+        }
+        // Execute the ORIGINAL, UNMODIFIED query text.
+        let response = match db.query(query).await {
+            Ok(response) => response,
+            Err(e) => return Some(Err(PgSqliteError::Sqlite(e))),
+        };
+        // Build the authoritative set of internal object NAMES from a separate,
+        // simple probe of sqlite_master. This is what lets us hide an internal
+        // object even when the client projects only `name` (so its `tbl_name`
+        // is not in the result to match on): an index/trigger owned by an
+        // internal table, such as `idx_enum_values_label` on
+        // `__pgsqlite_enum_values`, is added to the denylist by NAME here. The
+        // probe cannot be corrupted (it is our own fixed text) and cannot
+        // recurse (db.query does not re-enter this interceptor).
+        let denylist = Self::internal_object_names(db).await;
+        Some(Ok(Self::filter_sqlite_master_response(response, denylist.as_ref())))
+    }
+
+    /// Probe sqlite_master directly for the complete set of pgsqlite-internal
+    /// object NAMES: every object whose own name is reserved
+    /// (`is_internal_object_name`) OR that belongs to an internal table
+    /// (`tbl_name` is reserved). The latter is how internal-owned indexes and
+    /// triggers (whose own names are not reserved, e.g. `idx_enum_values_label`
+    /// or `sqlite_autoindex___pgsqlite_enum_values_1`) get denied. Returns
+    /// `None` on any error so the caller degrades to static-name filtering
+    /// rather than failing the client's query.
+    async fn internal_object_names(db: &Arc<DbHandler>) -> Option<HashSet<String>> {
+        let response = db
+            .query("SELECT name, tbl_name FROM sqlite_master")
+            .await
+            .ok()?;
+        let name_idx = response.columns.iter().position(|c| c.eq_ignore_ascii_case("name"))?;
+        let tbl_name_idx = response
+            .columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case("tbl_name"))?;
+        let mut denied = HashSet::new();
+        for row in &response.rows {
+            let cell = |idx: usize| -> Option<String> {
+                row.get(idx)
+                    .and_then(|c| c.as_ref())
+                    .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+            };
+            let name = cell(name_idx);
+            let tbl_name = cell(tbl_name_idx);
+            let owner_is_internal = tbl_name
+                .as_deref()
+                .map(Self::is_internal_object_name)
+                .unwrap_or(false);
+            if let Some(name) = name {
+                if Self::is_internal_object_name(&name) || owner_is_internal {
+                    denied.insert(name);
+                }
+            }
+        }
+        Some(denied)
+    }
+
+    /// Return `true` only when `query` parses as a single plain `SELECT` whose
+    /// FROM clause (including any JOINed relation) references a `sqlite_master`
+    /// or `sqlite_schema` table. Alias- and schema-qualifier-aware. Any other
+    /// shape returns `false` so the caller fails open.
+    fn query_selects_from_sqlite_master(query: &str) -> bool {
+        let dialect = PostgreSqlDialect {};
+        let Ok(statements) = Parser::parse_sql(&dialect, query) else {
+            return false;
+        };
+        if statements.len() != 1 {
+            return false;
+        }
+        let Statement::Query(query_stmt) = &statements[0] else {
+            return false;
+        };
+        let SetExpr::Select(select) = &*query_stmt.body else {
+            return false;
+        };
+        for table in &select.from {
+            if Self::table_factor_is_sqlite_master(&table.relation) {
+                return true;
+            }
+            for join in &table.joins {
+                if Self::table_factor_is_sqlite_master(&join.relation) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// `true` if `factor` is the `sqlite_master` / `sqlite_schema` table, ignoring
+    /// any schema qualifier (e.g. `main.sqlite_master`) and case.
+    fn table_factor_is_sqlite_master(factor: &TableFactor) -> bool {
+        if let TableFactor::Table { name, .. } = factor {
+            let full_name = name.to_string().to_lowercase();
+            let bare_name = full_name.rsplit('.').next().unwrap_or(&full_name);
+            return bare_name == "sqlite_master" || bare_name == "sqlite_schema";
+        }
+        false
+    }
+
+    /// Drop rows that name a pgsqlite-internal object from an already-executed
+    /// `sqlite_master` response. A row is removed when its `name` value OR (when
+    /// the projection includes it) its `tbl_name` value identifies an internal
+    /// object. A value is internal when it is statically reserved
+    /// (`is_internal_object_name`) OR appears in `denylist`, the dynamic set of
+    /// internal-owned object names discovered by `internal_object_names`.
+    /// Consulting `denylist` by NAME is what hides internal-owned indexes and
+    /// triggers (e.g. `idx_enum_values_*` on `__pgsqlite_enum_values`) even when
+    /// the client projects only `name`, so both a `type = 'index'` scan and an
+    /// unqualified `SELECT * FROM sqlite_master` come back clean.
+    ///
+    /// If the projection includes NEITHER a `name` nor a `tbl_name` column (for
+    /// example `SELECT sql FROM sqlite_master` or `SELECT count(*) ...`), internal
+    /// rows cannot be identified, so the response is returned UNFILTERED. This is
+    /// a rare, documented, accepted caveat.
+    fn filter_sqlite_master_response(
+        response: DbResponse,
+        denylist: Option<&HashSet<String>>,
+    ) -> DbResponse {
+        let name_idx = response
+            .columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case("name"));
+        let tbl_name_idx = response
+            .columns
+            .iter()
+            .position(|c| c.eq_ignore_ascii_case("tbl_name"));
+
+        // Cannot identify internal rows without a name / tbl_name column: return
+        // the result untouched rather than guess.
+        if name_idx.is_none() && tbl_name_idx.is_none() {
+            return response;
+        }
+
+        let value_is_internal = |value: &str| -> bool {
+            Self::is_internal_object_name(value)
+                || denylist.is_some_and(|set| set.contains(value))
+        };
+        let DbResponse { columns, rows, .. } = response;
+        let cell_is_internal = |row: &Vec<Option<Vec<u8>>>, idx: Option<usize>| -> bool {
+            match idx.and_then(|i| row.get(i)).and_then(|cell| cell.as_ref()) {
+                Some(bytes) => value_is_internal(&String::from_utf8_lossy(bytes)),
+                None => false,
+            }
+        };
+        let filtered: Vec<Vec<Option<Vec<u8>>>> = rows
+            .into_iter()
+            .filter(|row| {
+                !(cell_is_internal(row, name_idx) || cell_is_internal(row, tbl_name_idx))
+            })
+            .collect();
+        let rows_affected = filtered.len();
+        DbResponse {
+            columns,
+            rows: filtered,
+            rows_affected,
+        }
+    }
+
+    /// `true` if `name` is a pgsqlite-reserved internal object: an `__pgsqlite_*`
+    /// bookkeeping table, one of the four materialized pg_catalog tables, or one
+    /// of the materialized pg_catalog / information_schema views. Exact-name
+    /// match against the reserved sets (never a `pg_%` wildcard) so a user-owned
+    /// object like `pg_indexes` or `pg_my_report` is preserved.
+    fn is_internal_object_name(name: &str) -> bool {
+        name.starts_with(PGSQLITE_INTERNAL_PREFIX)
+            || PG_CATALOG_INTERNAL_TABLES.contains(&name)
+            || PG_CATALOG_INTERNAL_VIEWS.contains(&name)
     }
 
     async fn handle_pg_type_query(select: &Select, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> DbResponse {
@@ -3892,5 +4165,178 @@ impl CatalogInterceptor {
         }
 
         Ok(filtered)
+    }
+}
+
+#[cfg(test)]
+mod sqlite_master_filter_tests {
+    use super::*;
+
+    /// Build a byte-encoded cell the way DbHandler::query encodes TEXT values.
+    fn cell(value: &str) -> Option<Vec<u8>> {
+        Some(value.as_bytes().to_vec())
+    }
+
+    fn names(response: &DbResponse, name_col: usize) -> Vec<String> {
+        response
+            .rows
+            .iter()
+            .map(|row| String::from_utf8_lossy(row[name_col].as_ref().unwrap()).to_string())
+            .collect()
+    }
+
+    #[test]
+    fn detects_plain_sqlite_master_select() {
+        assert!(CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT name FROM sqlite_master"
+        ));
+        assert!(CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT * FROM sqlite_master WHERE type = 'table'"
+        ));
+        assert!(CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT m.name FROM sqlite_master m WHERE m.type = 'view'"
+        ));
+        // sqlite_schema alias and schema-qualified name both count.
+        assert!(CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT name FROM sqlite_schema"
+        ));
+        assert!(CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT name FROM main.sqlite_master"
+        ));
+        // A JOIN that includes sqlite_master still counts.
+        assert!(CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT sm.name FROM sqlite_master sm JOIN pragma_table_info('t') pti"
+        ));
+    }
+
+    #[test]
+    fn does_not_detect_non_sqlite_master_queries() {
+        // sqlite_master only inside a string literal, not a FROM relation.
+        assert!(!CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT 'sqlite_master' AS label"
+        ));
+        // A plain user-table query.
+        assert!(!CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT name FROM customers"
+        ));
+        // Not a single statement / not parseable fails open.
+        assert!(!CatalogInterceptor::query_selects_from_sqlite_master(
+            "SELECT name FROM sqlite_master; SELECT 1"
+        ));
+        assert!(!CatalogInterceptor::query_selects_from_sqlite_master(
+            "this is not sql"
+        ));
+    }
+
+    #[test]
+    fn is_internal_object_name_matches_reserved_only() {
+        // __pgsqlite_ prefix.
+        assert!(CatalogInterceptor::is_internal_object_name("__pgsqlite_schema"));
+        assert!(CatalogInterceptor::is_internal_object_name("__pgsqlite_enum_values"));
+        // Every materialized table and view is reserved.
+        for name in PG_CATALOG_INTERNAL_TABLES {
+            assert!(CatalogInterceptor::is_internal_object_name(name), "table {name}");
+        }
+        for name in PG_CATALOG_INTERNAL_VIEWS {
+            assert!(CatalogInterceptor::is_internal_object_name(name), "view {name}");
+        }
+        // Exact-name set, NOT a pg_% wildcard: user-owned pg_* names survive.
+        assert!(!CatalogInterceptor::is_internal_object_name("pg_indexes"));
+        assert!(!CatalogInterceptor::is_internal_object_name("pg_my_report"));
+        assert!(!CatalogInterceptor::is_internal_object_name("customers"));
+        // An index whose NAME is not reserved is not matched by name; it is
+        // hidden via its tbl_name instead (covered in the filter test below).
+        assert!(!CatalogInterceptor::is_internal_object_name("idx_enum_values_0"));
+    }
+
+    #[test]
+    fn filter_drops_internal_rows_by_name_and_tbl_name() {
+        // Columns mirror a `SELECT type, name, tbl_name FROM sqlite_master`.
+        let response = DbResponse {
+            columns: vec!["type".into(), "name".into(), "tbl_name".into()],
+            rows: vec![
+                vec![cell("table"), cell("customers"), cell("customers")],
+                vec![cell("table"), cell("pg_indexes"), cell("pg_indexes")],
+                vec![cell("table"), cell("__pgsqlite_schema"), cell("__pgsqlite_schema")],
+                vec![cell("table"), cell("pg_constraint"), cell("pg_constraint")],
+                vec![cell("view"), cell("pg_class"), cell("pg_class")],
+                // An index whose own name is NOT reserved, but which belongs to
+                // an internal table: must be dropped via tbl_name.
+                vec![cell("index"), cell("idx_enum_values_0"), cell("__pgsqlite_enum_values")],
+                vec![cell("index"), cell("idx_customers_name"), cell("customers")],
+                vec![cell("view"), cell("pg_my_report"), cell("pg_my_report")],
+            ],
+            rows_affected: 8,
+        };
+        let filtered = CatalogInterceptor::filter_sqlite_master_response(response, None);
+        let kept = names(&filtered, 1);
+        assert_eq!(
+            kept,
+            vec![
+                "customers".to_string(),
+                "pg_indexes".to_string(),
+                "idx_customers_name".to_string(),
+                "pg_my_report".to_string(),
+            ],
+            "unexpected surviving rows"
+        );
+        assert_eq!(filtered.rows_affected, 4);
+    }
+
+    #[test]
+    fn filter_without_name_or_tbl_name_column_is_untouched() {
+        // `SELECT sql FROM sqlite_master`: no name / tbl_name column, so internal
+        // rows cannot be identified and the response is returned unfiltered.
+        let response = DbResponse {
+            columns: vec!["sql".into()],
+            rows: vec![
+                vec![cell("CREATE TABLE customers (...)")],
+                vec![cell("CREATE TABLE __pgsqlite_schema (...)")],
+            ],
+            rows_affected: 2,
+        };
+        let filtered = CatalogInterceptor::filter_sqlite_master_response(response, None);
+        assert_eq!(filtered.rows.len(), 2, "must be returned unfiltered");
+        assert_eq!(filtered.rows_affected, 2);
+    }
+
+    #[test]
+    fn filter_on_name_only_projection() {
+        // `SELECT name FROM sqlite_master`: only the name column present.
+        let response = DbResponse {
+            columns: vec!["name".into()],
+            rows: vec![
+                vec![cell("customers")],
+                vec![cell("__pgsqlite_schema")],
+                vec![cell("pg_depend")],
+                vec![cell("pg_indexes")],
+            ],
+            rows_affected: 4,
+        };
+        let filtered = CatalogInterceptor::filter_sqlite_master_response(response, None);
+        assert_eq!(names(&filtered, 0), vec!["customers".to_string(), "pg_indexes".to_string()]);
+    }
+
+    #[test]
+    fn denylist_hides_internal_owned_index_in_name_only_projection() {
+        // `SELECT name FROM sqlite_master WHERE type = 'index'`: only the name
+        // column is present, so an internal-owned index whose OWN name is not
+        // reserved (idx_enum_values_label on __pgsqlite_enum_values) can only be
+        // hidden via the dynamic denylist built by internal_object_names.
+        let mut denylist = HashSet::new();
+        denylist.insert("idx_enum_values_label".to_string());
+        denylist.insert("sqlite_autoindex___pgsqlite_schema_1".to_string());
+        let response = DbResponse {
+            columns: vec!["name".into()],
+            rows: vec![
+                vec![cell("idx_customers_name")],
+                vec![cell("idx_enum_values_label")],
+                vec![cell("sqlite_autoindex___pgsqlite_schema_1")],
+            ],
+            rows_affected: 3,
+        };
+        let filtered =
+            CatalogInterceptor::filter_sqlite_master_response(response, Some(&denylist));
+        assert_eq!(names(&filtered, 0), vec!["idx_customers_name".to_string()]);
     }
 }
