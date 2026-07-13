@@ -324,6 +324,50 @@ fn test_type_normalization() -> rusqlite::Result<()> {
     // Should detect no drift despite type variations
     let drift = SchemaDriftDetector::detect_drift(&conn).unwrap();
     assert!(drift.is_empty());
-    
+
+    Ok(())
+}
+
+#[test]
+fn test_no_drift_serial_autoincrement_column() -> rusqlite::Result<()> {
+    // Regression: a SERIAL/BIGSERIAL column is stored in __pgsqlite_schema with
+    // the constraint-bearing sqlite_type "INTEGER PRIMARY KEY AUTOINCREMENT"
+    // (see TypeMapper::pg_to_sqlite_for_create_table), while PRAGMA table_info
+    // reports only the bare "INTEGER" type token. The drift checker must not
+    // treat this as a type mismatch, otherwise an existing database created via
+    // `CREATE TABLE ... (id SERIAL PRIMARY KEY)` fails to open with a spurious
+    // "expected SQLite type 'INTEGER PRIMARY KEY AUTOINCREMENT' but found
+    // 'INTEGER'" schema-drift error.
+    let mut conn = Connection::open_in_memory()?;
+
+    TypeMetadata::init(&conn)?;
+
+    // The table as pgsqlite actually creates it from a translated SERIAL DDL.
+    conn.execute(
+        "CREATE TABLE drift_test (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name TEXT
+        )",
+        []
+    )?;
+
+    // The metadata as pgsqlite actually records it for a SERIAL column.
+    let tx = conn.transaction()?;
+    tx.execute(
+        "INSERT INTO __pgsqlite_schema (table_name, column_name, pg_type, sqlite_type)
+         VALUES
+         ('drift_test', 'id', 'int4', 'INTEGER PRIMARY KEY AUTOINCREMENT'),
+         ('drift_test', 'name', 'text', 'TEXT')",
+        []
+    )?;
+    tx.commit()?;
+
+    let drift = SchemaDriftDetector::detect_drift(&conn).unwrap();
+    assert!(
+        drift.is_empty(),
+        "SERIAL/AUTOINCREMENT column should not be reported as drift: {}",
+        drift.format_report()
+    );
+
     Ok(())
 }
