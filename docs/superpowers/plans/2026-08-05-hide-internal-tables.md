@@ -145,7 +145,7 @@ git commit -m "feat(config): add --hide-internal-tables flag and global toggle (
 
 **Interfaces:**
 - Consumes: nothing from Task 1. This module is pure — it never reads config, so its tests are safe.
-- Produces: `SqliteMasterFilter::translate(query: &str) -> Cow<'_, str>`. Returns `Cow::Borrowed` unchanged when there is nothing to do (no textual mention, parse failure, no relation matched, or the idempotence guard trips) and `Cow::Owned` with the rewritten SQL otherwise. Tasks 3 and 4 call this.
+- Produces: `SqliteMasterFilter::translate(query: &str) -> Cow<'_, str>`. Returns `Cow::Borrowed` unchanged when there is nothing to do (no textual mention, parse failure, no relation matched) and `Cow::Owned` with the rewritten SQL otherwise. Tasks 3 and 4 call this. *(The idempotence guard originally listed here was removed during execution — see Notes for the reviewer.)*
 
 - [ ] **Step 1: Enable the sqlparser visitor feature**
 
@@ -335,13 +335,13 @@ impl SqliteMasterFilter {
             return Cow::Borrowed(query);
         }
 
-        // Idempotence guard, and the "still queryable by name" half of the design:
-        // a query that already mentions the internal prefix is either one we
-        // rewrote in an earlier hook or a client deliberately naming an internal
-        // table. Either way, leave it alone.
-        if query.contains("__pgsqlite_") {
-            return Cow::Borrowed(query);
-        }
+        // REMOVED DURING EXECUTION — do not implement this block. It let a
+        // trailing SQL comment bypass filtering entirely. See "Notes for the
+        // reviewer" at the end of this plan for the ruling and reasoning.
+        //
+        // if query.contains("__pgsqlite_") {
+        //     return Cow::Borrowed(query);
+        // }
 
         let mut statements = match Parser::parse_sql(&PostgreSqlDialect {}, query) {
             Ok(statements) => statements,
