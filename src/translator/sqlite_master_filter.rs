@@ -1,8 +1,9 @@
 use std::borrow::Cow;
 use std::ops::ControlFlow;
+use std::sync::LazyLock;
 
 use sqlparser::ast::{
-    Ident, ObjectNamePart, Statement, TableAlias, TableFactor, VisitMut, VisitorMut,
+    Ident, ObjectNamePart, Query, Statement, TableAlias, TableFactor, VisitMut, VisitorMut,
 };
 use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
@@ -18,6 +19,34 @@ const FILTERED_RELATION_SQL: &str = "SELECT * FROM sqlite_master \
      WHERE substr(name, 1, 11) <> '__pgsqlite_' \
      AND (tbl_name IS NULL OR substr(tbl_name, 1, 11) <> '__pgsqlite_')";
 
+/// [`FILTERED_RELATION_SQL`] parsed once, so each rewrite and each recognition
+/// check reuses the same shape.
+fn parse_filtered_relation() -> Option<Box<Query>> {
+    let statements = Parser::parse_sql(&PostgreSqlDialect {}, FILTERED_RELATION_SQL).ok()?;
+    match statements.into_iter().next() {
+        Some(Statement::Query(query)) => Some(query),
+        _ => None,
+    }
+}
+
+/// How sqlparser renders [`FILTERED_RELATION_SQL`] back out. Comparing against
+/// this is what lets us recognize our own generated relation in a query that
+/// has already been rewritten and re-parsed.
+static FILTERED_RELATION_RENDERED: LazyLock<String> =
+    LazyLock::new(|| parse_filtered_relation().map(|q| q.to_string()).unwrap_or_default());
+
+/// Is `query` the subquery this translator substitutes for a client
+/// `sqlite_master` reference?
+///
+/// The SQL injection detector uses this so that pgsqlite's own wrapper is not
+/// counted as attacker-supplied subquery nesting. Recognizing it cannot be
+/// abused: a client that reproduces this exact subquery gets the filtered
+/// relation, which is precisely what the flag exists to hand them.
+pub(crate) fn is_generated_filter_subquery(query: &Query) -> bool {
+    let rendered = &*FILTERED_RELATION_RENDERED;
+    !rendered.is_empty() && query.to_string() == *rendered
+}
+
 /// Rewrites client references to `sqlite_master` / `sqlite_schema` so that
 /// pgsqlite's own `__pgsqlite_*` objects are not listed.
 ///
@@ -28,7 +57,7 @@ pub struct SqliteMasterFilter;
 
 impl SqliteMasterFilter {
     /// Cheap allocation-free gate: is there any point parsing this query?
-    pub fn needs_translation(query: &str) -> bool {
+    fn needs_translation(query: &str) -> bool {
         contains_ignore_ascii_case(query, "sqlite_master")
             || contains_ignore_ascii_case(query, "sqlite_schema")
     }
@@ -51,7 +80,22 @@ impl SqliteMasterFilter {
 
         let mut visitor = RelationReplacer { replaced: 0 };
         for statement in &mut statements {
-            let _ = statement.visit(&mut visitor);
+            // Read contexts only. `UPDATE`/`DELETE` name their target relation
+            // with the same `TableFactor::Table`, and substituting a derived
+            // table there produces syntactically invalid SQL whose error text
+            // would leak the `__pgsqlite_` prefix straight back to the client.
+            // Writes to `sqlite_master` are SQLite's to reject, unmodified.
+            match statement {
+                Statement::Query(query) => {
+                    let _ = query.visit(&mut visitor);
+                }
+                Statement::Insert(insert) => {
+                    if let Some(source) = insert.source.as_mut() {
+                        let _ = source.visit(&mut visitor);
+                    }
+                }
+                _ => {}
+            }
         }
 
         if visitor.replaced == 0 {
@@ -113,10 +157,7 @@ impl VisitorMut for RelationReplacer {
             columns: vec![],
         });
 
-        let Ok(statements) = Parser::parse_sql(&PostgreSqlDialect {}, FILTERED_RELATION_SQL) else {
-            return ControlFlow::Continue(());
-        };
-        let Some(Statement::Query(subquery)) = statements.into_iter().next() else {
+        let Some(subquery) = parse_filtered_relation() else {
             return ControlFlow::Continue(());
         };
 
@@ -266,5 +307,91 @@ mod tests {
         let out = rewritten("SELECT name FROM sqlite_master");
         assert!(out.contains("SUBSTR(name, 1, 11) <> '__pgsqlite_'"));
         assert!(!out.contains("LIKE '__pgsqlite_"));
+    }
+
+    #[test]
+    fn leaves_attached_database_qualifier_alone() {
+        // Only `main.` and `temp.` name the SQLite catalog; `otherdb.sqlite_master`
+        // belongs to an ATTACHed database and is none of our business.
+        assert!(matches!(
+            SqliteMasterFilter::translate("SELECT name FROM otherdb.sqlite_master"),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            rewritten("SELECT name FROM otherdb.sqlite_master"),
+            "SELECT name FROM otherdb.sqlite_master"
+        );
+    }
+
+    #[test]
+    fn leaves_delete_untouched() {
+        // Substituting a derived table for the DELETE target yields invalid SQL
+        // whose error text would leak `__pgsqlite_` to the client. Let SQLite
+        // reject the write itself, with its own clear diagnostic.
+        assert!(matches!(
+            SqliteMasterFilter::translate("DELETE FROM sqlite_master WHERE name = 'zzz'"),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            rewritten("DELETE FROM sqlite_master WHERE name = 'zzz'"),
+            "DELETE FROM sqlite_master WHERE name = 'zzz'"
+        );
+    }
+
+    #[test]
+    fn leaves_update_untouched() {
+        assert!(matches!(
+            SqliteMasterFilter::translate("UPDATE sqlite_master SET name = 'x'"),
+            Cow::Borrowed(_)
+        ));
+        assert_eq!(
+            rewritten("UPDATE sqlite_master SET name = 'x'"),
+            "UPDATE sqlite_master SET name = 'x'"
+        );
+    }
+
+    #[test]
+    fn rewrites_insert_select_source() {
+        // The read half of an INSERT ... SELECT is still a listing.
+        let out = rewritten("INSERT INTO t SELECT name FROM sqlite_master");
+        assert_eq!(
+            out,
+            format!("INSERT INTO t SELECT name FROM {FILTERED} AS sqlite_master")
+        );
+    }
+
+    #[test]
+    fn recognizes_its_own_generated_subquery() {
+        // What the SQL injection detector keys on. Parse the rewritten form back
+        // and confirm the derived table it contains is recognized as ours.
+        let out = rewritten("SELECT name FROM sqlite_master WHERE type = 'table'");
+        let statements = Parser::parse_sql(&PostgreSqlDialect {}, &out).unwrap();
+        let Some(Statement::Query(query)) = statements.into_iter().next() else {
+            panic!("expected a query");
+        };
+        let sqlparser::ast::SetExpr::Select(select) = &*query.body else {
+            panic!("expected a select");
+        };
+        let TableFactor::Derived { subquery, .. } = &select.from[0].relation else {
+            panic!("expected a derived table");
+        };
+        assert!(is_generated_filter_subquery(subquery));
+    }
+
+    #[test]
+    fn does_not_recognize_a_client_written_subquery() {
+        let statements =
+            Parser::parse_sql(&PostgreSqlDialect {}, "SELECT * FROM (SELECT name FROM sqlite_master) z")
+                .unwrap();
+        let Some(Statement::Query(query)) = statements.into_iter().next() else {
+            panic!("expected a query");
+        };
+        let sqlparser::ast::SetExpr::Select(select) = &*query.body else {
+            panic!("expected a select");
+        };
+        let TableFactor::Derived { subquery, .. } = &select.from[0].relation else {
+            panic!("expected a derived table");
+        };
+        assert!(!is_generated_filter_subquery(subquery));
     }
 }

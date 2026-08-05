@@ -282,7 +282,17 @@ impl SqlInjectionDetector {
                 }
             }
             TableFactor::Derived { subquery, .. } => {
-                self.analyze_query_statement(subquery, analysis, depth + 1, original_query)?;
+                // `--hide-internal-tables` rewrites a client `sqlite_master`
+                // reference into a derived table of our own making. That wrapper
+                // is pgsqlite's, not attacker-supplied nesting, so it must not
+                // push the relation inside it past the `depth > 1` rule above.
+                // Client-written subqueries still increment as before.
+                let nested_depth = if crate::translator::is_generated_filter_subquery(subquery) {
+                    depth
+                } else {
+                    depth + 1
+                };
+                self.analyze_query_statement(subquery, analysis, nested_depth, original_query)?;
             }
             _ => {}
         }
@@ -607,5 +617,54 @@ mod tests {
         // Complex access should be suspicious
         let result = detector.analyze_query("SELECT * FROM users UNION SELECT * FROM pg_user");
         assert!(result.is_err());
+    }
+
+    /// Regression: `--hide-internal-tables` rewrites client `sqlite_master`
+    /// queries into a derived table. That extra nesting used to trip the
+    /// `depth > 1` system-table rule, so an ordinary schema listing over the
+    /// extended protocol in text result format logged a HIGH-severity false
+    /// alert on its way through `execute_with_params` -> `validate_sql_security`.
+    #[test]
+    fn test_generated_sqlite_master_filter_is_not_an_injection() {
+        let detector = SqlInjectionDetector::new();
+
+        let listings = [
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+            "SELECT count(*) FROM sqlite_master",
+            "SELECT sql FROM sqlite_master WHERE type='table'",
+            "SELECT name FROM sqlite_schema WHERE type='index'",
+        ];
+
+        for listing in &listings {
+            // Build the rewritten form the exact same way the wire hooks do,
+            // rather than hardcoding it, so the two can never drift apart.
+            let rewritten = crate::translator::SqliteMasterFilter::translate(listing).into_owned();
+            assert_ne!(&rewritten, listing, "expected {listing} to be rewritten");
+            assert!(
+                detector.analyze_query(&rewritten).is_ok(),
+                "rewritten listing must be accepted: {rewritten}"
+            );
+        }
+    }
+
+    /// The fix above must not blunt the real check: nesting a system table
+    /// inside a subquery the *client* wrote is still suspicious.
+    #[test]
+    fn test_client_nested_system_table_access_is_still_rejected() {
+        let detector = SqlInjectionDetector::new();
+
+        let nested = [
+            "SELECT * FROM (SELECT name FROM sqlite_master) z",
+            "SELECT * FROM (SELECT * FROM pg_user) z",
+            // Same wrapper shape as ours but a different predicate: not ours.
+            "SELECT * FROM (SELECT * FROM sqlite_master WHERE name <> 'x') z",
+        ];
+
+        for query in &nested {
+            assert!(
+                detector.analyze_query(query).is_err(),
+                "client-nested system table access must still be rejected: {query}"
+            );
+        }
     }
 }

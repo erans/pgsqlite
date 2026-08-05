@@ -1,5 +1,6 @@
 use clap::Parser;
 use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Parser, Debug, Clone)]
 #[command(name = "pgsqlite")]
@@ -224,8 +225,6 @@ impl Config {
 lazy_static::lazy_static! {
     pub static ref CONFIG: Config = Config::load();
 }
-
-use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Process-global mirror of `Config::hide_internal_tables`, set once at startup.
 ///

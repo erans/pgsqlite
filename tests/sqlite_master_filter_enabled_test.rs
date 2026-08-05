@@ -106,3 +106,33 @@ async fn hides_internal_objects_from_extended_protocol() {
     );
     assert!(names.iter().any(|n| n == "orders"), "user table missing: {names:?}");
 }
+
+#[tokio::test]
+async fn write_attempts_on_sqlite_master_keep_sqlites_own_error() {
+    pgsqlite::config::set_hide_internal_tables(true);
+
+    let server = setup_test_server_with_init(|_| Box::pin(async move { Ok(()) })).await;
+
+    // The rewrite is a read-context rewrite. Substituting a derived table for a
+    // DELETE/UPDATE target produces invalid SQL whose error text would paste
+    // `__pgsqlite_` in front of the very user the flag exists to shield.
+    for sql in [
+        "DELETE FROM sqlite_master WHERE name = 'zzz'",
+        "UPDATE sqlite_master SET name = 'x'",
+    ] {
+        let err = server
+            .client
+            .simple_query(sql)
+            .await
+            .expect_err("writing to sqlite_master must fail");
+        let text = err.to_string();
+        assert!(
+            !text.contains("__pgsqlite_"),
+            "internal prefix leaked into a client-facing error for `{sql}`: {text}"
+        );
+        assert!(
+            text.contains("may not be modified"),
+            "expected SQLite's own diagnostic for `{sql}`, got: {text}"
+        );
+    }
+}
