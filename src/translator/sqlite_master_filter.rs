@@ -41,14 +41,6 @@ impl SqliteMasterFilter {
             return Cow::Borrowed(query);
         }
 
-        // Idempotence guard, and the "still queryable by name" half of the design:
-        // a query that already mentions the internal prefix is either one we
-        // rewrote in an earlier hook or a client deliberately naming an internal
-        // table. Either way, leave it alone.
-        if query.contains("__pgsqlite_") {
-            return Cow::Borrowed(query);
-        }
-
         let mut statements = match Parser::parse_sql(&PostgreSqlDialect {}, query) {
             Ok(statements) => statements,
             Err(e) => {
@@ -246,12 +238,25 @@ mod tests {
     }
 
     #[test]
-    fn leaves_explicit_internal_lookups_alone() {
-        // "Hidden from listings, still queryable by name" — a client that names an
-        // internal table explicitly is asking for it, and rewriting would also
-        // double-apply the filter when both protocol hooks run.
-        let q = "SELECT name FROM sqlite_master WHERE name = '__pgsqlite_schema'";
-        assert!(matches!(SqliteMasterFilter::translate(q), Cow::Borrowed(_)));
+    fn filters_listing_queries_that_name_an_internal_table() {
+        // A listing query is filtered the same way regardless of what its WHERE
+        // clause happens to test for; naming an internal table in a predicate
+        // doesn't opt the query out of the rewrite.
+        let out = rewritten("SELECT name FROM sqlite_master WHERE name = '__pgsqlite_schema'");
+        assert_eq!(
+            out,
+            format!("SELECT name FROM {FILTERED} AS sqlite_master WHERE name = '__pgsqlite_schema'")
+        );
+    }
+
+    #[test]
+    fn filters_despite_internal_prefix_in_a_comment() {
+        // Regression guard: the internal-prefix literal appearing anywhere in the
+        // query text (e.g. a trailing comment) must never disable the rewrite.
+        // sqlparser drops comments on the round-trip, so assert on the rewritten
+        // relation rather than on the comment surviving.
+        let out = rewritten("SELECT name FROM sqlite_master -- __pgsqlite_");
+        assert!(out.contains(FILTERED));
     }
 
     #[test]
