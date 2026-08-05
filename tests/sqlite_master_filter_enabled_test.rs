@@ -78,6 +78,31 @@ async fn hides_internal_objects_from_simple_protocol() {
     assert_eq!(counts.len(), 1);
     let visible: usize = counts[0].parse().unwrap();
     assert_eq!(visible, names.len(), "count disagrees with the listing");
+}
 
-    pgsqlite::config::set_hide_internal_tables(false);
+#[tokio::test]
+async fn hides_internal_objects_from_extended_protocol() {
+    pgsqlite::config::set_hide_internal_tables(true);
+
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, total TEXT)").await?;
+            Ok(())
+        })
+    })
+    .await;
+
+    // client.query() goes through Parse/Bind/Execute, not simple query.
+    let rows = server
+        .client
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", &[])
+        .await
+        .unwrap();
+    let names: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
+
+    assert!(
+        !names.iter().any(|n| n.starts_with("__pgsqlite_")),
+        "internal tables leaked over extended protocol: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "orders"), "user table missing: {names:?}");
 }

@@ -37,3 +37,26 @@ async fn default_still_shows_internal_objects() {
     );
     assert!(names.iter().any(|n| n == "customers"));
 }
+
+#[tokio::test]
+async fn default_still_shows_internal_objects_on_extended_protocol() {
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY)").await?;
+            Ok(())
+        })
+    })
+    .await;
+
+    let rows = server
+        .client
+        .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", &[])
+        .await
+        .unwrap();
+    let names: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
+
+    assert!(
+        names.iter().any(|n| n == "__pgsqlite_schema"),
+        "default behaviour changed on extended protocol: {names:?}"
+    );
+}

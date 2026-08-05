@@ -90,6 +90,11 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        let query = if crate::config::hide_internal_tables() {
+            crate::translator::SqliteMasterFilter::translate(&query).into_owned()
+        } else {
+            query
+        };
         info!("PARSE: Starting parse for statement '{}', query: {}", name, query);
         // Fast path: Check if we already have this prepared statement
         // This avoids re-parsing the same query multiple times
