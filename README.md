@@ -135,9 +135,10 @@ const client = new Client({
 ```bash
 # Basic options
 pgsqlite \
-  --database <path>     # SQLite database file (default: sqlite.db)
-  --port <port>         # PostgreSQL port (default: 5432)
-  --in-memory           # Use in-memory database
+  --database <path>      # SQLite database file (default: sqlite.db)
+  --port <port>          # PostgreSQL port (default: 5432)
+  --in-memory            # Use in-memory database
+  --hide-internal-tables # Hide pgsqlite's __pgsqlite_* tables from sqlite_master listings
 
 # Security
 pgsqlite \

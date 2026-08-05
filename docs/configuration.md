@@ -22,6 +22,7 @@ pgsqlite can be configured through:
 | In-Memory | `--in-memory` | `PGSQLITE_IN_MEMORY` | `false` | Use in-memory SQLite database |
 | Socket Directory | `--socket-dir` | `PGSQLITE_SOCKET_DIR` | `/tmp` | Directory for Unix domain socket |
 | No TCP | `--no-tcp` | `PGSQLITE_NO_TCP` | `false` | Disable TCP listener, use only Unix socket |
+| Hide Internal Tables | `--hide-internal-tables` | `PGSQLITE_HIDE_INTERNAL_TABLES` | `false` | Hide pgsqlite's internal `__pgsqlite_*` tables and their indexes from client `sqlite_master` / `sqlite_schema` queries. The tables remain queryable when named explicitly. Does not affect the materialized `pg_*` / `information_schema_*` relations or `PRAGMA table_list`. |
 
 ### SSL/TLS Configuration
 

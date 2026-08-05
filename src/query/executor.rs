@@ -31,10 +31,16 @@ static SET_CONFIG_PATTERN: Lazy<Regex> = Lazy::new(|| {
 });
 
 fn preprocess_query(query: &str) -> String {
-    if PG_SHOW_ALL_SETTINGS_PATTERN.is_match(query) {
-        PG_SHOW_ALL_SETTINGS_PATTERN.replace_all(query, "pg_settings").to_string()
+    let query: Cow<'_, str> = if PG_SHOW_ALL_SETTINGS_PATTERN.is_match(query) {
+        Cow::Owned(PG_SHOW_ALL_SETTINGS_PATTERN.replace_all(query, "pg_settings").to_string())
     } else {
-        query.to_string()
+        Cow::Borrowed(query)
+    };
+
+    if crate::config::hide_internal_tables() {
+        crate::translator::SqliteMasterFilter::translate(&query).into_owned()
+    } else {
+        query.into_owned()
     }
 }
 

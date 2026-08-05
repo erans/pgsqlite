@@ -9,6 +9,7 @@ mod tests {
     fn test_certificate_generation() {
         let config = Config {
             database: ":memory:".to_string(),
+            hide_internal_tables: false,
             ssl: true,
             ssl_cert: None,
             ssl_key: None,
@@ -84,6 +85,7 @@ mod tests {
         
         let config = Config {
             database: db_path.to_string_lossy().to_string(),
+            hide_internal_tables: false,
             ssl: true,
             ssl_cert: None,
             ssl_key: None,
@@ -166,6 +168,7 @@ mod tests {
     fn test_ssl_disabled_for_unix_sockets() {
         let config = Config {
             database: "test.db".to_string(),
+            hide_internal_tables: false,
             ssl: true,
             ssl_cert: None,
             ssl_key: None,
