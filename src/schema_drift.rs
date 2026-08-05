@@ -217,12 +217,22 @@ impl SchemaDriftDetector {
     
     fn normalize_sqlite_type(type_str: &str) -> String {
         let upper = type_str.to_uppercase();
-        
+
+        // Strip inline column constraints that pgsqlite bakes into the stored
+        // metadata sqlite_type. SERIAL/BIGSERIAL/IDENTITY columns are stored in
+        // __pgsqlite_schema as e.g. "INTEGER PRIMARY KEY AUTOINCREMENT", but
+        // PRAGMA table_info only ever reports the bare declared type token
+        // ("INTEGER"). Without stripping the constraint suffix the two sides can
+        // never compare equal, producing a false "schema drift" that refuses to
+        // open an otherwise-valid database. The drift check only compares the
+        // column type, not its constraints, so dropping the suffix is safe.
+        let type_only = Self::strip_column_constraints(&upper);
+
         // Remove any size/precision specifications
-        let base_type = if let Some(paren_pos) = upper.find('(') {
-            upper[..paren_pos].trim().to_string()
+        let base_type = if let Some(paren_pos) = type_only.find('(') {
+            type_only[..paren_pos].trim().to_string()
         } else {
-            upper.trim().to_string()
+            type_only.trim().to_string()
         };
         
         // Normalize common variations
@@ -237,6 +247,43 @@ impl SchemaDriftDetector {
             "BYTEA" => "BLOB".to_string(),
             "NUMERIC" | "DECIMAL" => "DECIMAL".to_string(),
             _ => base_type,
+        }
+    }
+
+    /// Drop trailing column constraints from a declared type expression,
+    /// keeping only the leading type token(s) (e.g. "DOUBLE PRECISION",
+    /// "CHARACTER VARYING", "NUMERIC(10, 2)"). The input is expected to be
+    /// already upper-cased. Truncation happens at the first constraint keyword
+    /// on a token boundary, so "INTEGER PRIMARY KEY AUTOINCREMENT" becomes
+    /// "INTEGER" while multi-word base types are preserved.
+    fn strip_column_constraints(upper_type: &str) -> String {
+        const CONSTRAINT_KEYWORDS: &[&str] = &[
+            "PRIMARY",
+            "KEY",
+            "AUTOINCREMENT",
+            "NOT",
+            "NULL",
+            "UNIQUE",
+            "DEFAULT",
+            "CHECK",
+            "REFERENCES",
+            "COLLATE",
+            "CONSTRAINT",
+            "GENERATED",
+        ];
+
+        let mut kept: Vec<&str> = Vec::new();
+        for token in upper_type.split_whitespace() {
+            if CONSTRAINT_KEYWORDS.contains(&token) {
+                break;
+            }
+            kept.push(token);
+        }
+
+        if kept.is_empty() {
+            upper_type.trim().to_string()
+        } else {
+            kept.join(" ")
         }
     }
 }
