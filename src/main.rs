@@ -28,6 +28,7 @@ use pgsqlite::migration::MigrationRunner;
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::load();
+    pgsqlite::config::set_hide_internal_tables(config.hide_internal_tables);
 
     // Initialize logging
     tracing_subscriber::fmt()

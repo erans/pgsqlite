@@ -25,6 +25,9 @@ pub struct Config {
     #[arg(long, env = "PGSQLITE_NO_TCP", help = "Disable TCP listener and use only Unix socket")]
     pub no_tcp: bool,
 
+    #[arg(long, env = "PGSQLITE_HIDE_INTERNAL_TABLES", help = "Hide pgsqlite's internal __pgsqlite_* tables from client sqlite_master queries")]
+    pub hide_internal_tables: bool,
+
     // Connection pool configuration
     #[arg(long, env = "PGSQLITE_USE_POOLING", help = "Enable connection pooling with read/write separation")]
     pub use_pooling: bool,
@@ -220,4 +223,39 @@ impl Config {
 // Global configuration instance
 lazy_static::lazy_static! {
     pub static ref CONFIG: Config = Config::load();
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Process-global mirror of `Config::hide_internal_tables`, set once at startup.
+///
+/// The wire-protocol hooks read this instead of `CONFIG` because dereferencing
+/// `CONFIG` calls `Config::parse()` on the current process argv, which aborts
+/// any test binary invoked with harness arguments such as `--nocapture`.
+static HIDE_INTERNAL_TABLES: AtomicBool = AtomicBool::new(false);
+
+/// Set the global "hide internal tables" toggle. Called once from `main`.
+pub fn set_hide_internal_tables(enabled: bool) {
+    HIDE_INTERNAL_TABLES.store(enabled, Ordering::Relaxed);
+}
+
+/// Whether client `sqlite_master` queries should have `__pgsqlite_*` objects filtered out.
+pub fn hide_internal_tables() -> bool {
+    HIDE_INTERNAL_TABLES.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hide_internal_tables_defaults_off_and_is_settable() {
+        // Note: this test must never touch CONFIG — Config::parse() would run
+        // against the test binary's argv and abort the process.
+        assert!(!hide_internal_tables());
+        set_hide_internal_tables(true);
+        assert!(hide_internal_tables());
+        set_hide_internal_tables(false);
+        assert!(!hide_internal_tables());
+    }
 }
