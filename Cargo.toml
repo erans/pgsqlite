@@ -21,7 +21,7 @@ postgres-protocol = "0.6.8"
 rusqlite = { version = "0.36.0", features = ["bundled", "uuid", "serde_json", "functions", "collation", "vtab", "column_decltype"] }
 
 # SQL parsing
-sqlparser = { version = "0.57.0", features = ["serde"] }
+sqlparser = { version = "0.57.0", features = ["serde", "visitor"] }
 
 # Types
 uuid = { version = "1.11.0", features = ["v4", "serde"] }
