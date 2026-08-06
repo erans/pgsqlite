@@ -80,11 +80,20 @@ impl SqliteMasterFilter {
 
         let mut visitor = RelationReplacer { replaced: 0 };
         for statement in &mut statements {
-            // Read contexts only. `UPDATE`/`DELETE` name their target relation
-            // with the same `TableFactor::Table`, and substituting a derived
-            // table there produces syntactically invalid SQL whose error text
-            // would leak the `__pgsqlite_` prefix straight back to the client.
-            // Writes to `sqlite_master` are SQLite's to reject, unmodified.
+            // Rewrite where the filtered rows are read back; never where
+            // filtering would change which rows a write touches.
+            //
+            // `UPDATE`/`DELETE` name their target relation with the same
+            // `TableFactor::Table`, and substituting a derived table there
+            // produces syntactically invalid SQL whose error text would leak
+            // the `__pgsqlite_` prefix straight back to the client. Writes to
+            // `sqlite_master` are SQLite's to reject, unmodified. Their
+            // subqueries are left alone too: filtering a `DELETE ... WHERE
+            // name IN (SELECT ... FROM sqlite_master)` would silently delete
+            // fewer rows than the client's SQL says.
+            //
+            // This stays an allowlist. A statement kind we miss is merely
+            // unfiltered; a write target we fail to recognize is invalid SQL.
             match statement {
                 Statement::Query(query) => {
                     let _ = query.visit(&mut visitor);
@@ -92,6 +101,19 @@ impl SqliteMasterFilter {
                 Statement::Insert(insert) => {
                     if let Some(source) = insert.source.as_mut() {
                         let _ = source.visit(&mut visitor);
+                    }
+                }
+                // SQLite persists the literal CREATE VIEW text and expands it
+                // on every read, so creation time is the only chance to filter.
+                // Covers MATERIALIZED and TEMP views: same variant, same field.
+                Statement::CreateView { query, .. } => {
+                    let _ = query.visit(&mut visitor);
+                }
+                // `CREATE TABLE ... AS SELECT`. `query` is `None` for ordinary
+                // CREATE TABLE, which is then left untouched.
+                Statement::CreateTable(create_table) => {
+                    if let Some(query) = create_table.query.as_mut() {
+                        let _ = query.visit(&mut visitor);
                     }
                 }
                 _ => {}
@@ -358,6 +380,59 @@ mod tests {
             out,
             format!("INSERT INTO t SELECT name FROM {FILTERED} AS sqlite_master")
         );
+    }
+
+    #[test]
+    fn rewrites_create_view_body() {
+        // The gap in #86: a view body is read back on every SELECT against the
+        // view, and the client's later `SELECT * FROM v` never mentions
+        // sqlite_master, so this is the only chance to filter it.
+        let out = rewritten("CREATE VIEW v AS SELECT name FROM sqlite_master");
+        assert_eq!(
+            out,
+            format!("CREATE VIEW v AS SELECT name FROM {FILTERED} AS sqlite_master")
+        );
+    }
+
+    #[test]
+    fn rewrites_create_table_as_select_source() {
+        let out = rewritten("CREATE TABLE snapshot AS SELECT name FROM sqlite_master");
+        assert_eq!(
+            out,
+            format!("CREATE TABLE snapshot AS SELECT name FROM {FILTERED} AS sqlite_master")
+        );
+    }
+
+    #[test]
+    fn rewrites_materialized_view() {
+        // Same Statement::CreateView variant, same `query` field: free.
+        let out = rewritten("CREATE MATERIALIZED VIEW mv AS SELECT name FROM sqlite_master");
+        assert_eq!(
+            out,
+            format!("CREATE MATERIALIZED VIEW mv AS SELECT name FROM {FILTERED} AS sqlite_master")
+        );
+    }
+
+    #[test]
+    fn leaves_create_table_without_query_borrowed() {
+        // Passes the cheap substring gate on the *table name*, parses to a
+        // CreateTable with `query: None`, replaces nothing, and must come back
+        // untouched. Guards the new arm against perturbing ordinary DDL.
+        assert!(matches!(
+            SqliteMasterFilter::translate("CREATE TABLE sqlite_master_backup (id INT)"),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    #[test]
+    fn leaves_create_view_over_attached_db_borrowed() {
+        // Only `main.` and `temp.` name the SQLite catalog.
+        assert!(matches!(
+            SqliteMasterFilter::translate(
+                "CREATE VIEW v AS SELECT name FROM otherdb.sqlite_master"
+            ),
+            Cow::Borrowed(_)
+        ));
     }
 
     #[test]
