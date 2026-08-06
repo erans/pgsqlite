@@ -136,3 +136,61 @@ async fn write_attempts_on_sqlite_master_keep_sqlites_own_error() {
         );
     }
 }
+
+#[tokio::test]
+async fn hides_internal_objects_through_a_view() {
+    pgsqlite::config::set_hide_internal_tables(true);
+
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)").await?;
+            Ok(())
+        })
+    })
+    .await;
+
+    // The issue's reproduction. The SELECT below never mentions sqlite_master,
+    // so the view body is the only place the filter can be applied.
+    server
+        .client
+        .simple_query("CREATE VIEW schema_names AS SELECT name FROM sqlite_master")
+        .await
+        .expect("CREATE VIEW over sqlite_master should succeed");
+
+    let names = table_names(&server.client, "SELECT name FROM schema_names ORDER BY name").await;
+    assert!(
+        !names.iter().any(|n| n.starts_with("__pgsqlite_")),
+        "internal tables leaked through a view: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "customers"), "user table missing: {names:?}");
+}
+
+#[tokio::test]
+async fn hides_internal_objects_through_create_table_as_select() {
+    pgsqlite::config::set_hide_internal_tables(true);
+
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY, total TEXT)").await?;
+            Ok(())
+        })
+    })
+    .await;
+
+    server
+        .client
+        .simple_query("CREATE TABLE catalog_snapshot AS SELECT name FROM sqlite_master")
+        .await
+        .expect("CTAS over sqlite_master should succeed");
+
+    let names = table_names(
+        &server.client,
+        "SELECT name FROM catalog_snapshot ORDER BY name",
+    )
+    .await;
+    assert!(
+        !names.iter().any(|n| n.starts_with("__pgsqlite_")),
+        "internal tables leaked into a CTAS snapshot: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "orders"), "user table missing: {names:?}");
+}
