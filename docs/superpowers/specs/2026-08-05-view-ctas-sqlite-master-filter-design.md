@@ -206,3 +206,87 @@ The issue's reproduction, in both flag states.
 No test asserts on the view's persisted `sql` text. That is the one thing
 knowingly accepted as ugly, and pinning sqlparser's exact rendering into an
 assertion makes the test fail on every sqlparser upgrade for no signal.
+
+## Findings from final review
+
+Three corrections landed after implementation, in response to a whole-branch
+review. The shipped code differs from the "Change" section above in these ways.
+
+### CTAS with an explicit column list is skipped
+
+`CREATE TABLE t (name TEXT) AS SELECT name FROM sqlite_master` is valid
+PostgreSQL, and the `CreateTable` arm rewrote its body into valid SQL — but the
+rewritten DDL then reaches `CreateTableTranslator`, whose greedy
+`CREATE_TABLE_REGEX` (`src/translator/create_table_translator.rs:10`) swallows
+the `AS SELECT` clause once a parenthesized subquery follows the column list.
+rusqlite embeds the whole statement text in its error and pgsqlite propagates it
+verbatim, so the client received:
+
+```
+SQLite error: near "SELECT": syntax error in CREATE TABLE typed_snapshot
+(name TEXT AS SELECT name FROM (SELECT * FROM sqlite_master WHERE
+SUBSTR(name, 1, 11) <> '__pgsqlite_' ...
+```
+
+That is #85's failure mode reintroduced: the flag exists to keep the internal
+prefix away from the user, and this pasted it into their face. The arm is now
+guarded on `create_table.columns.is_empty()`, so the shape is left borrowed and
+behaves exactly as with the flag off.
+
+The root cause is the regex, not the filter. Fixing `CreateTableTranslator` was
+deliberately kept out of this branch — it is a separate, wider blast radius —
+and is to be filed separately. Note that the underlying translator bug is
+pre-existing and independent of this flag: with `--hide-internal-tables` off, the
+same statement silently creates an *empty* `typed_snapshot`, the `AS SELECT`
+having been dropped.
+
+### The parse retries with `SQLiteDialect`
+
+`translate` parsed with `PostgreSqlDialect` only. PostgreSQL has no
+`CREATE VIEW IF NOT EXISTS`; SQLite does, so that shape failed to parse, failed
+open, and stored the view unfiltered — issue #86 verbatim, one keyword away.
+Verified over the wire: the resulting view listed all 15 `__pgsqlite_*` tables
+plus internal indexes.
+
+On `PostgreSqlDialect` failure the parse now retries with
+`sqlparser::dialect::SQLiteDialect` before giving up. The existing
+`replaced == 0 ⇒ Cow::Borrowed` early return confines any rendering differences
+between the two dialects to statements that genuinely referenced
+`sqlite_master`, so ordinary SQLite-only syntax is unaffected.
+
+(`CREATE TABLE IF NOT EXISTS ... AS SELECT` parses under both dialects; the gap
+was specific to views.)
+
+### `temp.` is no longer accepted as a qualifier
+
+`post_visit_table_factor` accepted `temp` alongside `main`, but
+`FILTERED_RELATION_SQL` hardcodes an unqualified `FROM sqlite_master`, so the
+qualifier was silently dropped. `temp.sqlite_master` is a *different* relation in
+SQLite, listing only temp objects — so the rewrite returned main's catalog and
+omitted the client's actual temp objects. Wrong rows, not merely unfiltered ones.
+
+Pre-existing, but this branch would have newly baked the wrong substitution into
+persisted view DDL. `temp.`-qualified references are now left alone, exactly as
+`otherdb.sqlite_master` already was. Rewriting them correctly would mean
+parameterizing `FILTERED_RELATION_SQL` on the qualifier; not worth it for a
+relation that contains no `__pgsqlite_*` objects to hide in the first place.
+
+### Tests added
+
+Beyond the table above:
+
+| Test | Asserts |
+| --- | --- |
+| `leaves_create_table_as_select_with_column_list_borrowed` | the guarded CTAS shape returns `Cow::Borrowed` |
+| `rewrites_create_view_if_not_exists` | the `SQLiteDialect` retry catches the SQLite-only keyword |
+| `leaves_temp_qualified_relation_borrowed` | `temp.`-qualified references untouched, in both `SELECT` and `CREATE VIEW` |
+| `leaves_merge_untouched` | the allowlist boundary the design names as the landmine for any denylist refactor |
+| `ctas_with_explicit_column_list_never_leaks_internal_prefix` (wire) | no client-facing error text contains `__pgsqlite_` |
+| `hides_internal_objects_through_a_create_view_if_not_exists` (wire) | the SQLite-only keyword is filtered end to end |
+| `hides_internal_objects_through_a_view_over_extended_protocol` (wire) | DDL through Parse/Bind/Execute, a physically separate hook from the simple protocol |
+
+The "no test asserts on the view's persisted `sql` text" decision above is
+softened, not reversed: `hides_internal_objects_through_a_view` now asserts only
+that the stored DDL contains `__pgsqlite_` and `substr` (case-insensitively), so
+the accepted trade-off is recorded where a future reader will hit it. sqlparser's
+exact rendering is still not pinned.

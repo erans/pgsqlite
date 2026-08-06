@@ -5,7 +5,7 @@ use std::sync::LazyLock;
 use sqlparser::ast::{
     Ident, ObjectNamePart, Query, Statement, TableAlias, TableFactor, VisitMut, VisitorMut,
 };
-use sqlparser::dialect::PostgreSqlDialect;
+use sqlparser::dialect::{PostgreSqlDialect, SQLiteDialect};
 use sqlparser::parser::Parser;
 use tracing::debug;
 
@@ -72,10 +72,22 @@ impl SqliteMasterFilter {
 
         let mut statements = match Parser::parse_sql(&PostgreSqlDialect {}, query) {
             Ok(statements) => statements,
-            Err(e) => {
-                debug!("sqlite_master filter: parse failed, passing through: {e}");
-                return Cow::Borrowed(query);
-            }
+            // PostgreSQL has no `CREATE VIEW IF NOT EXISTS`; SQLite does, and a
+            // client talking to pgsqlite may well use it. Without this retry the
+            // parse fails, we fail open, and the view is stored unfiltered —
+            // issue #86 verbatim, one keyword away. The `replaced == 0` early
+            // return below confines any rendering differences between the two
+            // dialects to statements that genuinely referenced `sqlite_master`.
+            Err(pg_err) => match Parser::parse_sql(&SQLiteDialect {}, query) {
+                Ok(statements) => statements,
+                Err(sqlite_err) => {
+                    debug!(
+                        "sqlite_master filter: parse failed, passing through: \
+                         postgres dialect: {pg_err}; sqlite dialect: {sqlite_err}"
+                    );
+                    return Cow::Borrowed(query);
+                }
+            },
         };
 
         let mut visitor = RelationReplacer { replaced: 0 };
@@ -111,7 +123,17 @@ impl SqliteMasterFilter {
                 }
                 // `CREATE TABLE ... AS SELECT`. `query` is `None` for ordinary
                 // CREATE TABLE, which is then left untouched.
-                Statement::CreateTable(create_table) => {
+                //
+                // A CTAS carrying an explicit column list
+                // (`CREATE TABLE t (name TEXT) AS SELECT ...`) is skipped: the
+                // rewritten DDL is valid SQL, but downstream
+                // `CreateTableTranslator`'s greedy CREATE_TABLE_REGEX swallows
+                // the `AS SELECT` clause once a parenthesized subquery follows
+                // the column list, and the resulting SQLite error embeds the
+                // whole statement text — pasting `__pgsqlite_` back to the very
+                // client the flag exists to shield. Leaving it borrowed means
+                // the statement behaves exactly as it does with the flag off.
+                Statement::CreateTable(create_table) if create_table.columns.is_empty() => {
                     if let Some(query) = create_table.query.as_mut() {
                         let _ = query.visit(&mut visitor);
                     }
@@ -158,13 +180,15 @@ impl VisitorMut for RelationReplacer {
             return ControlFlow::Continue(());
         }
 
-        // Only `main.` and `temp.` qualify the SQLite catalog. Anything else
-        // (e.g. an attached database) is left alone.
+        // Only `main.` names the catalog this filter substitutes for. `temp.`
+        // is a *different* relation listing only temp objects, and
+        // FILTERED_RELATION_SQL hardcodes an unqualified `FROM sqlite_master`,
+        // so rewriting it would silently drop the qualifier and hand back
+        // main's catalog. Left alone, exactly like an ATTACHed database's.
         if name.0.len() > 1 {
             match name.0.first() {
                 Some(ObjectNamePart::Identifier(qualifier)) => {
-                    let qualifier = qualifier.value.to_ascii_lowercase();
-                    if qualifier != "main" && qualifier != "temp" {
+                    if !qualifier.value.eq_ignore_ascii_case("main") {
                         return ControlFlow::Continue(());
                     }
                 }
@@ -333,7 +357,7 @@ mod tests {
 
     #[test]
     fn leaves_attached_database_qualifier_alone() {
-        // Only `main.` and `temp.` name the SQLite catalog; `otherdb.sqlite_master`
+        // Only `main.` names the catalog we substitute for; `otherdb.sqlite_master`
         // belongs to an ATTACHed database and is none of our business.
         assert!(matches!(
             SqliteMasterFilter::translate("SELECT name FROM otherdb.sqlite_master"),
@@ -343,6 +367,25 @@ mod tests {
             rewritten("SELECT name FROM otherdb.sqlite_master"),
             "SELECT name FROM otherdb.sqlite_master"
         );
+    }
+
+    #[test]
+    fn leaves_temp_qualified_relation_borrowed() {
+        // `temp.sqlite_master` is a *different* relation, listing only temp
+        // objects. FILTERED_RELATION_SQL hardcodes an unqualified
+        // `FROM sqlite_master`, so rewriting would drop the qualifier and hand
+        // the client main's catalog instead — wrong rows, not merely unfiltered
+        // ones. Leave it alone.
+        for sql in [
+            "SELECT name FROM temp.sqlite_master",
+            "SELECT name FROM TEMP.sqlite_schema",
+            "CREATE VIEW v AS SELECT name FROM temp.sqlite_master",
+        ] {
+            assert!(
+                matches!(SqliteMasterFilter::translate(sql), Cow::Borrowed(_)),
+                "temp-qualified reference was rewritten: {sql}"
+            );
+        }
     }
 
     #[test]
@@ -426,13 +469,75 @@ mod tests {
 
     #[test]
     fn leaves_create_view_over_attached_db_borrowed() {
-        // Only `main.` and `temp.` name the SQLite catalog.
+        // Only `main.` names the catalog we substitute for.
         assert!(matches!(
             SqliteMasterFilter::translate(
                 "CREATE VIEW v AS SELECT name FROM otherdb.sqlite_master"
             ),
             Cow::Borrowed(_)
         ));
+    }
+
+    #[test]
+    fn rewrites_create_view_if_not_exists() {
+        // PostgreSQL has no `CREATE VIEW IF NOT EXISTS`, so the PostgreSqlDialect
+        // parse fails and we used to fail open — storing the view unfiltered,
+        // which is issue #86 verbatim one keyword away. The SQLiteDialect retry
+        // is what catches it.
+        let out = rewritten("CREATE VIEW IF NOT EXISTS v AS SELECT name FROM sqlite_master");
+        assert!(
+            out.contains("SUBSTR(name, 1, 11) <> '__pgsqlite_'"),
+            "CREATE VIEW IF NOT EXISTS was not filtered: {out}"
+        );
+        assert!(!out.contains("LIKE '__pgsqlite_"));
+    }
+
+    #[test]
+    fn leaves_create_table_as_select_with_column_list_borrowed() {
+        // `CREATE TABLE t (name TEXT) AS SELECT ...` is valid PostgreSQL, and
+        // the rewrite of its body is valid SQL — but the rewritten DDL then
+        // meets CreateTableTranslator's greedy CREATE_TABLE_REGEX, which
+        // swallows the `AS SELECT` once a parenthesized subquery follows the
+        // column list. The broken statement's text is echoed back in SQLite's
+        // error, leaking `__pgsqlite_` to the client. Skipping the rewrite
+        // makes the statement behave exactly as with the flag off.
+        for sql in [
+            "CREATE TABLE t (name TEXT) AS SELECT name FROM sqlite_master",
+            "CREATE TABLE IF NOT EXISTS t (name TEXT) AS SELECT name FROM sqlite_master",
+        ] {
+            assert!(
+                matches!(SqliteMasterFilter::translate(sql), Cow::Borrowed(_)),
+                "CTAS with an explicit column list was rewritten: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn leaves_merge_untouched() {
+        // The allowlist boundary. `Statement::Merge`'s target is itself a
+        // `TableFactor`, so any future refactor to a denylist that visits
+        // statements wholesale would substitute a derived table for the MERGE
+        // target and emit invalid SQL whose error text pastes `__pgsqlite_`
+        // back to the client. This test pins the boundary.
+        //
+        // Both forms below parse under sqlparser 0.57's PostgreSqlDialect, so
+        // today this test really does exercise the allowlist rather than the
+        // fail-open path. That is not guaranteed forever: if a future sqlparser
+        // stopped parsing this syntax the assertion would still hold, but only
+        // via fail-open, and the test would quietly become weaker evidence than
+        // it looks. It is a regression guard against a denylist refactor, not
+        // proof that MERGE parses.
+        for sql in [
+            "MERGE INTO sqlite_master USING src ON src.name = sqlite_master.name \
+             WHEN MATCHED THEN UPDATE SET tbl_name = src.tbl_name",
+            "MERGE INTO t USING sqlite_master AS s ON s.name = t.name \
+             WHEN MATCHED THEN UPDATE SET n = s.name",
+        ] {
+            assert!(
+                matches!(SqliteMasterFilter::translate(sql), Cow::Borrowed(_)),
+                "MERGE was rewritten: {sql}"
+            );
+        }
     }
 
     #[test]
