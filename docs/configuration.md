@@ -22,7 +22,55 @@ pgsqlite can be configured through:
 | In-Memory | `--in-memory` | `PGSQLITE_IN_MEMORY` | `false` | Use in-memory SQLite database |
 | Socket Directory | `--socket-dir` | `PGSQLITE_SOCKET_DIR` | `/tmp` | Directory for Unix domain socket |
 | No TCP | `--no-tcp` | `PGSQLITE_NO_TCP` | `false` | Disable TCP listener, use only Unix socket |
-| Hide Internal Tables | `--hide-internal-tables` | `PGSQLITE_HIDE_INTERNAL_TABLES` | `false` | Hide pgsqlite's internal `__pgsqlite_*` tables and their indexes from client `sqlite_master` / `sqlite_schema` queries. The tables remain queryable when named explicitly. Does not affect the materialized `pg_*` / `information_schema_*` relations or `PRAGMA table_list`. |
+| Hide Internal Tables | `--hide-internal-tables` | `PGSQLITE_HIDE_INTERNAL_TABLES` | `false` | Hide pgsqlite's internal `__pgsqlite_*` tables and their indexes from client `sqlite_master` / `sqlite_schema` reads. See [notes below](#hide-internal-tables). |
+
+#### Hide Internal Tables
+
+`--hide-internal-tables` rewrites client references to `sqlite_master` /
+`sqlite_schema` into a filtered relation, so pgsqlite's own `__pgsqlite_*`
+bookkeeping objects and the indexes they own are not listed.
+
+**Where the rewrite applies.** Read contexts only:
+
+- plain `SELECT` (including CTEs, subqueries and joins)
+- the `SELECT` source of an `INSERT ... SELECT`
+- the body of `CREATE VIEW` (including `CREATE MATERIALIZED VIEW`, `CREATE TEMP
+  VIEW`, and `CREATE VIEW IF NOT EXISTS`)
+- the `AS SELECT` source of `CREATE TABLE ... AS SELECT`
+
+**Where it does not apply.** `UPDATE` and `DELETE` are never rewritten, including
+their subqueries — filtering there would silently change which rows a write
+touches, and SQLite rejects writes to `sqlite_master` on its own anyway.
+References qualified with another database (`otherdb.sqlite_master`) or with
+`temp.` are left alone, because those name a different relation than the one the
+filter substitutes for. `CREATE TABLE t (col ...) AS SELECT ...` — a CTAS with an
+explicit column list — is also skipped. In all of these cases the client simply
+sees the unfiltered catalog; the flag never rejects a query it cannot handle.
+
+**The filter predicate is persisted into your view definitions.** This is a
+knowingly accepted trade-off, and it is the one surprising consequence. SQLite
+stores the literal `CREATE VIEW` text, so a view created while this flag is on
+has the filter baked into its stored DDL:
+
+```sql
+CREATE VIEW v AS SELECT name FROM (SELECT * FROM sqlite_master
+  WHERE SUBSTR(name, 1, 11) <> '__pgsqlite_'
+    AND (tbl_name IS NULL OR SUBSTR(tbl_name, 1, 11) <> '__pgsqlite_')) AS sqlite_master
+```
+
+That text is what you get back from `sqlite_master.sql` and from
+`information_schema.views.view_definition` — so a definition intended to hide the
+internal prefix ends up displaying it. Two further consequences follow from the
+rewrite happening at creation time: a view created while the flag is on keeps
+filtering after the flag is turned off, and a view created while the flag was off
+keeps listing internal objects after it is turned on. `CREATE TABLE ... AS
+SELECT` is unaffected — SQLite stores the expanded column list, not the select —
+so it is a clean one-shot filtered copy.
+
+**Scope.** Hiding is listing-only, not access control. The internal tables remain
+queryable when named explicitly (`SELECT * FROM __pgsqlite_schema`), and the flag
+does not affect the materialized `pg_*` / `information_schema_*` relations or
+`PRAGMA table_list`.
 
 ### SSL/TLS Configuration
 

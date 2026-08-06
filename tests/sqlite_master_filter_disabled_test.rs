@@ -60,3 +60,28 @@ async fn default_still_shows_internal_objects_on_extended_protocol() {
         "default behaviour changed on extended protocol: {names:?}"
     );
 }
+
+#[tokio::test]
+async fn default_still_shows_internal_objects_through_a_view() {
+    // No call to set_hide_internal_tables — this asserts the shipped default.
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)").await?;
+            Ok(())
+        })
+    })
+    .await;
+
+    server
+        .client
+        .simple_query("CREATE VIEW schema_names AS SELECT name FROM sqlite_master")
+        .await
+        .expect("CREATE VIEW over sqlite_master should succeed");
+
+    let names = table_names(&server.client, "SELECT name FROM schema_names ORDER BY name").await;
+    assert!(
+        names.iter().any(|n| n == "__pgsqlite_schema"),
+        "default behaviour changed — a view over sqlite_master should still show internals: {names:?}"
+    );
+    assert!(names.iter().any(|n| n == "customers"));
+}
