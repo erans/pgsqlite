@@ -39,12 +39,10 @@ async fn main() -> Result<()> {
     info!("pgsqlite v{}", env!("CARGO_PKG_VERSION"));
 
     // Determine database path based on --in-memory flag
-    let db_path = if config.in_memory {
+    if config.in_memory {
         info!("Using in-memory SQLite database (testing mode)");
-        "file:pgsqlite_mem?mode=memory&cache=shared".to_string()
-    } else {
-        config.database.clone()
-    };
+    }
+    let db_path = config.resolve_db_path();
 
     // Handle migration command
     if config.migrate {

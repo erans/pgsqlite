@@ -1,3 +1,5 @@
+use clap::Parser;
+use pgsqlite::config::Config;
 use pgsqlite::session::db_handler::DbHandler;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -18,15 +20,26 @@ fn text_cell(row: &[Option<Vec<u8>>], index: usize) -> String {
 /// empty in-memory database and never see the migrated `pg_class`/`pg_namespace`
 /// views or any table created by another session.
 ///
-/// This test opens a `DbHandler` on that same shared-cache URI, creates a table on
-/// one (temporary, memory-mode) connection via `DbHandler::execute`, then queries
-/// `pg_class` from a second, independently created session connection and asserts
-/// the table shows up. Before the shared-cache fix this hard-errored with
-/// "no such table: pg_class" because the second connection's database was empty.
+/// This test opens a `DbHandler` on the URI that `--in-memory` actually resolves to
+/// -- obtained from `Config::resolve_db_path()`, the same call `src/main.rs` makes, so
+/// reverting that decision to a bare `:memory:` breaks this test rather than leaving it
+/// green. It creates a table on one (temporary, memory-mode) connection via
+/// `DbHandler::execute`, then queries `pg_class` from a second, independently created
+/// session connection and asserts the table shows up. Before the shared-cache fix this
+/// hard-errored with "no such table: pg_class" because the second connection's database
+/// was empty.
 #[tokio::test]
 async fn test_in_memory_pg_class_visible_across_sessions() {
+    // Exactly what `pgsqlite --in-memory` resolves its database path to.
+    let db_path = Config::parse_from(["pgsqlite", "--in-memory"]).resolve_db_path();
+    assert_ne!(
+        db_path, ":memory:",
+        "--in-memory must not resolve to a bare :memory:; that gives every connection \
+         its own private database and hides the migrated catalog views from sessions"
+    );
+
     let db_handler = Arc::new(
-        DbHandler::new("file:pgsqlite_mem_f6_regression?mode=memory&cache=shared")
+        DbHandler::new(&db_path)
             .expect("DbHandler::new should succeed on the shared-cache in-memory URI"),
     );
 
