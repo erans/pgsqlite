@@ -34,6 +34,7 @@ lazy_static! {
         register_v25_information_schema_triggers_support(&mut registry);
         register_v26_enhanced_pg_attribute_support(&mut registry);
         register_v27_fix_pg_proc_types(&mut registry);
+        register_v28_pg_class_full_columns(&mut registry);
 
         registry
     };
@@ -2858,5 +2859,174 @@ fn register_v27_fix_pg_proc_types(registry: &mut BTreeMap<u32, Migration>) {
             "#,
         ])),
         dependencies: vec![26],
+    });
+}
+
+/// Version 28: Serve pg_class from SQLite with full column parity.
+/// Adds the nine columns PgClassHandler used to synthesize, assigns internal
+/// pg_*/information_schema_* relations to their proper namespaces, and fixes
+/// three pre-existing view bugs (relkind_full is not a real PostgreSQL column;
+/// relreplident should be 'd'; relispartition should be 'f').
+fn register_v28_pg_class_full_columns(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(28, Migration {
+        version: 28,
+        name: "pg_class_full_columns",
+        description: "Enrich pg_class view to full 33-column parity and namespace internal relations so SQLite can serve pg_class directly",
+        up: MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS pg_class"#,
+            r#"DROP VIEW IF EXISTS pg_namespace"#,
+
+            r#"
+            CREATE VIEW pg_namespace AS
+                SELECT 11 as oid, 'pg_catalog' as nspname, 10 as nspowner, NULL as nspacl
+                UNION ALL
+                SELECT 2200 as oid, 'public' as nspname, 10 as nspowner, NULL as nspacl
+                UNION ALL
+                SELECT 13000 as oid, 'information_schema' as nspname, 10 as nspowner, NULL as nspacl
+            "#,
+
+            r#"
+            CREATE VIEW pg_class AS
+            WITH base AS (
+                SELECT name, type,
+                    ((unicode(substr(name, 1, 1)) * 1000000) +
+                     (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                     (unicode(substr(name || '  ', 3, 1)) * 100) +
+                     (length(name) * 7)) % 1000000 + 16384 AS oid_num
+                FROM sqlite_master
+                WHERE type IN ('table', 'view', 'index')
+                  AND name NOT LIKE 'sqlite_%'
+                  AND name NOT LIKE '__pgsqlite_%'
+            )
+            SELECT
+                CAST(oid_num AS TEXT) as oid,
+                name as relname,
+                CASE
+                    WHEN name LIKE 'pg\_%' ESCAPE '\' THEN 11
+                    WHEN name LIKE 'information\_schema\_%' ESCAPE '\' THEN 13000
+                    ELSE 2200
+                END as relnamespace,
+                CAST(oid_num + 1 AS TEXT) as reltype,
+                0 as reloftype,
+                10 as relowner,
+                CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                0 as relfilenode,
+                0 as reltablespace,
+                0 as relpages,
+                -1 as reltuples,
+                0 as relallvisible,
+                0 as reltoastrelid,
+                CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                'f' as relisshared,
+                'p' as relpersistence,
+                CASE type
+                    WHEN 'table' THEN 'r'
+                    WHEN 'view' THEN 'v'
+                    WHEN 'index' THEN 'i'
+                END as relkind,
+                (SELECT COUNT(*) FROM pragma_table_info(base.name)) as relnatts,
+                0 as relchecks,
+                'f' as relhasrules,
+                CASE WHEN EXISTS(
+                    SELECT 1 FROM sqlite_master t
+                    WHERE t.type = 'trigger' AND t.tbl_name = base.name
+                ) THEN 't' ELSE 'f' END as relhastriggers,
+                'f' as relhassubclass,
+                'f' as relrowsecurity,
+                'f' as relforcerowsecurity,
+                't' as relispopulated,
+                'd' as relreplident,
+                'f' as relispartition,
+                0 as relrewrite,
+                0 as relfrozenxid,
+                0 as relminmxid,
+                NULL as relacl,
+                NULL as reloptions,
+                NULL as relpartbound
+            FROM base
+            "#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '28', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS pg_class"#,
+            r#"DROP VIEW IF EXISTS pg_namespace"#,
+
+            // Restore the v26 pg_class view: copied verbatim from
+            // register_v26_enhanced_pg_attribute_support's `up`.
+            r#"
+            CREATE VIEW IF NOT EXISTS pg_class AS
+            SELECT
+                -- Use SQLite built-in functions for consistent OID generation
+                CAST(
+                    (
+                        (unicode(substr(name, 1, 1)) * 1000000) +
+                        (unicode(substr(name || ' ', 2, 1)) * 10000) +
+                        (unicode(substr(name || '  ', 3, 1)) * 100) +
+                        (length(name) * 7)
+                    ) % 1000000 + 16384
+                AS TEXT) as oid,
+                name as relname,
+                2200 as relnamespace,  -- public schema
+                CASE
+                    WHEN type = 'table' THEN 'r'
+                    WHEN type = 'view' THEN 'v'
+                    WHEN type = 'index' THEN 'i'
+                END as relkind,
+                10 as relowner,
+                CASE WHEN type = 'index' THEN 403 ELSE 0 END as relam,
+                0 as relfilenode,
+                0 as reltablespace,
+                0 as relpages,
+                -1 as reltuples,
+                0 as relallvisible,
+                0 as reltoastrelid,
+                CASE WHEN type = 'table' THEN 't' ELSE 'f' END as relhasindex,
+                'f' as relisshared,
+                'p' as relpersistence,
+                'h' as relkind_full,
+                't' as relispopulated,
+                'v' as relreplident,
+                't' as relispartition,
+                0 as relrewrite,
+                0 as relfrozenxid,
+                0 as relminmxid,
+                NULL as relacl,
+                NULL as reloptions,
+                NULL as relpartbound
+            FROM sqlite_master
+            WHERE type IN ('table', 'view', 'index')
+              AND name NOT LIKE 'sqlite_%'
+              AND name NOT LIKE '__pgsqlite_%';
+            "#,
+
+            // Restore the two-row pg_namespace view: copied verbatim from
+            // register_v5_pg_catalog_tables's `up`.
+            r#"
+                CREATE VIEW IF NOT EXISTS pg_namespace AS
+                SELECT 
+                    11 as oid,
+                    'pg_catalog' as nspname,
+                    10 as nspowner,
+                    NULL as nspacl
+                UNION ALL
+                SELECT 
+                    2200 as oid,
+                    'public' as nspname,
+                    10 as nspowner,
+                    NULL as nspacl;
+            "#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '27', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![27],
     });
 }
