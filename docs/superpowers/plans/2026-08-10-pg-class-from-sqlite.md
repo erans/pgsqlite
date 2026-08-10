@@ -719,6 +719,29 @@ git commit -m "test: cover ~ and !~ operators on catalog tables (#87)"
 
 **Why:** Before this work, `pg_class JOIN pg_constraint ON con.conrelid = c.oid` returned all `pg_class` rows with no `conname` column — the join predicate was never evaluated. It also could not have matched, because `pg_class` served `hash31` OIDs while `pg_constraint` persists unicode-formula OIDs. Both are fixed by serving `pg_class` from the view.
 
+**Prerequisite discovered during execution — a fourth OID formula.** Task 4 unified the runtime OID producers onto `crate::utils::generate_table_oid` (the canonical unicode formula), but `src/catalog/pg_constraint.rs:256` has its own `generate_table_oid` using Rust's `DefaultHasher`, and it *synthesizes* `conrelid`/`confrelid` at query time (call sites `:171`, `:215`, `:219`), overriding the correct persisted values. Measured on a fresh database: `pg_class.oid` for `customers` is `197947`, while `pg_constraint.conrelid` is `51945`. The join returns zero rows.
+
+This must be fixed for the test below to pass. `DefaultHasher` is additionally unsuitable for OIDs because it is not guaranteed stable across Rust releases. The comment at `:257` claiming the formula is "same as pg_class handler" was never true.
+
+- [ ] **Step 0: Port `pg_constraint.rs` to the canonical OID function**
+
+Replace the body of `generate_table_oid` in `src/catalog/pg_constraint.rs:256-265` so it delegates to the canonical implementation, exactly as `pg_attribute.rs` and `constraint_populator.rs` now do:
+
+```rust
+    fn generate_table_oid(table_name: &str) -> u32 {
+        crate::utils::generate_table_oid(table_name)
+    }
+```
+
+Then confirm no other formula survives anywhere:
+
+```bash
+grep -rn "DefaultHasher" src/catalog/
+grep -rn "wrapping_mul(31)" src/
+```
+
+Expected: no OID-generating hits. (`src/functions/hash_functions.rs`'s `oid_hash` UDF is a separate, known-deferred issue — leave it.)
+
 - [ ] **Step 1: Write the test**
 
 Create `tests/catalog_join_test.rs`:
