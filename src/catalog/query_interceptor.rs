@@ -208,6 +208,19 @@ impl CatalogInterceptor {
         None
     }
 
+    /// Catalog tables that exist as real SQLite views/tables (populated by migrations and
+    /// constraint_populator) and can therefore be queried with plain SQL once we return `None`
+    /// to let the query fall through. `pg_stats` and `pg_tablespace` are deliberately excluded:
+    /// per migrations v19 and v24 (src/migration/registry.rs), both are handled entirely by the
+    /// catalog interceptor and have no backing SQLite view/table, so routing a JOIN into them to
+    /// raw SQL would fail with "no such table".
+    fn is_sqlite_backed_catalog(name: &str) -> bool {
+        name.contains("pg_constraint") || name.contains("pg_index") ||
+            name.contains("pg_depend") || name.contains("pg_proc") ||
+            name.contains("pg_description") || name.contains("pg_roles") ||
+            name.contains("pg_user")
+    }
+
     async fn handle_catalog_query(query: &sqlparser::ast::Query, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<DbResponse> {
         debug!("handle_catalog_query called");
         println!("HANDLE_CATALOG_QUERY: called with query");
@@ -463,15 +476,12 @@ impl CatalogInterceptor {
                         // JOINs from pg_class into other SQLite-backed catalog tables (pg_constraint,
                         // pg_index, pg_depend, ...) must be executed as real SQL so the join predicate
                         // is actually evaluated, instead of being routed to a single-table handler that
-                        // can't see columns from the other side of the join.
+                        // can't see columns from the other side of the join. pg_stats and pg_tablespace
+                        // are excluded — see is_sqlite_backed_catalog.
                         let has_view_backed_catalog_joins = select.from[0].joins.iter().any(|j| {
                             if let TableFactor::Table { name, .. } = &j.relation {
                                 let join_table = name.to_string().to_lowercase();
-                                join_table.contains("pg_constraint") || join_table.contains("pg_index") ||
-                                    join_table.contains("pg_depend") || join_table.contains("pg_proc") ||
-                                    join_table.contains("pg_description") || join_table.contains("pg_roles") ||
-                                    join_table.contains("pg_user") || join_table.contains("pg_stats") ||
-                                    join_table.contains("pg_tablespace")
+                                Self::is_sqlite_backed_catalog(&join_table)
                             } else {
                                 false
                             }
@@ -483,11 +493,7 @@ impl CatalogInterceptor {
                         }
 
                         // For other catalog table JOINs, still return None to let SQLite handle
-                        if table_name.contains("pg_") && (table_name.contains("pg_constraint") ||
-                            table_name.contains("pg_index") || table_name.contains("pg_depend") ||
-                            table_name.contains("pg_proc") || table_name.contains("pg_description") ||
-                            table_name.contains("pg_roles") || table_name.contains("pg_user") ||
-                            table_name.contains("pg_stats") || table_name.contains("pg_tablespace")) {
+                        if table_name.contains("pg_") && Self::is_sqlite_backed_catalog(&table_name) {
                             debug!("Passing other catalog JOIN query to SQLite views");
                             return None;
                         }
