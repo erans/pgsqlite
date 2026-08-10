@@ -34,6 +34,22 @@ pub fn generate_oid_string(name: &str) -> String {
     generate_oid(name).to_string()
 }
 
+/// Generate a stable table-identity OID from a name using the 3-character-prefix formula.
+/// This is the canonical formula used by the pg_class/pg_namespace views (migration v28) and
+/// by `constraint_populator::generate_table_oid`. Every producer of table-identity OIDs
+/// (attrelid, tgrelid, seqrelid, etc.) must use this exact formula so that joins against
+/// pg_class.oid resolve correctly.
+pub fn generate_table_oid(name: &str) -> u32 {
+    let name_with_padding = format!("{name}  ");
+    let chars: Vec<char> = name_with_padding.chars().collect();
+    let char1 = chars.first().copied().unwrap_or(' ') as u32;
+    let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
+    let char3 = chars.get(2).copied().unwrap_or(' ') as u32;
+    let length = name.len() as u32;
+
+    ((char1 * 1_000_000) + (char2 * 10_000) + (char3 * 100) + (length * 7)) % 1_000_000 + 16384
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

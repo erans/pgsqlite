@@ -223,19 +223,13 @@ impl PgTriggerHandler {
     }
 
     fn generate_trigger_oid(trigger_name: &str) -> u32 {
-        let mut hash = 0u32;
-        for byte in trigger_name.bytes() {
-            hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-        }
-        16384 + (hash % 65536)
+        crate::utils::generate_table_oid(trigger_name)
     }
 
     fn generate_table_oid(table_name: &str) -> u32 {
-        let mut hash = 0u32;
-        for byte in table_name.bytes() {
-            hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-        }
-        16384 + (hash % 65536)
+        // Must match the formula used by the pg_class view (migration v28) and
+        // constraint_populator::generate_table_oid, so that tgrelid joins to pg_class.oid.
+        crate::utils::generate_table_oid(table_name)
     }
 
     fn apply_where_filter(

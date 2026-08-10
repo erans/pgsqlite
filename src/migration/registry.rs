@@ -2863,7 +2863,7 @@ fn register_v27_fix_pg_proc_types(registry: &mut BTreeMap<u32, Migration>) {
 }
 
 /// Version 28: Serve pg_class from SQLite with full column parity.
-/// Adds the nine columns PgClassHandler used to synthesize, assigns internal
+/// Adds the nine columns the Rust pg_class handler used to synthesize, assigns internal
 /// pg_*/information_schema_* relations to their proper namespaces, and fixes
 /// three pre-existing view bugs (relkind_full is not a real PostgreSQL column;
 /// relreplident should be 'd'; relispartition should be 'f').

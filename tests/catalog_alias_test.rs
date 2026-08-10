@@ -36,35 +36,43 @@ async fn test_pg_catalog_roles_alias_projection_uses_source_column() {
 
 #[tokio::test]
 async fn test_pg_catalog_namespace_alias_projection() {
-    let response = catalog_query("SELECT oid AS did FROM pg_catalog.pg_namespace").await;
+    // pg_namespace is now served directly from SQLite (migration v28) instead of being
+    // intercepted in Rust, so this alias-projection behavior is exercised against pg_roles
+    // instead, which remains a Rust-intercepted catalog.
+    let response = catalog_query("SELECT oid AS did FROM pg_catalog.pg_roles").await;
 
     assert_eq!(response.columns, vec!["did"]);
-    assert_eq!(response.rows.len(), 2);
-    assert_eq!(text_cell(&response.rows[0], 0), "11");
-    assert_eq!(text_cell(&response.rows[1], 0), "2200");
+    assert_eq!(response.rows.len(), 3);
+    assert_eq!(text_cell(&response.rows[0], 0), "10");
+    assert_eq!(text_cell(&response.rows[1], 0), "0");
+    assert_eq!(text_cell(&response.rows[2], 0), "100");
 }
 
 #[tokio::test]
 async fn test_catalog_unquoted_aliases_fold_to_lowercase_and_quoted_aliases_preserve_case() {
     let response = catalog_query(
-        "SELECT oid AS MixedAlias, nspname AS \"SchemaName\" FROM pg_catalog.pg_namespace",
+        "SELECT oid AS MixedAlias, rolname AS \"SchemaName\" FROM pg_catalog.pg_roles",
     )
     .await;
 
     assert_eq!(response.columns, vec!["mixedalias", "SchemaName"]);
-    assert_eq!(response.rows.len(), 2);
-    assert_eq!(text_cell(&response.rows[0], 0), "11");
-    assert_eq!(text_cell(&response.rows[0], 1), "pg_catalog");
+    assert_eq!(response.rows.len(), 3);
+    assert_eq!(text_cell(&response.rows[0], 0), "10");
+    assert_eq!(text_cell(&response.rows[0], 1), "postgres");
 }
 
 #[tokio::test]
 async fn test_catalog_wildcard_keeps_trailing_projection_items() {
-    let namespace = catalog_query("SELECT *, oid FROM pg_catalog.pg_namespace").await;
+    // pg_namespace is now served directly from SQLite (migration v28), so the wildcard half
+    // of this test is exercised against pg_database instead, which remains Rust-intercepted.
+    let database = catalog_query("SELECT *, oid FROM pg_catalog.pg_database").await;
 
-    assert_eq!(namespace.columns, vec!["oid", "nspname", "oid"]);
-    assert_eq!(namespace.rows.len(), 2);
-    assert_eq!(text_cell(&namespace.rows[0], 0), "11");
-    assert_eq!(text_cell(&namespace.rows[0], 2), "11");
+    assert_eq!(database.columns.len(), 19);
+    assert_eq!(database.columns[0], "oid");
+    assert_eq!(database.columns[18], "oid");
+    assert_eq!(database.rows.len(), 1);
+    assert_eq!(text_cell(&database.rows[0], 0), "1");
+    assert_eq!(text_cell(&database.rows[0], 18), "1");
 
     let roles = catalog_query("SELECT *, oid FROM pg_catalog.pg_roles").await;
 
@@ -78,11 +86,14 @@ async fn test_catalog_wildcard_keeps_trailing_projection_items() {
 
 #[tokio::test]
 async fn test_catalog_count_star_returns_static_dataset_count() {
-    let namespace = catalog_query("SELECT count(*) FROM pg_catalog.pg_namespace").await;
+    // pg_namespace is now served directly from SQLite (migration v28), so the unfiltered
+    // count(*) half of this test is exercised against pg_roles instead (still Rust-intercepted),
+    // using a distinct query from the filtered pg_roles count below.
+    let roles_all = catalog_query("SELECT count(*) FROM pg_catalog.pg_roles").await;
 
-    assert_eq!(namespace.columns, vec!["count"]);
-    assert_eq!(namespace.rows.len(), 1);
-    assert_eq!(text_cell(&namespace.rows[0], 0), "2");
+    assert_eq!(roles_all.columns, vec!["count"]);
+    assert_eq!(roles_all.rows.len(), 1);
+    assert_eq!(text_cell(&roles_all.rows[0], 0), "3");
 
     let roles =
         catalog_query("SELECT count(*) FROM pg_catalog.pg_roles WHERE rolcanlogin = 't'").await;
@@ -107,31 +118,40 @@ async fn test_pg_roles_unquoted_aliases_fold_to_lowercase_and_quoted_aliases_pre
 
 #[tokio::test]
 async fn test_pg_namespace_cast_projection_uses_inner_source_column() {
-    let response = catalog_query("SELECT CAST(oid AS text) AS o FROM pg_catalog.pg_namespace").await;
+    // pg_namespace is now served directly from SQLite (migration v28), so cast-projection
+    // behavior is exercised against pg_roles instead, which remains Rust-intercepted.
+    let response = catalog_query("SELECT CAST(oid AS text) AS o FROM pg_catalog.pg_roles").await;
 
     assert_eq!(response.columns, vec!["o"]);
-    assert_eq!(response.rows.len(), 2);
-    assert_eq!(text_cell(&response.rows[0], 0), "11");
-    assert_eq!(text_cell(&response.rows[1], 0), "2200");
+    assert_eq!(response.rows.len(), 3);
+    assert_eq!(text_cell(&response.rows[0], 0), "10");
+    assert_eq!(text_cell(&response.rows[1], 0), "0");
+    assert_eq!(text_cell(&response.rows[2], 0), "100");
 }
 
 #[tokio::test]
 async fn test_pg_namespace_nested_projection_uses_inner_source_column() {
-    let response = catalog_query("SELECT (oid) AS o FROM pg_catalog.pg_namespace").await;
+    // pg_namespace is now served directly from SQLite (migration v28), so nested-projection
+    // behavior is exercised against pg_roles instead, which remains Rust-intercepted.
+    let response = catalog_query("SELECT (oid) AS o FROM pg_catalog.pg_roles").await;
 
     assert_eq!(response.columns, vec!["o"]);
-    assert_eq!(response.rows.len(), 2);
-    assert_eq!(response.rows[0][0].as_deref(), Some(b"11".as_ref()));
+    assert_eq!(response.rows.len(), 3);
+    assert_eq!(response.rows[0][0].as_deref(), Some(b"10".as_ref()));
 }
 
 #[tokio::test]
 async fn test_pg_namespace_compound_identifier_projection_uses_leaf_column() {
-    let response = catalog_query("SELECT n.nspname FROM pg_catalog.pg_namespace AS n").await;
+    // pg_namespace is now served directly from SQLite (migration v28), so
+    // compound-identifier projection is exercised against pg_roles instead, which remains
+    // Rust-intercepted.
+    let response = catalog_query("SELECT r.rolname FROM pg_catalog.pg_roles AS r").await;
 
-    assert_eq!(response.columns, vec!["nspname"]);
-    assert_eq!(response.rows.len(), 2);
-    assert_eq!(text_cell(&response.rows[0], 0), "pg_catalog");
+    assert_eq!(response.columns, vec!["rolname"]);
+    assert_eq!(response.rows.len(), 3);
+    assert_eq!(text_cell(&response.rows[0], 0), "postgres");
     assert_eq!(text_cell(&response.rows[1], 0), "public");
+    assert_eq!(text_cell(&response.rows[2], 0), "pgsqlite_user");
 }
 
 #[tokio::test]
@@ -145,10 +165,13 @@ async fn test_pg_roles_where_filter_with_alias_free_projection() {
 
 #[tokio::test]
 async fn test_pg_namespace_unknown_source_column_projects_no_columns() {
-    let response = catalog_query("SELECT nonexistent FROM pg_catalog.pg_namespace").await;
+    // pg_namespace is now served directly from SQLite (migration v28), so unknown-column
+    // projection behavior is exercised against pg_roles instead, which remains
+    // Rust-intercepted.
+    let response = catalog_query("SELECT nonexistent FROM pg_catalog.pg_roles").await;
 
     assert!(response.columns.is_empty());
-    assert_eq!(response.rows.len(), 2);
+    assert_eq!(response.rows.len(), 3);
     assert!(response.rows.iter().all(Vec::is_empty));
 }
 

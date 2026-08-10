@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     // Determine database path based on --in-memory flag
     let db_path = if config.in_memory {
         info!("Using in-memory SQLite database (testing mode)");
-        ":memory:".to_string()
+        "file:pgsqlite_mem?mode=memory&cache=shared".to_string()
     } else {
         config.database.clone()
     };
