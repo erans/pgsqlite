@@ -96,6 +96,9 @@ async fn test_dt_hides_internal_relations() {
         assert!(!names.iter().any(|n| n == internal),
             "pgsqlite's own {internal} must not appear in \\dt, got {names:?}");
     }
+
+    assert!(!names.is_empty(),
+        "must not pass vacuously against a 0-row result");
 }
 
 #[tokio::test]
@@ -125,7 +128,7 @@ async fn test_dt_reports_public_schema_and_owner() {
 
 Run: `cargo test --test pg_class_dt_test 2>&1 | tail -30`
 
-Expected: all three FAIL. `test_dt_lists_user_tables` fails on the `customers` assertion because the query returns 0 rows. `test_dt_reports_public_schema_and_owner` fails on `expect("customers row must be present")`.
+Expected: all three FAIL. `test_dt_lists_user_tables` fails on the `customers` assertion because the query returns 0 rows. `test_dt_hides_internal_relations` fails on the non-emptiness assertion ("must not pass vacuously against a 0-row result") because the query returns 0 rows. `test_dt_reports_public_schema_and_owner` fails on `expect("customers row must be present")`.
 
 If instead you see a panic about a missing `Schema` column, that is the same root cause (the interceptor drops projected columns) and still counts as RED.
 

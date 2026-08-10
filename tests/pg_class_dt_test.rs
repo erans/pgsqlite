@@ -58,6 +58,9 @@ async fn test_dt_hides_internal_relations() {
         assert!(!names.iter().any(|n| n == internal),
             "pgsqlite's own {internal} must not appear in \\dt, got {names:?}");
     }
+
+    assert!(!names.is_empty(),
+        "must not pass vacuously against a 0-row result");
 }
 
 #[tokio::test]
