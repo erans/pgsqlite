@@ -459,6 +459,29 @@ impl CatalogInterceptor {
                             }
                         }
 
+                        // pg_class is now served by a real SQLite view (see pg_class migration).
+                        // JOINs from pg_class into other SQLite-backed catalog tables (pg_constraint,
+                        // pg_index, pg_depend, ...) must be executed as real SQL so the join predicate
+                        // is actually evaluated, instead of being routed to a single-table handler that
+                        // can't see columns from the other side of the join.
+                        let has_view_backed_catalog_joins = select.from[0].joins.iter().any(|j| {
+                            if let TableFactor::Table { name, .. } = &j.relation {
+                                let join_table = name.to_string().to_lowercase();
+                                join_table.contains("pg_constraint") || join_table.contains("pg_index") ||
+                                    join_table.contains("pg_depend") || join_table.contains("pg_proc") ||
+                                    join_table.contains("pg_description") || join_table.contains("pg_roles") ||
+                                    join_table.contains("pg_user") || join_table.contains("pg_stats") ||
+                                    join_table.contains("pg_tablespace")
+                            } else {
+                                false
+                            }
+                        });
+
+                        if table_name.contains("pg_class") && has_view_backed_catalog_joins {
+                            debug!("Passing pg_class JOIN against SQLite-backed catalog table to SQLite views");
+                            return None;
+                        }
+
                         // For other catalog table JOINs, still return None to let SQLite handle
                         if table_name.contains("pg_") && (table_name.contains("pg_constraint") ||
                             table_name.contains("pg_index") || table_name.contains("pg_depend") ||
