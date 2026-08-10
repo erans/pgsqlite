@@ -42,12 +42,16 @@ pub fn generate_oid_string(name: &str) -> String {
 pub fn generate_table_oid(name: &str) -> u32 {
     let name_with_padding = format!("{name}  ");
     let chars: Vec<char> = name_with_padding.chars().collect();
-    let char1 = chars.first().copied().unwrap_or(' ') as u32;
-    let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
-    let char3 = chars.get(2).copied().unwrap_or(' ') as u32;
-    let length = name.len() as u32;
+    // Widen to u64 for the arithmetic: a high-codepoint leading character (e.g. from
+    // "日本語") times 1_000_000 overflows u32. The final `% 1_000_000 + 16_384` keeps
+    // the result far below u32::MAX, so the u32 -> u64 -> u32 round trip is safe.
+    let char1 = chars.first().copied().unwrap_or(' ') as u64;
+    let char2 = chars.get(1).copied().unwrap_or(' ') as u64;
+    let char3 = chars.get(2).copied().unwrap_or(' ') as u64;
+    // Match SQLite's `length(name)`, which counts characters, not UTF-8 bytes.
+    let length = name.chars().count() as u64;
 
-    ((char1 * 1_000_000) + (char2 * 10_000) + (char3 * 100) + (length * 7)) % 1_000_000 + 16384
+    (((char1 * 1_000_000) + (char2 * 10_000) + (char3 * 100) + (length * 7)) % 1_000_000 + 16384) as u32
 }
 
 #[cfg(test)]
@@ -75,5 +79,34 @@ mod tests {
 
         assert_eq!(oid_u32 as i32, oid_i32);
         assert_eq!(oid_u32.to_string(), oid_string);
+    }
+
+    /// Pinned ASCII value: `customers` is persisted on disk today in
+    /// `pg_constraint.conrelid` / `pg_index.indrelid` / `pg_attrdef.adrelid` /
+    /// `pg_depend.objid` and `refobjid`, and `tests/catalog_join_test.rs:47` pins it too.
+    /// This value must never change for ASCII input.
+    #[test]
+    fn test_generate_table_oid_ascii_pinned() {
+        assert_eq!(generate_table_oid("customers"), 197947);
+        assert_eq!(generate_table_oid("orders"), 166426);
+    }
+
+    /// Non-ASCII names must agree with the v28 SQL expression, which uses
+    /// `length(name)` (character count). These expected values were computed by
+    /// running the identical SQL expression through the `sqlite3` CLI:
+    /// `café` -> 996612, `naïve_tbl` -> 1010347.
+    #[test]
+    fn test_generate_table_oid_non_ascii_matches_sqlite() {
+        assert_eq!(generate_table_oid("café"), 996612);
+        assert_eq!(generate_table_oid("naïve_tbl"), 1010347);
+    }
+
+    /// A high-codepoint leading character must not overflow/panic. Before the u64
+    /// widening, `generate_table_oid("日本語")` panicked with "attempt to multiply
+    /// with overflow" in a debug build. Expected value computed via the `sqlite3`
+    /// CLI running the identical v28 SQL expression: 685005.
+    #[test]
+    fn test_generate_table_oid_high_codepoint_no_panic() {
+        assert_eq!(generate_table_oid("日本語"), 685005);
     }
 }
