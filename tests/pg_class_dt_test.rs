@@ -84,3 +84,35 @@ async fn test_dt_reports_public_schema_and_owner() {
     assert_eq!(row.get::<_, String>("Schema"), "public");
     assert_eq!(row.get::<_, String>("Type"), "table");
 }
+
+#[tokio::test]
+async fn test_trusted_schema_allows_pragma_in_views() {
+    let _ = env_logger::builder().is_test(true).try_init();
+
+    let server = setup_test_server_with_init(|db| {
+        Box::pin(async move {
+            db.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT)").await?;
+            Ok(())
+        })
+    }).await;
+
+    // `PRAGMA trusted_schema` does not round-trip through the wire protocol: pgsqlite's
+    // query-vs-execute classifier routes it to the execute path, which rejects it because
+    // it returns rows ("Execute returned results - did you mean to call query?"). It's also
+    // not a strong enough probe on its own: verified manually with the sqlite3 CLI, a bare
+    // top-level `SELECT ... FROM pragma_table_info(...)` succeeds regardless of trusted_schema
+    // -- SQLite only enforces the restriction on virtual tables referenced from within a VIEW
+    // (or trigger/check constraint) definition. That's exactly what Task 3's pg_class.relnatts
+    // column does, so assert the real guarantee: a VIEW that calls pragma_table_info() must be
+    // creatable and queryable.
+    server.client.execute(
+        "CREATE VIEW v_trusted_schema_probe AS \
+         SELECT (SELECT COUNT(*) FROM pragma_table_info('customers')) AS n",
+        &[],
+    ).await.expect("CREATE VIEW using pragma_table_info() must succeed when trusted_schema is ON");
+
+    let rows = server.client.query("SELECT n FROM v_trusted_schema_probe", &[]).await
+        .expect("SELECT from a view that calls pragma_table_info() must succeed");
+    let n: i32 = rows[0].get(0);
+    assert_eq!(n, 2, "customers has 2 columns");
+}

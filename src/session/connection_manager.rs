@@ -69,7 +69,13 @@ impl ConnectionManager {
         );
         conn.execute_batch(&pragma_sql)
             .map_err(PgSqliteError::Sqlite)?;
-        
+
+        // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
+        // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
+        // so a future default change or defensive-mode setting can't silently break those views.
+        conn.execute_batch("PRAGMA trusted_schema=ON;")
+            .map_err(PgSqliteError::Sqlite)?;
+
         // Register functions
         crate::functions::register_all_functions(&conn)
             .map_err(PgSqliteError::Sqlite)?;

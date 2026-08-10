@@ -340,7 +340,12 @@ impl DbHandler {
             config.pragma_mmap_size
         );
         conn.execute_batch(&pragma_sql)?;
-        
+
+        // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
+        // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
+        // so a future default change or defensive-mode setting can't silently break those views.
+        conn.execute_batch("PRAGMA trusted_schema=ON;")?;
+
         Ok(conn)
     }
     

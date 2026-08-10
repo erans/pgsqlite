@@ -53,7 +53,13 @@ async fn main() -> Result<()> {
         // Open connection directly for migration
         let conn = rusqlite::Connection::open(&db_path)
             .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
-        
+
+        // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
+        // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
+        // so a future default change or defensive-mode setting can't silently break those views.
+        conn.execute_batch("PRAGMA trusted_schema=ON;")
+            .map_err(|e| anyhow::anyhow!("Failed to set trusted_schema pragma: {}", e))?;
+
         // Register functions needed for migrations
         pgsqlite::functions::register_all_functions(&conn)
             .map_err(|e| anyhow::anyhow!("Failed to register functions: {}", e))?;
