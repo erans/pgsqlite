@@ -9,7 +9,7 @@ use sqlparser::dialect::PostgreSqlDialect;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Location, Span};
 use tracing::{debug, info};
-use super::{pg_class::PgClassHandler, pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, pg_settings::PgSettingsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
+use super::{pg_attribute::PgAttributeHandler, pg_constraint::PgConstraintHandler, pg_depend::PgDependHandler, pg_enum::PgEnumHandler, pg_description::PgDescriptionHandler, pg_roles::PgRolesHandler, pg_user::PgUserHandler, pg_stats::PgStatsHandler, pg_sequence::PgSequenceHandler, pg_trigger::PgTriggerHandler, pg_settings::PgSettingsHandler, system_functions::SystemFunctions, where_evaluator::WhereEvaluator};
 use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
@@ -512,11 +512,6 @@ impl CatalogInterceptor {
                 return Some(Ok(Self::handle_pg_type_query(select, db.clone(), session.clone()).await));
             }
 
-            // Handle pg_namespace queries
-            if table_name.contains("pg_namespace") || table_name.contains("pg_catalog.pg_namespace") {
-                return Some(Ok(Self::handle_pg_namespace_query(select)));
-            }
-
             // Handle pg_range queries (usually empty)
             if table_name.contains("pg_range") || table_name.contains("pg_catalog.pg_range") {
                 return Some(Ok(Self::handle_pg_range_query(select)));
@@ -547,11 +542,6 @@ impl CatalogInterceptor {
                 return Some(Ok(Self::handle_pg_statistic_query(select)));
             }
 
-            // Handle pg_class queries
-            if table_name.contains("pg_class") || table_name.contains("pg_catalog.pg_class") {
-                return Some(PgClassHandler::handle_query(select, &db).await);
-            }
-            
             // Handle pg_attribute queries
             if table_name.contains("pg_attribute") || table_name.contains("pg_catalog.pg_attribute") {
                 info!("Routing to PgAttributeHandler for table: {}", table_name);
@@ -1053,43 +1043,6 @@ impl CatalogInterceptor {
         let rows_affected = rows.len();
         info!("pg_type query: filter_oid={:?}, filter_typtype={:?}, has_placeholder={}", filter_oid, filter_typtype, has_placeholder);
         info!("Returning {} rows for pg_type query with {} columns: {:?}", rows_affected, columns.len(), columns);
-        DbResponse {
-            columns,
-            rows,
-            rows_affected,
-        }
-    }
-
-    fn handle_pg_namespace_query(select: &Select) -> DbResponse {
-        let all_columns = vec!["oid".to_string(), "nspname".to_string()];
-        let (columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
-
-        let full_rows = vec![
-            vec![
-                Some("11".to_string().into_bytes()),
-                Some("pg_catalog".to_string().into_bytes()),
-            ],
-            vec![
-                Some("2200".to_string().into_bytes()),
-                Some("public".to_string().into_bytes()),
-            ],
-        ];
-        if columns.is_empty() && Self::is_count_star_projection(&select.projection) {
-            return Self::count_response(full_rows.len());
-        }
-
-        let rows: Vec<Vec<Option<Vec<u8>>>> = full_rows
-            .into_iter()
-            .map(|full_row| {
-                column_indices
-                    .iter()
-                    .map(|&idx| full_row[idx].clone())
-                    .collect()
-            })
-            .collect();
-
-        let rows_affected = rows.len();
-        debug!("Returning {} rows for pg_namespace query with {} columns: {:?}", rows_affected, columns.len(), columns);
         DbResponse {
             columns,
             rows,
@@ -1806,44 +1759,6 @@ impl CatalogInterceptor {
             .last()
             .and_then(|part| part.as_ident())
             .map(|ident| ident.value.to_lowercase())
-    }
-
-    fn is_count_star_projection(projection: &[SelectItem]) -> bool {
-        if projection.len() != 1 {
-            return false;
-        }
-
-        let expr = match &projection[0] {
-            SelectItem::UnnamedExpr(expr) => expr,
-            SelectItem::ExprWithAlias { expr, .. } => expr,
-            _ => return false,
-        };
-
-        let Expr::Function(function) = expr else {
-            return false;
-        };
-
-        if Self::function_name(function).as_deref() != Some("count") {
-            return false;
-        }
-
-        matches!(
-            &function.args,
-            sqlparser::ast::FunctionArguments::List(arg_list)
-                if arg_list.args.len() == 1
-                    && matches!(
-                        &arg_list.args[0],
-                        FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
-                    )
-        )
-    }
-
-    fn count_response(count: usize) -> DbResponse {
-        DbResponse {
-            columns: vec!["count".to_string()],
-            rows: vec![vec![Some(count.to_string().into_bytes())]],
-            rows_affected: 1,
-        }
     }
 
     async fn handle_information_schema_schemata_query(select: &Select, _db: &DbHandler) -> DbResponse {
