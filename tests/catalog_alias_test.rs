@@ -117,7 +117,7 @@ async fn test_pg_roles_unquoted_aliases_fold_to_lowercase_and_quoted_aliases_pre
 }
 
 #[tokio::test]
-async fn test_pg_namespace_cast_projection_uses_inner_source_column() {
+async fn test_pg_roles_cast_projection_uses_inner_source_column() {
     // pg_namespace is now served directly from SQLite (migration v28), so cast-projection
     // behavior is exercised against pg_roles instead, which remains Rust-intercepted.
     let response = catalog_query("SELECT CAST(oid AS text) AS o FROM pg_catalog.pg_roles").await;
@@ -130,7 +130,7 @@ async fn test_pg_namespace_cast_projection_uses_inner_source_column() {
 }
 
 #[tokio::test]
-async fn test_pg_namespace_nested_projection_uses_inner_source_column() {
+async fn test_pg_roles_nested_projection_uses_inner_source_column() {
     // pg_namespace is now served directly from SQLite (migration v28), so nested-projection
     // behavior is exercised against pg_roles instead, which remains Rust-intercepted.
     let response = catalog_query("SELECT (oid) AS o FROM pg_catalog.pg_roles").await;
@@ -141,7 +141,7 @@ async fn test_pg_namespace_nested_projection_uses_inner_source_column() {
 }
 
 #[tokio::test]
-async fn test_pg_namespace_compound_identifier_projection_uses_leaf_column() {
+async fn test_pg_roles_compound_identifier_projection_uses_leaf_column() {
     // pg_namespace is now served directly from SQLite (migration v28), so
     // compound-identifier projection is exercised against pg_roles instead, which remains
     // Rust-intercepted.
@@ -164,7 +164,7 @@ async fn test_pg_roles_where_filter_with_alias_free_projection() {
 }
 
 #[tokio::test]
-async fn test_pg_namespace_unknown_source_column_projects_no_columns() {
+async fn test_pg_roles_unknown_source_column_projects_no_columns() {
     // pg_namespace is now served directly from SQLite (migration v28), so unknown-column
     // projection behavior is exercised against pg_roles instead, which remains
     // Rust-intercepted.

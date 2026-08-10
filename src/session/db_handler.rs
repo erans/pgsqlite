@@ -1298,7 +1298,7 @@ impl DbHandler {
     
     /// Query with session-specific connection
     pub async fn query_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
-        eprintln!("🔍 query_with_session called with query: {}", query);
+        debug!("query_with_session called with query: {}", query);
         // Check if this is a catalog query that should be intercepted
         // We need to do this before applying translations
         let lower_query = query.to_lowercase();
