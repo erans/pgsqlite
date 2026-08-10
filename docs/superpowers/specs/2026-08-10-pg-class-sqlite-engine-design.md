@@ -112,8 +112,14 @@ missing column becomes a loud SQLite error rather than silent wrong rows.
 
 ## Scope
 
-`pg_class` only. The other catalog handlers keep working untouched. This
-establishes the pattern for later per-catalog specs.
+`pg_class` and `pg_namespace`. The other catalog handlers keep working
+untouched. This establishes the pattern for later per-catalog specs.
+
+`pg_namespace` was added to the scope during execution: it is intercepted
+separately by `handle_pg_namespace_query`, which returns a hardcoded two-row set
+and would otherwise shadow the new `information_schema` namespace row. Issue #87
+does not depend on this — `\dt` enters through `pg_class` — but the namespace
+assignment below is unreachable without it.
 
 ## Design
 

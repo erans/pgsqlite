@@ -514,16 +514,26 @@ git commit -m "feat: migration v28 enriches pg_class view to full column parity 
 
 ---
 
-### Task 4: Remove `pg_class` interception and delete `PgClassHandler`
+### Task 4: Remove `pg_class` and `pg_namespace` interception, delete `PgClassHandler`
 
 **Files:**
-- Modify: `src/catalog/query_interceptor.rs:550-553` (remove the branch), `:12` (remove the import)
+- Modify: `src/catalog/query_interceptor.rs:550-553` (remove the pg_class branch), `:515-517` (remove the pg_namespace branch), `:1063-1098` (delete `handle_pg_namespace_query`), `:12` (remove the import)
 - Modify: `src/catalog/mod.rs` (remove the `pg_class` module declaration)
 - Delete: `src/catalog/pg_class.rs`
 
+**Scope amendment (human ruling, made during execution):** the original plan
+removed only the `pg_class` branch. Implementation of Task 3 revealed that
+`pg_namespace` is *also* intercepted, by `handle_pg_namespace_query`, which
+returns a hardcoded two-row set (`pg_catalog`, `public`) and therefore shadows
+v28's new `information_schema` namespace row. Task 4 now removes both branches.
+Issue #87 itself does not depend on this — `\dt`'s FROM table is `pg_class`, so
+removing that branch alone lets the whole joined query fall through to SQLite —
+but without it, a direct `pg_namespace` query still returns stale rows and
+Task 3's `test_pg_namespace_has_information_schema` cannot pass.
+
 **Interfaces:**
-- Consumes: the v28 view from Task 3.
-- Produces: `pg_class` queries reaching SQLite. This is what makes Task 1's tests pass.
+- Consumes: the v28 views from Task 3.
+- Produces: `pg_class` and `pg_namespace` queries reaching SQLite. This is what makes Task 1's tests pass.
 
 - [ ] **Step 1: Remove the interception branch**
 
@@ -536,11 +546,30 @@ In `src/catalog/query_interceptor.rs`, delete these four lines at 550-553:
             }
 ```
 
-- [ ] **Step 2: Remove the import**
+- [ ] **Step 2: Remove the pg_namespace branch and its handler**
+
+In `src/catalog/query_interceptor.rs`, delete the branch at 515-517:
+
+```rust
+            // Handle pg_namespace queries
+            if table_name.contains("pg_namespace") || table_name.contains("pg_catalog.pg_namespace") {
+                return Some(Ok(Self::handle_pg_namespace_query(select)));
+            }
+```
+
+Then delete the now-unused `handle_pg_namespace_query` function (around `:1063-1098`). Confirm nothing else calls it:
+
+```bash
+grep -n "handle_pg_namespace_query" src/catalog/query_interceptor.rs
+```
+
+Expected after deletion: no matches.
+
+- [ ] **Step 3: Remove the import**
 
 In `src/catalog/query_interceptor.rs:12`, remove `pg_class::PgClassHandler, ` from the `use super::{...}` list. Leave the other handlers untouched.
 
-- [ ] **Step 3: Delete the handler and its module declaration**
+- [ ] **Step 4: Delete the handler and its module declaration**
 
 ```bash
 git rm src/catalog/pg_class.rs
@@ -549,13 +578,13 @@ grep -n "pub mod pg_class;\|mod pg_class;" src/catalog/mod.rs
 
 Remove the matching line from `src/catalog/mod.rs`.
 
-- [ ] **Step 4: Build**
+- [ ] **Step 5: Build**
 
 Run: `cargo check 2>&1 | grep -E "^error|^warning: unused" | head -20`
 
-Expected: clean. If you see `unused import` for something that was only used by the deleted branch, remove it too.
+Expected: clean. If you see `unused import` or a dead-code warning for something that was only used by the deleted branches, remove it too.
 
-- [ ] **Step 5: Run the acceptance tests from Task 1**
+- [ ] **Step 6: Run the acceptance tests from Task 1**
 
 Run: `cargo test --test pg_class_dt_test 2>&1 | tail -30`
 
@@ -569,17 +598,17 @@ RUST_LOG=pgsqlite=debug cargo test --test pg_class_dt_test test_dt_lists_user_ta
 
 The candidates are the system-function branch at `query_interceptor.rs:334` (entered because `\dt` contains `pg_table_is_visible`) and the catalog-JOIN branch at `:402`. Neither should claim this query — `:341` requires the literal `pg_class.relname` and `:402` requires a join to `pg_attribute`/`pg_type` — but if the log shows one of them returning `Some`, that branch needs the same treatment.
 
-- [ ] **Step 6: Run the view tests from Task 3**
+- [ ] **Step 7: Run the view tests from Task 3**
 
 Run: `cargo test --test pg_class_view_test 2>&1 | tail -30`
 
-Expected: all four PASS now that the view is no longer shadowed.
+Expected: all four PASS now that the views are no longer shadowed. Note that `test_pg_class_has_full_column_parity` and `test_pg_class_relnatts_is_real_column_count` already passed before this task (the deleted Rust handler also served 33 columns), so the meaningful changes here are `test_pg_class_namespace_assignment` and `test_pg_namespace_has_information_schema` going green.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add -A src/catalog/
-git commit -m "fix: serve pg_class from SQLite instead of PgClassHandler (#87)"
+git commit -m "fix: serve pg_class and pg_namespace from SQLite instead of Rust handlers (#87)"
 ```
 
 ---
