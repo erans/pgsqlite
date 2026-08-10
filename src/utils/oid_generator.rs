@@ -1,8 +1,9 @@
 /// Central OID generation module to ensure consistency across the codebase
-/// Uses the same formula as the pg_class view in migrations
 
-/// Generate a stable OID from a name using the same formula as SQLite views
-/// This matches: (unicode(substr(name, 1, 1)) * 1000000) + (unicode(substr(name || ' ', 2, 1)) * 10000) + ...
+/// Generate a stable OID from a name by sampling six character positions.
+///
+/// This is the *constraint/sequence* OID formula. It is deliberately NOT the table-identity
+/// formula — see `generate_table_oid` for the one that must match the pg_class view.
 pub fn generate_oid(name: &str) -> u32 {
     // For better uniqueness, sample characters from different positions
     let chars: Vec<char> = name.chars().collect();
@@ -10,18 +11,22 @@ pub fn generate_oid(name: &str) -> u32 {
 
     // Sample characters from different positions for better distribution
     // Use first, middle, and last characters to avoid collisions
-    let char1 = chars.get(0).copied().unwrap_or(' ') as u32;
-    let char2 = chars.get(1).copied().unwrap_or(' ') as u32;
-    let char3 = chars.get(len / 3).copied().unwrap_or(' ') as u32;  // 1/3 position
-    let char4 = chars.get(2 * len / 3).copied().unwrap_or(' ') as u32;  // 2/3 position
-    let char5 = chars.get(len.saturating_sub(1)).copied().unwrap_or(' ') as u32;  // Last char
-    let char6 = chars.get(len / 2).copied().unwrap_or(' ') as u32;  // Middle char
-    let length = name.len() as u32;
+    // Widened to u64 for the same reason as generate_table_oid: a high-codepoint
+    // character times 1_000_000 overflows u32. The final `% 1_000_000 + 16384`
+    // keeps the result far below u32::MAX, so the round trip is safe, and every
+    // value that did not previously overflow is unchanged.
+    let char1 = chars.first().copied().unwrap_or(' ') as u64;
+    let char2 = chars.get(1).copied().unwrap_or(' ') as u64;
+    let char3 = chars.get(len / 3).copied().unwrap_or(' ') as u64;  // 1/3 position
+    let char4 = chars.get(2 * len / 3).copied().unwrap_or(' ') as u64;  // 2/3 position
+    let char5 = chars.get(len.saturating_sub(1)).copied().unwrap_or(' ') as u64;  // Last char
+    let char6 = chars.get(len / 2).copied().unwrap_or(' ') as u64;  // Middle char
+    let length = name.len() as u64;
 
     // Include characters from different positions for better uniqueness
     // This helps distinguish constraints with the same prefix
-    ((char1 * 1000000) + (char2 * 10000) + (char3 * 100) +
-     (char4 * 37) + (char5 * 23) + (char6 * 19) + (length * 7)) % 1000000 + 16384
+    (((char1 * 1000000) + (char2 * 10000) + (char3 * 100) +
+     (char4 * 37) + (char5 * 23) + (char6 * 19) + (length * 7)) % 1000000 + 16384) as u32
 }
 
 /// Generate OID as i32 (for functions that need signed integers)
@@ -68,6 +73,30 @@ mod tests {
         // Test that different names produce different OIDs
         let oid3 = generate_oid("other_table");
         assert_ne!(oid1, oid3);
+    }
+
+    /// The u64 widening of `generate_oid` must be strictly panic-eliminating: every
+    /// input that already produced a value must still produce the same value. These
+    /// were measured against the pre-widening body (with checked arithmetic to detect
+    /// the overflow) and are unchanged by the widening, non-ASCII names included.
+    #[test]
+    fn test_generate_oid_values_unchanged_by_widening() {
+        assert_eq!(generate_oid("users"), 186701);
+        assert_eq!(generate_oid("customers"), 206538);
+        assert_eq!(generate_oid("orders"), 175208);
+        assert_eq!(generate_oid("a"), 353754);
+        assert_eq!(generate_oid("ab"), 1013840);
+        assert_eq!(generate_oid("café"), 1007190);
+    }
+
+    /// A high-codepoint leading character overflowed `char1 * 1_000_000` in u32,
+    /// panicking in debug builds and silently wrapping in release. `generate_oid`
+    /// reaches persisted catalog OIDs through migration v5's `populate_catalog_tables`,
+    /// so this was a panic on the upgrade path for such a name.
+    #[test]
+    fn test_generate_oid_high_codepoint_no_panic() {
+        assert_eq!(generate_oid("日本語"), 408635);
+        assert_eq!(generate_oid("\u{10FFFF}x"), 636999);
     }
 
     #[test]
