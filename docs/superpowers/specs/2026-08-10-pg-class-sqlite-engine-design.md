@@ -117,7 +117,14 @@ establishes the pattern for later per-catalog specs.
 
 ## Design
 
-### Migration v26: recreate the `pg_class` view
+### Migration v28: recreate the `pg_class` view
+
+The migration registry currently runs through v27 (`register_v27_fix_pg_proc_types`),
+so this work lands as **v28**. The current `pg_class` view is owned by v26
+(`register_v26_enhanced_pg_attribute_support`, `registry.rs:2544`), so v28 must
+`DROP VIEW IF EXISTS pg_class` before recreating it. Note that CLAUDE.md's
+"Current Migrations (v1-v25)" list is stale and should be corrected to v28 as
+part of this work.
 
 The current view has 25 columns; the Rust handler serves 33. Add the nine
 missing: `reltype`, `reloftype`, `relnatts`, `relchecks`, `relhasrules`,
