@@ -85,10 +85,12 @@ When modifying `__pgsqlite_*` tables:
 2. Define migration with version, name, description, up/down SQL, and dependencies
 3. Update Current Migrations list below
 
-### Current Migrations (v1-v25)
+### Current Migrations (v1-v28)
 - v1-v10: Initial schema, ENUM, DateTime, Arrays, Full-Text Search, catalog tables
 - v15-v19: pg_depend, pg_proc, pg_description, pg_roles/pg_user, pg_stats
 - v20-v25: information_schema support (routines, views, referential_constraints, check_constraints, triggers), pg_tablespace
+- v26-v27: Enhanced pg_attribute, pg_proc type fixes
+- v28: pg_class full column parity; internal relations moved to pg_catalog/information_schema namespaces
 
 ## Major Features
 
