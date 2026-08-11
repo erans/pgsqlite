@@ -98,9 +98,12 @@ mapping already exists as `SchemaTypeMapper::pg_type_string_to_oid`
 
 v28 identifies internal relations with `name LIKE 'pg\_%' ESCAPE '\'`. A user
 table named `pg_myreport` is therefore filed under `pg_catalog` — today that
-only hides it from `\dt`, but once `information_schema.tables` derives
-`table_schema` from the same expression, the misfiling hides it from ORM
-introspection too.
+only hides it from `\dt`. If `information_schema.tables` derived `table_schema`
+by joining `pg_namespace` on `pg_class.relnamespace`, it would inherit the
+misfiling and hide that table from ORM introspection too — a regression on
+current behavior, where it is at least visible. The `information_schema` views
+therefore call the exact-name UDF directly rather than reading
+`pg_class.relnamespace`; correcting `pg_class` itself is a follow-up.
 
 The prefix test also *under*-matches. Migrations create eight indexes named
 `idx_*`, which no `__pgsqlite_%` or `pg_%` filter catches:
@@ -116,7 +119,10 @@ $ psql -c "\di"
 
 All eight are `CREATE INDEX IF NOT EXISTS` statements in
 `src/migration/registry.rs`, and all eight leak into `\di` and ORM index
-reflection today.
+reflection today. Indexes are not visible through `information_schema.tables`
+(which selects `relkind IN ('r','v')`), so this leak is fixed by the `pg_class`
+follow-up, not here — but the registry this design introduces is what makes that
+fix a one-line change.
 
 ## Design
 
@@ -129,10 +135,11 @@ New module `src/catalog/internal_relations.rs` holding a `const` list of the
 relation names pgsqlite's migrations create — 4 tables, 24 views, 8 indexes —
 each tagged with its namespace OID (11 `pg_catalog`, 13000 `information_schema`).
 
-This is the authoritative answer to "is this ours?", replacing the `LIKE 'pg\_%'`
-heuristic. It is a static list because the migration registry is static; adding a
-catalog relation to a future migration means adding a line here, and the
-migration round-trip test below fails loudly if the two drift.
+This is the authoritative answer to "is this ours?". It supersedes the
+`LIKE 'pg\_%'` heuristic for the `information_schema` views in this change, and
+for `pg_class` in the follow-up. It is a static list because the migration
+registry is static; adding a catalog relation to a future migration means adding
+a line here, and the drift test below fails loudly if the two disagree.
 
 Exposed to SQL as one UDF in `src/functions/catalog_functions.rs`:
 
@@ -160,22 +167,24 @@ All three register through `functions::register_all_functions`
 
 ### Component 3: migration v29
 
-Four view redefinitions, following the v28 pattern of `DROP VIEW` + `CREATE VIEW`
-with a `down` that restores the prior definitions verbatim.
+Three view redefinitions, following the v28 pattern of `DROP VIEW` + `CREATE VIEW`
+with a `down` that restores the prior definitions verbatim. `pg_class` is
+deliberately left alone — see Follow-ups.
 
-- **`pg_class`** — `relnamespace` becomes `__pgsqlite_relnamespace(name)`. Every
-  downstream consumer inherits exact-name correctness; fixes the `pg_myreport`
-  misfiling and the eight leaking `idx_*` indexes in one place.
 - **`pg_attribute`** — `atttypid` becomes
   `COALESCE(__pgsqlite_pg_type_oid(s.pg_type), <existing CASE>)` via a
   `LEFT JOIN __pgsqlite_schema s`. The fallback preserves behavior for tables
   with no `__pgsqlite_schema` row (databases created outside pgsqlite).
-- **`information_schema_tables`** — `table_schema` from
-  `pg_namespace.nspname` joined on `pg_class.relnamespace`, replacing
-  `'public' as table_schema`.
-- **`information_schema_columns`** — same `table_schema` join;
+- **`information_schema_tables`** — `table_schema` becomes
+  `__pgsqlite_relnamespace(relname)` resolved through `pg_namespace.nspname`,
+  replacing `'public' as table_schema`. It reads the UDF directly rather than
+  `pg_class.relnamespace`, so it does not inherit v28's prefix heuristic.
+- **`information_schema_columns`** — same `table_schema` derivation;
   `data_type` and `udt_name` from `__pgsqlite_format_type_is(a.atttypid)`,
   replacing the inline `CASE`.
+
+The views continue to select `FROM pg_class` for the relation list and
+`relkind`; only the namespace derivation bypasses it.
 
 ### Component 4: routing
 
@@ -211,8 +220,8 @@ psql
           ├─ handle_catalog_query → None      (no arm matches)
           └─ db.query(translated)
               └─ SQLite view
-                  └─ pg_class → pg_namespace
-                      └─ __pgsqlite_relnamespace(name)
+                  ├─ pg_class          (relation list, relkind)
+                  └─ __pgsqlite_relnamespace(relname) → pg_namespace.nspname
 ```
 
 ### Error handling
@@ -224,8 +233,9 @@ psql
   the failure mode is showing an internal relation rather than hiding a user's.
 - `__pgsqlite_format_type_is` returns `text` for unmapped OIDs, matching the
   current view's `ELSE 'text'`.
-- Migration `down` restores the v28 `pg_class`, v26 `pg_attribute`, and v14
-  `information_schema_*` definitions verbatim.
+- Migration `down` restores the v26 `pg_attribute` and v14
+  `information_schema_*` definitions verbatim. `pg_class` is untouched by v29,
+  so its v28 definition survives both directions.
 
 ## Testing
 
@@ -241,18 +251,27 @@ TDD throughout, starting from a test that fails on the current tree.
 3. **Type fidelity** — the eight-column table above, asserting the "correct"
    column of that table.
 4. **Exact-name matching** — a user table named `pg_myreport` reports
-   `table_schema='public'` and appears in `\dt`; the eight `idx_*` indexes do not
-   appear in `\di`.
+   `table_schema='public'` in `information_schema.tables`. The same test asserts
+   it is still misfiled in `pg_class` under v28's heuristic, documenting the
+   known divergence until the follow-up lands; that assertion flips there.
 5. **No regressions** — `tests/information_schema_test.rs`,
    `tests/information_schema_comprehensive_test.rs`,
    `tests/orm_constraint_discovery_test.rs`, `tests/permission_functions_test.rs`
    and the SQLAlchemy suite stay green.
-6. **Migration round-trip** — v29 up then down leaves the v28 schema, and the
-   internal-relation list matches what a migrated-to-head database actually
-   contains (guards list drift).
+6. **Migration round-trip** — v29 up then down leaves the v28 schema.
+7. **Registry drift** — the internal-relation list matches exactly what a
+   migrated-to-head database contains, so a future migration that adds a catalog
+   relation without updating the list fails here rather than silently leaking it.
 
 ## Non-goals
 
+- **`pg_class` namespace assignment.** v28's `LIKE 'pg\_%'` heuristic stays, so a
+  user table named `pg_myreport` remains misfiled in `pg_class` and the eight
+  `idx_*` indexes keep leaking into `\di`. Split out to keep this change off the
+  path of `\dt`, `\di`, and every ORM introspection query one week after #87
+  landed there. The registry and UDF this design introduces make the follow-up a
+  one-expression swap. Tracked as
+  [#102](https://github.com/erans/pgsqlite/issues/102).
 - **Columns of views.** `pg_attribute` remains tables-only, so
   `information_schema.columns` reports nothing for a view — true today on both
   paths. Follow-up issue.
@@ -264,3 +283,16 @@ TDD throughout, starting from a test that fails on the current tree.
   `views`, `schemata` keep their handlers and very likely share these defects.
   Out of scope; worth an umbrella issue once this lands and the pattern is
   proven twice.
+
+## Follow-ups
+
+1. **`pg_class` exact-name namespacing** —
+   [#102](https://github.com/erans/pgsqlite/issues/102). Swap v28's prefix `CASE`
+   for `__pgsqlite_relnamespace(name)`. Fixes the `pg_myreport` misfiling and the
+   eight leaking `idx_*` indexes, and removes the divergence test 4 documents.
+2. **View columns in `pg_attribute`** — extend beyond `m.type = 'table'`. To be
+   filed.
+3. **Umbrella: remaining `information_schema` handlers** — audit the other six
+   for the same `ORDER BY` / aggregate / predicate defects. To be filed once this
+   lands.
+
