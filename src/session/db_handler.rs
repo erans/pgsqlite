@@ -57,6 +57,12 @@ pub struct DbHandler {
     statement_cache_optimizer: Arc<StatementCacheOptimizer>,
     sql_injection_detector: Arc<SqlInjectionDetector>,
     pub(crate) db_path: String,
+    /// Keeps a shared-cache in-memory SQLite database alive for the lifetime of this
+    /// handler. SQLite destroys a shared-cache `:memory:` database as soon as its last
+    /// connection closes, so without this the migrated schema (including the pg_class /
+    /// pg_namespace views) would vanish the moment the initial migration connection is
+    /// dropped, before any session connection is opened.
+    _memory_keepalive: Option<Arc<parking_lot::Mutex<rusqlite::Connection>>>,
 }
 
 impl DbHandler {
@@ -285,22 +291,33 @@ impl DbHandler {
         
         // Create a temporary connection for migrations
         let temp_conn = Self::create_initial_connection(db_path, config)?;
-        
+
         // Run migrations if needed
-        Self::run_migrations_if_needed(temp_conn, db_path)?;
-        
+        let temp_conn = Self::run_migrations_if_needed(temp_conn, db_path)?;
+
         // Initialize optimization components
         let optimization_manager = Arc::new(OptimizationManager::new(true));
         let statement_cache_optimizer = Arc::new(StatementCacheOptimizer::new(200, optimization_manager));
-        
+
         // Create connection manager
         let connection_manager = Arc::new(ConnectionManager::new(
             db_path.to_string(),
             Arc::new(config.clone())
         ));
-        
+
+        // Shared-cache in-memory databases are destroyed as soon as their last connection
+        // closes. Keep the migration connection alive for the lifetime of this DbHandler so
+        // the migrated schema survives until the first real session connection is created.
+        let is_memory_db = db_path == ":memory:" || db_path.contains("mode=memory");
+        let memory_keepalive = if is_memory_db {
+            Some(Arc::new(parking_lot::Mutex::new(temp_conn)))
+        } else {
+            drop(temp_conn);
+            None
+        };
+
         // DbHandler initialized
-        
+
         Ok(Self {
             connection_manager,
             schema_cache: Arc::new(SchemaCache::new(config.schema_cache_ttl)),
@@ -308,6 +325,7 @@ impl DbHandler {
             statement_cache_optimizer,
             sql_injection_detector: Arc::new(SqlInjectionDetector::new()),
             db_path: db_path.to_string(),
+            _memory_keepalive: memory_keepalive,
         })
     }
     
@@ -340,18 +358,23 @@ impl DbHandler {
             config.pragma_mmap_size
         );
         conn.execute_batch(&pragma_sql)?;
-        
+
+        // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
+        // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
+        // so a future default change or defensive-mode setting can't silently break those views.
+        conn.execute_batch("PRAGMA trusted_schema=ON;")?;
+
         Ok(conn)
     }
     
-    fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<(), rusqlite::Error> {
+    fn run_migrations_if_needed(conn: rusqlite::Connection, db_path: &str) -> Result<rusqlite::Connection, rusqlite::Error> {
         // Skip all checks for in-memory databases
-        if db_path.contains(":memory:") {
+        if db_path.contains(":memory:") || db_path.contains("mode=memory") {
             debug!("Running initial migrations for in-memory database...");
-            
+
             // Register functions before migrations
             crate::functions::register_all_functions(&conn)?;
-            
+
             let mut runner = MigrationRunner::new(conn);
             match runner.run_pending_migrations() {
                 Ok(applied) => {
@@ -366,7 +389,7 @@ impl DbHandler {
                     ));
                 }
             }
-            return Ok(());
+            return Ok(runner.into_connection());
         }
         
         // For file-based databases, first check for schema drift
@@ -405,10 +428,10 @@ impl DbHandler {
         
         if needs_migrations {
             debug!("Running initial migrations...");
-            
+
             // Register functions before migrations
             crate::functions::register_all_functions(&conn)?;
-            
+
             let mut runner = MigrationRunner::new(conn);
             match runner.run_pending_migrations() {
                 Ok(applied) => {
@@ -423,16 +446,18 @@ impl DbHandler {
                     ));
                 }
             }
+            Ok(runner.into_connection())
         } else {
             // Check if we need to run any pending migrations
             // Register functions first
             crate::functions::register_all_functions(&conn)?;
-            
+
             let runner = MigrationRunner::new(conn);
             match runner.check_schema_version() {
                 Ok(()) => {
                     // Schema is up to date
                     debug!("Schema version check passed");
+                    Ok(runner.into_connection())
                 }
                 Err(e) => {
                     // Schema is outdated, run migrations
@@ -451,11 +476,10 @@ impl DbHandler {
                             ));
                         }
                     }
+                    Ok(runner.into_connection())
                 }
             }
         }
-        
-        Ok(())
     }
     
     /// Create a connection for a new session
@@ -1274,7 +1298,7 @@ impl DbHandler {
     
     /// Query with session-specific connection
     pub async fn query_with_session(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
-        eprintln!("🔍 query_with_session called with query: {}", query);
+        debug!("query_with_session called with query: {}", query);
         // Check if this is a catalog query that should be intercepted
         // We need to do this before applying translations
         let lower_query = query.to_lowercase();

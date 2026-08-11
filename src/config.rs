@@ -164,7 +164,30 @@ pub struct Config {
     pub migrate: bool,
 }
 
+/// SQLite database name used for `--in-memory` mode.
+pub const IN_MEMORY_DB_NAME: &str = "pgsqlite_mem";
+
+/// Build the URI for an in-memory SQLite database.
+///
+/// A bare `:memory:` gives every connection its *own* private database, so migrations
+/// run on one connection are invisible to the connections opened later for each client
+/// session. The shared-cache URI form makes every connection in the process address one
+/// database. This lives here rather than inline at the call site so tests can pin the
+/// format instead of duplicating the literal.
+pub fn in_memory_db_uri(name: &str) -> String {
+    format!("file:{name}?mode=memory&cache=shared")
+}
+
 impl Config {
+    /// Resolve the database path this configuration should open.
+    pub fn resolve_db_path(&self) -> String {
+        if self.in_memory {
+            in_memory_db_uri(IN_MEMORY_DB_NAME)
+        } else {
+            self.database.clone()
+        }
+    }
+
     /// Get a configuration instance with all values resolved from CLI args and environment variables
     pub fn load() -> Self {
         let config = Config::parse();

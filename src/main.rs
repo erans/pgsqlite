@@ -39,12 +39,10 @@ async fn main() -> Result<()> {
     info!("pgsqlite v{}", env!("CARGO_PKG_VERSION"));
 
     // Determine database path based on --in-memory flag
-    let db_path = if config.in_memory {
+    if config.in_memory {
         info!("Using in-memory SQLite database (testing mode)");
-        ":memory:".to_string()
-    } else {
-        config.database.clone()
-    };
+    }
+    let db_path = config.resolve_db_path();
 
     // Handle migration command
     if config.migrate {
@@ -53,7 +51,13 @@ async fn main() -> Result<()> {
         // Open connection directly for migration
         let conn = rusqlite::Connection::open(&db_path)
             .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
-        
+
+        // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
+        // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
+        // so a future default change or defensive-mode setting can't silently break those views.
+        conn.execute_batch("PRAGMA trusted_schema=ON;")
+            .map_err(|e| anyhow::anyhow!("Failed to set trusted_schema pragma: {}", e))?;
+
         // Register functions needed for migrations
         pgsqlite::functions::register_all_functions(&conn)
             .map_err(|e| anyhow::anyhow!("Failed to register functions: {}", e))?;

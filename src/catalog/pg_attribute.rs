@@ -624,11 +624,7 @@ fn map_sqlite_to_pg_type(sqlite_type: &str) -> (i32, i16, i32) {
 }
 
 fn generate_oid_from_name(name: &str) -> u32 {
-    // Generate a stable OID from name using a simple hash
-    // Start at 16384 to avoid conflicts with system OIDs
-    let mut hash = 0u32;
-    for byte in name.bytes() {
-        hash = hash.wrapping_mul(31).wrapping_add(byte as u32);
-    }
-    16384 + (hash % 1000000)
+    // Must match the formula used by the pg_class view (migration v28) and
+    // constraint_populator::generate_table_oid, so that attrelid joins to pg_class.oid.
+    crate::utils::generate_table_oid(name)
 }

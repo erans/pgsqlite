@@ -14,7 +14,12 @@ async fn test_catalog_where_simple() {
     eprintln!("Test server listening on port {port}");
     
     let server_handle = tokio::spawn(async move {
-        let db_handler = Arc::new(DbHandler::new(":memory:").unwrap());
+        // Use the same shared-cache in-memory URI as the `--in-memory` server flag
+        // (src/main.rs). A bare ":memory:" gives every SQLite connection its own private,
+        // empty database, so the pg_class/pg_namespace views created by migrations on the
+        // initial connection would be invisible to the per-session connections opened by
+        // ConnectionManager.
+        let db_handler = Arc::new(DbHandler::new("file:pgsqlite_mem_where_simple?mode=memory&cache=shared").unwrap());
         
         // Create test table
         db_handler.execute("CREATE TABLE test_table1 (id INTEGER PRIMARY KEY, name TEXT)").await.unwrap();

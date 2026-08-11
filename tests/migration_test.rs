@@ -23,8 +23,8 @@ fn test_fresh_database_migration() {
     
     // Should apply all migrations
     assert_eq!(applied.len(), MIGRATIONS.len());
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
-    
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
+
     // Verify schema version
     let conn = runner.into_connection();
     let version: String = conn.query_row(
@@ -32,12 +32,12 @@ fn test_fresh_database_migration() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "27");
-    
+    assert_eq!(version, "28");
+
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
     assert!(runner2.check_schema_version().is_ok());
-    
+
     // Verify all tables exist
     let conn = runner2.into_connection();
     let tables: Vec<String> = conn.prepare(
@@ -68,7 +68,7 @@ fn test_idempotent_migrations() {
     let conn = Connection::open(&db_path).unwrap();
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
-    assert_eq!(applied.len(), 27);
+    assert_eq!(applied.len(), 28);
     drop(runner);
     
     // Second run - should apply nothing
@@ -109,8 +109,8 @@ fn test_existing_schema_detection() {
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
     
-    // Should recognize existing schema as version 1 and only apply versions 2-27
-    assert_eq!(applied.len(), 26);
+    // Should recognize existing schema as version 1 and only apply versions 2-28
+    assert_eq!(applied.len(), 27);
     assert_eq!(applied[0], 2);
     assert_eq!(applied[1], 3);
     assert_eq!(applied[2], 4);
@@ -123,7 +123,8 @@ fn test_existing_schema_detection() {
     assert_eq!(applied[9], 11);
     assert_eq!(applied[10], 12);
     assert_eq!(applied[25], 27);
-    
+    assert_eq!(applied[26], 28);
+
     // Verify final version
     let conn = runner.into_connection();
     let version: String = conn.query_row(
@@ -131,7 +132,7 @@ fn test_existing_schema_detection() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "27");
+    assert_eq!(version, "28");
     
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -156,7 +157,7 @@ fn test_migration_history() {
     .unwrap()
     .collect::<Result<Vec<_>, _>>().unwrap();
     
-    assert_eq!(migrations.len(), 27);
+    assert_eq!(migrations.len(), 28);
     assert_eq!(migrations[0], (1, "initial_schema".to_string(), "completed".to_string()));
     assert_eq!(migrations[1], (2, "enum_type_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[2], (3, "datetime_timezone_support".to_string(), "completed".to_string()));

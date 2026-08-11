@@ -8,7 +8,10 @@ use tracing::debug;
 pub struct ObjectResolver;
 
 impl ObjectResolver {
-    /// Resolve table name to OID using the same algorithm as pg_class view
+    /// Resolve table name to OID for comment storage (`__pgsqlite_comments.object_oid`).
+    /// NOTE: this uses a `DefaultHasher`-based formula, not the pg_class view's unicode
+    /// formula (see `crate::utils::generate_table_oid`), so these OIDs do not match
+    /// `pg_class.oid`. Changing this requires a data migration for already-persisted rows.
     pub fn resolve_table_oid(table_name: &str) -> i32 {
         generate_table_oid(table_name)
     }
@@ -80,7 +83,10 @@ impl ObjectResolver {
     }
 }
 
-/// Generate a stable OID from table name using the same algorithm as pg_class view
+/// Generate a stable OID from a table name using a `DefaultHasher`. This is NOT the same
+/// formula as the pg_class view (`crate::utils::generate_table_oid`); these OIDs do not
+/// join against `pg_class.oid`. Kept as-is because `__pgsqlite_comments.object_oid` rows
+/// already persist values from this formula (see issue #87 follow-up for a data migration).
 fn generate_table_oid(name: &str) -> i32 {
     let mut hasher = DefaultHasher::new();
     name.hash(&mut hasher);
