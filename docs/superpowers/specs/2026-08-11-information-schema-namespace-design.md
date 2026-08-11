@@ -148,43 +148,62 @@ Exposed to SQL as one UDF in `src/functions/catalog_functions.rs`:
 
 ### Component 2: type-resolution UDFs
 
-Two more UDFs in the same module, so views can reach the existing Rust type
-logic:
+The handler being deleted resolves a column's PostgreSQL type through
+`map_sqlite_type_to_pg_column_info` (`src/catalog/query_interceptor.rs:2190`),
+a private function returning
+`(data_type, character_maximum_length, numeric_precision, numeric_scale)` from
+the declared type string. Three of those four are `NULL` in the current view, so
+deleting the handler without replacing them would regress `VARCHAR(50)` to no
+length and `NUMERIC(10,2)` to no precision — both read by Django and SQLAlchemy.
 
-- `__pgsqlite_pg_type_oid(pg_type TEXT) -> INTEGER` — wraps
-  `SchemaTypeMapper::pg_type_string_to_oid`, handling modifiers (`NUMERIC(10,2)`)
-  and array suffixes (`TEXT[]`). Returns `NULL` on unrecognized input so the view
-  can fall back.
-- `__pgsqlite_format_type_is(oid INTEGER) -> TEXT` — OID to the SQL-standard
-  `data_type` spelling `information_schema` requires: `integer`,
-  `character varying`, `timestamp with time zone`, `ARRAY` for any array OID.
-  Distinct from the existing `SchemaTypeMapper::pg_oid_to_type_name`, which
-  returns PostgreSQL internal names (`int4`, `varchar`).
+Move that function to `src/catalog/column_type_info.rs` as
+`pub fn pg_column_info(pg_type: &str) -> PgColumnInfo`, fixing the gaps the
+measurement above exposed (`SERIAL`, `TIMESTAMPTZ`, `TIME`/`TIMETZ`, array
+suffixes), and expose it as four UDFs in `src/functions/catalog_functions.rs`:
 
-All three register through `functions::register_all_functions`
+- `__pgsqlite_pg_data_type(pg_type TEXT) -> TEXT` — the SQL-standard `data_type`
+  spelling: `integer`, `character varying`, `timestamp with time zone`, `ARRAY`
+- `__pgsqlite_char_max_length(pg_type TEXT) -> INTEGER | NULL`
+- `__pgsqlite_numeric_precision(pg_type TEXT) -> INTEGER | NULL`
+- `__pgsqlite_numeric_scale(pg_type TEXT) -> INTEGER | NULL`
+
+Deriving from the type string rather than an OID is deliberate: an OID cannot
+carry the `(50)` or `(10,2)` modifier those last three columns need.
+
+All five UDFs register through `functions::register_all_functions`
 (`src/functions/mod.rs:20`), so every connection gets them, including the one
 `db.query()` uses for the fall-through path.
 
 ### Component 3: migration v29
 
-Three view redefinitions, following the v28 pattern of `DROP VIEW` + `CREATE VIEW`
-with a `down` that restores the prior definitions verbatim. `pg_class` is
-deliberately left alone — see Follow-ups.
+Two view redefinitions, following the v28 pattern of `DROP VIEW` + `CREATE VIEW`
+with a `down` that restores the v14 definitions verbatim. `pg_class` and
+`pg_attribute` are both deliberately left alone — see Non-goals.
 
-- **`pg_attribute`** — `atttypid` becomes
-  `COALESCE(__pgsqlite_pg_type_oid(s.pg_type), <existing CASE>)` via a
-  `LEFT JOIN __pgsqlite_schema s`. The fallback preserves behavior for tables
-  with no `__pgsqlite_schema` row (databases created outside pgsqlite).
 - **`information_schema_tables`** — `table_schema` becomes
   `__pgsqlite_relnamespace(relname)` resolved through `pg_namespace.nspname`,
   replacing `'public' as table_schema`. It reads the UDF directly rather than
   `pg_class.relnamespace`, so it does not inherit v28's prefix heuristic.
-- **`information_schema_columns`** — same `table_schema` derivation;
-  `data_type` and `udt_name` from `__pgsqlite_format_type_is(a.atttypid)`,
-  replacing the inline `CASE`.
+- **`information_schema_columns`** — rebuilt on `sqlite_master`,
+  `pragma_table_info`, and `__pgsqlite_schema` directly, the same sources
+  `pg_attribute` reads, rather than layering on `pg_attribute`. This keeps v29
+  off a view every ORM reads for column reflection, and is what makes the four
+  recovered columns reachable:
 
-The views continue to select `FROM pg_class` for the relation list and
-`relkind`; only the namespace derivation bypasses it.
+  | column | source |
+  | --- | --- |
+  | `table_schema` | `__pgsqlite_relnamespace(m.name)` → `pg_namespace.nspname` |
+  | `column_default` | `pragma_table_info.dflt_value` |
+  | `is_nullable` | `pragma_table_info.notnull` **or** `pk` — an `INTEGER PRIMARY KEY` is `NOT NULL`, which the current view gets wrong and `tests/information_schema_test.rs:183` asserts |
+  | `data_type`, `udt_name` | `__pgsqlite_pg_data_type(COALESCE(s.pg_type, p.type))` |
+  | `character_maximum_length`, `character_octet_length` | `__pgsqlite_char_max_length(...)` |
+  | `numeric_precision`, `numeric_scale` | `__pgsqlite_numeric_precision/scale(...)` |
+
+  `COALESCE(s.pg_type, p.type)` preserves behavior for tables with no
+  `__pgsqlite_schema` row (databases created outside pgsqlite).
+
+`information_schema_tables` continues to select `FROM pg_class` for the relation
+list and `relkind`; only the namespace derivation bypasses it.
 
 ### Component 4: routing
 
@@ -226,16 +245,20 @@ psql
 
 ### Error handling
 
-- `__pgsqlite_pg_type_oid` returns `NULL` for unknown or `NULL` input; the
-  `COALESCE` in `pg_attribute` falls back to the SQLite-type `CASE`.
 - `__pgsqlite_relnamespace` returns `2200` for any unlisted name, so an
   unrecognized relation is treated as a user table — the safe direction, since
   the failure mode is showing an internal relation rather than hiding a user's.
-- `__pgsqlite_format_type_is` returns `text` for unmapped OIDs, matching the
-  current view's `ELSE 'text'`.
-- Migration `down` restores the v26 `pg_attribute` and v14
-  `information_schema_*` definitions verbatim. `pg_class` is untouched by v29,
-  so its v28 definition survives both directions.
+- `__pgsqlite_pg_data_type` returns `text` for unmapped type strings, matching
+  both the current view's `ELSE 'text'` and the handler's final fallback.
+- `__pgsqlite_char_max_length`, `__pgsqlite_numeric_precision` and
+  `__pgsqlite_numeric_scale` return `NULL` when the type carries no modifier —
+  `NULL` is what `information_schema` specifies for a type without one.
+- All five UDFs return `NULL` on `NULL` input rather than erroring, so a view
+  row with a missing `__pgsqlite_schema` entry degrades instead of failing the
+  query.
+- Migration `down` restores the v14 `information_schema_*` definitions verbatim.
+  `pg_class` and `pg_attribute` are untouched by v29, so their v28 and v26
+  definitions survive both directions.
 
 ## Testing
 
@@ -250,16 +273,25 @@ TDD throughout, starting from a test that fails on the current tree.
    fail today.
 3. **Type fidelity** — the eight-column table above, asserting the "correct"
    column of that table.
-4. **Exact-name matching** — a user table named `pg_myreport` reports
+4. **Recovered columns** — `VARCHAR(50)` reports
+   `character_maximum_length = 50`, `NUMERIC(10,2)` reports precision 10 /
+   scale 2, `DEFAULT true` reports a non-`NULL` `column_default`, and an
+   `INTEGER PRIMARY KEY` reports `is_nullable = 'NO'`. These guard the four
+   columns the handler populates and the current view does not.
+5. **Exact-name matching** — a user table named `pg_myreport` reports
    `table_schema='public'` in `information_schema.tables`. The same test asserts
    it is still misfiled in `pg_class` under v28's heuristic, documenting the
    known divergence until the follow-up lands; that assertion flips there.
-5. **No regressions** — `tests/information_schema_test.rs`,
+6. **No regressions** — `tests/information_schema_test.rs`,
    `tests/information_schema_comprehensive_test.rs`,
    `tests/orm_constraint_discovery_test.rs`, `tests/permission_functions_test.rs`
    and the SQLAlchemy suite stay green.
-6. **Migration round-trip** — v29 up then down leaves the v28 schema.
-7. **Registry drift** — the internal-relation list matches exactly what a
+7. **Migration `down`** — v29 supplies one restoring the v14 views verbatim, per
+   repo convention. It cannot be tested: no rollback path exists anywhere in
+   `src/migration/`, and `Migration::down` is never executed. The convention is
+   worth following so a future rollback runner finds it populated, but the plan
+   should not claim a round-trip test it cannot run.
+8. **Registry drift** — the internal-relation list matches exactly what a
    migrated-to-head database contains, so a future migration that adds a catalog
    relation without updating the list fails here rather than silently leaking it.
 
@@ -272,9 +304,18 @@ TDD throughout, starting from a test that fails on the current tree.
   landed there. The registry and UDF this design introduces make the follow-up a
   one-expression swap. Tracked as
   [#102](https://github.com/erans/pgsqlite/issues/102).
-- **Columns of views.** `pg_attribute` remains tables-only, so
-  `information_schema.columns` reports nothing for a view — true today on both
-  paths. Follow-up issue.
+- **`pg_attribute.atttypid`.** Still derived from the SQLite declared type, so
+  `\d` and ORM column reflection keep reporting `text` for `NUMERIC`, `UUID` and
+  `JSONB`. `information_schema_columns` no longer reads `pg_attribute`, so #88 is
+  fully fixed without touching it — and the same blast-radius argument that split
+  `pg_class` out applies here. Folded into
+  [#102](https://github.com/erans/pgsqlite/issues/102).
+- **Columns of views.** `information_schema.columns` reports nothing for a view,
+  since the rebuilt view keeps the handler's `type = 'table'` restriction — true
+  today on both paths. Follow-up issue.
+- **ENUM columns.** `data_type` reports `text` rather than `USER-DEFINED` with
+  `udt_name` set to the enum type. Unchanged from today; a scalar UDF cannot
+  reach `EnumMetadata`, which needs the connection.
 - **Stripping the `information_schema_` prefix** from `table_name`, so
   `information_schema.tables` reports `information_schema_tables` rather than
   PostgreSQL's `tables`. Cosmetic; no client filters on it.
@@ -286,12 +327,14 @@ TDD throughout, starting from a test that fails on the current tree.
 
 ## Follow-ups
 
-1. **`pg_class` exact-name namespacing** —
+1. **`pg_class` exact-name namespacing + `pg_attribute.atttypid`** —
    [#102](https://github.com/erans/pgsqlite/issues/102). Swap v28's prefix `CASE`
-   for `__pgsqlite_relnamespace(name)`. Fixes the `pg_myreport` misfiling and the
-   eight leaking `idx_*` indexes, and removes the divergence test 4 documents.
-2. **View columns in `pg_attribute`** — extend beyond `m.type = 'table'`. To be
-   filed.
+   for `__pgsqlite_relnamespace(name)`, and resolve `atttypid` from
+   `__pgsqlite_schema`. Fixes the `pg_myreport` misfiling, the eight leaking
+   `idx_*` indexes, and `\d` type reporting; removes the divergence test 5
+   documents.
+2. **View columns in `information_schema.columns` and `pg_attribute`** — extend
+   beyond `type = 'table'`. To be filed.
 3. **Umbrella: remaining `information_schema` handlers** — audit the other six
    for the same `ORDER BY` / aggregate / predicate defects. To be filed once this
    lands.
