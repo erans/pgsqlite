@@ -346,3 +346,195 @@ fn internal_relation_list_matches_migrated_database() {
         "src/catalog/internal_relations.rs lists relations no migration creates: {stale:?}"
     );
 }
+
+fn simple_query_column(messages: &[tokio_postgres::SimpleQueryMessage]) -> Vec<String> {
+    let mut values: Vec<String> = messages
+        .iter()
+        .filter_map(|m| match m {
+            tokio_postgres::SimpleQueryMessage::Row(r) => Some(r.get(0).unwrap().to_string()),
+            _ => None,
+        })
+        .collect();
+    values.sort();
+    values
+}
+
+/// The catalog interceptor gates on a lowercased query, so a mixed-case
+/// qualifier enters the catalog path. Before the case-insensitive rewrite it
+/// fell through untranslated and died with "no such table". The Rust handler
+/// this branch deleted dispatched on a lowercased name, so every spelling
+/// worked; JDBC-derived tooling emits `INFORMATION_SCHEMA.tables`.
+#[tokio::test]
+async fn mixed_case_schema_qualifiers_route_to_the_views() {
+    let server = setup_test_server().await;
+    let client = &server.client;
+
+    client
+        .simple_query("CREATE TABLE gadgets (id INTEGER PRIMARY KEY, label TEXT)")
+        .await
+        .unwrap();
+
+    let baseline = simple_query_column(
+        &client
+            .simple_query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'",
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(baseline, vec!["gadgets".to_string()]);
+
+    for query in [
+        "SELECT table_name FROM Information_Schema.Tables WHERE table_schema = 'public'",
+        "SELECT table_name FROM information_schema.TABLES WHERE table_schema = 'public'",
+        "SELECT table_name FROM INFORMATION_SCHEMA.tables WHERE table_schema = 'public'",
+        "SELECT table_name FROM INFORMATION_SCHEMA.TABLES WHERE table_schema = 'public'",
+    ] {
+        let messages = client
+            .simple_query(query)
+            .await
+            .unwrap_or_else(|e| panic!("{query} failed: {e}"));
+        assert_eq!(simple_query_column(&messages), baseline, "mismatch for {query}");
+    }
+
+    let baseline = simple_query_column(
+        &client
+            .simple_query(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'gadgets'",
+            )
+            .await
+            .unwrap(),
+    );
+    assert_eq!(baseline, vec!["id".to_string(), "label".to_string()]);
+
+    for query in [
+        "SELECT column_name FROM Information_Schema.Columns WHERE table_name = 'gadgets'",
+        "SELECT column_name FROM information_schema.COLUMNS WHERE table_name = 'gadgets'",
+        "SELECT column_name FROM INFORMATION_SCHEMA.columns WHERE table_name = 'gadgets'",
+    ] {
+        let messages = client
+            .simple_query(query)
+            .await
+            .unwrap_or_else(|e| panic!("{query} failed: {e}"));
+        assert_eq!(simple_query_column(&messages), baseline, "mismatch for {query}");
+    }
+}
+
+/// The schema-prefix translator used a blind `str::replace`, which rewrote
+/// matches inside string literals. Any table holding SQL text -- an audit log,
+/// a migration history, a notes table -- got corrupted values and silently
+/// wrong equality results.
+#[tokio::test]
+async fn string_literals_containing_schema_qualifiers_survive() {
+    let server = setup_test_server().await;
+    let client = &server.client;
+
+    for literal in [
+        "information_schema.tables",
+        "information_schema.columns",
+        "pg_catalog.pg_class",
+    ] {
+        let row = client
+            .query_one(&format!("SELECT '{literal}' AS s"), &[])
+            .await
+            .unwrap_or_else(|e| panic!("selecting '{literal}' failed: {e}"));
+        assert_eq!(row.get::<_, &str>(0), literal);
+    }
+
+    client
+        .simple_query("CREATE TABLE notes (id INTEGER PRIMARY KEY, msg TEXT)")
+        .await
+        .unwrap();
+
+    for (id, msg) in [
+        (1i32, "see information_schema.tables for details"),
+        (2i32, "see pg_catalog.pg_class for details"),
+    ] {
+        client
+            .execute("INSERT INTO notes (id, msg) VALUES ($1, $2)", &[&id, &msg])
+            .await
+            .unwrap();
+
+        // simple_query, not query_one: the catalog interceptor's gate is a
+        // substring test over the whole query text, so a literal mentioning
+        // pg_catalog sends even this count down the catalog path, which types
+        // the result as text. Pre-existing and orthogonal to literal handling.
+        let messages = client
+            .simple_query(&format!("SELECT count(*) FROM notes WHERE msg = '{msg}'"))
+            .await
+            .unwrap();
+        assert_eq!(
+            simple_query_column(&messages),
+            vec!["1".to_string()],
+            "round-trip failed for {msg:?}"
+        );
+
+        let row = client
+            .query_one("SELECT msg FROM notes WHERE id = $1", &[&id])
+            .await
+            .unwrap();
+        assert_eq!(row.get::<_, &str>(0), msg);
+    }
+
+    // The SQL-standard doubled-quote escape: 'it''s ...' is one literal.
+    let row = client
+        .query_one("SELECT 'it''s information_schema.tables' AS s", &[])
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, &str>(0), "it's information_schema.tables");
+}
+
+/// PostgreSQL reports radix 2 for the binary-precision numeric types and 10
+/// only for numeric/decimal. v29 first reported 10 for every typed precision.
+#[tokio::test]
+async fn numeric_precision_radix_matches_postgresql() {
+    let server = setup_test_server().await;
+    let client = &server.client;
+
+    client
+        .simple_query(
+            "CREATE TABLE radix_probe (
+                i INTEGER,
+                b BIGINT,
+                s SMALLINT,
+                d DOUBLE PRECISION,
+                n NUMERIC(10,2),
+                t TEXT
+            )",
+        )
+        .await
+        .unwrap();
+
+    let rows = client
+        .query(
+            "SELECT column_name, numeric_precision, numeric_precision_radix \
+             FROM information_schema.columns WHERE table_name = 'radix_probe' \
+             ORDER BY ordinal_position",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let got: Vec<(String, Option<i32>, Option<i32>)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<_, String>(0),
+                r.get::<_, Option<i32>>(1),
+                r.get::<_, Option<i32>>(2),
+            )
+        })
+        .collect();
+
+    assert_eq!(
+        got,
+        vec![
+            ("i".to_string(), Some(32), Some(2)),
+            ("b".to_string(), Some(64), Some(2)),
+            ("s".to_string(), Some(16), Some(2)),
+            ("d".to_string(), Some(53), Some(2)),
+            ("n".to_string(), Some(10), Some(10)),
+            ("t".to_string(), None, None),
+        ]
+    );
+}

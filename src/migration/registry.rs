@@ -3095,9 +3095,14 @@ fn register_v29_information_schema_namespace(registry: &mut BTreeMap<u32, Migrat
                 __pgsqlite_char_max_length(COALESCE(s.pg_type, p.type)) as character_maximum_length,
                 __pgsqlite_char_max_length(COALESCE(s.pg_type, p.type)) as character_octet_length,
                 __pgsqlite_numeric_precision(COALESCE(s.pg_type, p.type)) as numeric_precision,
-                CASE
-                    WHEN __pgsqlite_numeric_precision(COALESCE(s.pg_type, p.type)) IS NULL THEN NULL
-                    ELSE 10
+                CASE __pgsqlite_pg_data_type(COALESCE(s.pg_type, p.type))
+                    WHEN 'smallint' THEN 2
+                    WHEN 'integer' THEN 2
+                    WHEN 'bigint' THEN 2
+                    WHEN 'real' THEN 2
+                    WHEN 'double precision' THEN 2
+                    WHEN 'numeric' THEN 10
+                    ELSE NULL
                 END as numeric_precision_radix,
                 __pgsqlite_numeric_scale(COALESCE(s.pg_type, p.type)) as numeric_scale,
                 NULL as datetime_precision,
