@@ -18,6 +18,14 @@ pub struct SchemaPrefixTranslator;
 ///
 /// `needle` must be ASCII. Single left-to-right scan; everything outside a
 /// replaced span is preserved byte for byte.
+///
+/// INVARIANT: callers must strip SQL comments first. This scanner does not
+/// recognize `--` or `/* */`, so an apostrophe inside a comment (`-- don't`)
+/// would leave it believing the rest of the query is one long string literal
+/// and silently skip every real qualifier after it. `strip_sql_comments` runs
+/// ahead of this translator on both entry paths (`query::executor` and
+/// `query::extended`) and is itself literal-aware, which is what makes that
+/// unreachable today.
 fn replace_outside_literals(input: &str, needle: &str, replacement: &str) -> String {
     debug_assert!(needle.is_ascii(), "needle must be ASCII for case-insensitive matching");
     if needle.is_empty() || input.len() < needle.len() {
