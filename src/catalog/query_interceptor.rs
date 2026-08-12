@@ -725,11 +725,6 @@ impl CatalogInterceptor {
                 return Some(Ok(Self::handle_information_schema_schemata_query(select, &db).await));
             }
 
-            // Handle information_schema.tables queries
-            if table_name.contains("information_schema.tables") {
-                return Some(Ok(Self::handle_information_schema_tables_query(select, &db).await));
-            }
-
             // Handle information_schema.columns queries
             if table_name.contains("information_schema.columns") {
                 if let Some(ref session_state) = session {
@@ -1838,102 +1833,6 @@ impl CatalogInterceptor {
             columns: selected_columns,
             rows,
             rows_affected,
-        }
-    }
-
-    async fn handle_information_schema_tables_query(select: &Select, db: &DbHandler) -> DbResponse {
-        debug!("Handling information_schema.tables query");
-
-        // Get list of tables and views from SQLite
-        let tables_response = match db.query("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
-            Ok(response) => response,
-            Err(_) => return DbResponse {
-                columns: vec!["table_name".to_string()],
-                rows: vec![],
-                rows_affected: 0,
-            },
-        };
-
-        // Define information_schema.tables columns (enhanced with all PostgreSQL standard columns)
-        let all_columns = vec![
-            "table_catalog".to_string(),
-            "table_schema".to_string(),
-            "table_name".to_string(),
-            "table_type".to_string(),
-            "self_referencing_column_name".to_string(),
-            "reference_generation".to_string(),
-            "user_defined_type_catalog".to_string(),
-            "user_defined_type_schema".to_string(),
-            "user_defined_type_name".to_string(),
-            "is_insertable_into".to_string(),
-            "is_typed".to_string(),
-            "commit_action".to_string(),
-        ];
-
-        // Extract selected columns
-        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
-
-        // Check for WHERE clause filtering
-        let table_filters = if let Some(ref where_clause) = select.selection {
-            Self::extract_table_name_filters(where_clause)
-        } else {
-            Vec::new()
-        };
-
-        // Build rows
-        let mut rows = Vec::new();
-        for table_row in &tables_response.rows {
-            if table_row.len() >= 2
-                && let (Some(Some(table_name_bytes)), Some(Some(table_type_bytes))) =
-                    (table_row.first(), table_row.get(1)) {
-                    let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
-                    let sqlite_type = String::from_utf8_lossy(table_type_bytes).to_string();
-
-                    // Apply WHERE clause filtering if present
-                    if !table_filters.is_empty() && !table_filters.contains(&table_name) {
-                        continue;
-                    }
-
-                    // Map SQLite type to PostgreSQL table_type
-                    let table_type = match sqlite_type.as_str() {
-                        "table" => "BASE TABLE",
-                        "view" => "VIEW",
-                        _ => "BASE TABLE", // Default fallback
-                    };
-
-                    // Determine if table is insertable (views are not)
-                    let is_insertable = if table_type == "VIEW" { "NO" } else { "YES" };
-
-                    // Create full row with all columns
-                    let full_row: Vec<Option<Vec<u8>>> = vec![
-                        Some("main".to_string().into_bytes()),        // table_catalog
-                        Some("public".to_string().into_bytes()),      // table_schema
-                        Some(table_name.into_bytes()),                // table_name
-                        Some(table_type.to_string().into_bytes()),    // table_type
-                        None,                                         // self_referencing_column_name
-                        None,                                         // reference_generation
-                        None,                                         // user_defined_type_catalog
-                        None,                                         // user_defined_type_schema
-                        None,                                         // user_defined_type_name
-                        Some(is_insertable.to_string().into_bytes()), // is_insertable_into
-                        Some("NO".to_string().into_bytes()),          // is_typed
-                        None,                                         // commit_action
-                    ];
-
-                    // Project only the requested columns
-                    let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
-                        .map(|&idx| full_row[idx].clone())
-                        .collect();
-
-                    rows.push(projected_row);
-                }
-        }
-        
-        let rows_count = rows.len();
-        DbResponse {
-            columns: selected_columns,
-            rows,
-            rows_affected: rows_count,
         }
     }
 

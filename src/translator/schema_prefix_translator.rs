@@ -38,7 +38,16 @@ impl SchemaPrefixTranslator {
             result = result.replace(&format!("pg_catalog.{func}"), func);
             result = result.replace(&format!("PG_CATALOG.{}", func.to_uppercase()), func);
         }
-        
+
+        // information_schema relations exist as SQLite views with underscores.
+        // Rewriting here routes them to the views through the interceptor's
+        // fall-through path, the same way pg_catalog.* reaches pg_class.
+        // Only the two relations served by views; the rest still have handlers.
+        result = result.replace("information_schema.tables", "information_schema_tables");
+        result = result.replace("information_schema.columns", "information_schema_columns");
+        result = result.replace("INFORMATION_SCHEMA.TABLES", "information_schema_tables");
+        result = result.replace("INFORMATION_SCHEMA.COLUMNS", "information_schema_columns");
+
         debug!("Schema prefix translation: {} -> {}", query, result);
         result
     }
@@ -87,8 +96,20 @@ impl SchemaPrefixTranslator {
             if schema_name == "pg_catalog" {
                 // Replace with just the table name
                 name.0 = vec![table.clone()];
+            } else if schema_name == "information_schema" {
+                // The two relations served by SQLite views are rewritten to
+                // their underscore names; the rest keep their Rust handlers.
+                let table_name = match table {
+                    ObjectNamePart::Identifier(ident) => ident.value.to_lowercase(),
+                };
+                if table_name == "tables" || table_name == "columns" {
+                    let mut ident = match table {
+                        ObjectNamePart::Identifier(ident) => ident.clone(),
+                    };
+                    ident.value = format!("information_schema_{table_name}");
+                    name.0 = vec![ObjectNamePart::Identifier(ident)];
+                }
             }
-            // Don't remove information_schema prefix - it's handled by query interceptor
         }
     }
 }
@@ -116,5 +137,36 @@ mod tests {
         let query = "SELECT * FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid";
         let translated = SchemaPrefixTranslator::translate_query(query);
         assert_eq!(translated, "SELECT * FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid");
+    }
+
+    #[test]
+    fn test_information_schema_tables_rewrite() {
+        let query = "SELECT table_name FROM information_schema.tables ORDER BY 1";
+        let translated = SchemaPrefixTranslator::translate_query(query);
+        assert_eq!(translated, "SELECT table_name FROM information_schema_tables ORDER BY 1");
+    }
+
+    #[test]
+    fn test_information_schema_columns_rewrite() {
+        let query = "SELECT * FROM information_schema.columns";
+        let translated = SchemaPrefixTranslator::translate_query(query);
+        assert_eq!(translated, "SELECT * FROM information_schema_columns");
+    }
+
+    /// Relations that still have Rust handlers must not be rewritten -- there is
+    /// no `information_schema_routines` view to fall through to.
+    #[test]
+    fn test_other_information_schema_relations_are_untouched() {
+        for relation in ["routines", "views", "triggers", "check_constraints"] {
+            let query = format!("SELECT * FROM information_schema.{relation}");
+            assert_eq!(SchemaPrefixTranslator::translate_query(&query), query);
+        }
+    }
+
+    /// `table_constraints` shares a prefix with `tables` -- verify no collision.
+    #[test]
+    fn test_table_constraints_is_not_caught_by_the_tables_rewrite() {
+        let query = "SELECT * FROM information_schema.table_constraints";
+        assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
     }
 }
