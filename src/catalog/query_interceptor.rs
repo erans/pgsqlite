@@ -689,6 +689,58 @@ impl CatalogInterceptor {
         let n = rows.len();
         Ok(DbResponse { columns: cols, rows, rows_affected: n })
     }
+
+    // === PATCH v42: DBX 列默认值 (03_attrdef) ===
+    // 用 PRAGMA table_info 的 dflt_value 合成 (attname, pg_get_expr) 两列。
+    // table=None 时返回 2 列 0 行 (供 extended Describe 宣告列数)。
+    async fn v42_get_attrdef(
+        db: &Arc<DbHandler>,
+        table: Option<&str>,
+    ) -> Result<DbResponse, PgSqliteError> {
+        let cols = vec![
+            "attname".to_string(),
+            "pg_get_expr".to_string(),
+        ];
+        let mut rows: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+        if let Some(table) = table {
+            let sql = format!(
+                "PRAGMA table_info('{}')",
+                Self::v38_sqlq(table)
+            );
+            if let Ok(res) = db.query(&sql).await {
+                for r in &res.rows {
+                    let cname = Self::v38_text(r, 1);
+                    let dflt = Self::v38_text(r, 4);
+                    // 仅返回有默认值的列 (对齐 PG: 无默认值则无 pg_attrdef 行)
+                    if !dflt.is_empty() {
+                        rows.push(vec![
+                            Some(cname.into_bytes()),
+                            Some(dflt.into_bytes()),
+                        ]);
+                    }
+                }
+            }
+        }
+        let n = rows.len();
+        Ok(DbResponse { columns: cols, rows, rows_affected: n })
+    }
+
+    // 从 dbx 列默认值查询提取表名: WHERE ... c.relname = <tbl>。
+    // 参数化版本被 v29i 探测替换成 c.relname = NULL, 提取不到则返回 None。
+    fn v42_extract_attrdef_table(query: &str) -> Option<String> {
+        let marker = "relname = '";
+        if let Some(pos) = query.to_lowercase().find(marker) {
+            let rest = &query[pos + marker.len()..];
+            let q = 39u8 as char;
+            if let Some(end) = rest.find(q) {
+                let raw = &rest[..end];
+                if !raw.is_empty() {
+                    return Some(raw.to_string());
+                }
+            }
+        }
+        None
+    }
     fn v40_extract_index_table(query: &str) -> Option<String> {
         let marker = "relname = '";
         if let Some(pos) = query.to_lowercase().find(marker) {
@@ -1542,32 +1594,35 @@ pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Ar
            lower_query.trim() == "select version()" {
             return None;
         }
-if let Some(r) = Self::v38_jdbc_metadata(query, &db).await {
+        // === v38: pgjdbc DatabaseMetaData 固定模板拦截 ===
+        if let Some(r) = Self::v38_jdbc_metadata(query, &db).await {
             println!("INTERCEPT: v38 jdbc-metadata handled");
             return Some(r);
         }
-if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
-            println!("INTERCEPT: DBeaver columns (01_columns) handled");
-            return Some(r);
-        }
-if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
-            println!("INTERCEPT: DBeaver columns (01_columns) handled");
-            return Some(r);
-        }
-if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
-            println!("INTERCEPT: DBeaver columns (01_columns) handled");
-            return Some(r);
-        }
-if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
-            println!("INTERCEPT: DBeaver columns (01_columns) handled");
-            return Some(r);
-        }
-if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
+
+        // === PATCH v40: DBeaver/DBX 字段列表查询 (01_columns) 专属短路 ===
+        if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
             println!("INTERCEPT: DBeaver columns (01_columns) handled");
             return Some(r);
         }
 
-        
+        // === PATCH v40: dbx / DBeaver 取索引列表 (02_indexes) 专属短路 ===
+        if lower_query.contains("pg_index") && lower_query.contains("array_agg") && !lower_query.contains("_pg_expandarray") {
+            let tbl = Self::v40_extract_index_table(query);
+            println!("INTERCEPT: dbx index list for table={:?}", tbl);
+            return Some(Self::v40_get_index_list(&db, tbl.as_deref()).await);
+        }
+
+        // === PATCH v42: DBX 列默认值查询 (03_attrdef) 专属短路 ===
+        if lower_query.contains("pg_attrdef")
+            && lower_query.contains("pg_get_expr")
+            && !lower_query.contains("as column_name")
+        {
+            let tbl = Self::v42_extract_attrdef_table(query);
+            println!("INTERCEPT: dbx attrdef for table={:?}", tbl);
+            return Some(Self::v42_get_attrdef(&db, tbl.as_deref()).await);
+        }
+
         // Check for catalog tables
         let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
            lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
