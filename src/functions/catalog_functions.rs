@@ -60,6 +60,39 @@ pub fn register_catalog_functions(conn: &Connection) -> Result<()> {
         },
     )?;
 
+    // Column type metadata for the information_schema.columns view. Four
+    // scalar functions rather than one, because a SQLite scalar UDF returns a
+    // single value and the view needs four fields from the same input.
+    macro_rules! register_column_info_fn {
+        ($name:literal, $field:ident) => {
+            conn.create_scalar_function(
+                $name,
+                1,
+                FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+                |ctx| {
+                    let pg_type: Option<String> = ctx.get(0)?;
+                    let value: Option<i32> = pg_type
+                        .and_then(|t| crate::catalog::column_type_info::pg_column_info(&t).$field);
+                    Ok(value)
+                },
+            )?;
+        };
+    }
+
+    conn.create_scalar_function(
+        "__pgsqlite_pg_data_type",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let pg_type: Option<String> = ctx.get(0)?;
+            Ok(pg_type.map(|t| crate::catalog::column_type_info::pg_column_info(&t).data_type))
+        },
+    )?;
+
+    register_column_info_fn!("__pgsqlite_char_max_length", character_maximum_length);
+    register_column_info_fn!("__pgsqlite_numeric_precision", numeric_precision);
+    register_column_info_fn!("__pgsqlite_numeric_scale", numeric_scale);
+
     debug!("Catalog functions registered successfully");
     Ok(())
 }

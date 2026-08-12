@@ -16,5 +16,6 @@ pub mod system_functions;
 pub mod where_evaluator;
 pub mod constraint_populator;
 pub mod internal_relations;
+pub mod column_type_info;
 
 pub use query_interceptor::CatalogInterceptor;
