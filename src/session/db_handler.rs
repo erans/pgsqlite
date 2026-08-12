@@ -1171,23 +1171,6 @@ impl DbHandler {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
-            if lower_query.contains("information_schema.columns") {
-                // Use the catalog interceptor for columns queries with session-based execution
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
             if lower_query.contains("information_schema.key_column_usage") {
                 use crate::catalog::query_interceptor::CatalogInterceptor;
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
@@ -1643,23 +1626,6 @@ impl DbHandler {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
-            if lower_query.contains("information_schema.columns") {
-                // Use the catalog interceptor for columns queries with session-based execution
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
             if lower_query.contains("information_schema.key_column_usage") {
                 use crate::catalog::query_interceptor::CatalogInterceptor;
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);

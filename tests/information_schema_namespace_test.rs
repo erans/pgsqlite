@@ -154,3 +154,142 @@ async fn user_table_named_like_a_catalog_relation_is_visible() {
         "known divergence until #102 lands; flip this to 'public' there"
     );
 }
+
+/// The type fidelity table from the spec. The deleted handler got id, ts and
+/// tags wrong; the pre-v29 view got six of eight wrong, including reporting
+/// `integer` for TIMESTAMPTZ, which leaked the INTEGER datetime storage.
+#[tokio::test]
+async fn column_types_are_reported_faithfully() {
+    let server = setup_test_server().await;
+    let client = &server.client;
+
+    client
+        .simple_query(
+            "CREATE TABLE fidelity (
+                id SERIAL PRIMARY KEY,
+                amount NUMERIC(10,2),
+                uid UUID,
+                doc JSONB,
+                tags TEXT[],
+                ts TIMESTAMPTZ,
+                flag BOOLEAN,
+                nick VARCHAR(50)
+            )",
+        )
+        .await
+        .unwrap();
+
+    let rows = client
+        .query(
+            "SELECT column_name, data_type FROM information_schema.columns \
+             WHERE table_name = 'fidelity' ORDER BY ordinal_position",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let got: Vec<(String, String)> = rows
+        .iter()
+        .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+        .collect();
+
+    assert_eq!(
+        got,
+        vec![
+            ("id".to_string(), "integer".to_string()),
+            ("amount".to_string(), "numeric".to_string()),
+            ("uid".to_string(), "uuid".to_string()),
+            ("doc".to_string(), "jsonb".to_string()),
+            ("tags".to_string(), "ARRAY".to_string()),
+            ("ts".to_string(), "timestamp with time zone".to_string()),
+            ("flag".to_string(), "boolean".to_string()),
+            ("nick".to_string(), "character varying".to_string()),
+        ]
+    );
+}
+
+/// The four columns the handler populated and the pre-v29 view left NULL.
+/// Django and SQLAlchemy both read these.
+#[tokio::test]
+async fn column_modifiers_and_defaults_are_reported() {
+    let server = setup_test_server().await;
+    let client = &server.client;
+
+    client
+        .simple_query(
+            "CREATE TABLE widgets (
+                id INTEGER PRIMARY KEY,
+                name VARCHAR(50),
+                price NUMERIC(10,2),
+                active BOOLEAN DEFAULT true
+            )",
+        )
+        .await
+        .unwrap();
+
+    let row = client
+        .query_one(
+            "SELECT character_maximum_length FROM information_schema.columns \
+             WHERE table_name = 'widgets' AND column_name = 'name'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<i32>>(0), Some(50));
+
+    let row = client
+        .query_one(
+            "SELECT numeric_precision, numeric_scale FROM information_schema.columns \
+             WHERE table_name = 'widgets' AND column_name = 'price'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, Option<i32>>(0), Some(10));
+    assert_eq!(row.get::<_, Option<i32>>(1), Some(2));
+
+    let row = client
+        .query_one(
+            "SELECT column_default FROM information_schema.columns \
+             WHERE table_name = 'widgets' AND column_name = 'active'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert!(
+        row.get::<_, Option<String>>(0).is_some(),
+        "column_default should be populated for DEFAULT true"
+    );
+
+    // INTEGER PRIMARY KEY is NOT NULL in PostgreSQL. pragma_table_info reports
+    // notnull=0 for it, so the view must also consider pk.
+    let row = client
+        .query_one(
+            "SELECT is_nullable FROM information_schema.columns \
+             WHERE table_name = 'widgets' AND column_name = 'id'",
+            &[],
+        )
+        .await
+        .unwrap();
+    assert_eq!(row.get::<_, &str>(0), "NO");
+}
+
+#[tokio::test]
+async fn columns_of_internal_relations_are_not_in_public() {
+    let server = setup_test_server().await;
+    let client = &server.client;
+
+    client.simple_query("CREATE TABLE t (id INTEGER)").await.unwrap();
+
+    let rows = client
+        .query(
+            "SELECT DISTINCT table_name FROM information_schema.columns \
+             WHERE table_schema = 'public' ORDER BY table_name",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let names: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
+    assert_eq!(names, vec!["t".to_string()]);
+}
