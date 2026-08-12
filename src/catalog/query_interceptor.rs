@@ -23,7 +23,1503 @@ pub struct CatalogInterceptor;
 
 impl CatalogInterceptor {
     /// Check if a query is targeting pg_catalog and handle it
-    pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<Result<DbResponse, PgSqliteError>> {
+        pub fn is_catalog_query(query: &str) -> bool {
+        let lower_query = query.to_lowercase();
+
+        // pgsqlite's own cache-status pseudo table is served by the interceptor.
+        if lower_query.contains("select * from pgsqlite_cache_status") {
+            return true;
+        }
+
+        // version() is deliberately left to the SQLite function layer.
+        if lower_query.trim() == "select pg_catalog.version()"
+            || lower_query.trim() == "select version()"
+        {
+            return false;
+        }
+
+        // Check for catalog tables
+        let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||
+           lower_query.contains("pg_namespace") || lower_query.contains("pg_range") ||
+           lower_query.contains("pg_tablespace") ||
+           lower_query.contains("pg_class") || lower_query.contains("pg_attribute") ||
+           lower_query.contains("pg_enum") ||
+           lower_query.contains("pg_description") || lower_query.contains("pg_roles") ||
+           lower_query.contains("pg_user") || lower_query.contains("pg_authid") ||
+           lower_query.contains("pg_stats") || lower_query.contains("pg_constraint") ||
+           lower_query.contains("pg_depend") || lower_query.contains("pg_sequence") ||
+           lower_query.contains("pg_trigger") || lower_query.contains("pg_settings") ||
+           lower_query.contains("pg_collation") ||
+           lower_query.contains("pg_replication_slots") ||
+           lower_query.contains("pg_shdepend") ||
+           lower_query.contains("pg_statistic") ||
+           lower_query.contains("information_schema") ||
+           lower_query.contains("pg_stat_") || lower_query.contains("pg_database") ||
+           lower_query.contains("pg_foreign_data_wrapper");
+
+        // Check for system functions
+        let has_system_functions = lower_query.contains("to_regtype") ||
+           lower_query.contains("pg_get_constraintdef") || lower_query.contains("pg_table_is_visible") ||
+           lower_query.contains("format_type") || lower_query.contains("pg_get_expr") ||
+           lower_query.contains("pg_get_userbyid") || lower_query.contains("pg_get_indexdef") ||
+           lower_query.contains("pg_size_pretty");
+
+        has_catalog_tables || has_system_functions
+    }
+    async fn v38_jdbc_metadata(
+        query: &str,
+        db: &Arc<DbHandler>,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+
+        // ---- v39: getImportedKeys / getExportedKeys / getCrossReference ----
+        // 指纹：模板里同时出现 PKTABLE_CAT 与 FKTABLE_CAT 两个别名，形状极稳。
+        // 原 SQL 有两处 SQLite 死语法：`generate_series(1,32) AS pos (n)`（表别名后
+        // 的列别名列表）与 `con.confkey[pos.n]`（数组下标）；且 pg_constraint 里
+        // 压根没有外键行。改走 PRAGMA foreign_key_list。
+        if lower.contains("pktable_cat") && lower.contains("fktable_cat") {
+            let child = Self::v39_extract_eq_str(query, "fkc.relname");
+            let parent = Self::v39_extract_eq_str(query, "pkc.relname");
+            info!(
+                "v39: intercept pgjdbc foreign keys child={child:?} parent={parent:?}"
+            );
+            return Some(
+                Self::v39_get_foreign_keys(db, child.as_deref(), parent.as_deref()).await,
+            );
+        }
+
+        // ---- getSchemas：靠 current_schemas 数组下标识别 ----
+        if lower.contains("current_schemas") && lower.contains("table_schem") {
+            info!("v38: intercept pgjdbc getSchemas");
+            return Some(Self::v38_get_schemas(db).await);
+        }
+
+        if !lower.contains("_pg_expandarray") {
+            return None;
+        }
+        let table = match Self::v38_extract_relname(query) {
+            Some(t) => t,
+            None => return None,
+        };
+
+        // getIndexInfo 模板带 pg_am/amname 与 ASC_OR_DESC；getPrimaryKeys 带 indisprimary
+        if lower.contains("am.amname") || lower.contains("asc_or_desc") {
+            info!("v38: intercept pgjdbc getIndexInfo for '{}'", table);
+            let unique_only = lower.contains("and i.indisunique");
+            return Some(Self::v38_get_index_info(db, &table, unique_only).await);
+        }
+        if lower.contains("indisprimary") {
+            info!("v38: intercept pgjdbc getPrimaryKeys for '{}'", table);
+            return Some(Self::v38_get_primary_keys(db, &table).await);
+        }
+        None
+    }
+    fn v38_extract_relname(query: &str) -> Option<String> {
+        let lower = query.to_lowercase();
+        let key = "ct.relname";
+        let mut from = 0usize;
+        while let Some(pos) = lower[from..].find(key) {
+            let after = from + pos + key.len();
+            let rest = &query[after..];
+            let b = rest.as_bytes();
+            let mut i = 0usize;
+            while i < b.len() && (b[i] == b' ' || b[i] == b'=') {
+                i += 1;
+            }
+            if rest.len() > i && rest[i..].to_lowercase().starts_with("like") {
+                i += 4;
+            }
+            while i < b.len() && b[i] == b' ' {
+                i += 1;
+            }
+            if i < b.len() && b[i] == b'\'' {
+                let s = i + 1;
+                if let Some(e) = rest[s..].find('\'') {
+                    let raw = &rest[s..s + e];
+                    return Some(raw.replace("\\_", "_").replace("\\%", "%"));
+                }
+            }
+            from = after;
+        }
+        None
+    }
+    fn v38_sqlq(s: &str) -> String {
+        s.replace('\'', "''")
+    }
+    fn v38_cell(row: &[Option<Vec<u8>>], idx: usize) -> Option<Vec<u8>> {
+        row.get(idx).cloned().flatten()
+    }
+    fn v38_text(row: &[Option<Vec<u8>>], idx: usize) -> String {
+        match Self::v38_cell(row, idx) {
+            Some(v) => String::from_utf8_lossy(&v).to_string(),
+            None => String::new(),
+        }
+    }
+    async fn v38_get_primary_keys(
+        db: &Arc<DbHandler>,
+        table: &str,
+    ) -> Result<DbResponse, PgSqliteError> {
+        let sql = format!(
+            "SELECT name, pk FROM pragma_table_info('{}') WHERE pk > 0 ORDER BY pk",
+            Self::v38_sqlq(table)
+        );
+        let res = db.query(&sql).await.map_err(PgSqliteError::Sqlite)?;
+        let pk_name = format!("{table}_pkey");
+        let mut rows = Vec::new();
+        for r in &res.rows {
+            let col = Self::v38_cell(r, 0).unwrap_or_default();
+            let seq = Self::v38_cell(r, 1).unwrap_or_else(|| b"1".to_vec());
+            rows.push(vec![
+                None,                                       // TABLE_CAT
+                Some(b"public".to_vec()),                   // TABLE_SCHEM
+                Some(table.as_bytes().to_vec()),            // TABLE_NAME
+                Some(col),                                  // COLUMN_NAME
+                Some(seq),                                  // KEY_SEQ
+                Some(pk_name.as_bytes().to_vec()),          // PK_NAME
+            ]);
+        }
+        let n = rows.len();
+        Ok(DbResponse {
+            columns: vec![
+                "TABLE_CAT".to_string(),
+                "TABLE_SCHEM".to_string(),
+                "TABLE_NAME".to_string(),
+                "COLUMN_NAME".to_string(),
+                "KEY_SEQ".to_string(),
+                "PK_NAME".to_string(),
+            ],
+            rows,
+            rows_affected: n,
+        })
+    }
+    async fn v38_get_index_info(
+        db: &Arc<DbHandler>,
+        table: &str,
+        unique_only: bool,
+    ) -> Result<DbResponse, PgSqliteError> {
+        let list_sql = format!(
+            "SELECT name, \"unique\" FROM pragma_index_list('{}')",
+            Self::v38_sqlq(table)
+        );
+        let list = db.query(&list_sql).await.map_err(PgSqliteError::Sqlite)?;
+        let mut rows = Vec::new();
+        for r in &list.rows {
+            let iname = Self::v38_text(r, 0);
+            if iname.is_empty() {
+                continue;
+            }
+            let uniq = Self::v38_text(r, 1) == "1";
+            if unique_only && !uniq {
+                continue;
+            }
+            let info_sql = format!(
+                "SELECT seqno, name FROM pragma_index_info('{}') ORDER BY seqno",
+                Self::v38_sqlq(&iname)
+            );
+            let info = match db.query(&info_sql).await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            for ir in &info.rows {
+                let seqno: i64 = Self::v38_text(ir, 0).parse().unwrap_or(0);
+                let cname = Self::v38_cell(ir, 1).unwrap_or_default();
+                rows.push(vec![
+                    None,                                             // TABLE_CAT
+                    Some(b"public".to_vec()),                         // TABLE_SCHEM
+                    Some(table.as_bytes().to_vec()),                  // TABLE_NAME
+                    Some(if uniq { b"f".to_vec() } else { b"t".to_vec() }), // NON_UNIQUE
+                    None,                                             // INDEX_QUALIFIER
+                    Some(iname.as_bytes().to_vec()),                  // INDEX_NAME
+                    Some(b"3".to_vec()),                              // TYPE: 3 = btree
+                    Some((seqno + 1).to_string().into_bytes()),       // ORDINAL_POSITION
+                    Some(cname),                                      // COLUMN_NAME
+                    Some(b"A".to_vec()),                              // ASC_OR_DESC
+                    Some(b"0".to_vec()),                              // CARDINALITY
+                    Some(b"0".to_vec()),                              // PAGES
+                    None,                                             // FILTER_CONDITION
+                ]);
+            }
+        }
+        let n = rows.len();
+        Ok(DbResponse {
+            columns: vec![
+                "TABLE_CAT".to_string(),
+                "TABLE_SCHEM".to_string(),
+                "TABLE_NAME".to_string(),
+                "NON_UNIQUE".to_string(),
+                "INDEX_QUALIFIER".to_string(),
+                "INDEX_NAME".to_string(),
+                "TYPE".to_string(),
+                "ORDINAL_POSITION".to_string(),
+                "COLUMN_NAME".to_string(),
+                "ASC_OR_DESC".to_string(),
+                "CARDINALITY".to_string(),
+                "PAGES".to_string(),
+                "FILTER_CONDITION".to_string(),
+            ],
+            rows,
+            rows_affected: n,
+        })
+    }
+    async fn v38_get_schemas(db: &Arc<DbHandler>) -> Result<DbResponse, PgSqliteError> {
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(res) = db
+            .query("SELECT nspname FROM pg_namespace WHERE nspname <> 'pg_toast' ORDER BY nspname")
+            .await
+        {
+            for r in &res.rows {
+                let v = Self::v38_text(r, 0);
+                if !v.is_empty() {
+                    names.push(v);
+                }
+            }
+        }
+        if names.is_empty() {
+            names = vec![
+                "information_schema".to_string(),
+                "pg_catalog".to_string(),
+                "public".to_string(),
+            ];
+        }
+        let rows: Vec<Vec<Option<Vec<u8>>>> = names
+            .iter()
+            .map(|n| vec![Some(n.as_bytes().to_vec()), None])
+            .collect();
+        let n = rows.len();
+        Ok(DbResponse {
+            columns: vec!["TABLE_SCHEM".to_string(), "TABLE_CATALOG".to_string()],
+            rows,
+            rows_affected: n,
+        })
+    }
+    fn v39_extract_eq_str(query: &str, key: &str) -> Option<String> {
+        let lower = query.to_lowercase();
+        let key_l = key.to_lowercase();
+        let mut from = 0usize;
+        while let Some(pos) = lower[from..].find(key_l.as_str()) {
+            let after = from + pos + key_l.len();
+            let rest = &query[after..];
+            let b = rest.as_bytes();
+            let mut i = 0usize;
+            while i < b.len() && (b[i] == b' ' || b[i] == b'=') {
+                i += 1;
+            }
+            if rest.len() > i && rest[i..].to_lowercase().starts_with("like") {
+                i += 4;
+            }
+            while i < b.len() && b[i] == b' ' {
+                i += 1;
+            }
+            if i < b.len() && b[i] == b'\'' {
+                let s = i + 1;
+                if let Some(e) = rest[s..].find('\'') {
+                    let raw = &rest[s..s + e];
+                    return Some(raw.replace("\\_", "_").replace("\\%", "%"));
+                }
+            }
+            from = after;
+        }
+        None
+    }
+    fn v39_fk_rule(action: &str) -> &'static str {
+        match action.trim().to_uppercase().as_str() {
+            "CASCADE" => "0",     // importedKeyCascade
+            "RESTRICT" => "1",    // importedKeyRestrict
+            "SET NULL" => "2",    // importedKeySetNull
+            "SET DEFAULT" => "4", // importedKeySetDefault
+            _ => "3",             // importedKeyNoAction
+        }
+    }
+    async fn v39_get_foreign_keys(
+        db: &Arc<DbHandler>,
+        child_filter: Option<&str>,
+        parent_filter: Option<&str>,
+    ) -> Result<DbResponse, PgSqliteError> {
+        // 1) 需要扫描哪些子表
+        let mut children: Vec<String> = Vec::new();
+        if let Some(c) = child_filter {
+            children.push(c.to_string());
+        } else if let Ok(res) = db
+            .query(
+                "SELECT name FROM sqlite_master WHERE type = 'table' \
+                 AND name NOT LIKE 'sqlite_%' AND substr(name, 1, 2) <> '__' \
+                 ORDER BY name",
+            )
+            .await
+        {
+            for r in &res.rows {
+                let n = Self::v38_text(r, 0);
+                if !n.is_empty() {
+                    children.push(n);
+                }
+            }
+        }
+
+        // 2) 逐表读外键。元组含义：
+        //    (parent, parent_col, child, child_col, key_seq, on_update, on_delete, fk_name)
+        let mut recs: Vec<(String, String, String, String, i64, String, String, String)> =
+            Vec::new();
+        for child in &children {
+            let sql = format!(
+                "SELECT id, seq, \"table\", \"from\", \"to\", on_update, on_delete \
+                 FROM pragma_foreign_key_list('{}') ORDER BY id, seq",
+                Self::v38_sqlq(child)
+            );
+            let res = match db.query(&sql).await {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            // 同一约束（同 id）的多列必须共用一个 FK_NAME，否则复合外键会被
+            // 客户端当成多个独立约束。取 seq=0 那列作为命名基准。
+            let mut first_col: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for r in &res.rows {
+                if Self::v38_text(r, 1) == "0" {
+                    first_col.insert(Self::v38_text(r, 0), Self::v38_text(r, 3));
+                }
+            }
+            for r in &res.rows {
+                let id = Self::v38_text(r, 0);
+                let seq: i64 = Self::v38_text(r, 1).parse().unwrap_or(0);
+                let parent = Self::v38_text(r, 2);
+                let child_col = Self::v38_text(r, 3);
+                let mut parent_col = Self::v38_text(r, 4);
+                let upd = Self::v38_text(r, 5);
+                let del = Self::v38_text(r, 6);
+                if parent.is_empty() || child_col.is_empty() {
+                    continue;
+                }
+                if let Some(p) = parent_filter {
+                    if !p.eq_ignore_ascii_case(&parent) {
+                        continue;
+                    }
+                }
+                // `REFERENCES parent` 省略列名时 `to` 为 NULL，回退到父表主键第 seq 列
+                if parent_col.is_empty() {
+                    let pk_sql = format!(
+                        "SELECT name FROM pragma_table_info('{}') WHERE pk > 0 ORDER BY pk",
+                        Self::v38_sqlq(&parent)
+                    );
+                    if let Ok(pk) = db.query(&pk_sql).await {
+                        if let Some(row) = pk.rows.get(seq as usize) {
+                            parent_col = Self::v38_text(row, 0);
+                        }
+                    }
+                    if parent_col.is_empty() {
+                        parent_col = "rowid".to_string();
+                    }
+                }
+                let base = first_col
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| child_col.clone());
+                let fk_name = format!("{child}_{base}_fkey");
+                recs.push((
+                    parent,
+                    parent_col,
+                    child.clone(),
+                    child_col,
+                    seq,
+                    upd,
+                    del,
+                    fk_name,
+                ));
+            }
+        }
+
+        // 3) 排序对齐 PG 模板：imported 按 (pk 表, 约束名, 列序)，exported 按 (fk 表, ...)
+        let exported = child_filter.is_none() && parent_filter.is_some();
+        if exported {
+            recs.sort_by(|a, b| (&a.2, &a.7, a.4).cmp(&(&b.2, &b.7, b.4)));
+        } else {
+            recs.sort_by(|a, b| (&a.0, &a.7, a.4).cmp(&(&b.0, &b.7, b.4)));
+        }
+
+        let mut rows: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+        for (parent, parent_col, child, child_col, seq, upd, del, fk_name) in recs {
+            let pk_name = format!("{parent}_pkey");
+            rows.push(vec![
+                None,                                              // PKTABLE_CAT
+                Some(b"public".to_vec()),                          // PKTABLE_SCHEM
+                Some(parent.into_bytes()),                         // PKTABLE_NAME
+                Some(parent_col.into_bytes()),                     // PKCOLUMN_NAME
+                None,                                              // FKTABLE_CAT
+                Some(b"public".to_vec()),                          // FKTABLE_SCHEM
+                Some(child.into_bytes()),                          // FKTABLE_NAME
+                Some(child_col.into_bytes()),                      // FKCOLUMN_NAME
+                Some((seq + 1).to_string().into_bytes()),          // KEY_SEQ
+                Some(Self::v39_fk_rule(&upd).as_bytes().to_vec()), // UPDATE_RULE
+                Some(Self::v39_fk_rule(&del).as_bytes().to_vec()), // DELETE_RULE
+                Some(fk_name.into_bytes()),                        // FK_NAME
+                Some(pk_name.into_bytes()),                        // PK_NAME
+                Some(b"7".to_vec()),                               // importedKeyNotDeferrable
+            ]);
+        }
+        let n = rows.len();
+        Ok(DbResponse {
+            columns: vec![
+                "PKTABLE_CAT".to_string(),
+                "PKTABLE_SCHEM".to_string(),
+                "PKTABLE_NAME".to_string(),
+                "PKCOLUMN_NAME".to_string(),
+                "FKTABLE_CAT".to_string(),
+                "FKTABLE_SCHEM".to_string(),
+                "FKTABLE_NAME".to_string(),
+                "FKCOLUMN_NAME".to_string(),
+                "KEY_SEQ".to_string(),
+                "UPDATE_RULE".to_string(),
+                "DELETE_RULE".to_string(),
+                "FK_NAME".to_string(),
+                "PK_NAME".to_string(),
+                "DEFERRABILITY".to_string(),
+            ],
+            rows,
+            rows_affected: n,
+        })
+    }
+    fn normalize_projection_qualifiers(query: &mut sqlparser::ast::Query) {
+        fn strip(expr: &mut Expr) {
+            match expr {
+                Expr::CompoundIdentifier(parts) => {
+                    if let Some(last) = parts.last().cloned() {
+                        *expr = Expr::Identifier(last);
+                    }
+                }
+                Expr::Cast { expr: inner, .. } => strip(inner),
+                Expr::Nested(inner) => strip(inner),
+                _ => {}
+            }
+        }
+        fn walk(body: &mut SetExpr) {
+            match body {
+                SetExpr::Select(select) => {
+                    for item in select.projection.iter_mut() {
+                        match item {
+                            SelectItem::UnnamedExpr(expr) => strip(expr),
+                            SelectItem::ExprWithAlias { expr, .. } => strip(expr),
+                            _ => {}
+                        }
+                    }
+                }
+                SetExpr::Query(q) => walk(&mut q.body),
+                SetExpr::SetOperation { left, right, .. } => {
+                    walk(left);
+                    walk(right);
+                }
+                _ => {}
+            }
+        }
+        walk(&mut query.body);
+    }
+    fn projection_output_name(item: &SelectItem) -> Option<String> {
+        match item {
+            SelectItem::UnnamedExpr(expr) => Self::extract_projection_source_column(expr),
+            SelectItem::ExprWithAlias { alias, .. } => Some(Self::alias_output_name(alias)),
+            _ => None,
+        }
+    }
+    fn align_response_to_projection(projection: &[SelectItem], response: &mut DbResponse) {
+        if projection.is_empty() {
+            return;
+        }
+        // Wildcards: the client cannot know the arity in advance, leave it alone.
+        if projection.iter().any(|i| {
+            matches!(i, SelectItem::Wildcard(_) | SelectItem::QualifiedWildcard(_, _))
+        }) {
+            return;
+        }
+
+        let mut expected: Vec<String> = Vec::with_capacity(projection.len());
+        for item in projection {
+            match Self::projection_output_name(item) {
+                Some(name) => expected.push(name),
+                // An expression we cannot name confidently — do not second-guess the handler.
+                None => return,
+            }
+        }
+
+        let have = response.columns.len();
+        if expected.len() <= have {
+            return;
+        }
+        // Rows must currently be well formed, otherwise bail out.
+        if response.rows.iter().any(|r| r.len() != have) {
+            return;
+        }
+
+        // Order-preserving merge: walk the requested names, consuming handler columns in order.
+        let mut names: Vec<String> = Vec::with_capacity(expected.len());
+        let mut mapping: Vec<Option<usize>> = Vec::with_capacity(expected.len());
+        let mut cursor = 0usize;
+        for want in &expected {
+            if cursor < have && response.columns[cursor].eq_ignore_ascii_case(want) {
+                names.push(response.columns[cursor].clone());
+                mapping.push(Some(cursor));
+                cursor += 1;
+            } else {
+                names.push(want.clone());
+                mapping.push(None);
+            }
+        }
+        // A handler column we could not place means the merge is unreliable.
+        if cursor != have {
+            return;
+        }
+
+        let new_rows: Vec<Vec<Option<Vec<u8>>>> = response
+            .rows
+            .iter()
+            .map(|row| {
+                mapping
+                    .iter()
+                    .map(|m| match m {
+                        Some(i) => row[*i].clone(),
+                        None => None,
+                    })
+                    .collect()
+            })
+            .collect();
+
+        info!(
+            "CATALOG ARITY: padded catalog response {} -> {} columns {:?}",
+            have,
+            names.len(),
+            names
+        );
+        response.columns = names;
+        response.rows = new_rows;
+    }
+    fn handle_pg_namespace_query(select: &Select) -> DbResponse {
+        let all_columns = vec!["oid".to_string(), "nspname".to_string()];
+        let (columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        let full_rows = vec![
+            vec![
+                Some("11".to_string().into_bytes()),
+                Some("pg_catalog".to_string().into_bytes()),
+            ],
+            vec![
+                Some("2200".to_string().into_bytes()),
+                Some("public".to_string().into_bytes()),
+            ],
+        ];
+        if columns.is_empty() && Self::is_count_star_projection(&select.projection) {
+            return Self::count_response(full_rows.len());
+        }
+
+        let rows: Vec<Vec<Option<Vec<u8>>>> = full_rows
+            .into_iter()
+            .map(|full_row| {
+                column_indices
+                    .iter()
+                    .map(|&idx| full_row[idx].clone())
+                    .collect()
+            })
+            .collect();
+
+        let rows_affected = rows.len();
+        debug!("Returning {} rows for pg_namespace query with {} columns: {:?}", rows_affected, columns.len(), columns);
+        DbResponse {
+            columns,
+            rows,
+            rows_affected,
+        }
+    }
+    async fn v40_get_index_list(
+        db: &Arc<DbHandler>,
+        table: Option<&str>,
+    ) -> Result<DbResponse, PgSqliteError> {
+        let cols = vec![
+            "index_name".to_string(),
+            "columns".to_string(),
+            "is_unique".to_string(),
+            "is_primary".to_string(),
+            "filter_expr".to_string(),
+            "index_type".to_string(),
+            "nkeyatts".to_string(),
+            "indkey".to_string(),
+            "index_comment".to_string(),
+        ];
+        let mut rows: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+        if let Some(table) = table {
+            let list_sql = format!(
+                "SELECT name, \"unique\", origin FROM pragma_index_list('{}') ORDER BY name",
+                Self::v38_sqlq(table)
+            );
+            if let Ok(list) = db.query(&list_sql).await {
+                for r in &list.rows {
+                    let iname = Self::v38_text(r, 0);
+                    if iname.is_empty() {
+                        continue;
+                    }
+                    let uniq = Self::v38_text(r, 1) == "1";
+                    let is_primary = Self::v38_text(r, 2) == "pk";
+                    let info_sql = format!(
+                        "SELECT name FROM pragma_index_info('{}') ORDER BY seqno",
+                        Self::v38_sqlq(&iname)
+                    );
+                    let mut col_names: Vec<String> = Vec::new();
+                    let mut indkey_parts: Vec<String> = Vec::new();
+                    if let Ok(info) = db.query(&info_sql).await {
+                        for (i, ir) in info.rows.iter().enumerate() {
+                            let cn = Self::v38_text(ir, 0);
+                            if !cn.is_empty() {
+                                col_names.push(cn);
+                                indkey_parts.push((i + 1).to_string());
+                            }
+                        }
+                    }
+                    let columns_str = col_names.join(",");
+                    let nkeyatts = col_names.len().to_string();
+                    let indkey_str = indkey_parts.join(" ");
+                    rows.push(vec![
+                        Some(iname.as_bytes().to_vec()),
+                        Some(columns_str.into_bytes()),
+                        Some(if uniq { b"t".to_vec() } else { b"f".to_vec() }),
+                        Some(if is_primary { b"t".to_vec() } else { b"f".to_vec() }),
+                        None,
+                        Some(b"btree".to_vec()),
+                        Some(nkeyatts.into_bytes()),
+                        Some(indkey_str.into_bytes()),
+                        None,
+                    ]);
+                }
+            }
+        }
+        let n = rows.len();
+        Ok(DbResponse { columns: cols, rows, rows_affected: n })
+    }
+    fn v40_extract_index_table(query: &str) -> Option<String> {
+        let marker = "relname = '";
+        if let Some(pos) = query.to_lowercase().find(marker) {
+            let rest = &query[pos + marker.len()..];
+            let q = 39u8 as char;
+            if let Some(end) = rest.find(q) {
+                let raw = &rest[..end];
+                if !raw.is_empty() {
+                    return Some(raw.to_string());
+                }
+            }
+        }
+        None
+    }
+    async fn handle_dbeaver_columns_query_if_match(
+        query: &str,
+        db: &DbHandler,
+        session: Option<&Arc<SessionState>>,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+        // 指纹: from pg_attribute + 投影含 column_name / is_pk (DBeaver 特征)
+        if !lower.contains("pg_attribute")
+            || !lower.contains("as column_name")
+            || !lower.contains("as is_pk")
+        {
+            return None;
+        }
+
+        // 抽表名: quote_ident('schema') || '.' || quote_ident('table')
+        let table: String = {
+            let re_concat = regex::Regex::new(
+                r"quote_ident\('([^']+)'\)\s*\|\|\s*'\.'\s*\|\|\s*quote_ident\('([^']+)'\)",
+            )
+            .ok()?;
+            if let Some(c) = re_concat.captures(query) {
+                c.get(2).map(|m| m.as_str().to_string())
+            } else {
+                // 退化: attrelid = 'schema.table'
+                let re_reg =
+                    regex::Regex::new(r"attrelid\s*=\s*'((?:[^'.]+\.)?[^']+)'").ok()?;
+                re_reg.captures(query).and_then(|c| {
+                    c.get(1).map(|m| {
+                        let s = m.as_str();
+                        s.rsplit('.').next().unwrap_or(s).to_string()
+                    })
+                })
+            }
+        }?;
+
+        let session_id = session?.id;
+
+        let rows_data = match db.connection_manager().execute_with_session(&session_id, |conn| {
+            let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+            let mut out: Vec<(i32, String, String, i32, Option<String>, i32)> = Vec::new();
+            let mut q = stmt.query([])?;
+            while let Some(r) = q.next()? {
+                let cid: i32 = r.get(0)?;
+                let name: String = r.get(1)?;
+                let type_name: String = r.get(2)?;
+                let notnull: i32 = r.get(3)?;
+                let dflt: Option<String> = r.get(4)?;
+                let pk: i32 = r.get(5)?;
+                out.push((cid, name, type_name, notnull, dflt, pk));
+            }
+            Ok(out)
+        }) {
+            Ok(d) => d,
+            Err(_) => {
+                return Some(Ok(DbResponse {
+                    columns: vec!["column_name".to_string()],
+                    rows: vec![],
+                    rows_affected: 0,
+                }));
+            }
+        };
+
+        let columns = vec![
+            "column_name".to_string(),
+            "full_type".to_string(),
+            "is_nullable".to_string(),
+            "column_default".to_string(),
+            "is_pk".to_string(),
+            "column_comment".to_string(),
+            "column_extra".to_string(),
+            "numeric_precision".to_string(),
+            "numeric_scale".to_string(),
+            "character_maximum_length".to_string(),
+            "enum_values".to_string(),
+        ];
+
+        let mut rows: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+        for (_, name, type_name, notnull, dflt, pk) in rows_data {
+            let full_type = type_name.clone();
+            let is_nullable = if notnull != 0 { "NO" } else { "YES" };
+            let column_default = dflt.unwrap_or_default();
+            let is_pk = if pk != 0 { "t" } else { "f" };
+            let (num_prec, num_scale, char_max) = Self::parse_pg_type_modifiers(&type_name);
+            rows.push(vec![
+                Some(name.into_bytes()),
+                Some(full_type.into_bytes()),
+                Some(is_nullable.to_string().into_bytes()),
+                if column_default.is_empty() {
+                    None
+                } else {
+                    Some(column_default.into_bytes())
+                },
+                Some(is_pk.to_string().into_bytes()),
+                None, // column_comment
+                None, // column_extra
+                num_prec,
+                num_scale,
+                char_max,
+                None, // enum_values
+            ]);
+        }
+
+        Some(Ok(DbResponse {
+            columns,
+            rows,
+            rows_affected: 0,
+        }))
+    }
+    pub async fn handle_information_schema_columns_query_with_session(select: &Select, db: &DbHandler, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
+        debug!("Handling information_schema.columns query");
+
+        // Define information_schema.columns columns (PostgreSQL standard)
+        let all_columns = vec![
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "column_name".to_string(),
+            "ordinal_position".to_string(),
+            "column_default".to_string(),
+            "is_nullable".to_string(),
+            "data_type".to_string(),
+            "character_maximum_length".to_string(),
+            "character_octet_length".to_string(),
+            "numeric_precision".to_string(),
+            "numeric_precision_radix".to_string(),
+            "numeric_scale".to_string(),
+            "datetime_precision".to_string(),
+            "interval_type".to_string(),
+            "interval_precision".to_string(),
+            "character_set_catalog".to_string(),
+            "character_set_schema".to_string(),
+            "character_set_name".to_string(),
+            "collation_catalog".to_string(),
+            "collation_schema".to_string(),
+            "collation_name".to_string(),
+            "domain_catalog".to_string(),
+            "domain_schema".to_string(),
+            "domain_name".to_string(),
+            "udt_catalog".to_string(),
+            "udt_schema".to_string(),
+            "udt_name".to_string(),
+            "scope_catalog".to_string(),
+            "scope_schema".to_string(),
+            "scope_name".to_string(),
+            "maximum_cardinality".to_string(),
+            "dtd_identifier".to_string(),
+            "is_self_referencing".to_string(),
+            "is_identity".to_string(),
+            "identity_generation".to_string(),
+            "identity_start".to_string(),
+            "identity_increment".to_string(),
+            "identity_maximum".to_string(),
+            "identity_minimum".to_string(),
+            "identity_cycle".to_string(),
+            "is_generated".to_string(),
+            "generation_expression".to_string(),
+            "is_updatable".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Check for WHERE clause filtering
+        let table_filter = if let Some(ref where_clause) = select.selection {
+            Self::extract_table_name_filter(where_clause)
+        } else {
+            None
+        };
+
+        // Get list of tables from SQLite
+        let tables_query = if let Some(table_name) = &table_filter {
+            format!("SELECT name FROM sqlite_master WHERE type='table' AND name = '{}' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'", table_name)
+        } else {
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'".to_string()
+        };
+
+        let tables_response = match db.connection_manager().execute_with_session(session_id, |conn| {
+            let mut stmt = conn.prepare(&tables_query)?;
+            let mut rows = Vec::new();
+            let mut query_rows = stmt.query([])?;
+            while let Some(row) = query_rows.next()? {
+                let name: String = row.get(0)?;
+                rows.push(vec![Some(name.into_bytes())]);
+            }
+            Ok(DbResponse {
+                columns: vec!["name".to_string()],
+                rows,
+                rows_affected: 0,
+            })
+        }) {
+            Ok(response) => response,
+            Err(_) => return Ok(DbResponse {
+                columns: selected_columns,
+                rows: vec![],
+                rows_affected: 0,
+            }),
+        };
+
+        let mut rows = Vec::new();
+
+        // Process each table
+        for table_row in &tables_response.rows {
+            if let Some(Some(table_name_bytes)) = table_row.first() {
+                let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
+
+                // Get column information using PRAGMA table_info
+                let pragma_query = format!("PRAGMA table_info({})", table_name);
+                let table_info_response = match db.connection_manager().execute_with_session(session_id, |conn| {
+                    let mut stmt = conn.prepare(&pragma_query)?;
+                    let mut rows = Vec::new();
+                    let mut query_rows = stmt.query([])?;
+                    while let Some(row) = query_rows.next()? {
+                        let cid: i32 = row.get(0)?;
+                        let name: String = row.get(1)?;
+                        let type_name: String = row.get(2)?;
+                        let not_null: i32 = row.get(3)?;
+                        let default_value: Option<String> = row.get(4)?;
+                        let pk: i32 = row.get(5)?;
+
+                        let row_data = vec![
+                            Some(cid.to_string().into_bytes()),
+                            Some(name.into_bytes()),
+                            Some(type_name.into_bytes()),
+                            Some(not_null.to_string().into_bytes()),
+                            default_value.map(|v| v.into_bytes()),
+                            Some(pk.to_string().into_bytes()),
+                        ];
+                        rows.push(row_data);
+                    }
+                    Ok(DbResponse {
+                        columns: vec!["cid".to_string(), "name".to_string(), "type".to_string(), "notnull".to_string(), "dflt_value".to_string(), "pk".to_string()],
+                        rows,
+                        rows_affected: 0,
+                    })
+                }) {
+                    Ok(response) => response,
+                    Err(_) => continue,
+                };
+
+                // Process each column
+                for (ordinal, column_row) in table_info_response.rows.iter().enumerate() {
+                    if column_row.len() >= 6
+                        && let (Some(Some(name_bytes)), Some(Some(type_bytes)), Some(Some(notnull_bytes)), default_opt, Some(Some(pk_bytes))) =
+                            (column_row.get(1), column_row.get(2), column_row.get(3), column_row.get(4), column_row.get(5)) {
+
+                            let column_name = String::from_utf8_lossy(name_bytes).to_string();
+                            let sqlite_type = String::from_utf8_lossy(type_bytes).to_string();
+                            let not_null = String::from_utf8_lossy(notnull_bytes) == "1";
+                            let default_value = match default_opt {
+                                Some(Some(default_bytes)) => String::from_utf8_lossy(default_bytes),
+                                _ => "".into(),
+                            };
+                            let is_primary_key = String::from_utf8_lossy(pk_bytes) == "1";
+
+                            // First try to get type from __pgsqlite_schema, then fall back to SQLite type
+                            let pg_type = match db.connection_manager().execute_with_session(session_id, |conn| {
+                                // Check if __pgsqlite_schema exists first
+                                let table_exists: i32 = conn.query_row(
+                                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__pgsqlite_schema'",
+                                    [],
+                                    |row| row.get(0)
+                                ).unwrap_or(0);
+
+                                if table_exists > 0 {
+                                    let query = "SELECT pg_type FROM __pgsqlite_schema WHERE table_name = ? AND column_name = ?";
+                                    let mut stmt = conn.prepare(query)?;
+                                    let result = stmt.query_row([&table_name, &column_name], |row| {
+                                        row.get::<_, String>(0)
+                                    });
+                                    Ok(result)
+                                } else {
+                                    Err(rusqlite::Error::InvalidPath("__pgsqlite_schema not found".into()))
+                                }
+                            }) {
+                                Ok(Ok(stored_type)) => stored_type,
+                                _ => sqlite_type.clone(),
+                            };
+
+                            // Map type to PostgreSQL type
+                            let (pg_data_type, char_max_length, numeric_precision, numeric_scale) =
+                                Self::map_sqlite_type_to_pg_column_info(&pg_type);
+
+                            // Determine nullability
+                            let is_nullable = if not_null || is_primary_key { "NO" } else { "YES" };
+
+                            // Handle default value
+                            let column_default = if default_value.is_empty() || default_value == "NULL" {
+                                None
+                            } else {
+                                Some(default_value.to_string().into_bytes())
+                            };
+
+                            let full_row: Vec<Option<Vec<u8>>> = vec![
+                                Some("main".to_string().into_bytes()),                    // table_catalog
+                                Some("public".to_string().into_bytes()),                 // table_schema
+                                Some(table_name.clone().into_bytes()),                   // table_name
+                                Some(column_name.clone().into_bytes()),                 // column_name
+                                Some((ordinal + 1).to_string().into_bytes()),           // ordinal_position (1-based)
+                                column_default,                                          // column_default
+                                Some(is_nullable.to_string().into_bytes()),             // is_nullable
+                                Some(pg_data_type.clone().into_bytes()),                // data_type
+                                char_max_length.map(|v| v.to_string().into_bytes()),    // character_maximum_length
+                                char_max_length.map(|v| v.to_string().into_bytes()),    // character_octet_length
+                                numeric_precision.map(|v| v.to_string().into_bytes()),  // numeric_precision
+                                numeric_precision.map(|_| "10".to_string().into_bytes()), // numeric_precision_radix
+                                numeric_scale.map(|v| v.to_string().into_bytes()),      // numeric_scale
+                                None,                                                    // datetime_precision
+                                None,                                                    // interval_type
+                                None,                                                    // interval_precision
+                                None,                                                    // character_set_catalog
+                                None,                                                    // character_set_schema
+                                None,                                                    // character_set_name
+                                None,                                                    // collation_catalog
+                                None,                                                    // collation_schema
+                                None,                                                    // collation_name
+                                None,                                                    // domain_catalog
+                                None,                                                    // domain_schema
+                                None,                                                    // domain_name
+                                Some("main".to_string().into_bytes()),                  // udt_catalog
+                                Some("pg_catalog".to_string().into_bytes()),            // udt_schema
+                                Some(pg_data_type.clone().into_bytes()),                // udt_name
+                                None,                                                    // scope_catalog
+                                None,                                                    // scope_schema
+                                None,                                                    // scope_name
+                                None,                                                    // maximum_cardinality
+                                Some((ordinal + 1).to_string().into_bytes()),           // dtd_identifier
+                                Some("NO".to_string().into_bytes()),                    // is_self_referencing
+                                Some("NO".to_string().into_bytes()),                    // is_identity
+                                None,                                                    // identity_generation
+                                None,                                                    // identity_start
+                                None,                                                    // identity_increment
+                                None,                                                    // identity_maximum
+                                None,                                                    // identity_minimum
+                                Some("NO".to_string().into_bytes()),                    // identity_cycle
+                                Some("NEVER".to_string().into_bytes()),                 // is_generated
+                                None,                                                    // generation_expression
+                                Some("YES".to_string().into_bytes()),                   // is_updatable
+                            ];
+
+                            // Project only the requested columns
+                            let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                                .map(|&idx| full_row[idx].clone())
+                                .collect();
+
+                            rows.push(projected_row);
+                        }
+                }
+            }
+        }
+
+        let rows_affected = rows.len();
+        Ok(DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected,
+        })
+    }
+    async fn handle_information_schema_tables_query(select: &Select, db: &DbHandler) -> DbResponse {
+        debug!("Handling information_schema.tables query");
+
+        // Get list of tables and views from SQLite
+        let tables_response = match db.query("SELECT name, type FROM sqlite_master WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%'").await {
+            Ok(response) => response,
+            Err(_) => return DbResponse {
+                columns: vec!["table_name".to_string()],
+                rows: vec![],
+                rows_affected: 0,
+            },
+        };
+
+        // Define information_schema.tables columns (enhanced with all PostgreSQL standard columns)
+        let all_columns = vec![
+            "table_catalog".to_string(),
+            "table_schema".to_string(),
+            "table_name".to_string(),
+            "table_type".to_string(),
+            "self_referencing_column_name".to_string(),
+            "reference_generation".to_string(),
+            "user_defined_type_catalog".to_string(),
+            "user_defined_type_schema".to_string(),
+            "user_defined_type_name".to_string(),
+            "is_insertable_into".to_string(),
+            "is_typed".to_string(),
+            "commit_action".to_string(),
+        ];
+
+        // Extract selected columns
+        let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
+
+        // Check for WHERE clause filtering
+        let table_filters = if let Some(ref where_clause) = select.selection {
+            Self::extract_table_name_filters(where_clause)
+        } else {
+            Vec::new()
+        };
+
+        // Build rows
+        let mut rows = Vec::new();
+        for table_row in &tables_response.rows {
+            if table_row.len() >= 2
+                && let (Some(Some(table_name_bytes)), Some(Some(table_type_bytes))) =
+                    (table_row.first(), table_row.get(1)) {
+                    let table_name = String::from_utf8_lossy(table_name_bytes).to_string();
+                    let sqlite_type = String::from_utf8_lossy(table_type_bytes).to_string();
+
+                    // Apply WHERE clause filtering if present
+                    if !table_filters.is_empty() && !table_filters.contains(&table_name) {
+                        continue;
+                    }
+
+                    // Map SQLite type to PostgreSQL table_type
+                    let table_type = match sqlite_type.as_str() {
+                        "table" => "BASE TABLE",
+                        "view" => "VIEW",
+                        _ => "BASE TABLE", // Default fallback
+                    };
+
+                    // Determine if table is insertable (views are not)
+                    let is_insertable = if table_type == "VIEW" { "NO" } else { "YES" };
+
+                    // Create full row with all columns
+                    let full_row: Vec<Option<Vec<u8>>> = vec![
+                        Some("main".to_string().into_bytes()),        // table_catalog
+                        Some("public".to_string().into_bytes()),      // table_schema
+                        Some(table_name.into_bytes()),                // table_name
+                        Some(table_type.to_string().into_bytes()),    // table_type
+                        None,                                         // self_referencing_column_name
+                        None,                                         // reference_generation
+                        None,                                         // user_defined_type_catalog
+                        None,                                         // user_defined_type_schema
+                        None,                                         // user_defined_type_name
+                        Some(is_insertable.to_string().into_bytes()), // is_insertable_into
+                        Some("NO".to_string().into_bytes()),          // is_typed
+                        None,                                         // commit_action
+                    ];
+
+                    // Project only the requested columns
+                    let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
+                        .map(|&idx| full_row[idx].clone())
+                        .collect();
+
+                    rows.push(projected_row);
+                }
+        }
+        
+        let rows_count = rows.len();
+        DbResponse {
+            columns: selected_columns,
+            rows,
+            rows_affected: rows_count,
+        }
+    }
+    fn map_sqlite_type_to_pg_column_info(sqlite_type: &str) -> (String, Option<i32>, Option<i32>, Option<i32>) {
+        let sqlite_type_upper = sqlite_type.to_uppercase();
+
+        // Handle parametric types like VARCHAR(255), DECIMAL(10,2)
+        if let Some(paren_pos) = sqlite_type_upper.find('(') {
+            let base_type = &sqlite_type_upper[..paren_pos];
+            let params_str = &sqlite_type_upper[paren_pos+1..];
+            if let Some(close_paren) = params_str.find(')') {
+                let params_str = &params_str[..close_paren];
+                let params: Vec<&str> = params_str.split(',').map(|s| s.trim()).collect();
+
+                match base_type {
+                    "VARCHAR" | "CHAR" | "CHARACTER VARYING" => {
+                        let length = params.first().and_then(|p| p.parse().ok()).unwrap_or(255);
+                        return ("character varying".to_string(), Some(length), None, None);
+                    },
+                    "DECIMAL" | "NUMERIC" => {
+                        let precision = params.first().and_then(|p| p.parse().ok()).unwrap_or(10);
+                        let scale = params.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+                        return ("numeric".to_string(), None, Some(precision), Some(scale));
+                    },
+                    _ => {}
+                }
+            }
+        }
+
+        // Handle base types
+        match sqlite_type_upper.as_str() {
+            "INTEGER" | "INT" => ("integer".to_string(), None, Some(32), Some(0)),
+            "BIGINT" => ("bigint".to_string(), None, Some(64), Some(0)),
+            "SMALLINT" => ("smallint".to_string(), None, Some(16), Some(0)),
+            "REAL" | "FLOAT" => ("real".to_string(), None, Some(24), None),
+            "DOUBLE" | "DOUBLE PRECISION" => ("double precision".to_string(), None, Some(53), None),
+            "TEXT" => ("text".to_string(), None, None, None),
+            "BLOB" => ("bytea".to_string(), None, None, None),
+            "BOOLEAN" | "BOOL" => ("boolean".to_string(), None, None, None),
+            "DATE" => ("date".to_string(), None, None, None),
+            "TIME" => ("time without time zone".to_string(), None, None, None),
+            "TIMESTAMP" | "DATETIME" => ("timestamp without time zone".to_string(), None, None, None),
+            "UUID" => ("uuid".to_string(), None, None, None),
+            "JSON" => ("json".to_string(), None, None, None),
+            "JSONB" => ("jsonb".to_string(), None, None, None),
+            "VARCHAR" | "CHARACTER VARYING" => ("character varying".to_string(), None, None, None),
+            "CHAR" | "CHARACTER" => ("character".to_string(), None, None, None),
+            _ => {
+                // Default fallback for unknown types
+                if sqlite_type_upper.contains("CHAR") || sqlite_type_upper.contains("TEXT") {
+                    ("text".to_string(), None, None, None)
+                } else if sqlite_type_upper.contains("INT") {
+                    ("integer".to_string(), None, Some(32), Some(0))
+                } else if sqlite_type_upper.contains("REAL") || sqlite_type_upper.contains("FLOAT") {
+                    ("real".to_string(), None, Some(24), None)
+                } else {
+                    ("text".to_string(), None, None, None)
+                }
+            }
+        }
+    }
+    fn from_is_sqlite_resolvable(select: &sqlparser::ast::Select) -> bool {
+        use sqlparser::ast::{ObjectNamePart, TableFactor};
+
+        // === PATCH v23: information_schema objects backed by real SQLite views ===
+        // The six v14 objects (tables/columns/schemata/key_column_usage/
+        // table_constraints/referential_constraints) plus the seventeen v33
+        // objects all have CREATE VIEW statements in the migration registry,
+        // and SchemaPrefixTranslator rewrites information_schema.<x> to
+        // information_schema_<x>. Keep in sync with V33_ISCHEMA_VIEWS in
+        // schema_prefix_translator.rs. Objects NOT listed here (routines,
+        // views, check_constraints, triggers, ...) exist only as Rust handlers
+        // and must stay on the handler path — delegating them would raise
+        // `no such table` and abort the whole GUI metadata transaction.
+        const ISCHEMA_SQLITE_RESOLVABLE: &[&str] = &[
+            // v14
+            "tables",
+            "columns",
+            "schemata",
+            "key_column_usage",
+            "table_constraints",
+            "referential_constraints",
+            // v33
+            "applicable_roles",
+            "character_sets",
+            "collations",
+            "column_privileges",
+            "column_udt_usage",
+            "constraint_column_usage",
+            "domain_constraints",
+            "domains",
+            "element_types",
+            "enabled_roles",
+            "information_schema_catalog_name",
+            "parameters",
+            "role_table_grants",
+            "sequences",
+            "table_privileges",
+            "view_column_usage",
+            "view_table_usage",
+        ];
+
+        fn factor_ok(factor: &TableFactor) -> bool {
+            match factor {
+                TableFactor::Table { name, .. } => {
+                    let parts = &name.0;
+                    if parts.len() <= 1 {
+                        return true;
+                    }
+                    match &parts[parts.len() - 2] {
+                        ObjectNamePart::Identifier(ident) => {
+                            if ident.value.eq_ignore_ascii_case("pg_catalog") {
+                                true
+                            } else if ident.value.eq_ignore_ascii_case("information_schema") {
+                                // === PATCH v23: only objects backed by a real
+                                // SQLite view are safe to delegate. The v14 six and
+                                // the v33 seventeen are rewritten by
+                                // SchemaPrefixTranslator to information_schema_<x>.
+                                if let Some(ObjectNamePart::Identifier(last)) = parts.last() {
+                                    ISCHEMA_SQLITE_RESOLVABLE
+                                        .iter()
+                                        .any(|o| last.value.eq_ignore_ascii_case(o))
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+                // Sub-queries / table functions are executed by the SQL engine
+                // anyway; nothing for the handler to hijack.
+                _ => true,
+            }
+        }
+
+        for twj in &select.from {
+            if !factor_ok(&twj.relation) {
+                return false;
+            }
+            for join in &twj.joins {
+                if !factor_ok(&join.relation) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+    fn query_needs_sql_engine(
+        query: &sqlparser::ast::Query,
+        select: &sqlparser::ast::Select,
+    ) -> bool {
+        use sqlparser::ast::GroupByExpr;
+
+        // === PATCH v18: schema-qualified names SQLite cannot resolve ===
+        // SQLite has no schema namespace. `information_schema.tables` simply does
+        // not exist there (the real view is `information_schema_tables`), so
+        // delegating such a query would raise `no such table`, abort the
+        // transaction and take the whole GUI metadata tree down with it — strictly
+        // worse than the handler's (wrong but harmless) result set. Only pg_catalog
+        // qualifiers are safe because SchemaPrefixTranslator strips them.
+        if !Self::from_is_sqlite_resolvable(select) {
+            return false;
+        }
+
+        // GROUP BY / HAVING —— handler 完全没有分组概念
+        let has_group_by = match &select.group_by {
+            GroupByExpr::Expressions(exprs, modifiers) => {
+                !exprs.is_empty() || !modifiers.is_empty()
+            }
+            GroupByExpr::All(_) => true,
+        };
+        if has_group_by || select.having.is_some() {
+            return true;
+        }
+
+        // ORDER BY —— handler 原样吐出内部顺序，排序被静默丢弃
+        if query.order_by.is_some() {
+            return true;
+        }
+
+        // 投影里的聚合函数 —— handler 找不到同名列，一律填 NULL
+        const AGGREGATES: [&str; 14] = [
+            "count(",
+            "sum(",
+            "avg(",
+            "min(",
+            "max(",
+            "array_agg(",
+            "string_agg(",
+            "json_agg(",
+            "jsonb_agg(",
+            "bool_and(",
+            "bool_or(",
+            "every(",
+            "bit_and(",
+            "bit_or(",
+        ];
+        let projection = select
+            .projection
+            .iter()
+            .map(|item| item.to_string().to_lowercase())
+            .collect::<Vec<_>>()
+            .join(" , ");
+        AGGREGATES.iter().any(|f| projection.contains(f))
+    }
+    fn select_uses_udf_backed_system_function(select: &sqlparser::ast::Select) -> bool {
+        const UDF_BACKED: [&str; 8] = [
+            "format_type",
+            "pg_get_expr",
+            "pg_get_indexdef",
+            "pg_get_constraintdef",
+            "to_regtype",
+            "pg_get_userbyid",
+            "pg_table_is_visible",
+            "pg_size_pretty",
+        ];
+        let rendered = select.to_string().to_lowercase();
+        UDF_BACKED.iter().any(|f| rendered.contains(f))
+    }
+    fn is_count_star_projection(projection: &[SelectItem]) -> bool {
+        if projection.len() != 1 {
+            return false;
+        }
+
+        let expr = match &projection[0] {
+            SelectItem::UnnamedExpr(expr) => expr,
+            SelectItem::ExprWithAlias { expr, .. } => expr,
+            _ => return false,
+        };
+
+        let Expr::Function(function) = expr else {
+            return false;
+        };
+
+        if Self::function_name(function).as_deref() != Some("count") {
+            return false;
+        }
+
+        matches!(
+            &function.args,
+            sqlparser::ast::FunctionArguments::List(arg_list)
+                if arg_list.args.len() == 1
+                    && matches!(
+                        &arg_list.args[0],
+                        FunctionArg::Unnamed(FunctionArgExpr::Wildcard)
+                    )
+        )
+    }
+    fn count_response(count: usize) -> DbResponse {
+        DbResponse {
+            columns: vec!["count".to_string()],
+            rows: vec![vec![Some(count.to_string().into_bytes())]],
+            rows_affected: 1,
+        }
+    }
+    fn extract_table_name_filters(where_clause: &Expr) -> Vec<String> {
+        match where_clause {
+            Expr::BinaryOp { left, op, right } => {
+                // Handle "table_name = 'value'"
+                if let (Expr::Identifier(ident), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
+                    (left.as_ref(), op, right.as_ref())
+                    && ident.value.to_lowercase() == "table_name"
+                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                            return vec![value.clone()];
+                        }
+                // Handle "'value' = table_name" (reversed)
+                if let (Expr::Value(value_with_span), sqlparser::ast::BinaryOperator::Eq, Expr::Identifier(ident)) =
+                    (left.as_ref(), op, right.as_ref())
+                    && ident.value.to_lowercase() == "table_name"
+                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                            return vec![value.clone()];
+                        }
+                // Handle compound identifiers like "information_schema.tables.table_name = 'value'"
+                if let (Expr::CompoundIdentifier(parts), sqlparser::ast::BinaryOperator::Eq, Expr::Value(value_with_span)) =
+                    (left.as_ref(), op, right.as_ref())
+                    && let Some(last_part) = parts.last()
+                        && last_part.value.to_lowercase() == "table_name"
+                            && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                                return vec![value.clone()];
+                            }
+            }
+            Expr::InList { expr, list, negated } => {
+                // Handle "table_name IN ('value1', 'value2')"
+                if !negated {
+                    if let Expr::Identifier(ident) = expr.as_ref()
+                        && ident.value.to_lowercase() == "table_name" {
+                            let mut values = Vec::new();
+                            for item in list {
+                                if let Expr::Value(value_with_span) = item
+                                    && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                                        values.push(value.clone());
+                                    }
+                            }
+                            return values;
+                        }
+                    // Handle compound identifiers in IN clause
+                    if let Expr::CompoundIdentifier(parts) = expr.as_ref()
+                        && let Some(last_part) = parts.last()
+                            && last_part.value.to_lowercase() == "table_name" {
+                                let mut values = Vec::new();
+                                for item in list {
+                                    if let Expr::Value(value_with_span) = item
+                                        && let sqlparser::ast::Value::SingleQuotedString(value) = &value_with_span.value {
+                                            values.push(value.clone());
+                                        }
+                                }
+                                return values;
+                            }
+                }
+            }
+            Expr::Nested(inner) => {
+                return Self::extract_table_name_filters(inner);
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+    fn parse_select(sql: &str) -> sqlparser::ast::Select {
+        use sqlparser::ast::Statement;
+        let mut ast = Parser::parse_sql(&PostgreSqlDialect {}, sql).expect("parse sql");
+        match ast.remove(0) {
+            Statement::Query(q) => match *q.body {
+                SetExpr::Select(select) => *select,
+                _ => panic!("not a SELECT"),
+            },
+            _ => panic!("not a query"),
+        }
+    }
+    fn v23_tables_count_delegates_to_sqlite() {
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT count(*) FROM information_schema.tables"
+        )));
+    }
+    fn v23_columns_count_delegates_to_sqlite() {
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT count(*) FROM information_schema.columns"
+        )));
+    }
+    fn v23_schemata_group_by_delegates_to_sqlite() {
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT schema_name, count(*) FROM information_schema.schemata GROUP BY schema_name"
+        )));
+    }
+    fn v23_key_column_usage_delegates_to_sqlite() {
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT count(*) FROM information_schema.key_column_usage"
+        )));
+    }
+    fn v23_handler_only_routines_stays_on_handler() {
+        assert!(!CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT count(*) FROM information_schema.routines"
+        )));
+    }
+    fn v23_pg_catalog_still_delegates() {
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT count(*) FROM pg_catalog.pg_class"
+        )));
+    }
+    fn v23_bare_table_name_still_delegates() {
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+            "SELECT count(*) FROM pg_class"
+        )));
+    }
+
+pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Arc<SessionState>>) -> Option<Result<DbResponse, PgSqliteError>> {
         debug!("INTERCEPT_QUERY: {}", query);
         // Quick check to avoid parsing if not a catalog query
         let lower_query = query.to_lowercase();
@@ -46,6 +1542,31 @@ impl CatalogInterceptor {
            lower_query.trim() == "select version()" {
             return None;
         }
+if let Some(r) = Self::v38_jdbc_metadata(query, &db).await {
+            println!("INTERCEPT: v38 jdbc-metadata handled");
+            return Some(r);
+        }
+if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
+            println!("INTERCEPT: DBeaver columns (01_columns) handled");
+            return Some(r);
+        }
+if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
+            println!("INTERCEPT: DBeaver columns (01_columns) handled");
+            return Some(r);
+        }
+if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
+            println!("INTERCEPT: DBeaver columns (01_columns) handled");
+            return Some(r);
+        }
+if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
+            println!("INTERCEPT: DBeaver columns (01_columns) handled");
+            return Some(r);
+        }
+if let Some(r) = Self::handle_dbeaver_columns_query_if_match(query, &db, session.as_ref()).await {
+            println!("INTERCEPT: DBeaver columns (01_columns) handled");
+            return Some(r);
+        }
+
         
         // Check for catalog tables
         let has_catalog_tables = lower_query.contains("pg_catalog") || lower_query.contains("pg_type") ||

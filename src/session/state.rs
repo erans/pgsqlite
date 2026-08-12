@@ -63,6 +63,30 @@ impl SessionState {
         parameters.insert("TimeZone".to_string(), "UTC".to_string());
         parameters.insert("IntervalStyle".to_string(), "postgres".to_string());
         parameters.insert("integer_datetimes".to_string(), "on".to_string());
+        // === PATCH v21 ===
+        // Real PostgreSQL always reports standard_conforming_strings. Without
+        // it clients fall back to the pre-8.2 assumption that backslashes are
+        // escape characters inside ordinary string literals, and then either
+        // double every backslash (libpq/psycopg2) or switch to the PostgreSQL
+        // extended-string syntax E'...' (PgJDBC, i.e. DBeaver). SQLite parses
+        // neither, and `near "'...'": syntax error` aborts the whole
+        // transaction, which is exactly the GUI metadata chain-failure we spent
+        // v11..v20 eliminating. pgsqlite passes literals through to SQLite
+        // verbatim, so the honest answer here is "on".
+        parameters.insert(
+            "standard_conforming_strings".to_string(),
+            "on".to_string(),
+        );
+        // Other statics a stock PostgreSQL 16 backend reports at startup and
+        // that GUI clients read while building their object trees.
+        parameters.insert("is_superuser".to_string(), "on".to_string());
+        parameters.insert("session_authorization".to_string(), user.clone());
+        parameters.insert("application_name".to_string(), String::new());
+        parameters.insert(
+            "default_transaction_read_only".to_string(),
+            "off".to_string(),
+        );
+        parameters.insert("in_hot_standby".to_string(), "off".to_string());
         
         // Increment active session count
         ACTIVE_SESSION_COUNT.fetch_add(1, Ordering::Relaxed);

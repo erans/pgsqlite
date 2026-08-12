@@ -14,6 +14,9 @@ pub struct Config {
     #[arg(short, long, default_value = "sqlite.db", env = "PGSQLITE_DATABASE")]
     pub database: String,
 
+    #[arg(long, default_value = "127.0.0.1", env = "PGSQLITE_BIND_ADDRESS", help = "TCP bind address (default 127.0.0.1, use 0.0.0.0 to expose on all interfaces)")]
+    pub bind_address: String,
+
     #[arg(long, default_value = "info", env = "PGSQLITE_LOG_LEVEL")]
     pub log_level: String,
 
