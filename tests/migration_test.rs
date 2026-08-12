@@ -23,7 +23,7 @@ fn test_fresh_database_migration() {
     
     // Should apply all migrations
     assert_eq!(applied.len(), MIGRATIONS.len());
-    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
+    assert_eq!(applied, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]);
 
     // Verify schema version
     let conn = runner.into_connection();
@@ -32,7 +32,7 @@ fn test_fresh_database_migration() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "28");
+    assert_eq!(version, "29");
 
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -68,7 +68,7 @@ fn test_idempotent_migrations() {
     let conn = Connection::open(&db_path).unwrap();
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
-    assert_eq!(applied.len(), 28);
+    assert_eq!(applied.len(), 29);
     drop(runner);
     
     // Second run - should apply nothing
@@ -109,8 +109,8 @@ fn test_existing_schema_detection() {
     let mut runner = MigrationRunner::new(conn);
     let applied = runner.run_pending_migrations().unwrap();
     
-    // Should recognize existing schema as version 1 and only apply versions 2-28
-    assert_eq!(applied.len(), 27);
+    // Should recognize existing schema as version 1 and only apply versions 2-29
+    assert_eq!(applied.len(), 28);
     assert_eq!(applied[0], 2);
     assert_eq!(applied[1], 3);
     assert_eq!(applied[2], 4);
@@ -124,6 +124,7 @@ fn test_existing_schema_detection() {
     assert_eq!(applied[10], 12);
     assert_eq!(applied[25], 27);
     assert_eq!(applied[26], 28);
+    assert_eq!(applied[27], 29);
 
     // Verify final version
     let conn = runner.into_connection();
@@ -132,7 +133,7 @@ fn test_existing_schema_detection() {
         [],
         |row| row.get(0)
     ).unwrap();
-    assert_eq!(version, "28");
+    assert_eq!(version, "29");
     
     // Now check should pass
     let runner2 = MigrationRunner::new(conn);
@@ -157,7 +158,7 @@ fn test_migration_history() {
     .unwrap()
     .collect::<Result<Vec<_>, _>>().unwrap();
     
-    assert_eq!(migrations.len(), 28);
+    assert_eq!(migrations.len(), 29);
     assert_eq!(migrations[0], (1, "initial_schema".to_string(), "completed".to_string()));
     assert_eq!(migrations[1], (2, "enum_type_support".to_string(), "completed".to_string()));
     assert_eq!(migrations[2], (3, "datetime_timezone_support".to_string(), "completed".to_string()));
@@ -220,4 +221,97 @@ fn test_check_up_to_date_database() {
     
     // Check should pass for up-to-date database
     assert!(runner.check_schema_version().is_ok());
+}
+
+#[test]
+fn test_v29_information_schema_views_are_namespace_aware() {
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("v29.db");
+
+    let conn = Connection::open(&db_path).unwrap();
+    let mut runner = MigrationRunner::new(conn);
+    runner.run_pending_migrations().unwrap();
+    let conn = runner.into_connection();
+
+    // The views call UDFs, which the migration runner's connection does not have.
+    pgsqlite::functions::register_all_functions(&conn).unwrap();
+    conn.pragma_update(None, "trusted_schema", true).unwrap();
+
+    conn.execute_batch(
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name VARCHAR(50), amount NUMERIC(10,2));",
+    )
+    .unwrap();
+
+    // Internal relations are not in public.
+    let internal_in_public: i32 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM information_schema_tables \
+             WHERE table_schema = 'public' AND table_name LIKE 'pg\\_%' ESCAPE '\\'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(internal_in_public, 0, "pg_* relations still reported in public");
+
+    let pg_class_schema: String = conn
+        .query_row(
+            "SELECT table_schema FROM information_schema_tables WHERE table_name = 'pg_class'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(pg_class_schema, "pg_catalog");
+
+    let is_tables_schema: String = conn
+        .query_row(
+            "SELECT table_schema FROM information_schema_tables \
+             WHERE table_name = 'information_schema_tables'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(is_tables_schema, "information_schema");
+
+    // The user table is the only thing in public.
+    let public_tables: Vec<String> = conn
+        .prepare("SELECT table_name FROM information_schema_tables WHERE table_schema = 'public' ORDER BY table_name")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(public_tables, vec!["customers".to_string()]);
+
+    // Column metadata the old view lost.
+    let (dt, len): (String, Option<i32>) = conn
+        .query_row(
+            "SELECT data_type, character_maximum_length FROM information_schema_columns \
+             WHERE table_name = 'customers' AND column_name = 'name'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(dt, "character varying");
+    assert_eq!(len, Some(50));
+
+    let (p, s): (Option<i32>, Option<i32>) = conn
+        .query_row(
+            "SELECT numeric_precision, numeric_scale FROM information_schema_columns \
+             WHERE table_name = 'customers' AND column_name = 'amount'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((p, s), (Some(10), Some(2)));
+
+    // INTEGER PRIMARY KEY is NOT NULL, which the v14 view got wrong.
+    let nullable: String = conn
+        .query_row(
+            "SELECT is_nullable FROM information_schema_columns \
+             WHERE table_name = 'customers' AND column_name = 'id'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(nullable, "NO");
 }

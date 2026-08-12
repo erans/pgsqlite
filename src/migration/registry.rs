@@ -35,6 +35,7 @@ lazy_static! {
         register_v26_enhanced_pg_attribute_support(&mut registry);
         register_v27_fix_pg_proc_types(&mut registry);
         register_v28_pg_class_full_columns(&mut registry);
+        register_v29_information_schema_namespace(&mut registry);
 
         registry
     };
@@ -3028,5 +3029,231 @@ fn register_v28_pg_class_full_columns(registry: &mut BTreeMap<u32, Migration>) {
             "#,
         ])),
         dependencies: vec![27],
+    });
+}
+
+/// Version 29: Namespace-aware information_schema views (#88)
+///
+/// The views are rebuilt rather than patched. `information_schema_tables`
+/// derives `table_schema` from `__pgsqlite_relnamespace` rather than hardcoding
+/// `'public'`, and reads the UDF directly rather than `pg_class.relnamespace` so
+/// it does not inherit v28's `LIKE 'pg\_%'` heuristic (#102).
+///
+/// `information_schema_columns` reads sqlite_master, pragma_table_info and
+/// __pgsqlite_schema directly rather than layering on pg_attribute, which keeps
+/// this migration off a view every ORM reads and is what makes column_default,
+/// is_nullable, character_maximum_length and numeric precision/scale reachable.
+fn register_v29_information_schema_namespace(registry: &mut BTreeMap<u32, Migration>) {
+    registry.insert(29, Migration {
+        version: 29,
+        name: "information_schema_namespace",
+        description: "Namespace-aware information_schema.tables and .columns served from SQLite",
+        up: MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_tables"#,
+            r#"DROP VIEW IF EXISTS information_schema_columns"#,
+
+            // Column order matches PostgreSQL: is_insertable_into is 10th, not
+            // 5th as in v14. The deleted Rust handler already used this order.
+            r#"
+            CREATE VIEW information_schema_tables AS
+            SELECT
+                'main' as table_catalog,
+                n.nspname as table_schema,
+                c.relname as table_name,
+                CASE c.relkind
+                    WHEN 'r' THEN 'BASE TABLE'
+                    WHEN 'v' THEN 'VIEW'
+                    ELSE 'UNKNOWN'
+                END as table_type,
+                NULL as self_referencing_column_name,
+                NULL as reference_generation,
+                NULL as user_defined_type_catalog,
+                NULL as user_defined_type_schema,
+                NULL as user_defined_type_name,
+                CASE c.relkind WHEN 'r' THEN 'YES' ELSE 'NO' END as is_insertable_into,
+                'NO' as is_typed,
+                NULL as commit_action
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = __pgsqlite_relnamespace(c.relname)
+            WHERE c.relkind IN ('r', 'v')
+            "#,
+
+            // 44 columns in v14's order, which matches PostgreSQL.
+            // substr(...) <> '__pgsqlite_' rather than LIKE '__pgsqlite_%':
+            // `_` is a LIKE wildcard, so the LIKE form matches unrelated names.
+            r#"
+            CREATE VIEW information_schema_columns AS
+            SELECT
+                'main' as table_catalog,
+                n.nspname as table_schema,
+                m.name as table_name,
+                p.name as column_name,
+                p.cid + 1 as ordinal_position,
+                p.dflt_value as column_default,
+                CASE WHEN p."notnull" = 1 OR p.pk > 0 THEN 'NO' ELSE 'YES' END as is_nullable,
+                __pgsqlite_pg_data_type(COALESCE(s.pg_type, p.type)) as data_type,
+                __pgsqlite_char_max_length(COALESCE(s.pg_type, p.type)) as character_maximum_length,
+                __pgsqlite_char_max_length(COALESCE(s.pg_type, p.type)) as character_octet_length,
+                __pgsqlite_numeric_precision(COALESCE(s.pg_type, p.type)) as numeric_precision,
+                CASE
+                    WHEN __pgsqlite_numeric_precision(COALESCE(s.pg_type, p.type)) IS NULL THEN NULL
+                    ELSE 10
+                END as numeric_precision_radix,
+                __pgsqlite_numeric_scale(COALESCE(s.pg_type, p.type)) as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as domain_catalog,
+                NULL as domain_schema,
+                NULL as domain_name,
+                'main' as udt_catalog,
+                'pg_catalog' as udt_schema,
+                __pgsqlite_pg_data_type(COALESCE(s.pg_type, p.type)) as udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                p.cid + 1 as dtd_identifier,
+                'NO' as is_self_referencing,
+                'NO' as is_identity,
+                NULL as identity_generation,
+                NULL as identity_start,
+                NULL as identity_increment,
+                NULL as identity_maximum,
+                NULL as identity_minimum,
+                'NO' as identity_cycle,
+                'NEVER' as is_generated,
+                NULL as generation_expression,
+                'YES' as is_updatable
+            FROM sqlite_master m
+            JOIN pragma_table_info(m.name) p
+            LEFT JOIN __pgsqlite_schema s
+                ON s.table_name = m.name AND s.column_name = p.name
+            JOIN pg_namespace n ON n.oid = __pgsqlite_relnamespace(m.name)
+            WHERE m.type = 'table'
+              AND m.name NOT LIKE 'sqlite_%'
+              AND substr(m.name, 1, 11) <> '__pgsqlite_'
+            "#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '29', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS information_schema_tables"#,
+            r#"DROP VIEW IF EXISTS information_schema_columns"#,
+
+            // Restore the v14 views: copied verbatim from
+            // register_v14_information_schema_views's `up`.
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_tables AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                relname as table_name,
+                CASE relkind
+                    WHEN 'r' THEN 'BASE TABLE'
+                    WHEN 'v' THEN 'VIEW'
+                    ELSE 'UNKNOWN'
+                END as table_type,
+                'YES' as is_insertable_into,
+                NULL as self_referencing_column_name,
+                NULL as reference_generation,
+                NULL as user_defined_type_catalog,
+                NULL as user_defined_type_schema,
+                NULL as user_defined_type_name,
+                'NO' as is_typed,
+                'NO' as commit_action
+            FROM pg_class
+            WHERE relkind IN ('r', 'v');
+            "#,
+
+            // NOTE TO IMPLEMENTER: this `down` is never executed. No rollback
+            // path exists in src/migration/ -- `Migration::down` is stored and
+            // never read. It is populated to match repo convention so a future
+            // rollback runner finds it, not because it can be tested.
+            r#"
+            CREATE VIEW IF NOT EXISTS information_schema_columns AS
+            SELECT
+                'main' as table_catalog,
+                'public' as table_schema,
+                c.relname as table_name,
+                a.attname as column_name,
+                a.attnum as ordinal_position,
+                NULL as column_default,
+                CASE WHEN a.attnotnull = 't' THEN 'NO' ELSE 'YES' END as is_nullable,
+                CASE a.atttypid
+                    WHEN 23 THEN 'integer'
+                    WHEN 25 THEN 'text'
+                    WHEN 700 THEN 'real'
+                    WHEN 701 THEN 'double precision'
+                    WHEN 17 THEN 'bytea'
+                    WHEN 1043 THEN 'character varying'
+                    WHEN 1042 THEN 'character'
+                    WHEN 16 THEN 'boolean'
+                    WHEN 1082 THEN 'date'
+                    WHEN 1083 THEN 'time without time zone'
+                    WHEN 1114 THEN 'timestamp without time zone'
+                    WHEN 1184 THEN 'timestamp with time zone'
+                    WHEN 1700 THEN 'numeric'
+                    ELSE 'text'
+                END as data_type,
+                NULL as character_maximum_length,
+                NULL as character_octet_length,
+                NULL as numeric_precision,
+                NULL as numeric_precision_radix,
+                NULL as numeric_scale,
+                NULL as datetime_precision,
+                NULL as interval_type,
+                NULL as interval_precision,
+                NULL as character_set_catalog,
+                NULL as character_set_schema,
+                NULL as character_set_name,
+                NULL as collation_catalog,
+                NULL as collation_schema,
+                NULL as collation_name,
+                NULL as domain_catalog,
+                NULL as domain_schema,
+                NULL as domain_name,
+                NULL as udt_catalog,
+                NULL as udt_schema,
+                NULL as udt_name,
+                NULL as scope_catalog,
+                NULL as scope_schema,
+                NULL as scope_name,
+                NULL as maximum_cardinality,
+                NULL as dtd_identifier,
+                'NO' as is_self_referencing,
+                'NO' as is_identity,
+                NULL as identity_generation,
+                NULL as identity_start,
+                NULL as identity_increment,
+                NULL as identity_maximum,
+                NULL as identity_minimum,
+                NULL as identity_cycle,
+                'NO' as is_generated,
+                NULL as generation_expression,
+                'NO' as is_updatable
+            FROM pg_class c
+            JOIN pg_attribute a ON c.oid = a.attrelid
+            WHERE c.relkind = 'r'
+              AND a.attnum > 0;
+            "#,
+
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '28', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![28],
     });
 }
