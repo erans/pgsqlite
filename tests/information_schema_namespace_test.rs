@@ -293,3 +293,56 @@ async fn columns_of_internal_relations_are_not_in_public() {
     let names: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
     assert_eq!(names, vec!["t".to_string()]);
 }
+
+/// The internal-relation list is maintained by hand, so it can drift when a
+/// migration adds a catalog relation. Fail here rather than silently leaking
+/// the new relation into information_schema.tables as a user table.
+#[test]
+fn internal_relation_list_matches_migrated_database() {
+    use pgsqlite::catalog::internal_relations::{
+        INTERNAL_INFORMATION_SCHEMA_RELATIONS, INTERNAL_PG_CATALOG_RELATIONS,
+    };
+    use pgsqlite::migration::MigrationRunner;
+    use rusqlite::Connection;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let db_path = temp_dir.path().join("drift.db");
+    let conn = Connection::open(&db_path).unwrap();
+    let mut runner = MigrationRunner::new(conn);
+    runner.run_pending_migrations().unwrap();
+    let conn = runner.into_connection();
+
+    let mut in_database: Vec<String> = conn
+        .prepare(
+            "SELECT name FROM sqlite_master \
+             WHERE name NOT LIKE 'sqlite_%' AND substr(name, 1, 11) <> '__pgsqlite_' \
+             ORDER BY name",
+        )
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    in_database.sort();
+
+    let mut in_list: Vec<String> = INTERNAL_PG_CATALOG_RELATIONS
+        .iter()
+        .chain(INTERNAL_INFORMATION_SCHEMA_RELATIONS.iter())
+        .map(|s| s.to_string())
+        .collect();
+    in_list.sort();
+
+    let missing: Vec<&String> = in_database.iter().filter(|n| !in_list.contains(n)).collect();
+    assert!(
+        missing.is_empty(),
+        "migrations create relations absent from src/catalog/internal_relations.rs: {missing:?}. \
+         Add them, or they will be reported as user tables in information_schema.tables."
+    );
+
+    let stale: Vec<&String> = in_list.iter().filter(|n| !in_database.contains(n)).collect();
+    assert!(
+        stale.is_empty(),
+        "src/catalog/internal_relations.rs lists relations no migration creates: {stale:?}"
+    );
+}
