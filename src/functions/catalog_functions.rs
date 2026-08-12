@@ -46,6 +46,20 @@ pub fn register_catalog_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
+    // __pgsqlite_relnamespace(name) - namespace OID for a relation.
+    // Lets catalog views ask "is this relation ours?" by exact name rather than
+    // by prefix. Returns NULL for NULL input so a view row degrades rather than
+    // failing the query.
+    conn.create_scalar_function(
+        "__pgsqlite_relnamespace",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let name: Option<String> = ctx.get(0)?;
+            Ok(name.map(|n| crate::catalog::internal_relations::relnamespace(&n)))
+        },
+    )?;
+
     debug!("Catalog functions registered successfully");
     Ok(())
 }
