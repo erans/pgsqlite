@@ -1171,27 +1171,6 @@ impl DbHandler {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
-            if lower_query.contains("information_schema.tables") {
-                return self.handle_information_schema_tables_query(query, session_id).await;
-            }
-
-            if lower_query.contains("information_schema.columns") {
-                // Use the catalog interceptor for columns queries with session-based execution
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
             if lower_query.contains("information_schema.key_column_usage") {
                 use crate::catalog::query_interceptor::CatalogInterceptor;
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
@@ -1647,27 +1626,6 @@ impl DbHandler {
             // For catalog queries, we need to use the catalog interceptor
             // This requires an Arc<DbHandler>, but we can't create a cyclic Arc here
             // Instead, let's handle specific queries directly for now
-            if lower_query.contains("information_schema.tables") {
-                return self.handle_information_schema_tables_query(query, session_id).await;
-            }
-
-            if lower_query.contains("information_schema.columns") {
-                // Use the catalog interceptor for columns queries with session-based execution
-                use crate::catalog::query_interceptor::CatalogInterceptor;
-                let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
-                if let Ok(mut statements) = parsed_query
-                    && let Some(sqlparser::ast::Statement::Query(query_ast)) = statements.pop()
-                        && let Some(select) = query_ast.body.as_select() {
-                            return CatalogInterceptor::handle_information_schema_columns_query_with_session(select, self, session_id).await;
-                        }
-                // Fallback to empty response if parsing fails
-                return Ok(DbResponse {
-                    columns: vec!["table_name".to_string(), "column_name".to_string()],
-                    rows: vec![],
-                    rows_affected: 0,
-                });
-            }
-
             if lower_query.contains("information_schema.key_column_usage") {
                 use crate::catalog::query_interceptor::CatalogInterceptor;
                 let parsed_query = sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, query);
@@ -2659,77 +2617,6 @@ impl DbHandler {
         &self.statement_cache_optimizer
     }
     
-    /// Handle information_schema.tables query
-    async fn handle_information_schema_tables_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {
-        debug!("Handling information_schema.tables query: {}", query);
-        
-        // Check if this is a simple table_name only query
-        if query.contains("SELECT table_name") && !query.contains("table_catalog") {
-            // Simple query - just return table names
-            let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
-            
-            return self.connection_manager.execute_with_session(session_id, |conn| {
-                let mut stmt = conn.prepare(tables_query)?;
-                let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
-                    let table_name: String = row.get(0)?;
-                    Ok(vec![Some(table_name.into_bytes())])
-                })?.collect();
-                
-                Ok(DbResponse {
-                    columns: vec!["table_name".to_string()],
-                    rows: rows?,
-                    rows_affected: 0,
-                })
-            });
-        }
-        
-        // Full information_schema.tables query
-        let tables_query = "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__pgsqlite_%' ORDER BY name";
-        
-        self.connection_manager.execute_with_session(session_id, |conn| {
-            let mut stmt = conn.prepare(tables_query)?;
-            let rows: Result<Vec<_>, _> = stmt.query_map([], |row| {
-                let table_name: String = row.get(0)?;
-                // Return full information_schema.tables row
-                Ok(vec![
-                    Some("main".to_string().into_bytes()),      // table_catalog
-                    Some("public".to_string().into_bytes()),    // table_schema  
-                    Some(table_name.into_bytes()),              // table_name
-                    Some("BASE TABLE".to_string().into_bytes()), // table_type
-                    None,                                       // self_referencing_column_name
-                    None,                                       // reference_generation
-                    None,                                       // user_defined_type_catalog
-                    None,                                       // user_defined_type_schema
-                    None,                                       // user_defined_type_name
-                    None,                                       // is_insertable_into
-                    None,                                       // is_typed
-                    None,                                       // commit_action
-                ])
-            })?.collect();
-            
-            Ok(DbResponse {
-                columns: vec![
-                    "table_catalog".to_string(),
-                    "table_schema".to_string(),
-                    "table_name".to_string(),
-                    "table_type".to_string(),
-                    "self_referencing_column_name".to_string(),
-                    "reference_generation".to_string(),
-                    "user_defined_type_catalog".to_string(),
-                    "user_defined_type_schema".to_string(),
-                    "user_defined_type_name".to_string(),
-                    "is_insertable_into".to_string(),
-                    "is_typed".to_string(),
-                    "commit_action".to_string(),
-                ],
-                rows: rows?,
-                rows_affected: 0,
-            })
-        })
-    }
-
-
-
     /// Handle SQLAlchemy table existence check query
     /// This optimizes the complex JOIN query by doing a simple table lookup
     async fn handle_table_existence_query(&self, query: &str, session_id: &Uuid) -> Result<DbResponse, PgSqliteError> {

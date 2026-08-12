@@ -2260,7 +2260,10 @@ impl ExtendedQueryHandler {
                                         });
                                     }
                                 } else if query.contains("information_schema.tables") {
-                                    // Return all information_schema.tables columns
+                                    // information_schema.tables now executes against the
+                                    // information_schema_tables SQLite view (#88), but Describe
+                                    // still needs static metadata for SELECT * -- this mirrors
+                                    // the view's column list from migration v29 exactly.
                                     let all_columns = vec![
                                         ("table_catalog", PgType::Text.to_oid()),
                                         ("table_schema", PgType::Text.to_oid()),
@@ -2412,6 +2415,20 @@ impl ExtendedQueryHandler {
                                                     let type_oid = Self::get_catalog_column_type(&name, query);
                                                     (name, type_oid)
                                                 }
+                                                sqlparser::ast::Expr::Function(func) => {
+                                                    let fname = func.name.to_string().to_lowercase();
+                                                    // PostgreSQL names an unaliased aggregate column after
+                                                    // the function itself, e.g. `count(*)` -> "count".
+                                                    // Scoped to information_schema (#88 fall-through routing)
+                                                    // so pg_depend/pg_class COUNT(*) callers, which read the
+                                                    // result as text today, are unaffected.
+                                                    let type_oid = if fname == "count" && query.contains("information_schema") {
+                                                        PgType::Int8.to_oid()
+                                                    } else {
+                                                        PgType::Text.to_oid()
+                                                    };
+                                                    (fname, type_oid)
+                                                }
                                                 _ => ("?column?".to_string(), PgType::Text.to_oid()),
                                             }
                                         }
@@ -2423,6 +2440,14 @@ impl ExtendedQueryHandler {
                                                 sqlparser::ast::Expr::CompoundIdentifier(parts) => {
                                                     let name = parts.last().map(|p| p.value.to_lowercase()).unwrap_or_else(|| "?column?".to_string());
                                                     Self::get_catalog_column_type(&name, query)
+                                                }
+                                                sqlparser::ast::Expr::Function(func) => {
+                                                    let fname = func.name.to_string().to_lowercase();
+                                                    if fname == "count" && query.contains("information_schema") {
+                                                        PgType::Int8.to_oid()
+                                                    } else {
+                                                        PgType::Text.to_oid()
+                                                    }
                                                 }
                                                 _ => PgType::Text.to_oid(),
                                             };
