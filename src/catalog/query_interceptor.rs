@@ -1535,38 +1535,62 @@ impl CatalogInterceptor {
             _ => panic!("not a query"),
         }
     }
+    // 从 SQLite 声明类型里解析 numeric_precision / numeric_scale / character_maximum_length
+    fn parse_pg_type_modifiers(type_name: &str) -> (Option<Vec<u8>>, Option<Vec<u8>>, Option<Vec<u8>>) {
+        let t = type_name.to_uppercase();
+        if let Some(cap) = regex::Regex::new(r"(?:VARCHAR|CHAR|CHARACTER)\s*\(\s*(\d+)\s*\)")
+            .ok()
+            .and_then(|re| re.captures(&t))
+        {
+            let n = cap.get(1).unwrap().as_str();
+            return (None, None, Some(n.to_string().into_bytes()));
+        }
+        if let Some(cap) = regex::Regex::new(r"(?:NUMERIC|DECIMAL)\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)")
+            .ok()
+            .and_then(|re| re.captures(&t))
+        {
+            let p = cap.get(1).unwrap().as_str();
+            let s = cap.get(2).unwrap().as_str();
+            return (
+                Some(p.to_string().into_bytes()),
+                Some(s.to_string().into_bytes()),
+                None,
+            );
+        }
+        (None, None, None)
+    }
     fn v23_tables_count_delegates_to_sqlite() {
-        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT count(*) FROM information_schema.tables"
         )));
     }
     fn v23_columns_count_delegates_to_sqlite() {
-        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT count(*) FROM information_schema.columns"
         )));
     }
     fn v23_schemata_group_by_delegates_to_sqlite() {
-        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT schema_name, count(*) FROM information_schema.schemata GROUP BY schema_name"
         )));
     }
     fn v23_key_column_usage_delegates_to_sqlite() {
-        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT count(*) FROM information_schema.key_column_usage"
         )));
     }
     fn v23_handler_only_routines_stays_on_handler() {
-        assert!(!CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(!CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT count(*) FROM information_schema.routines"
         )));
     }
     fn v23_pg_catalog_still_delegates() {
-        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT count(*) FROM pg_catalog.pg_class"
         )));
     }
     fn v23_bare_table_name_still_delegates() {
-        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&parse_select(
+        assert!(CatalogInterceptor::from_is_sqlite_resolvable(&Self::parse_select(
             "SELECT count(*) FROM pg_class"
         )));
     }
