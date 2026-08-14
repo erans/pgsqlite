@@ -1952,7 +1952,84 @@ impl ExtendedQueryHandler {
         
         Ok(())
     }
-    
+
+    // ===================== v29i catalog truth probe =====================
+    /// v29i: build FieldDescriptions from a real column-name list.
+    /// Catalog values are shipped as text bytes, so Text is the honest
+    /// default; the two exceptions below preserve the pre-v29i typing of
+    /// pg_attribute boolean/char columns so existing clients do not regress.
+    fn v29i_fields_from_columns(cols: &[String]) -> Vec<FieldDescription> {
+        cols.iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let lower = name.to_lowercase();
+                let type_oid = match lower.as_str() {
+                    "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing"
+                    | "attisdropped" | "attislocal" | "not_null" | "has_default"
+                    | "is_not_null" | "has_def" => PgType::Bool.to_oid(),
+                    "attidentity" | "attgenerated" | "attalign" | "attstorage"
+                    | "attcompression" => PgType::Char.to_oid(),
+                    _ => PgType::Text.to_oid(),
+                };
+                FieldDescription {
+                    name: name.clone(),
+                    table_oid: 0,
+                    column_id: (i + 1) as i16,
+                    type_oid,
+                    type_size: -1,
+                    type_modifier: -1,
+                    format: 0,
+                }
+            })
+            .collect()
+    }
+
+    /// v29i: THE single source of truth for the shape of a catalog result.
+    /// Whatever CatalogInterceptor returns at Execute time is exactly what
+    /// Describe must announce, so we simply ask it up-front.  $N parameter
+    /// placeholders are neutralised to NULL: we only want the column list,
+    /// never the rows.  Result is memoised per query text.
+    async fn v29i_probe_catalog_columns(
+        session: &Arc<SessionState>,
+        query: &str,
+    ) -> Option<Vec<String>> {
+        static V29I_CATALOG_COLS: once_cell::sync::Lazy<
+            parking_lot::Mutex<std::collections::HashMap<String, Vec<String>>>,
+        > = once_cell::sync::Lazy::new(|| {
+            parking_lot::Mutex::new(std::collections::HashMap::new())
+        });
+
+        if let Some(hit) = V29I_CATALOG_COLS.lock().get(query).cloned() {
+            return if hit.is_empty() { None } else { Some(hit) };
+        }
+
+        let mut probe = query.to_string();
+        for i in (1..=32).rev() {
+            probe = probe.replace(&format!("${i}"), "NULL");
+        }
+
+        let db = session.get_db_handler().await?;
+        let cols = match CatalogInterceptor::intercept_query(
+            &probe,
+            db,
+            Some(session.clone()),
+        )
+        .await
+        {
+            Some(Ok(resp)) if !resp.columns.is_empty() => Some(resp.columns),
+            _ => None,
+        };
+
+        {
+            let mut cache = V29I_CATALOG_COLS.lock();
+            if cache.len() > 512 {
+                cache.clear();
+            }
+            cache.insert(query.to_string(), cols.clone().unwrap_or_default());
+        }
+        cols
+    }
+
     pub async fn handle_describe<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         session: &Arc<SessionState>,
@@ -1966,14 +2043,60 @@ impl ExtendedQueryHandler {
         
         if typ == b'S' {
             // Describe statement
+            // Snapshot what we need, then release the read lock so the truth
+            // probe below can take a write lock without deadlocking.
+            let (param_types, query_text, fd_len) = {
+                let statements = session.prepared_statements.read().await;
+                let stmt = statements.get(&name)
+                    .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {name}")))?;
+                (stmt.param_types.clone(), stmt.query.clone(), stmt.field_descriptions.len())
+            };
+
+            // Send ParameterDescription first
+            framed.send(BackendMessage::ParameterDescription(param_types)).await
+                .map_err(PgSqliteError::Io)?;
+
+            // ============ v29i catalog truth probe ============
+            // Before v29i the field list for catalog queries came from
+            // hand-maintained tables that had drifted from what the catalog
+            // interceptor actually returns, and parameterised `SELECT *`
+            // catalog queries fell through to NoData entirely.  Both cases end
+            // with Describe and Execute disagreeing, which clients report as
+            // "unexpected message from server" (DataGrip: empty table list).
+            // Ask the interceptor up-front for the real column list.
+            if query_starts_with_ignore_case(&query_text, "SELECT")
+                && (query_text.contains("pg_catalog") || query_text.contains("pg_type")
+                    || query_text.contains("pg_namespace") || query_text.contains("pg_class")
+                    || query_text.contains("pg_attribute") || query_text.contains("pg_constraint")
+                    || query_text.contains("pg_index") || query_text.contains("pg_depend")
+                    || query_text.contains("pg_database") || query_text.contains("information_schema"))
+            {
+                if let Some(cols) = Self::v29i_probe_catalog_columns(session, &query_text).await {
+                    if fd_len != cols.len() {
+                        warn!(
+                            "v29i truth probe: statement '{}' announced {} fields but the catalog returns {} -> realigning. query: {}",
+                            name, fd_len, cols.len(), query_text
+                        );
+                        let fields = Self::v29i_fields_from_columns(&cols);
+                        {
+                            let mut sm = session.prepared_statements.write().await;
+                            if let Some(stmt_mut) = sm.get_mut(&name) {
+                                stmt_mut.field_descriptions = fields.clone();
+                            }
+                        }
+                        framed.send(BackendMessage::RowDescription(fields)).await
+                            .map_err(PgSqliteError::Io)?;
+                        return Ok(());
+                    }
+                }
+            }
+            // ============ end v29i catalog truth probe ============
+
+            // Re-acquire the read lock (released during the truth probe above)
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&name)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {name}")))?;
-            
-            // Send ParameterDescription first
-            framed.send(BackendMessage::ParameterDescription(stmt.param_types.clone())).await
-                .map_err(PgSqliteError::Io)?;
-            
+
             // Check if this is a catalog query that needs special handling
             let query = &stmt.query;
             let is_catalog_query = query.contains("pg_catalog") || query.contains("pg_type") ||
@@ -1981,7 +2104,7 @@ impl ExtendedQueryHandler {
                                    query.contains("pg_attribute") || query.contains("pg_constraint") ||
                                    query.contains("pg_index") || query.contains("pg_depend") ||
                                    query.contains("pg_database") || query.contains("information_schema");
-            
+
             // Then send RowDescription or NoData
             if !stmt.field_descriptions.is_empty() {
                 info!("Sending RowDescription with {} fields in Describe", stmt.field_descriptions.len());

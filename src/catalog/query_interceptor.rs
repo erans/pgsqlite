@@ -725,6 +725,150 @@ impl CatalogInterceptor {
         Ok(DbResponse { columns: cols, rows, rows_affected: n })
     }
 
+    // === PATCH v43: DBX / DataGrip schema 对象列表 (展开 schema 树) 专属短路 ===
+    // DataGrip 展开 schema 时发的对象列表查询:
+    //   SELECT c.relname AS object_name, CASE c.relkind ... FROM pg_class c
+    //     JOIN pg_namespace n ... LEFT JOIN LATERAL pg_stat_file(...) stat ON true ...
+    //   UNION ALL SELECT p.proname ... FROM pg_proc p ... WHERE ... NOT p.proisagg AND NOT p.proiswindow ...
+    // pgsqlite 当前不支持 LATERAL pg_stat_file, 且 pg_proc 视图缺 proisagg/proiswindow 列,
+    // 整条报 "near "(": syntax error", 导致对象树(含表/视图)全部为空。
+    // 改写为可执行的简化版: 去掉 LATERAL pg_stat_file 与 proisagg/proiswindow,
+    // created_at/updated_at 等填 NULL, 列名/顺序严格对齐原查询, 供 DBX 正常渲染。
+    async fn v43_dbx_object_list(
+        db: &Arc<DbHandler>,
+        query: &str,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+        // 指纹: 对象列表形态 + 触发不支持语法的标记
+        let has_obj_shape = lower.contains("object_name")
+            && lower.contains("sort_order")
+            && lower.contains("union all")
+            && lower.contains("pg_proc");
+        let has_unsupported = lower.contains("pg_stat_file")
+            || lower.contains("proisagg")
+            || lower.contains("proiswindow");
+        if !has_obj_shape || !has_unsupported {
+            return None;
+        }
+        // 提取 schema 名 (第一个 nspname = 'X'); DBX 一般发 'public'
+        let schema = {
+            let re = regex::Regex::new(r"nspname\s*=\s*'([^']+)'").ok()?;
+            re.captures(query)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "public".to_string())
+        };
+        let sql = format!(
+            "SELECT c.relname AS object_name, \
+             CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED_VIEW' WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS object_type, \
+             obj_description(c.oid) AS object_comment, \
+             CAST(NULL AS TEXT) AS created_at, CAST(NULL AS TEXT) AS updated_at, \
+             CAST(NULL AS TEXT) AS parent_schema, CAST(NULL AS TEXT) AS parent_name, \
+             CAST(NULL AS TEXT) AS signature, \
+             CASE c.relkind WHEN 'v' THEN 1 WHEN 'm' THEN 1 WHEN 'S' THEN 4 ELSE 0 END AS sort_order \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = '{schema}' AND c.relkind IN ('r','v','m','f','p','S') \
+             UNION ALL \
+             SELECT p.proname AS object_name, 'FUNCTION' AS object_type, obj_description(p.oid) AS object_comment, \
+             CAST(NULL AS TEXT), CAST(NULL AS TEXT), CAST(NULL AS TEXT), CAST(NULL AS TEXT), \
+             pg_get_function_arguments(p.oid) AS signature, 3 AS sort_order \
+             FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = '{schema}' \
+             ORDER BY sort_order, object_name"
+        );
+        match db.query(&sql).await {
+            Ok(res) => {
+                println!(
+                    "INTERCEPT: dbx object-list handled (schema={}, {} rows)",
+                    schema,
+                    res.rows.len()
+                );
+                Some(Ok(DbResponse {
+                    columns: res.columns.clone(),
+                    rows: res.rows.clone(),
+                    rows_affected: res.rows.len(),
+                }))
+            }
+            Err(e) => {
+                eprintln!("INTERCEPT: dbx object-list rewrite failed: {:?}", e);
+                Some(Err(PgSqliteError::Sqlite(e)))
+            }
+        }
+    }
+
+    // === PATCH v44: DBX / DataGrip 表属主 + 默认权限查询 (点开表属性时触发) 专属短路 ===
+    // DataGrip 点开表属性时发:
+    //   SELECT pg_get_userbyid(c.relowner)::text,
+    //     ARRAY(SELECT default_acl.privilege_type::text
+    //           FROM pg_catalog.aclexplode(pg_catalog.acldefault('r', c.relowner)) default_acl
+    //           WHERE default_acl.grantee = c.relowner ORDER BY default_acl.privilege_type)
+    //   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    //   WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p') ORDER BY c.oid LIMIT 1
+    // pgsqlite 不支持 ARRAY(SELECT ...) 标量子查询 -> "near "SELECT": syntax error"。
+    // 改写为: 第1列用 pg_get_userbyid(c.relowner) (pgsqlite 已实现, 返回 'postgres'),
+    // 第2列(默认权限数组)用 NULL 表示无额外默认权限。列名/顺序对齐, 供 DBX 正常渲染。
+    async fn v44_dbx_table_acl(
+        db: &Arc<DbHandler>,
+        query: &str,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+        // 指纹: 表属主 + 默认权限数组 + acldefault 函数 (acldefault 极罕见, 足以唯一定位)
+        let is_match = lower.contains("pg_get_userbyid")
+            && lower.contains("acldefault")
+            && lower.contains("array(");
+        if !is_match {
+            return None;
+        }
+        // 提取 schema 与 table (参数在执行时已替换为字面量, 见 dune 日志报错行)
+        let schema = {
+            let re = regex::Regex::new(r"nspname\s*=\s*'([^']+)'").ok()?;
+            re.captures(query)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "public".to_string())
+        };
+        let table = {
+            let re = regex::Regex::new(r"relname\s*=\s*'([^']+)'").ok()?;
+            re.captures(query)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+        };
+        let sql = match table {
+            Some(ref t) => format!(
+                "SELECT pg_get_userbyid(c.relowner)::text AS owner, NULL::text AS defacl \
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+                 WHERE n.nspname = '{schema}' AND c.relname = '{t}' AND c.relkind IN ('r','p') \
+                 ORDER BY c.oid LIMIT 1",
+                schema = Self::v38_sqlq(&schema),
+                t = Self::v38_sqlq(t),
+            ),
+            None => {
+                // 解析不到表名(极端: 参数未替换仍 $1/$2)时给一个干净的兜底行, 避免 DBX 整条报错
+                "SELECT 'postgres'::text AS owner, NULL::text AS defacl".to_string()
+            }
+        };
+        match db.query(&sql).await {
+            Ok(res) => {
+                println!(
+                    "INTERCEPT: dbx table-acl handled (schema={}, table={:?}, {} rows)",
+                    schema, table, res.rows.len()
+                );
+                Some(Ok(DbResponse {
+                    columns: res.columns.clone(),
+                    rows: res.rows.clone(),
+                    rows_affected: res.rows.len(),
+                }))
+            }
+            Err(e) => {
+                // 兜底: 即便查询失败也返回一行干净的属主信息, 不让 DBX 弹错中断
+                eprintln!("INTERCEPT: dbx table-acl rewrite failed: {:?}, fallback", e);
+                let cols = vec!["owner".to_string(), "defacl".to_string()];
+                let rows = vec![vec![Some(b"postgres".to_vec()), None]];
+                Some(Ok(DbResponse { columns: cols, rows, rows_affected: 1 }))
+            }
+        }
+    }
+
     // 从 dbx 列默认值查询提取表名: WHERE ... c.relname = <tbl>。
     // 参数化版本被 v29i 探测替换成 c.relname = NULL, 提取不到则返回 None。
     fn v42_extract_attrdef_table(query: &str) -> Option<String> {
@@ -1645,6 +1789,16 @@ pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Ar
             let tbl = Self::v42_extract_attrdef_table(query);
             println!("INTERCEPT: dbx attrdef for table={:?}", tbl);
             return Some(Self::v42_get_attrdef(&db, tbl.as_deref()).await);
+        }
+
+        // === PATCH v43: DBX / DataGrip schema 对象列表 (展开树) 专属短路 ===
+        if let Some(r) = Self::v43_dbx_object_list(&db, query).await {
+            return Some(r);
+        }
+
+        // === PATCH v44: DBX / DataGrip 表属主 + 默认权限查询 (点开表) 专属短路 ===
+        if let Some(r) = Self::v44_dbx_table_acl(&db, query).await {
+            return Some(r);
         }
 
         // Check for catalog tables
