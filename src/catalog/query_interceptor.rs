@@ -869,6 +869,157 @@ impl CatalogInterceptor {
         }
     }
 
+    // === PATCH v45: DBX / DataGrip schema 列表 (展开树第一层) 专属短路 ===
+    // 刷新数据源时 DBX 先枚举 schema:
+    //   SELECT n.nspname AS schema_name, d.description AS schema_comment
+    //   FROM pg_catalog.pg_namespace n
+    //   LEFT JOIN pg_catalog.pg_description d ON d.objoid = n.oid AND d.objsubid = 0 AND d.classoid = 'pg_namespace'
+    //   WHERE n.nspname NOT IN ('information_schema','pg_catalog','pg_toast')
+    //     AND n.nspname NOT LIKE 'pg_toast_temp_%' AND n.nspname NOT LIKE 'pg_temp_%'
+    //   ORDER BY n.nspname
+    // 原路径会掉进 PgDescriptionHandler (pg_description 单表 handler), 返回 0 列 ->
+    // Describe 发 NoData -> 整棵树空白 (连 schema 这一层都过不去)。
+    // 直接返回 DBX 期望的 (schema_name, schema_comment) 列 + 实际 schema 列表。
+    // pgsqlite 单库单 schema, 即 public。
+    async fn v45_dbx_schema_list(
+        _db: &Arc<DbHandler>,
+        query: &str,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+        // 指纹: pg_namespace + 投影 nspname AS schema_name (DBX schema 树专有形态)
+        if !(lower.contains("pg_namespace") && lower.contains("nspname as schema_name")) {
+            return None;
+        }
+        println!("INTERCEPT: dbx schema-list handled");
+        let columns = vec!["schema_name".to_string(), "schema_comment".to_string()];
+        let rows = vec![vec![
+            Some("public".to_string().into_bytes()),
+            Some("".to_string().into_bytes()),
+        ]];
+        let rows_affected = rows.len();
+        Some(Ok(DbResponse {
+            columns,
+            rows,
+            rows_affected,
+        }))
+    }
+
+    // === PATCH v46: DBX / DataGrip extension 列表 专属短路 ===
+    // 刷新时 DBX 枚举 extension:
+    //   SELECT e.extname, COALESCE(e.extversion, '') AS extversion, d.description, n.nspname
+    //   FROM pg_catalog.pg_extension e
+    //   JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace
+    //   LEFT JOIN pg_catalog.pg_description d ON d.objoid = e.oid AND d.classoid = 'pg_extension'
+    //   ORDER BY n.nspname, e.extname
+    // SQLite 无 extension 概念, 原路径 (check_table_factor 无 pg_extension 分支) 落回裸 SQL -> 0 列 -> NoData。
+    // 返回 DBX 期望的 4 列 + 0 行, 让 DBX 渲染空 extension 列表而不报错中断树加载。
+    async fn v46_dbx_extension_list(
+        _db: &Arc<DbHandler>,
+        query: &str,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+        // 指纹: pg_extension + 投影 extname
+        if !(lower.contains("pg_extension") && lower.contains("extname")) {
+            return None;
+        }
+        println!("INTERCEPT: dbx extension-list handled");
+        let columns = vec![
+            "extname".to_string(),
+            "extversion".to_string(),
+            "description".to_string(),
+            "nspname".to_string(),
+        ];
+        // SQLite 无 extension: 返回正确列名 + 0 行
+        let rows: Vec<Vec<Option<Vec<u8>>>> = Vec::new();
+        Some(Ok(DbResponse {
+            columns,
+            rows,
+            rows_affected: 0,
+        }))
+    }
+
+    // === PATCH v47: DBX / DataGrip "Tables" 节点列表 专属短路 ===
+    // DBX 点开 schema 下的 Tables 节点时发:
+    //   SELECT c.relname AS table_name,
+    //     CASE c.relkind WHEN 'r' THEN 'BASE TABLE' ... END AS table_type,
+    //     obj_description(c.oid) AS table_comment,
+    //     CASE WHEN pc.relkind='p' THEN pn.nspname ELSE NULL END AS parent_schema,
+    //     CASE WHEN pc.relkind='p' THEN pc.relname ELSE NULL END AS parent_name
+    //   FROM pg_class c JOIN pg_namespace n ...
+    //     LEFT JOIN pg_inherits i ... LEFT JOIN pg_class pc ... LEFT JOIN pg_namespace pn ...
+    //   WHERE n.nspname='public' AND c.relkind IN ('r','v','m','f','p')
+    //     AND (... c.relname LIKE '%%' ...)   -- 搜索过滤, 空时恒真
+    //   ORDER BY ... c.relname
+    //   LIMIT -1 OFFSET CAST(0 AS INTEGER)
+    // SQLite 的 pg_inherits 视图无 ihparent 列 -> "no such column: i.ihparent" -> 整条报错 -> 表列表空白。
+    // SQLite 不支持表继承, parent_schema/parent_name 恒为 NULL。改写为不含 pg_inherits 的等价查询,
+    // 列名/顺序严格对齐 (table_name, table_type, table_comment, parent_schema, parent_name)。
+    // 注意: 搜索过滤 (c.relname LIKE 'x%') 在改写中被丢弃, 返回该 schema 下全部关系 (v48 可补)。
+    async fn v47_dbx_table_list(
+        db: &Arc<DbHandler>,
+        query: &str,
+    ) -> Option<Result<DbResponse, PgSqliteError>> {
+        let lower = query.to_lowercase();
+        // 指纹: 投影 parent_schema + parent_name + 引入 pg_inherits (Tables 节点专有形态)
+        if !(lower.contains("as parent_schema") && lower.contains("as parent_name") && lower.contains("pg_inherits")) {
+            return None;
+        }
+        // 提取 schema (nspname = 'X')
+        let schema = {
+            let re = regex::Regex::new(r"nspname\s*=\s*'([^']+)'").ok()?;
+            re.captures(query)
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .unwrap_or_else(|| "public".to_string())
+        };
+        // 提取 relkind IN (...) 列表 (不同 DBX 版本可能不同)
+        let relkinds = {
+            let re = regex::Regex::new(r"relkind\s+in\s*\(([^)]*)\)").ok();
+            match re.and_then(|re| re.captures(query)) {
+                Some(caps) => caps
+                    .get(1)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_else(|| "'r','v','m','f','p'".to_string()),
+                None => "'r','v','m','f','p'".to_string(),
+            }
+        };
+        let sql = format!(
+            "SELECT c.relname AS table_name, \
+             CASE c.relkind WHEN 'r' THEN 'BASE TABLE' WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'MATERIALIZED_VIEW' WHEN 'f' THEN 'FOREIGN TABLE' WHEN 'p' THEN 'BASE TABLE' END AS table_type, \
+             obj_description(c.oid) AS table_comment, \
+             CAST(NULL AS TEXT) AS parent_schema, \
+             CAST(NULL AS TEXT) AS parent_name \
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = '{schema}' AND c.relkind IN ({relkinds}) \
+             ORDER BY c.relname"
+        );
+        match db.query(&sql).await {
+            Ok(res) => {
+                println!(
+                    "INTERCEPT: dbx table-list handled (schema={}, {} rows)",
+                    schema,
+                    res.rows.len()
+                );
+                let columns = vec![
+                    "table_name".to_string(),
+                    "table_type".to_string(),
+                    "table_comment".to_string(),
+                    "parent_schema".to_string(),
+                    "parent_name".to_string(),
+                ];
+                Some(Ok(DbResponse {
+                    columns,
+                    rows: res.rows.clone(),
+                    rows_affected: res.rows.len(),
+                }))
+            }
+            Err(e) => {
+                eprintln!("INTERCEPT: dbx table-list rewrite failed: {:?}", e);
+                Some(Err(PgSqliteError::Sqlite(e)))
+            }
+        }
+    }
+
     // 从 dbx 列默认值查询提取表名: WHERE ... c.relname = <tbl>。
     // 参数化版本被 v29i 探测替换成 c.relname = NULL, 提取不到则返回 None。
     fn v42_extract_attrdef_table(query: &str) -> Option<String> {
@@ -1798,6 +1949,21 @@ pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Ar
 
         // === PATCH v44: DBX / DataGrip 表属主 + 默认权限查询 (点开表) 专属短路 ===
         if let Some(r) = Self::v44_dbx_table_acl(&db, query).await {
+            return Some(r);
+        }
+
+        // === PATCH v45: DBX / DataGrip schema 列表 (展开树第一层) 专属短路 ===
+        if let Some(r) = Self::v45_dbx_schema_list(&db, query).await {
+            return Some(r);
+        }
+
+        // === PATCH v46: DBX / DataGrip extension 列表 专属短路 ===
+        if let Some(r) = Self::v46_dbx_extension_list(&db, query).await {
+            return Some(r);
+        }
+
+        // === PATCH v47: DBX / DataGrip "Tables" 节点列表 专属短路 ===
+        if let Some(r) = Self::v47_dbx_table_list(&db, query).await {
             return Some(r);
         }
 
