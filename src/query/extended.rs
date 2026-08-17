@@ -2019,6 +2019,18 @@ impl ExtendedQueryHandler {
             probe = probe.replace(&format!("${i}"), "NULL");
         }
 
+        // 列数探测不需要实际行数。参数化查询中的 LIMIT/OFFSET（如
+        // `LIMIT CAST($4 AS BIGINT) OFFSET CAST($5 AS BIGINT)`）被替换成
+        // NULL 后，在 SQLite 里是非法语法（LIMIT must be an integer），
+        // 会让整条探测查询执行失败、返回 None，进而 Parse 阶段 fd_len 仍为 0，
+        // extended 协议下 Describe(Portal) 直接发 NoData(0列)，客户端
+        // (dbx/DataGrip) 据此把 Execute 的 DataRow 按 0 列丢弃 -> 表列表/
+        // 对象列表等节点空白。列数与行数无关，统一修正为合法形态再探测。
+        probe = probe.replace("LIMIT CAST(NULL AS BIGINT)", "LIMIT 0");
+        probe = probe.replace("OFFSET CAST(NULL AS BIGINT)", "");
+        probe = probe.replace("LIMIT NULL", "LIMIT 0");
+        probe = probe.replace("OFFSET NULL", "");
+
         let db = session.get_db_handler().await?;
         let cols = match CatalogInterceptor::intercept_query(
             &probe,
