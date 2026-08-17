@@ -528,8 +528,19 @@ impl ExtendedQueryHandler {
                cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
                cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_depend") ||
                cleaned_query.contains("pg_database") {
-                info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
-                Vec::new()
+                // v47fix: Parse 阶段即用 catalog interceptor 探测真实列数，
+                // 避免在 extended 协议下 fd_len=0，导致 Describe(Portal) 直接发
+                // NoData(0列)，客户端(dbx/DataGrip)据此把 Execute 结果按 0 列
+                // 丢弃，表列表/对象列表等节点空白。truth probe 只在
+                // Describe(Statement) 运行，而 dbx 走 Describe(Portal)，必须
+                // 让 Parse 阶段就把 field_descriptions 设为正确列数。
+                match Self::v29i_probe_catalog_columns(session, &cleaned_query).await {
+                    Some(cols) => Self::v29i_fields_from_columns(&cols),
+                    None => {
+                        info!("PARSE: catalog query probed empty, leaving 0 field_descriptions: {}", cleaned_query);
+                        Vec::new()
+                    }
+                }
             } else {
                 // Try to get field descriptions
                 // For parameterized queries, substitute dummy values
@@ -4587,7 +4598,7 @@ impl ExtendedQueryHandler {
             println!("EXTENDED: Got catalog result, about to unwrap");
             let mut catalog_response = catalog_result?;
             println!("EXTENDED: Unwrapped catalog result, columns: {}, rows: {}", catalog_response.columns.len(), catalog_response.rows.len());
-            
+
             // For catalog queries with binary result formats, we need to ensure the data
             // is in the correct format for binary encoding
             let portals = session.portals.read().await;
