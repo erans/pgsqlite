@@ -4631,6 +4631,17 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        // === v47fix5: 去除 public. schema 前缀 ===
+        // dbx 点开表发 SELECT * FROM "public"."bath_records"（带 schema 前缀），
+        // SQLite 无 schema namespace，直接执行会报 "no such table: public.bath_records"。
+        // 与 executor.rs 的 execute_select (PATCH v27) 对齐，去掉 public. 前缀。
+        let __v47fix5_public_owned = if query.contains("public.") || query.contains("\"public\"") {
+            Some(crate::translator::SchemaPrefixTranslator::strip_public_prefix(query))
+        } else {
+            None
+        };
+        let query: &str = __v47fix5_public_owned.as_deref().unwrap_or(query);
+
         // Check if this is a catalog query first
         info!("execute_select: Checking if query is catalog query: {}", query);
         if query.contains("int_array_with_nulls") {
