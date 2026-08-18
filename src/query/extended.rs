@@ -2728,6 +2728,37 @@ impl ExtendedQueryHandler {
                 framed.send(BackendMessage::RowDescription(fields)).await
                     .map_err(PgSqliteError::Io)?;
             } else {
+                // v29i: dbx / DataGrip 走 Describe(Portal) 取列数，且往往不发
+                // Describe(Statement)。Parse 阶段即便跑了 catalog 探测，结果也可能
+                // 没落到该 statement（或探测当次返回 None），导致 field_descriptions
+                // 恒为 0 -> 此处直接发 NoData(0列)，客户端据此把 Execute 的 DataRow
+                // 按 0 列丢弃 -> 表列表/对象列表等节点空白。
+                // 这里在 Describe(Portal) 补一次 catalog 探测（此时 Bind 已完成、
+                // 连接可用），把真实列数钉进去再发 RowDescription，与
+                // Describe(Statement) 的 truth probe 行为保持一致。
+                let query_text = stmt.query.clone();
+                let statement_name = portal.statement_name.clone();
+                drop(portals);
+                drop(statements);
+                let is_catalog = query_starts_with_ignore_case(&query_text, "SELECT")
+                    && (query_text.contains("pg_catalog") || query_text.contains("pg_type")
+                        || query_text.contains("pg_namespace") || query_text.contains("pg_class")
+                        || query_text.contains("pg_attribute") || query_text.contains("pg_constraint")
+                        || query_text.contains("pg_index") || query_text.contains("pg_depend")
+                        || query_text.contains("pg_database") || query_text.contains("information_schema"));
+                if is_catalog {
+                    if let Some(cols) = Self::v29i_probe_catalog_columns(session, &query_text).await {
+                        let fields = Self::v29i_fields_from_columns(&cols);
+                        let mut sm = session.prepared_statements.write().await;
+                        if let Some(stmt_mut) = sm.get_mut(&statement_name) {
+                            stmt_mut.field_descriptions = fields.clone();
+                        }
+                        drop(sm);
+                        framed.send(BackendMessage::RowDescription(fields)).await
+                            .map_err(PgSqliteError::Io)?;
+                        return Ok(());
+                    }
+                }
                 framed.send(BackendMessage::NoData).await
                     .map_err(PgSqliteError::Io)?;
             }
