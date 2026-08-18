@@ -2653,6 +2653,44 @@ impl ExtendedQueryHandler {
             }
         } else {
             // Describe portal
+            // === v47fix6: catalog truth probe 前移（防列数错位）===
+            // dbx 点开表会发外键等 information_schema 查询（实际 7 列），但 Parse
+            // 阶段 field_descriptions 可能被错算（如 3 列）。dbx 走 Describe(Portal)
+            // 取列数，若直接用错的 field_descriptions 发 RowDescription，Execute 再发
+            // 真实列数的 DataRow，列数错位 -> pgjdbc 报 "unexpected message from server"。
+            // 这里先对 catalog 查询探测真实列数，不匹配则 realign 后直接返回。
+            {
+                let (q, fd_len, sname) = {
+                    let portals = session.portals.read().await;
+                    let portal = portals.get(&name)
+                        .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {name}")))?;
+                    let statements = session.prepared_statements.read().await;
+                    let stmt = statements.get(&portal.statement_name)
+                        .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {}", portal.statement_name)))?;
+                    (stmt.query.clone(), stmt.field_descriptions.len(), portal.statement_name.clone())
+                };
+                let is_catalog = query_starts_with_ignore_case(&q, "SELECT")
+                    && (q.contains("pg_catalog") || q.contains("pg_type")
+                        || q.contains("pg_namespace") || q.contains("pg_class")
+                        || q.contains("pg_attribute") || q.contains("pg_constraint")
+                        || q.contains("pg_index") || q.contains("pg_depend")
+                        || q.contains("pg_database") || q.contains("information_schema"));
+                if is_catalog && fd_len > 0 {
+                    if let Some(cols) = Self::v29i_probe_catalog_columns(session, &q).await {
+                        if cols.len() != fd_len {
+                            let fields = Self::v29i_fields_from_columns(&cols);
+                            let mut sm = session.prepared_statements.write().await;
+                            if let Some(stmt_mut) = sm.get_mut(&sname) {
+                                stmt_mut.field_descriptions = fields.clone();
+                            }
+                            drop(sm);
+                            framed.send(BackendMessage::RowDescription(fields)).await
+                                .map_err(PgSqliteError::Io)?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
             let portals = session.portals.read().await;
             let portal = portals.get(&name)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {name}")))?;
