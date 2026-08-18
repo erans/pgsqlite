@@ -6099,7 +6099,30 @@ impl ExtendedQueryHandler {
                     info!("Found explicit cast for parameter {}: {} (OID {})", i, cast_type, oid);
                     found_type = true;
                 }
-            
+
+            // Check for CAST($N AS TYPE) — 如 LIMIT CAST($4 AS BIGINT) OFFSET CAST($5 AS BIGINT)
+            // 这是 dbx/DataGrip 表列表查询 LIMIT/OFFSET 的参数写法。若漏掉，$4/$5
+            // 会被默认推断成 text(25) 而非 int8(20)，导致返回给 pgjdbc 的参数类型
+            // 全错、Bind 阶段序列化参数时报 "error serializing parameter N"。
+            if !found_type {
+                let cast_as_pattern =
+                    format!(r"CAST\s*\(\s*\${i}\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)");
+                if let Ok(cast_as_regex) = regex::Regex::new(&cast_as_pattern) {
+                    if let Some(captures) = cast_as_regex.captures(query) {
+                        if let Some(type_match) = captures.get(1) {
+                            let cast_type = type_match.as_str();
+                            let oid = Self::pg_type_name_to_oid(cast_type);
+                            param_types.push(oid);
+                            info!(
+                                "Found CAST(${} AS {}) -> OID {}",
+                                i, cast_type, oid
+                            );
+                            found_type = true;
+                        }
+                    }
+                }
+            }
+
             if found_type {
                 continue;
             }
