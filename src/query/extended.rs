@@ -424,6 +424,14 @@ impl ExtendedQueryHandler {
             cleaned_query.clone()
         };
         
+        // === v47fix7: 去除 public. schema 前缀（与 execute_select 的 v47fix5 对齐）===
+        // 否则非 catalog 的带 public 前缀查询（如 SELECT * FROM "public"."t"）在
+        // Parse 阶段测试查询失败 -> field_descriptions 空 -> Describe(P) 发 NoData(0列)，
+        // 而 Execute 阶段 strip 后返回真实列数 -> 列数错位 -> pgjdbc unexpected message。
+        if translated_for_analysis.contains("public.") || translated_for_analysis.contains("\"public\"") {
+            translated_for_analysis = crate::translator::SchemaPrefixTranslator::strip_public_prefix(&translated_for_analysis);
+        }
+        
         // Translate NUMERIC to TEXT casts with proper formatting
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::NumericFormatTranslator::needs_translation(&translated_for_analysis) {
