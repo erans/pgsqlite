@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*'
+      # Layerbase fork tags (v*-layerbase, incl. suffixed revisions like
+      # v*-layerbase-2) are handled by release-layerbase.yml; exclude them so
+      # both workflows do not race to create a release for the same tag. The
+      # trailing * must match the release-layerbase.yml trigger glob.
+      - '!v*-layerbase*'
   workflow_dispatch:  # Allows manual testing
 
 env:

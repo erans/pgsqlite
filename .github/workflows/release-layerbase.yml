@@ -1,0 +1,87 @@
+name: Release (Layerbase fork)
+
+# Tag-triggered release for the Layerbase-LLC fork. Pushing a tag of the form
+# vX.Y.Z-layerbase (optionally with a fork revision suffix such as
+# vX.Y.Z-layerbase-2) builds a linux/amd64 (glibc) binary and publishes
+# pgsqlite-linux-amd64.tar.gz as a GitHub release asset. The layerbase-cloud
+# universal image (images/Dockerfile.base) downloads and untars exactly that
+# asset name. This workflow is separate from the upstream release.yml so a
+# fork sync never has to reconcile the two.
+
+on:
+  push:
+    tags:
+      # Trailing * so both v*-layerbase and suffixed revisions like
+      # v*-layerbase-2 match (a bare v*-layerbase glob requires the ref to end
+      # in -layerbase and would miss the suffixed forms).
+      - 'v*-layerbase*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Test, build and release linux-amd64
+    # Pin to 24.04 so the produced glibc build matches the ubuntu:24.04 base
+    # image the binary runs inside.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-layerbase
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Run unit tests
+        run: cargo test --release --lib --verbose
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Strip binary
+        run: strip target/release/pgsqlite
+
+      - name: Package tarball
+        run: |
+          cd target/release
+          tar czf "${GITHUB_WORKSPACE}/pgsqlite-linux-amd64.tar.gz" pgsqlite
+          cd "${GITHUB_WORKSPACE}"
+          sha256sum pgsqlite-linux-amd64.tar.gz > pgsqlite-linux-amd64.tar.gz.sha256
+          cat pgsqlite-linux-amd64.tar.gz.sha256
+
+      - name: Create release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          make_latest: false
+          body: |
+            Layerbase fork build of pgsqlite for the layerbase-cloud universal image.
+
+            Base: upstream erans/pgsqlite v0.0.22 plus the internal-object
+            sqlite_master result filter. A client-issued sqlite_master /
+            sqlite_schema SELECT runs verbatim and pgsqlite's internal objects
+            (__pgsqlite_* bookkeeping tables, the materialized pg_catalog
+            tables/views, and indexes/triggers owned by them) are dropped from
+            the result. The query text is never modified, so no client query can
+            be corrupted by the filter.
+
+            The pgsqlite-linux-amd64.tar.gz asset is a linux x86_64 (glibc) build
+            consumed by images/Dockerfile.base in layerbase-cloud.
+          files: |
+            pgsqlite-linux-amd64.tar.gz
+            pgsqlite-linux-amd64.tar.gz.sha256
