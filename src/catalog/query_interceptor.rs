@@ -14,9 +14,28 @@ use std::sync::Arc;
 use std::pin::Pin;
 use std::future::Future;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// Type alias for the complex Future type returned by process_expression
 type ProcessExpressionFuture<'a> = Pin<Box<dyn Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'a>>;
+
+/// Process-wide database name registry (populated once at startup by main.rs).
+/// Used by pg_database handlers to list every database this server serves.
+static DATABASE_REGISTRY: OnceLock<Vec<String>> = OnceLock::new();
+
+/// Set the ordered database names served by this process (called once at startup).
+pub fn set_database_registry(names: Vec<String>) {
+    let _ = DATABASE_REGISTRY.set(names);
+}
+
+/// Get the registered database names; falls back to ["main"] for single-db mode/tests.
+fn database_registry_names() -> Vec<String> {
+    DATABASE_REGISTRY
+        .get()
+        .cloned()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec!["main".to_string()])
+}
 
 /// Intercepts and handles queries to pg_catalog tables
 pub struct CatalogInterceptor;
@@ -4072,37 +4091,53 @@ pub async fn intercept_query(query: &str, db: Arc<DbHandler>, session: Option<Ar
         // Extract selected columns
         let (selected_columns, column_indices) = Self::extract_selected_columns(select, &all_columns);
 
-        // Single database entry representing the current SQLite database
-        let full_row: Vec<Option<Vec<u8>>> = vec![
-            Some("1".to_string().into_bytes()),                        // oid
-            Some("main".to_string().into_bytes()),                     // datname - the key field!
-            Some("10".to_string().into_bytes()),                       // datdba (owner)
-            Some("6".to_string().into_bytes()),                        // encoding (UTF8)
-            Some("d".to_string().into_bytes()),                        // datlocprovider (default)
-            Some("f".to_string().into_bytes()),                        // datistemplate (false) - PostgreSQL uses 'f'/'t' for bool
-            Some("t".to_string().into_bytes()),                        // datallowconn (true) - PostgreSQL uses 'f'/'t' for bool
-            Some("f".to_string().into_bytes()),                        // dathasloginevt (false) - PostgreSQL uses 'f'/'t' for bool
-            Some("-1".to_string().into_bytes()),                       // datconnlimit (no limit)
-            Some("1".to_string().into_bytes()),                        // datfrozenxid
-            Some("1".to_string().into_bytes()),                        // datminmxid
-            Some("1663".to_string().into_bytes()),                     // dattablespace (default)
-            Some("en_US.UTF-8".to_string().into_bytes()),              // datcollate
-            Some("en_US.UTF-8".to_string().into_bytes()),              // datctype
-            None,                                                      // datlocale
-            None,                                                      // daticurules
-            None,                                                      // datcollversion
-            None,                                                      // datacl
-        ];
+        // One row per registered database (multi-database support).
+        // Falls back to a single "main" entry when no registry is set.
+        let db_names = database_registry_names();
 
-        // Project only requested columns
-        let projected_row: Vec<Option<Vec<u8>>> = column_indices.iter()
-            .map(|&idx| full_row[idx].clone())
+        // Build the full (unprojected) row for a database. All non-name fields use
+        // the same defaults as a single SQLite-backed database.
+        let build_full_row = |oid: usize, datname: &str| -> Vec<Option<Vec<u8>>> {
+            vec![
+                Some(oid.to_string().into_bytes()),                       // oid
+                Some(datname.as_bytes().to_vec()),                        // datname - the key field!
+                Some("10".to_string().into_bytes()),                      // datdba (owner)
+                Some("6".to_string().into_bytes()),                       // encoding (UTF8)
+                Some("d".to_string().into_bytes()),                       // datlocprovider (default)
+                Some("f".to_string().into_bytes()),                       // datistemplate (false)
+                Some("t".to_string().into_bytes()),                       // datallowconn (true)
+                Some("f".to_string().into_bytes()),                       // dathasloginevt (false)
+                Some("-1".to_string().into_bytes()),                      // datconnlimit (no limit)
+                Some("1".to_string().into_bytes()),                       // datfrozenxid
+                Some("1".to_string().into_bytes()),                       // datminmxid
+                Some("1663".to_string().into_bytes()),                    // dattablespace (default)
+                Some("en_US.UTF-8".to_string().into_bytes()),             // datcollate
+                Some("en_US.UTF-8".to_string().into_bytes()),             // datctype
+                None,                                                     // datlocale
+                None,                                                     // daticurules
+                None,                                                     // datcollversion
+                None,                                                     // datacl
+            ]
+        };
+
+        // Project each row to the requested columns
+        let rows: Vec<Vec<Option<Vec<u8>>>> = db_names
+            .iter()
+            .enumerate()
+            .map(|(idx, name)| {
+                let full_row = build_full_row(idx + 1, name);
+                column_indices
+                    .iter()
+                    .map(|&ci| full_row[ci].clone())
+                    .collect()
+            })
             .collect();
 
+        let rows_affected = rows.len();
         DbResponse {
             columns: selected_columns,
-            rows: vec![projected_row],
-            rows_affected: 1,
+            rows,
+            rows_affected,
         }
     }
 
