@@ -324,3 +324,134 @@ mod tests {
         assert_eq!(parse_timestamp_to_microseconds("1970-01-01 00:00:00"), Some(0));
     }
 }
+
+/// v29c: Parse a TIME cell coming out of SQLite into microseconds since midnight.
+///
+/// Accepts pgsqlite's native encoding (integer microseconds) *and* loose text
+/// written by external applications, e.g. `08:30` produced by an HTML
+/// `<input type="time">`. Returns `None` when the value is not recognisable as
+/// a time, in which case callers must leave the original bytes untouched.
+pub fn time_text_to_micros<S: AsRef<str>>(s: S) -> Option<i64> {
+    let t = s.as_ref().trim();
+    if t.is_empty() {
+        return None;
+    }
+    // pgsqlite native encoding: integer microseconds since midnight
+    if let Ok(v) = t.parse::<i64>() {
+        return Some(v);
+    }
+
+    // Drop a trailing timezone offset (TIMETZ text) before parsing the clock part.
+    let mut core = t;
+    for sep in ['+', 'Z', 'z'] {
+        if let Some(p) = core.find(sep) {
+            if p > 0 {
+                core = &core[..p];
+            }
+        }
+    }
+    // A '-' offset only counts when it follows the clock part (never at index 0).
+    if let Some(p) = core.rfind('-') {
+        if p > 0 {
+            core = &core[..p];
+        }
+    }
+    let core = core.trim();
+
+    let mut it = core.split(':');
+    let h: i64 = it.next()?.trim().parse().ok()?;
+    let m: i64 = it.next()?.trim().parse().ok()?;
+    let (sec, frac_micros) = match it.next() {
+        Some(rest) => {
+            let rest = rest.trim();
+            let mut sp = rest.split('.');
+            let sec: i64 = sp.next()?.trim().parse().ok()?;
+            let frac: i64 = match sp.next() {
+                Some(f) => {
+                    let digits: String = f.chars().filter(|c| c.is_ascii_digit()).take(6).collect();
+                    if digits.is_empty() {
+                        return None;
+                    }
+                    let mut padded = digits;
+                    while padded.len() < 6 {
+                        padded.push('0');
+                    }
+                    padded.parse::<i64>().ok()?
+                }
+                None => 0,
+            };
+            if sp.next().is_some() {
+                return None;
+            }
+            (sec, frac)
+        }
+        None => (0, 0),
+    };
+    if it.next().is_some() {
+        return None;
+    }
+    if !(0..=23).contains(&h) || !(0..=59).contains(&m) || !(0..=59).contains(&sec) {
+        return None;
+    }
+    Some((h * 3600 + m * 60 + sec) * 1_000_000 + frac_micros)
+}
+
+
+#[cfg(test)]
+mod v29c_time_text_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_native_integer_micros() {
+        assert_eq!(time_text_to_micros("30600000000"), Some(30_600_000_000));
+    }
+
+    #[test]
+    fn hh_mm_gets_zero_seconds() {
+        let m = time_text_to_micros("08:30").unwrap();
+        assert_eq!(m, (8 * 3600 + 30 * 60) * 1_000_000);
+        assert_eq!(format_microseconds_to_time(m), "08:30:00");
+    }
+
+    #[test]
+    fn single_digit_hour_ok() {
+        let m = time_text_to_micros("8:05").unwrap();
+        assert_eq!(format_microseconds_to_time(m), "08:05:00");
+    }
+
+    #[test]
+    fn hh_mm_ss_roundtrips() {
+        let m = time_text_to_micros("08:30:15").unwrap();
+        assert_eq!(format_microseconds_to_time(m), "08:30:15");
+    }
+
+    #[test]
+    fn fractional_seconds_preserved() {
+        let m = time_text_to_micros("08:30:15.5").unwrap();
+        assert_eq!(format_microseconds_to_time(m), "08:30:15.500000");
+    }
+
+    #[test]
+    fn timetz_offset_is_dropped() {
+        let m = time_text_to_micros("08:30:15+08").unwrap();
+        assert_eq!(format_microseconds_to_time(m), "08:30:15");
+    }
+
+    #[test]
+    fn midnight_and_end_of_day() {
+        assert_eq!(format_microseconds_to_time(time_text_to_micros("00:00").unwrap()), "00:00:00");
+        assert_eq!(format_microseconds_to_time(time_text_to_micros("23:59:59").unwrap()), "23:59:59");
+    }
+
+    #[test]
+    fn rejects_garbage_so_caller_passes_through() {
+        assert_eq!(time_text_to_micros("not a time"), None);
+        assert_eq!(time_text_to_micros(""), None);
+        assert_eq!(time_text_to_micros("   "), None);
+        assert_eq!(time_text_to_micros("25:00"), None);
+        assert_eq!(time_text_to_micros("08:75"), None);
+        assert_eq!(time_text_to_micros("08:30:99"), None);
+        assert_eq!(time_text_to_micros("2026-06-26"), None);
+    }
+}
+

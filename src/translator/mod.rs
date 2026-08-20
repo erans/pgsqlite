@@ -29,6 +29,12 @@ mod catalog_function_translator;
 mod pg_table_is_visible_translator;
 mod session_identifier_translator;
 mod sqlite_master_filter;
+mod escape_string_translator;
+mod ilike_translator;
+mod limit_translator;
+pub use escape_string_translator::EscapeStringTranslator;
+pub use ilike_translator::IlikeTranslator;
+pub use limit_translator::LimitTranslator;
 
 pub use json_translator::JsonTranslator;
 pub use returning_translator::ReturningTranslator;

@@ -140,6 +140,19 @@ impl PgSettingsHandler {
             ("statement_timeout", "0", "ms", "Client Connection Defaults", "Statement timeout", "user", "integer"),
             ("lock_timeout", "0", "ms", "Client Connection Defaults", "Lock timeout", "user", "integer"),
             ("idle_in_transaction_session_timeout", "0", "ms", "Client Connection Defaults", "Idle transaction timeout", "user", "integer"),
+            // === v38: pgjdbc 通过 pg_catalog.pg_settings 读取这些 preset。
+            // 带 pg_catalog. 前缀的查询会被路由到本 handler（而不是 SQLite 视图），
+            // 此前列表里缺 max_index_keys，pgjdbc getMaxIndexKeys() 拿到 0 行后抛
+            // "Unable to determine a value for MaxIndexKeys due to missing system
+            // catalog data"，导致 getImportedKeys / getExportedKeys（DBeaver 外键
+            // 标签页）整体不可用。取值与 SQLite 视图 (migration v33) 保持一致。
+            ("max_index_keys", "32", "", "Preset Options", "Maximum number of index keys", "internal", "integer"),
+            ("max_identifier_length", "63", "", "Preset Options", "Maximum identifier length", "internal", "integer"),
+            ("max_function_args", "100", "", "Preset Options", "Maximum function arguments", "internal", "integer"),
+            ("block_size", "8192", "", "Preset Options", "Database block size", "internal", "integer"),
+            ("segment_size", "131072", "8kB", "Preset Options", "Segment size", "internal", "integer"),
+            ("wal_block_size", "8192", "", "Preset Options", "WAL block size", "internal", "integer"),
+            ("wal_segment_size", "16MB", "", "Preset Options", "WAL segment size", "internal", "integer"),
         ];
 
         settings_data

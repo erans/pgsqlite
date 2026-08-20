@@ -108,8 +108,8 @@ async fn main() -> Result<()> {
 
     // Create TCP listener if not disabled
     let tcp_listener = if !config.no_tcp {
-        let listener = TcpListener::bind(("0.0.0.0", config.port)).await?;
-        info!("TCP server listening on port {}", config.port);
+        let listener = TcpListener::bind((config.bind_address.as_str(), config.port)).await?;
+        info!("TCP server listening on {}:{}", config.bind_address, config.port);
         Some(listener)
     } else {
         info!("TCP listener disabled, using Unix socket only");
@@ -427,8 +427,54 @@ where
     info!("Sent authentication and ready response to {}", connection_info);
 
     // Main message loop
+    // === PATCH v29e: PostgreSQL extended-protocol error recovery ===
+    // Once an error is reported inside an extended-query sequence the backend
+    // MUST discard every subsequent message until a Sync arrives, and only then
+    // emit a single ReadyForQuery. Answering the queued Describe/Bind/Execute
+    // shifts the whole frame stream by one message and the client aborts with
+    // "unexpected message from server".
+    let mut __v29e_error_state = false;
     while let Some(msg) = framed.next().await {
-        match msg? {
+        let __v29e_msg = msg?;
+
+        if __v29e_error_state {
+            match &__v29e_msg {
+                FrontendMessage::Sync => {
+                    __v29e_error_state = false;
+                    // Implicit rollback on Sync: clear any failed-transaction state.
+                    let cur = *session.transaction_status.read().await;
+                    if cur == TransactionStatus::InFailedTransaction {
+                        session.set_transaction_status(TransactionStatus::Idle).await;
+                    }
+                    framed
+                        .send(BackendMessage::ReadyForQuery {
+                            status: *session.transaction_status.read().await,
+                        })
+                        .await?;
+                    framed.flush().await?;
+                    continue;
+                }
+                // A simple Query reply is self-contained (it always ends with its
+                // own ReadyForQuery), so accepting it cannot desynchronise the
+                // stream. Being lenient here avoids hanging a client that skips
+                // Sync after a failed extended sequence.
+                FrontendMessage::Query(_) => {
+                    __v29e_error_state = false;
+                }
+                FrontendMessage::Terminate => {
+                    __v29e_error_state = false;
+                }
+                other => {
+                    debug!(
+                        "v29e: discarding {:?} from {} while skipping to Sync",
+                        other, connection_info
+                    );
+                    continue;
+                }
+            }
+        }
+
+        match __v29e_msg {
             FrontendMessage::Query(sql) => {
                 debug!("Received query from {}: {}", connection_info, sql);
 
@@ -458,7 +504,7 @@ where
                         // Query executed successfully
                     }
                     Err(e) => {
-                        error!("Query execution error: {}", e);
+                        error!("[QFAIL simple] {} || SQL: {}", e, sql);
                         
                         // If we're in a transaction, mark it as failed
                         // Let SQLAlchemy handle its own rollback to avoid double-rollback issues
@@ -500,9 +546,15 @@ where
                         "Rate limit exceeded".to_string(),
                     );
                     framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                    // === PATCH v29e: skip to Sync instead of answering the rest ===
+                    __v29e_error_state = true;
+                    framed.flush().await?;
                     continue;
                 }
 
+                // v29e: keep the SQL text for the [QFAIL] diagnostic; `query` is
+                // moved into handle_parse below.
+                let __qfail_sql = query.clone();
                 match ExtendedQueryHandler::handle_parse(
                     &mut framed,
                     &db_handler,
@@ -515,18 +567,22 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Parse error: {}", e);
+                        error!("[QFAIL parse] {} || SQL: {}", e, __qfail_sql);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Parse failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
@@ -550,23 +606,29 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Bind error: {}", e);
+                        error!("[QFAIL bind] {}", e);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Bind failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
             FrontendMessage::Execute { portal, max_rows } => {
                 info!("Received Execute from {}: portal={}, max_rows={}", connection_info, portal, max_rows);
+                // v29e: keep the portal name for the [QFAIL] diagnostic.
+                let __qfail_portal = portal.clone();
                 match ExtendedQueryHandler::handle_execute(
                     &mut framed,
                     &db_handler,
@@ -578,18 +640,22 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Execute error: {}", e);
+                        error!("[QFAIL execute] {} || portal: {}", e, __qfail_portal);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Execute failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
@@ -598,18 +664,22 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Describe error: {}", e);
+                        error!("[QFAIL describe] {}", e);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Describe failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
@@ -624,21 +694,36 @@ where
                             format!("Close failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
             FrontendMessage::Sync => {
+                // PostgreSQL implicitly rolls back a FAILED transaction on Sync.
+                // Reset to Idle so a later query is not rejected with
+                // "current transaction is aborted" (which pgjdbc surfaces as
+                // "unexpected message from server"). An explicit transaction
+                // (InTransaction) must survive Sync, so only InFailedTransaction
+                // is cleared here.
+                let cur = *session.transaction_status.read().await;
+                if cur == TransactionStatus::InFailedTransaction {
+                    session.set_transaction_status(TransactionStatus::Idle).await;
+                }
                 // Send ReadyForQuery to indicate we're ready for more commands
                 framed
                     .send(BackendMessage::ReadyForQuery {
                         status: *session.transaction_status.read().await,
                     })
                     .await?;
+                framed.flush().await?;
             }
             FrontendMessage::Flush => {
                 // Flush any pending messages

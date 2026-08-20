@@ -16,13 +16,13 @@ impl SystemFunctions {
         db: Arc<DbHandler>,
     ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
         match function_name.to_lowercase().as_str() {
-            "pg_get_constraintdef" => Self::pg_get_constraintdef(args, db).await,
+            "pg_get_constraintdef" => Ok(None), // PATCH v13: handled by SQLite UDF
             "pg_table_is_visible" => Self::pg_table_is_visible(args, db).await,
-            "format_type" => Self::format_type(args, db).await,
-            "pg_get_expr" => Self::pg_get_expr(args, db).await,
+            "format_type" => Ok(None), // PATCH v13: handled by SQLite UDF
+            "pg_get_expr" => Ok(None), // PATCH v13: handled by SQLite UDF
             "pg_get_userbyid" => Self::pg_get_userbyid(args).await,
-            "pg_get_indexdef" => Self::pg_get_indexdef(args, db).await,
-            "to_regtype" => Self::to_regtype(args, db).await,
+            "pg_get_indexdef" => Ok(None), // PATCH v13: handled by SQLite UDF
+            "to_regtype" => Ok(None), // PATCH v13: handled by SQLite UDF
             "pg_size_pretty" => Self::pg_size_pretty(args).await,
             _ => Ok(None), // Unknown function, let it pass through
         }

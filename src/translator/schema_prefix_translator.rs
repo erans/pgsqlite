@@ -6,116 +6,338 @@ use tracing::debug;
 /// but SQLite doesn't support schemas, so we need to strip the prefix
 pub struct SchemaPrefixTranslator;
 
-/// Case-insensitively replace every occurrence of `needle` with `replacement`,
-/// skipping SQL string literals (`'...'`) and quoted identifiers (`"..."`).
-///
-/// A blind `str::replace` rewrites matches inside literals, so
-/// `SELECT 'information_schema.tables'` used to come back corrupted and a
-/// `WHERE msg = 'see pg_catalog.pg_class'` used to stop matching stored rows.
-/// Matching is also case-insensitive because the catalog interceptor's gate is,
-/// so spellings like `Information_Schema.Tables` reach this translator and must
-/// not fall through untranslated to SQLite.
-///
-/// `needle` must be ASCII. Single left-to-right scan; everything outside a
-/// replaced span is preserved byte for byte.
-///
-/// INVARIANT: callers must strip SQL comments first. This scanner does not
-/// recognize `--` or `/* */`, so an apostrophe inside a comment (`-- don't`)
-/// would leave it believing the rest of the query is one long string literal
-/// and silently skip every real qualifier after it. `strip_sql_comments` runs
-/// ahead of this translator on both entry paths (`query::executor` and
-/// `query::extended`) and is itself literal-aware, which is what makes that
-/// unreachable today.
-fn replace_outside_literals(input: &str, needle: &str, replacement: &str) -> String {
-    debug_assert!(needle.is_ascii(), "needle must be ASCII for case-insensitive matching");
-    if needle.is_empty() || input.len() < needle.len() {
-        return input.to_string();
-    }
-
-    let bytes = input.as_bytes();
-    let needle = needle.as_bytes();
-    let mut out = String::with_capacity(input.len());
-    // Everything in `input[..copied]` has already been emitted into `out`.
-    let mut copied = 0usize;
-    let mut i = 0usize;
-
-    while i < bytes.len() {
-        let quote = bytes[i];
-        if quote == b'\'' || quote == b'"' {
-            // Skip the whole quoted span, honoring the SQL doubled-quote escape
-            // ('it''s' is one literal). Unterminated spans run to end of input,
-            // which leaves them untouched -- the parser rejects them later.
-            i += 1;
-            while i < bytes.len() {
-                if bytes[i] == quote {
-                    if bytes.get(i + 1) == Some(&quote) {
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            continue;
-        }
-
-        if bytes.len() - i >= needle.len() && bytes[i..i + needle.len()].eq_ignore_ascii_case(needle)
-        {
-            out.push_str(&input[copied..i]);
-            out.push_str(replacement);
-            i += needle.len();
-            copied = i;
-            continue;
-        }
-
-        i += 1;
-    }
-
-    out.push_str(&input[copied..]);
-    out
-}
-
 impl SchemaPrefixTranslator {
     /// Translate a query string by removing schema prefixes
     pub fn translate_query(query: &str) -> String {
-        let mut result = query.to_string();
+        // === PATCH v5: generic `pg_catalog.` stripping ===
+        // The previous implementation matched a hard-coded whitelist of 10 tables
+        // and 14 functions, so every other catalog object (pg_proc, pg_description,
+        // pg_settings, pg_roles, pg_database, pg_depend, pg_trigger, ...) reached
+        // SQLite still qualified and failed with "no such table". SQLite has no
+        // schema namespace at all, so the qualifier can always be dropped.
+        let result = Self::strip_pg_catalog_prefix(query);
+        let result = Self::rewrite_information_schema_views(&result);
 
-        // List of known pg_catalog tables that we have views for
-        let catalog_tables = [
-            "pg_class", "pg_namespace", "pg_attribute", "pg_type",
-            "pg_constraint", "pg_index", "pg_attrdef", "pg_am",
-            "pg_enum", "pg_range"
-        ];
+        // === PATCH v22: PostgreSQL LIMIT/OFFSET semantics ===
+        // Covers the paths that do not go through execute_select:
+        // query_interceptor.rs, unified_processor.rs and lazy_processor.rs all
+        // funnel through translate_query. Rewriting twice is harmless (idempotent).
+        let result = match crate::translator::LimitTranslator::translate(&result) {
+            Some(rewritten) => rewritten,
+            None => result,
+        };
+        
+        // === PATCH v27: DBeaver qualifies tables with `public.` ===
+        // SQLite has no schema namespace; `public.bath_records` raises
+        // "no such table". Drop the qualifier everywhere it is not inside a
+        // literal / quoted identifier (e.g. nspname = 'public' is untouched).
+        let result = Self::strip_public_prefix(&result);
 
-        for table in &catalog_tables {
-            // Replace pg_catalog.table with just table
-            result = replace_outside_literals(&result, &format!("pg_catalog.{table}"), table);
-        }
-
-        // Also remove schema prefix from functions
-        let catalog_functions = [
-            "pg_table_is_visible", "pg_get_userbyid", "pg_get_constraintdef",
-            "format_type", "pg_get_expr", "pg_get_indexdef", "version",
-            "current_database", "current_schema", "current_user", "session_user",
-            "pg_backend_pid", "pg_is_in_recovery", "current_schemas"
-        ];
-
-        for func in &catalog_functions {
-            result = replace_outside_literals(&result, &format!("pg_catalog.{func}"), func);
-        }
-
-        // information_schema relations exist as SQLite views with underscores.
-        // Rewriting here routes them to the views through the interceptor's
-        // fall-through path, the same way pg_catalog.* reaches pg_class.
-        // Only the two relations served by views; the rest still have handlers.
-        result = replace_outside_literals(&result, "information_schema.tables", "information_schema_tables");
-        result = replace_outside_literals(&result, "information_schema.columns", "information_schema_columns");
+        // === PATCH v27: DBeaver index query uses JOIN LATERAL unnest ===
+        let result = match crate::translator::UnnestTranslator::translate_unnest(&result) {
+            Ok(rewritten) => rewritten,
+            Err(_) => result,
+        };
 
         debug!("Schema prefix translation: {} -> {}", query, result);
         result
     }
 
+    /// Drop every `public.` qualifier that is not inside a string literal or a
+    /// quoted identifier. `public.bath_records` -> `bath_records`; the literal
+    /// `'public'` in `nspname = 'public'` is left alone.
+    /// Drop every `public.` qualifier that is not inside a string literal or a
+    /// quoted identifier. `public.bath_records` -> `bath_records`; the literal
+    /// `'public'` in `nspname = 'public'` is left alone.
+    /// NOTE: cannot reuse replace_ident_outside_literals -- that helper refuses
+    /// to replace when the next char is an identifier char, and `public.<table>`
+    /// always has one (public.bath_records). This mirrors strip_pg_catalog_prefix.
+    pub fn strip_public_prefix(query: &str) -> String {
+        let chars: Vec<char> = query.chars().collect();
+        let n = chars.len();
+        let mut out = String::with_capacity(query.len());
+        let mut i = 0usize;
+        let mut prev_ident = false;
+        let dq = 0x22 as char;
+        let sq = 0x27 as char;
+        let target: [char; 6] = ['p', 'u', 'b', 'l', 'i', 'c'];
+
+        while i < n {
+            let c = chars[i];
+
+            // 1) single-quoted string literal: copy verbatim
+            if c == sq {
+                out.push(c);
+                i += 1;
+                while i < n {
+                    let lc = chars[i];
+                    out.push(lc);
+                    i += 1;
+                    if lc == sq {
+                        break;
+                    }
+                }
+                prev_ident = false;
+                continue;
+            }
+
+            // 2) double-quoted identifier
+            if c == dq {
+                let mut j = i + 1;
+                let mut ident = String::new();
+                let mut closed = false;
+                while j < n {
+                    if chars[j] == dq {
+                        if j + 1 < n && chars[j + 1] == dq {
+                            ident.push(dq);
+                            j += 2;
+                            continue;
+                        }
+                        closed = true;
+                        break;
+                    }
+                    ident.push(chars[j]);
+                    j += 1;
+                }
+                if closed && ident.eq_ignore_ascii_case("public") {
+                    let mut k = j + 1;
+                    while k < n && chars[k].is_whitespace() {
+                        k += 1;
+                    }
+                    if k < n && chars[k] == '.' {
+                        k += 1;
+                        while k < n && chars[k].is_whitespace() {
+                            k += 1;
+                        }
+                        i = k;
+                        prev_ident = false;
+                        continue;
+                    }
+                }
+                let end = if closed { j + 1 } else { n };
+                for ci in i..end {
+                    out.push(chars[ci]);
+                }
+                i = end;
+                prev_ident = true;
+                continue;
+            }
+
+            // 3) bare public followed by optional ws + '.'
+            if !prev_ident && (c == 'p' || c == 'P') && i + 6 <= n {
+                let mut matched = true;
+                for (o, tc) in target.iter().enumerate() {
+                    if chars[i + o].to_ascii_lowercase() != *tc {
+                        matched = false;
+                        break;
+                    }
+                }
+                if matched {
+                    let mut k = i + 6;
+                    while k < n && chars[k].is_whitespace() {
+                        k += 1;
+                    }
+                    if k < n && chars[k] == '.' {
+                        k += 1;
+                        while k < n && chars[k].is_whitespace() {
+                            k += 1;
+                        }
+                        i = k;
+                        prev_ident = false;
+                        continue;
+                    }
+                }
+            }
+
+            out.push(c);
+            prev_ident = c.is_alphanumeric() || c == '_';
+            i += 1;
+        }
+
+        out
+    }
+    
+    /// Remove every `pg_catalog.` qualifier that is not inside a string literal
+    /// or a quoted identifier, and that is not part of a longer identifier
+    /// (e.g. `my_pg_catalog.foo` is left untouched). Case-insensitive.
+
+    /// === PATCH v19 ===
+    /// SQLite has no schema namespace, so `information_schema.foo` never resolves and
+    /// raises "no such table", which aborts the whole transaction and takes the GUI
+    /// metadata scan down with it.
+    ///
+    /// Objects still served by the Rust catalog handler MUST keep the dotted form --
+    /// rewriting them would silently swap a populated handler result for an empty
+    /// SQLite view (that is exactly the v18 regression on table_constraints /
+    /// key_column_usage, 33 rows -> 0 rows). Only the objects that migration v33
+    /// materialised as real views are rewritten here.
+    const V33_ISCHEMA_VIEWS: &[&str] = &[
+        "applicable_roles",
+        "character_sets",
+        "collations",
+        "column_privileges",
+        "column_udt_usage",
+        "constraint_column_usage",
+        "domain_constraints",
+        "domains",
+        "element_types",
+        "enabled_roles",
+        "information_schema_catalog_name",
+        "parameters",
+        "role_table_grants",
+        "sequences",
+        "table_privileges",
+        "view_column_usage",
+        "view_table_usage",
+
+        // === PATCH v23: v14-era information_schema views ===
+        // Migration v14 created real SQLite views for these six objects, but
+        // the rewrite whitelist never included them, so
+        // information_schema.tables & co. were never rewritten to
+        // information_schema_tables & co. Aggregate / grouped / ordered
+        // queries over them were therefore hijacked by the single-table
+        // handlers (count(*) -> N rows of NULL, ORDER BY dropped). Keep in
+        // sync with ISCHEMA_SQLITE_RESOLVABLE in query_interceptor.rs.
+        "tables",
+        "columns",
+        "schemata",
+        "key_column_usage",
+        "table_constraints",
+        "referential_constraints"
+    ];
+
+    fn rewrite_information_schema_views(query: &str) -> String {
+        let mut out = query.to_string();
+        for obj in Self::V33_ISCHEMA_VIEWS {
+            let needle = format!("information_schema.{obj}");
+            let repl = format!("information_schema_{obj}");
+            out = Self::replace_ident_outside_literals(&out, &needle, &repl);
+        }
+        out
+    }
+
+    /// Replace `needle` with `repl` only when it appears as a standalone identifier:
+    /// not inside a string literal or quoted identifier, and not glued to surrounding
+    /// identifier characters on either side.
+    fn replace_ident_outside_literals(query: &str, needle: &str, repl: &str) -> String {
+        let mut out = String::with_capacity(query.len());
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut prev_ident_char = false;
+        let mut skip_until = 0usize;
+
+        for (idx, c) in query.char_indices() {
+            if idx < skip_until {
+                continue;
+            }
+            if in_single {
+                out.push(c);
+                if c == '\'' {
+                    in_single = false;
+                }
+                continue;
+            }
+            if in_double {
+                out.push(c);
+                if c == '"' {
+                    in_double = false;
+                }
+                continue;
+            }
+            match c {
+                '\'' => {
+                    in_single = true;
+                    out.push(c);
+                    prev_ident_char = false;
+                }
+                '"' => {
+                    in_double = true;
+                    out.push(c);
+                    prev_ident_char = false;
+                }
+                _ => {
+                    // NOTE: every slice below is guarded by is_char_boundary first --
+                    // slicing on a non-boundary would panic on multi-byte input.
+                    let end = idx + needle.len();
+                    let matched = !prev_ident_char
+                        && end <= query.len()
+                        && query.is_char_boundary(end)
+                        && query[idx..end].eq_ignore_ascii_case(needle)
+                        && query[end..]
+                            .chars()
+                            .next()
+                            .map(|n| !(n.is_alphanumeric() || n == '_'))
+                            .unwrap_or(true);
+                    if matched {
+                        out.push_str(repl);
+                        skip_until = end;
+                        prev_ident_char = true;
+                        continue;
+                    }
+                    out.push(c);
+                    prev_ident_char = c.is_alphanumeric() || c == '_';
+                }
+            }
+        }
+        out
+    }
+
+    fn strip_pg_catalog_prefix(query: &str) -> String {
+        const PREFIX: &str = "pg_catalog.";
+        let mut out = String::with_capacity(query.len());
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut prev_ident_char = false;
+        let mut skip_until = 0usize;
+        
+        for (idx, c) in query.char_indices() {
+            if idx < skip_until {
+                continue;
+            }
+            if in_single {
+                out.push(c);
+                if c == '\'' {
+                    in_single = false;
+                }
+                continue;
+            }
+            if in_double {
+                out.push(c);
+                if c == '"' {
+                    in_double = false;
+                }
+                continue;
+            }
+            match c {
+                '\'' => {
+                    in_single = true;
+                    out.push(c);
+                    prev_ident_char = false;
+                }
+                '"' => {
+                    in_double = true;
+                    out.push(c);
+                    prev_ident_char = false;
+                }
+                _ => {
+                    let end = idx + PREFIX.len();
+                    if !prev_ident_char
+                        && end <= query.len()
+                        && query.is_char_boundary(end)
+                        && query[idx..end].eq_ignore_ascii_case(PREFIX)
+                    {
+                        skip_until = end;
+                        prev_ident_char = false;
+                        continue;
+                    }
+                    out.push(c);
+                    prev_ident_char = c.is_ascii_alphanumeric() || c == '_';
+                }
+            }
+        }
+        out
+    }
+    
     /// Translate an AST by removing schema prefixes
     pub fn translate_statement(stmt: &mut Statement) -> Result<(), sqlparser::parser::ParserError> {
         match stmt {
@@ -160,20 +382,8 @@ impl SchemaPrefixTranslator {
             if schema_name == "pg_catalog" {
                 // Replace with just the table name
                 name.0 = vec![table.clone()];
-            } else if schema_name == "information_schema" {
-                // The two relations served by SQLite views are rewritten to
-                // their underscore names; the rest keep their Rust handlers.
-                let table_name = match table {
-                    ObjectNamePart::Identifier(ident) => ident.value.to_lowercase(),
-                };
-                if table_name == "tables" || table_name == "columns" {
-                    let mut ident = match table {
-                        ObjectNamePart::Identifier(ident) => ident.clone(),
-                    };
-                    ident.value = format!("information_schema_{table_name}");
-                    name.0 = vec![ObjectNamePart::Identifier(ident)];
-                }
             }
+            // Don't remove information_schema prefix - it's handled by query interceptor
         }
     }
 }
@@ -203,111 +413,150 @@ mod tests {
         assert_eq!(translated, "SELECT * FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid");
     }
 
+    // === PATCH v27: public. schema prefix
     #[test]
-    fn test_information_schema_tables_rewrite() {
-        let query = "SELECT table_name FROM information_schema.tables ORDER BY 1";
-        let translated = SchemaPrefixTranslator::translate_query(query);
-        assert_eq!(translated, "SELECT table_name FROM information_schema_tables ORDER BY 1");
+    fn v27_strip_public_prefix_from_table() {
+        assert_eq!(SchemaPrefixTranslator::strip_public_prefix(
+            "SELECT * FROM public.bath_records WHERE id = 1"),
+            "SELECT * FROM bath_records WHERE id = 1");
     }
 
     #[test]
-    fn test_information_schema_columns_rewrite() {
-        let query = "SELECT * FROM information_schema.columns";
-        let translated = SchemaPrefixTranslator::translate_query(query);
-        assert_eq!(translated, "SELECT * FROM information_schema_columns");
+    fn v27_public_prefix_keeps_literals() {
+        assert_eq!(SchemaPrefixTranslator::strip_public_prefix(
+            "SELECT * FROM users WHERE nspname = 'public'"),
+            "SELECT * FROM users WHERE nspname = 'public'");
     }
 
-    /// Relations that still have Rust handlers must not be rewritten -- there is
-    /// no `information_schema_routines` view to fall through to.
     #[test]
-    fn test_other_information_schema_relations_are_untouched() {
-        for relation in ["routines", "views", "triggers", "check_constraints"] {
-            let query = format!("SELECT * FROM information_schema.{relation}");
-            assert_eq!(SchemaPrefixTranslator::translate_query(&query), query);
-        }
+    fn v27_public_prefix_join_and_alias() {
+        assert_eq!(SchemaPrefixTranslator::strip_public_prefix(
+            "SELECT u.id FROM public.users u JOIN public.orders o ON o.user_id = u.id"),
+            "SELECT u.id FROM users u JOIN orders o ON o.user_id = u.id");
     }
 
-    /// `table_constraints` shares a prefix with `tables` -- verify no collision.
     #[test]
-    fn test_table_constraints_is_not_caught_by_the_tables_rewrite() {
-        let query = "SELECT * FROM information_schema.table_constraints";
-        assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
+    fn v27_public_prefix_quoted_identifier_safe() {
+        assert_eq!(SchemaPrefixTranslator::strip_public_prefix(
+            "SELECT * FROM \"public.t\" WHERE x = 1"),
+            "SELECT * FROM \"public.t\" WHERE x = 1");
     }
+}
 
-    /// The catalog interceptor gates on a lowercased query, so mixed-case
-    /// spellings reach the translator and must not fall through to SQLite.
+#[cfg(test)]
+mod v23_ischema_rewrite_tests {
+    use super::*;
+
     #[test]
-    fn test_mixed_case_schema_qualifiers_are_rewritten() {
-        for query in [
-            "SELECT * FROM Information_Schema.Tables",
-            "SELECT * FROM information_schema.TABLES",
-            "SELECT * FROM INFORMATION_SCHEMA.tables",
-            "SELECT * FROM INFORMATION_SCHEMA.TABLES",
-        ] {
-            assert_eq!(
-                SchemaPrefixTranslator::translate_query(query),
-                "SELECT * FROM information_schema_tables",
-                "failed for {query}"
-            );
-        }
-
-        assert_eq!(
-            SchemaPrefixTranslator::translate_query("SELECT * FROM Information_Schema.Columns"),
-            "SELECT * FROM information_schema_columns"
+    fn v23_tables_rewritten_to_underscore_view() {
+        let translated = SchemaPrefixTranslator::translate_query(
+            "SELECT count(*) FROM information_schema.tables",
         );
-        assert_eq!(
-            SchemaPrefixTranslator::translate_query("SELECT * FROM Pg_Catalog.Pg_Class"),
-            "SELECT * FROM pg_class"
+        assert_eq!(translated, "SELECT count(*) FROM information_schema_tables");
+    }
+
+    #[test]
+    fn v23_columns_rewritten_to_underscore_view() {
+        let translated = SchemaPrefixTranslator::translate_query(
+            "SELECT count(*) FROM information_schema.columns",
         );
+        assert_eq!(translated, "SELECT count(*) FROM information_schema_columns");
     }
 
-    /// A blind `str::replace` rewrote matches inside string literals, silently
-    /// corrupting stored SQL text and breaking equality comparisons.
     #[test]
-    fn test_string_literals_are_not_rewritten() {
-        for query in [
-            "SELECT 'information_schema.tables' AS s",
-            "SELECT 'information_schema.columns' AS s",
-            "SELECT 'pg_catalog.pg_class' AS s",
-            "INSERT INTO notes (msg) VALUES ('see information_schema.tables for details')",
-            "SELECT * FROM notes WHERE msg = 'see pg_catalog.pg_class for details'",
-        ] {
-            assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
-        }
+    fn v23_routines_not_rewritten() {
+        // routines has no SQLite view (handler only) -> stays on handler path.
+        let translated = SchemaPrefixTranslator::translate_query(
+            "SELECT count(*) FROM information_schema.routines",
+        );
+        assert_eq!(translated, "SELECT count(*) FROM information_schema.routines");
     }
+}
 
-    /// `'it''s'` is one literal, not two -- a naive scan would treat the text
-    /// after the doubled quote as unquoted and rewrite it.
+
+#[cfg(test)]
+mod v29_public_quoted_tests {
+    use super::*;
+
     #[test]
-    fn test_doubled_quote_escape_keeps_the_literal_intact() {
-        let query = "SELECT 'it''s information_schema.tables' AS s";
-        assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
-    }
-
-    /// Double quotes are identifier quoting in PostgreSQL, so a quoted
-    /// identifier is one literal name and never a schema qualifier.
-    #[test]
-    fn test_quoted_identifiers_are_not_rewritten() {
-        let query = r#"SELECT * FROM "information_schema.tables""#;
-        assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
-
-        let query = r#"SELECT * FROM "pg_catalog.pg_class""#;
-        assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
-    }
-
-    /// Text outside the replaced spans, including non-ASCII, is preserved.
-    #[test]
-    fn test_rewrites_outside_literals_still_happen_alongside_literals() {
-        let query = "SELECT 'information_schema.tables' AS lbl FROM information_schema.tables WHERE table_name = 'naïve.pg_catalog.pg_class'";
+    fn strips_quoted_public_prefix() {
         assert_eq!(
-            SchemaPrefixTranslator::translate_query(query),
-            "SELECT 'information_schema.tables' AS lbl FROM information_schema_tables WHERE table_name = 'naïve.pg_catalog.pg_class'"
+            SchemaPrefixTranslator::strip_public_prefix(r#"SELECT * FROM "public"."bath_records" LIMIT 100"#),
+            r#"SELECT * FROM "bath_records" LIMIT 100"#
         );
     }
 
     #[test]
-    fn test_unterminated_literal_is_left_alone() {
-        let query = "SELECT 'information_schema.tables";
-        assert_eq!(SchemaPrefixTranslator::translate_query(query), query);
+    fn leaves_quoted_public_as_column_alone() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix(r#"SELECT "public" FROM t"#),
+            r#"SELECT "public" FROM t"#
+        );
+    }
+
+    #[test]
+    fn strips_unquoted_public_prefix_still() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix("SELECT * FROM public.bath_records"),
+            "SELECT * FROM bath_records"
+        );
+    }
+
+    #[test]
+    fn leaves_public_literal_alone() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix("SELECT * FROM t WHERE nspname = 'public'"),
+            "SELECT * FROM t WHERE nspname = 'public'"
+        );
+    }
+
+    #[test]
+    fn strips_quoted_public_with_unquoted_table() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix(r#"SELECT * FROM "public".bath_records"#),
+            "SELECT * FROM bath_records"
+        );
+    }
+
+    #[test]
+    fn strips_unquoted_public_with_quoted_table() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix("SELECT * FROM public.\"bath_records\" LIMIT 5"),
+            "SELECT * FROM \"bath_records\" LIMIT 5"
+        );
+    }
+
+    #[test]
+    fn strips_unquoted_public_with_limit() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix("SELECT * FROM public.bath_records LIMIT 5"),
+            "SELECT * FROM bath_records LIMIT 5"
+        );
+    }
+
+    #[test]
+    fn strips_multiple_public_prefixes_in_join() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix(
+                "SELECT a.id FROM public.a a JOIN \"public\".\"b\" b ON a.id = b.id"
+            ),
+            "SELECT a.id FROM a a JOIN \"b\" b ON a.id = b.id"
+        );
+    }
+
+    #[test]
+    fn leaves_republic_word_alone() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix("SELECT republic.id FROM republic"),
+            "SELECT republic.id FROM republic"
+        );
+    }
+
+    #[test]
+    fn leaves_public_literal_containing_dot_alone() {
+        assert_eq!(
+            SchemaPrefixTranslator::strip_public_prefix("SELECT * FROM t WHERE x = 'public.bath_records'"),
+            "SELECT * FROM t WHERE x = 'public.bath_records'"
+        );
     }
 }
