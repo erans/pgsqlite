@@ -307,6 +307,15 @@ fn encode_empty_query_response(dst: &mut BytesMut) {
 }
 
 fn encode_error_response(err: ErrorResponse, dst: &mut BytesMut) {
+    // === PATCH v29e: catch-all audit of every ErrorResponse put on the wire.
+    // Without this, SQLite rejections were invisible server-side and the log
+    // looked clean while DBeaver was drowning in errors.
+    tracing::warn!(
+        "[QFAIL wire] severity={} code={} msg={}",
+        err.severity,
+        err.code,
+        err.message
+    );
     dst.put_u8(b'E');
     let len_pos = dst.len();
     dst.put_i32(0); // Placeholder

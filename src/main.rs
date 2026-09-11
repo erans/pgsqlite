@@ -42,47 +42,71 @@ async fn main() -> Result<()> {
     if config.in_memory {
         info!("Using in-memory SQLite database (testing mode)");
     }
-    let db_path = config.resolve_db_path();
+
+    // Ordered list of (database_name, sqlite_path) served by this process
+    let registry_list = config.database_registry();
 
     // Handle migration command
     if config.migrate {
         info!("Running database migrations...");
-        
-        // Open connection directly for migration
-        let conn = rusqlite::Connection::open(&db_path)
-            .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))?;
+        for (name, path) in &registry_list {
+            info!("Migrating database {} ({})", name, path);
 
-        // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
-        // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
-        // so a future default change or defensive-mode setting can't silently break those views.
-        conn.execute_batch("PRAGMA trusted_schema=ON;")
-            .map_err(|e| anyhow::anyhow!("Failed to set trusted_schema pragma: {}", e))?;
+            // Open connection directly for migration
+            let conn = rusqlite::Connection::open(path)
+                .map_err(|e| anyhow::anyhow!("Failed to open database {}: {}", name, e))?;
 
-        // Register functions needed for migrations
-        pgsqlite::functions::register_all_functions(&conn)
-            .map_err(|e| anyhow::anyhow!("Failed to register functions: {}", e))?;
-        
-        let mut runner = MigrationRunner::new(conn);
-        match runner.run_pending_migrations() {
-            Ok(applied) => {
-                if applied.is_empty() {
-                    info!("No pending migrations. Database is up to date.");
-                } else {
-                    info!("Successfully applied {} migrations: {:?}", applied.len(), applied);
+            // pragma_table_info() is a virtual table; views (e.g. pg_class.relnatts) that call it
+            // require trusted_schema=ON. It defaults to ON in the C API, but pin it explicitly
+            // so a future default change or defensive-mode setting can't silently break those views.
+            conn.execute_batch("PRAGMA trusted_schema=ON;")
+                .map_err(|e| anyhow::anyhow!("Failed to set trusted_schema pragma: {}", e))?;
+
+            // Register functions needed for migrations
+            pgsqlite::functions::register_all_functions(&conn)
+                .map_err(|e| anyhow::anyhow!("Failed to register functions: {}", e))?;
+
+            let mut runner = MigrationRunner::new(conn);
+            match runner.run_pending_migrations() {
+                Ok(applied) => {
+                    if applied.is_empty() {
+                        info!("No pending migrations for {}. Database is up to date.", name);
+                    } else {
+                        info!("Successfully applied {} migrations for {}: {:?}", applied.len(), name, applied);
+                    }
                 }
-                std::process::exit(0);
-            }
-            Err(e) => {
-                error!("Migration failed: {}", e);
-                std::process::exit(1);
+                Err(e) => {
+                    error!("Migration failed for {}: {}", name, e);
+                    std::process::exit(1);
+                }
             }
         }
+        std::process::exit(0);
     }
 
-    // Initialize database handler with direct executor
-    let db_handler = Arc::new(
-        DbHandler::new_with_config(&db_path, &config)
-            .map_err(|e| anyhow::anyhow!("Failed to create database handler: {}", e))?,
+    // Initialize one database handler per registered database (independent SQLite connections)
+    let mut db_handlers: std::collections::HashMap<String, Arc<DbHandler>> = std::collections::HashMap::new();
+    for (name, path) in &registry_list {
+        info!("Opening database {} ({})", name, path);
+        let handler = Arc::new(
+            DbHandler::new_with_config(path, &config)
+                .map_err(|e| anyhow::anyhow!("Failed to create database handler for {} ({}): {}", name, path, e))?,
+        );
+        db_handlers.insert(name.clone(), handler);
+    }
+
+    // Sync the full database registry into every file's __pgsqlite_databases table so
+    // pg_database (view over that table) lists all databases from any connection.
+    if let Err(e) = sync_database_registry(&registry_list) {
+        error!("Failed to sync database registry into files: {}", e);
+    }
+
+    let db_registry: Arc<std::collections::HashMap<String, Arc<DbHandler>>> = Arc::new(db_handlers);
+
+    // Publish the ordered database names process-wide so catalog handlers
+    // (e.g. pg_database) can list every database served by this process.
+    pgsqlite::catalog::query_interceptor::set_database_registry(
+        registry_list.iter().map(|(n, _)| n.clone()).collect(),
     );
 
     // Unix socket setup (only on Unix platforms)
@@ -108,8 +132,8 @@ async fn main() -> Result<()> {
 
     // Create TCP listener if not disabled
     let tcp_listener = if !config.no_tcp {
-        let listener = TcpListener::bind(("0.0.0.0", config.port)).await?;
-        info!("TCP server listening on port {}", config.port);
+        let listener = TcpListener::bind((config.bind_address.as_str(), config.port)).await?;
+        info!("TCP server listening on {}:{}", config.bind_address, config.port);
         Some(listener)
     } else {
         info!("TCP listener disabled, using Unix socket only");
@@ -171,7 +195,7 @@ async fn main() -> Result<()> {
     #[cfg(unix)]
     {
         loop {
-            let db_handler = db_handler.clone();
+            let db_registry = db_registry.clone();
             
             tokio::select! {
                 // Handle TCP connections
@@ -184,10 +208,10 @@ async fn main() -> Result<()> {
                 } => {
                     if let Ok((stream, addr)) = result {
                         info!("New TCP connection from {}", addr);
-                        let db_handler = db_handler.clone();
+                        let db_registry = db_registry.clone();
                         let tls_acceptor = tls_acceptor.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_tcp_connection(stream, addr, db_handler, tls_acceptor).await {
+                            if let Err(e) = handle_tcp_connection(stream, addr, db_registry, tls_acceptor).await {
                                 error!("TCP connection error from {}: {}", addr, e);
                             }
                         });
@@ -198,9 +222,9 @@ async fn main() -> Result<()> {
                 result = unix_listener.accept() => {
                     if let Ok((stream, _addr)) = result {
                         info!("New Unix socket connection");
-                        let db_handler = db_handler.clone();
+                        let db_registry = db_registry.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = handle_unix_connection(stream, db_handler).await {
+                            if let Err(e) = handle_unix_connection(stream, db_registry).await {
                                 error!("Unix socket connection error: {}", e);
                             }
                         });
@@ -214,32 +238,56 @@ async fn main() -> Result<()> {
     {
         // Windows/non-Unix: only handle TCP connections
         loop {
-            let db_handler = db_handler.clone();
+            let db_registry = db_registry.clone();
             
             if let Some(ref listener) = tcp_listener {
                 if let Ok((stream, addr)) = listener.accept().await {
                     info!("New TCP connection from {}", addr);
-                    let db_handler = db_handler.clone();
+                    let db_registry = db_registry.clone();
                     let tls_acceptor = tls_acceptor.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_tcp_connection(stream, addr, db_handler, tls_acceptor).await {
+                        if let Err(e) = handle_tcp_connection(stream, addr, db_registry, tls_acceptor).await {
                             error!("TCP connection error from {}: {}", addr, e);
                         }
                     });
                 }
             } else {
                 // No TCP listener and no Unix sockets on Windows
-                error!("No listeners available on Windows when TCP is disabled");
-                return Err(anyhow::anyhow!("Cannot run without TCP on Windows"));
-            }
+            error!("No listeners available on Windows when TCP is disabled");
+            return Err(anyhow::anyhow!("Cannot run without TCP on Windows"));
         }
     }
+}
+
+/// Populate every file's `__pgsqlite_databases` table with the full registry so that
+/// `pg_database` (a view over that table) lists all databases from any connection.
+fn sync_database_registry(registry: &[(String, String)]) -> Result<()> {
+    for (_, path) in registry {
+        let conn = rusqlite::Connection::open(path)
+            .map_err(|e| anyhow::anyhow!("Failed to open {} for registry sync: {}", path, e))?;
+        // Views over pragma_table_info() require trusted_schema=ON (same as migrations)
+        conn.execute_batch("PRAGMA trusted_schema=ON;")
+            .map_err(|e| anyhow::anyhow!("Failed to set trusted_schema: {}", e))?;
+        conn.execute("DELETE FROM __pgsqlite_databases", [])
+            .map_err(|e| anyhow::anyhow!("Failed to clear registry in {}: {}", path, e))?;
+        for (idx, (name, _)) in registry.iter().enumerate() {
+            conn.execute(
+                "INSERT OR REPLACE INTO __pgsqlite_databases (oid, datname) VALUES (?1, ?2)",
+                rusqlite::params![idx as i64 + 1, name],
+            )
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to insert registry row for {} in {}: {}", name, path, e)
+            })?;
+        }
+    }
+    Ok(())
+}
 }
 
 async fn handle_tcp_connection(
     stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
-    db_handler: Arc<DbHandler>,
+    db_registry: Arc<std::collections::HashMap<String, Arc<DbHandler>>>,
     tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     info!("Handling TCP connection from {}", addr);
@@ -259,7 +307,7 @@ async fn handle_tcp_connection(
     stream.set_nodelay(true)?;
 
     // Always handle potential SSL requests, even if SSL is disabled
-    match handle_ssl_negotiation(stream, addr, db_handler, tls_acceptor).await {
+    match handle_ssl_negotiation(stream, addr, db_registry, tls_acceptor).await {
         Ok(()) => Ok(()),
         Err(e) => {
             // Record failure for circuit breaker
@@ -272,7 +320,7 @@ async fn handle_tcp_connection(
 async fn handle_ssl_negotiation(
     mut stream: tokio::net::TcpStream,
     addr: std::net::SocketAddr,
-    db_handler: Arc<DbHandler>,
+    db_registry: Arc<std::collections::HashMap<String, Arc<DbHandler>>>,
     tls_acceptor: Option<TlsAcceptor>,
 ) -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -300,7 +348,7 @@ async fn handle_ssl_negotiation(
             events::connection_accepted(addr.ip(), true);
 
             // Handle the connection with TLS
-            handle_connection_generic(tls_stream, &addr.to_string(), db_handler).await
+            handle_connection_generic(tls_stream, &addr.to_string(), db_registry).await
         } else {
             // SSL is disabled, send 'N' to indicate SSL is not available
             stream.write_all(b"N").await?;
@@ -311,7 +359,7 @@ async fn handle_ssl_negotiation(
             events::connection_accepted(addr.ip(), false);
 
             // Continue with non-SSL connection
-            handle_connection_generic(stream, &addr.to_string(), db_handler).await
+            handle_connection_generic(stream, &addr.to_string(), db_registry).await
         }
     } else {
         // Not an SSL request, we need to handle this as a regular startup message
@@ -323,23 +371,23 @@ async fn handle_ssl_negotiation(
 
         // Create a custom stream that will first return our buffered data
         let stream_with_buffer = StreamWithBuffer::new(stream, initial_data);
-        handle_connection_generic(stream_with_buffer, &addr.to_string(), db_handler).await
+        handle_connection_generic(stream_with_buffer, &addr.to_string(), db_registry).await
     }
 }
 
 #[cfg(unix)]
 async fn handle_unix_connection(
     stream: tokio::net::UnixStream,
-    db_handler: Arc<DbHandler>,
+    db_registry: Arc<std::collections::HashMap<String, Arc<DbHandler>>>,
 ) -> Result<()> {
     info!("Handling Unix socket connection");
-    handle_connection_generic(stream, "unix-socket", db_handler).await
+    handle_connection_generic(stream, "unix-socket", db_registry).await
 }
 
 async fn handle_connection_generic<S>(
     stream: S,
     connection_info: &str,
-    db_handler: Arc<DbHandler>,
+    db_registry: Arc<std::collections::HashMap<String, Arc<DbHandler>>>,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
@@ -371,6 +419,36 @@ where
             _ => {}
         }
     }
+
+    // Resolve the database handler for this session:
+    // - multi-database mode: strict lookup by database name (PostgreSQL semantics,
+    //   unknown database -> FATAL 3D000 so clients surface a proper error)
+    // - single-database mode: always the one registered handler (loose, backward
+    //   compatible with clients that send an arbitrary database name)
+    let db_handler = if db_registry.len() > 1 {
+        match db_registry.get(&database) {
+            Some(handler) => handler.clone(),
+            None => {
+                error!(
+                    "Database \"{}\" does not exist (available: {:?})",
+                    database,
+                    db_registry.keys().collect::<Vec<_>>()
+                );
+                framed
+                    .send(BackendMessage::ErrorResponse(Box::new(ErrorResponse::new(
+                        "FATAL".to_string(),
+                        "3D000".to_string(),
+                        format!("database \"{}\" does not exist", database),
+                    ))))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Failed to send error response: {}", e))?;
+                // FATAL errors terminate the connection (PostgreSQL protocol semantics)
+                return Ok(());
+            }
+        }
+    } else {
+        db_registry.values().next().cloned().unwrap()
+    };
 
     let session = Arc::new(SessionState::new(database.clone(), user.clone()));
     let session_id = session.id;
@@ -427,8 +505,54 @@ where
     info!("Sent authentication and ready response to {}", connection_info);
 
     // Main message loop
+    // === PATCH v29e: PostgreSQL extended-protocol error recovery ===
+    // Once an error is reported inside an extended-query sequence the backend
+    // MUST discard every subsequent message until a Sync arrives, and only then
+    // emit a single ReadyForQuery. Answering the queued Describe/Bind/Execute
+    // shifts the whole frame stream by one message and the client aborts with
+    // "unexpected message from server".
+    let mut __v29e_error_state = false;
     while let Some(msg) = framed.next().await {
-        match msg? {
+        let __v29e_msg = msg?;
+
+        if __v29e_error_state {
+            match &__v29e_msg {
+                FrontendMessage::Sync => {
+                    __v29e_error_state = false;
+                    // Implicit rollback on Sync: clear any failed-transaction state.
+                    let cur = *session.transaction_status.read().await;
+                    if cur == TransactionStatus::InFailedTransaction {
+                        session.set_transaction_status(TransactionStatus::Idle).await;
+                    }
+                    framed
+                        .send(BackendMessage::ReadyForQuery {
+                            status: *session.transaction_status.read().await,
+                        })
+                        .await?;
+                    framed.flush().await?;
+                    continue;
+                }
+                // A simple Query reply is self-contained (it always ends with its
+                // own ReadyForQuery), so accepting it cannot desynchronise the
+                // stream. Being lenient here avoids hanging a client that skips
+                // Sync after a failed extended sequence.
+                FrontendMessage::Query(_) => {
+                    __v29e_error_state = false;
+                }
+                FrontendMessage::Terminate => {
+                    __v29e_error_state = false;
+                }
+                other => {
+                    debug!(
+                        "v29e: discarding {:?} from {} while skipping to Sync",
+                        other, connection_info
+                    );
+                    continue;
+                }
+            }
+        }
+
+        match __v29e_msg {
             FrontendMessage::Query(sql) => {
                 debug!("Received query from {}: {}", connection_info, sql);
 
@@ -458,7 +582,7 @@ where
                         // Query executed successfully
                     }
                     Err(e) => {
-                        error!("Query execution error: {}", e);
+                        error!("[QFAIL simple] {} || SQL: {}", e, sql);
                         
                         // If we're in a transaction, mark it as failed
                         // Let SQLAlchemy handle its own rollback to avoid double-rollback issues
@@ -500,9 +624,15 @@ where
                         "Rate limit exceeded".to_string(),
                     );
                     framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
+                    // === PATCH v29e: skip to Sync instead of answering the rest ===
+                    __v29e_error_state = true;
+                    framed.flush().await?;
                     continue;
                 }
 
+                // v29e: keep the SQL text for the [QFAIL] diagnostic; `query` is
+                // moved into handle_parse below.
+                let __qfail_sql = query.clone();
                 match ExtendedQueryHandler::handle_parse(
                     &mut framed,
                     &db_handler,
@@ -515,18 +645,22 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Parse error: {}", e);
+                        error!("[QFAIL parse] {} || SQL: {}", e, __qfail_sql);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Parse failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
@@ -550,23 +684,29 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Bind error: {}", e);
+                        error!("[QFAIL bind] {}", e);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Bind failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
             FrontendMessage::Execute { portal, max_rows } => {
                 info!("Received Execute from {}: portal={}, max_rows={}", connection_info, portal, max_rows);
+                // v29e: keep the portal name for the [QFAIL] diagnostic.
+                let __qfail_portal = portal.clone();
                 match ExtendedQueryHandler::handle_execute(
                     &mut framed,
                     &db_handler,
@@ -578,18 +718,22 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Execute error: {}", e);
+                        error!("[QFAIL execute] {} || portal: {}", e, __qfail_portal);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Execute failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
@@ -598,18 +742,22 @@ where
                 {
                     Ok(()) => {}
                     Err(e) => {
-                        error!("Describe error: {}", e);
+                        error!("[QFAIL describe] {}", e);
                         let err = ErrorResponse::new(
                             "ERROR".to_string(),
                             "42000".to_string(),
                             format!("Describe failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
@@ -624,21 +772,36 @@ where
                             format!("Close failed: {e}"),
                         );
                         framed.send(BackendMessage::ErrorResponse(Box::new(err))).await?;
-                        framed
-                            .send(BackendMessage::ReadyForQuery {
-                                status: *session.transaction_status.read().await,
-                            })
-                            .await?;
+                        // === PATCH v29e: enter extended-protocol error state ===
+                        // Deliberately NO ReadyForQuery here: it is Sync's job.
+                        if session.in_transaction().await {
+                            session
+                                .set_transaction_status(TransactionStatus::InFailedTransaction)
+                                .await;
+                        }
+                        __v29e_error_state = true;
+                        framed.flush().await?;
                     }
                 }
             }
             FrontendMessage::Sync => {
+                // PostgreSQL implicitly rolls back a FAILED transaction on Sync.
+                // Reset to Idle so a later query is not rejected with
+                // "current transaction is aborted" (which pgjdbc surfaces as
+                // "unexpected message from server"). An explicit transaction
+                // (InTransaction) must survive Sync, so only InFailedTransaction
+                // is cleared here.
+                let cur = *session.transaction_status.read().await;
+                if cur == TransactionStatus::InFailedTransaction {
+                    session.set_transaction_status(TransactionStatus::Idle).await;
+                }
                 // Send ReadyForQuery to indicate we're ready for more commands
                 framed
                     .send(BackendMessage::ReadyForQuery {
                         status: *session.transaction_status.read().await,
                     })
                     .await?;
+                framed.flush().await?;
             }
             FrontendMessage::Flush => {
                 // Flush any pending messages

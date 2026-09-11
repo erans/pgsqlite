@@ -2135,7 +2135,20 @@ impl DbHandler {
     pub async fn commit(&self, session_id: &Uuid) -> Result<(), PgSqliteError> {
         // Execute the commit on the current session
         self.connection_manager.execute_with_session(session_id, |conn| {
-            conn.execute("COMMIT", [])?;
+            // PATCH v6: PostgreSQL answers a COMMIT issued outside of a transaction
+            // with `WARNING: there is no transaction in progress` and still reports
+            // CommandComplete(COMMIT). SQLite raises a hard error instead, which
+            // surfaces in GUI clients as a failed statement whenever they commit in
+            // autocommit mode. Mirror the tolerant ROLLBACK handling below.
+            match conn.execute("COMMIT", []) {
+                Ok(_) => Ok(()),
+                Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                    if msg.contains("cannot commit - no transaction is active") => {
+                    debug!("COMMIT called with no active transaction - ignoring");
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }?;
             Ok(())
         })?;
         

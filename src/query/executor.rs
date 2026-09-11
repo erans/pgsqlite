@@ -563,7 +563,21 @@ impl QueryExecutor {
                                                             _ => Some(data), // Keep original data for unknown datetime types
                                                         }
                                                     } else {
-                                                        Some(data) // Keep original data if not an integer
+                                                        // v29c: value is stored as TEXT (e.g. '08:30' written by
+                                                        // an app), not pgsqlite's integer encoding. Canonicalize
+                                                        // TIME so PG clients can parse it; anything else is
+                                                        // passed through byte-for-byte.
+                                                        let normalized = match dt_type.as_str() {
+                                                            "time" | "timetz" | "time without time zone" | "time with time zone" => {
+                                                                crate::types::datetime_utils::time_text_to_micros(s)
+                                                                    .map(crate::types::datetime_utils::format_microseconds_to_time)
+                                                            }
+                                                            _ => None,
+                                                        };
+                                                        match normalized {
+                                                            Some(txt) => Some(txt.into_bytes()),
+                                                            None => Some(data),
+                                                        }
                                                     }
                                                 }
                                                 Err(_) => Some(data), // Keep original data if not valid UTF-8
@@ -996,6 +1010,65 @@ impl QueryExecutor {
         // debug!("execute_select (non-ultra-simple) called with query: {}", query);
         // SQLAlchemy manages transactions explicitly - don't start implicit transactions
         // debug!("=== EXECUTE_SELECT CALLED with query: {}", query);
+
+        // === PATCH v29d: PostgreSQL escape-string constants E'...' ===
+        // DBeaver reads catalog metadata with e.g.
+        //     WHERE relname LIKE E'pg\_class'
+        // SQLite has no E'' syntax and died with
+        //     near "'pg\_class'": syntax error
+        // which aborted navigator expand / column / index / DDL reads.
+        // Decode into a plain SQLite literal using PostgreSQL's escape rules.
+        // Must run BEFORE every other translator: an escaped quote (\') would
+        // otherwise desynchronise their literal scanners.
+        let __v29d_estr_owned = crate::translator::EscapeStringTranslator::contains_escape_string(query)
+            .then(|| crate::translator::EscapeStringTranslator::translate(query));
+        let query: &str = __v29d_estr_owned.as_deref().unwrap_or(query);
+
+        // === PATCH v11: ILIKE -> LIKE before anything else looks at the query ===
+        // SQLite has no ILIKE operator. Catalog JOIN queries from dbx/DBeaver now
+        // reach SQLite verbatim (see PATCH v11 in catalog/query_interceptor.rs) and
+        // those queries filter relation names with ILIKE. Translating at the entry
+        // point covers the catalog interceptor and the plain SQLite path in one hop.
+        // No-op (and no allocation) for queries that do not contain ILIKE.
+        // === PATCH v20: also give bare LIKE PostgreSQL's default \ escape ===
+        let __v11_ilike_owned = if crate::translator::IlikeTranslator::contains_like(query) {
+            Some(crate::translator::IlikeTranslator::normalize_like(query))
+        } else {
+            None
+        };
+        let query: &str = __v11_ilike_owned.as_deref().unwrap_or(query);
+
+        // === PATCH v22: PostgreSQL LIMIT/OFFSET semantics ===
+        // PG treats `LIMIT NULL` / `LIMIT ALL` as "no upper bound" and allows a
+        // bare OFFSET; SQLite errors out on both. dbx sends `LIMIT CAST($4 AS
+        // BIGINT)` with $4 = NULL when loading a schema's table list, which used
+        // to fail the whole statement with "datatype mismatch" and left the table
+        // tree empty. Parameters are already inlined at this point, so the real
+        // value is visible here. Returns None (no allocation) for normal LIMITs.
+        let __v22_limit_owned = crate::translator::LimitTranslator::needs_translation(query)
+            .then(|| crate::translator::LimitTranslator::translate(query))
+            .flatten();
+        let query: &str = __v22_limit_owned.as_deref().unwrap_or(query);
+
+        // === PATCH v27: DBeaver JOIN LATERAL unnest + public. prefix ===
+        // 1) unnest: DBeaver's table-index query uses
+        //    JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, n) ON true
+        //    which SQLite cannot parse (existing UnnestTranslator only matched
+        //    `FROM unnest(...)`). Translate to a json_each() subquery.
+        // 2) public.: DBeaver qualifies tables with the schema prefix
+        //    (`SELECT * FROM public.bath_records`); SQLite has no schema
+        //    namespace, so drop the qualifier (literals are left alone).
+        let __v27_unnest_owned = crate::translator::UnnestTranslator::contains_unnest(query)
+            .then(|| crate::translator::UnnestTranslator::translate_unnest(query).ok())
+            .flatten();
+        let query: &str = __v27_unnest_owned.as_deref().unwrap_or(query);
+        let __v27_public_owned = if query.contains("public.") || query.contains("\"public\"") {
+            Some(crate::translator::SchemaPrefixTranslator::strip_public_prefix(query))
+        } else {
+            None
+        };
+        let query: &str = __v27_public_owned.as_deref().unwrap_or(query);
+
         
         // Check wire protocol cache first for cacheable queries
         if crate::cache::is_cacheable_for_wire_protocol(query)
@@ -1462,7 +1535,7 @@ impl QueryExecutor {
                                 }
                                 "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
                                     if let Ok(value_str) = std::str::from_utf8(value_bytes)
-                                        && let Ok(micros) = value_str.parse::<i64>() {
+                                        && let Some(micros) = crate::types::datetime_utils::time_text_to_micros(value_str) {
                                             use crate::types::datetime_utils::format_microseconds_to_time_buf;
                                             let mut buf = vec![0u8; 32];
                                             let len = format_microseconds_to_time_buf(micros, &mut buf);
@@ -1788,7 +1861,7 @@ impl QueryExecutor {
                             "TIME" | "TIME WITHOUT TIME ZONE" | "TIME WITH TIME ZONE" | "TIMETZ" => {
                                 // Convert INTEGER microseconds to HH:MM:SS.ffffff format
                                 if let Ok(value_str) = std::str::from_utf8(value_bytes) {
-                                    if let Ok(micros) = value_str.parse::<i64>() {
+                                    if let Some(micros) = crate::types::datetime_utils::time_text_to_micros(value_str) {
                                         use crate::types::datetime_utils::format_microseconds_to_time_buf;
                                         let mut buf = vec![0u8; 32];
                                         let len = format_microseconds_to_time_buf(micros, &mut buf);
@@ -2496,7 +2569,7 @@ impl QueryExecutor {
                     } else if type_oid == time_oid || type_oid == timetz_oid {
                         // Convert INTEGER microseconds to HH:MM:SS.ffffff format
                         if let Ok(s) = std::str::from_utf8(&data) {
-                            if let Ok(micros) = s.parse::<i64>() {
+                            if let Some(micros) = crate::types::datetime_utils::time_text_to_micros(s) {
                                 use crate::types::datetime_utils::format_microseconds_to_time_buf;
                                 let mut buf = vec![0u8; 32];
                                 let len = format_microseconds_to_time_buf(micros, &mut buf);
@@ -2591,6 +2664,20 @@ impl QueryExecutor {
     }
 }
 
+
+/// PATCH v5: PostgreSQL reserves the `pg_` prefix for system catalogs, and
+/// pgsqlite exposes those catalogs as SQLite *views* that carry no declared
+/// column types. Running PRAGMA type inference against them yields BLOB,
+/// which is then advertised on the wire as bytea (oid 17) while the catalog
+/// handlers actually emit plain text -- clients such as dbx / DBeaver / pg8000
+/// then fail while hex-decoding. Treating them as "no table" makes the caller
+/// fall back to text (oid 25), which is correct.
+fn is_pg_catalog_object(name: &str) -> bool {
+    let lower = name.trim_matches('"').trim_matches('\'').to_ascii_lowercase();
+    let bare = lower.rsplit('.').next().unwrap_or(lower.as_str());
+    bare.starts_with("pg_") || bare.starts_with("information_schema")
+}
+
 fn extract_table_name_from_select(query: &str) -> Option<String> {
     // Look for FROM keyword using regex to handle various whitespace patterns
     use once_cell::sync::Lazy;
@@ -2612,6 +2699,11 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
             let table_name = table_name.trim_matches('"').trim_matches('\'');
             
             if !table_name.is_empty() {
+                // === PATCH v5: never PRAGMA-probe synthesised catalog views ===
+                if is_pg_catalog_object(table_name) {
+                    debug!("extract_table_name_from_select: '{}' is a catalog object -> None", table_name);
+                    return None;
+                }
                 // debug!("extract_table_name_from_select: extracted table='{}'", table_name);
                 debug!("extract_table_name_from_select: query='{}' -> table='{}'", query, table_name);
                 return Some(table_name.to_string());

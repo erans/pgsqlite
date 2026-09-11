@@ -3261,4 +3261,81 @@ fn register_v29_information_schema_namespace(registry: &mut BTreeMap<u32, Migrat
         ])),
         dependencies: vec![28],
     });
+
+    registry.insert(38, Migration {
+        version: 38,
+        name: "multi_database_registry",
+        description: "Add __pgsqlite_databases registry table and re-point pg_database view at it for multi-database support",
+        up: MigrationAction::SqlBatch(&[
+            r#"
+            -- Per-file registry table listing every database served by this process.
+            -- Populated at server startup (multi-database mode) so that querying
+            -- pg_database from any file lists all databases.
+            CREATE TABLE IF NOT EXISTS __pgsqlite_databases (
+                oid INTEGER PRIMARY KEY,
+                datname TEXT NOT NULL,
+                datdba INTEGER DEFAULT 10,
+                encoding INTEGER DEFAULT 6,
+                datlocprovider TEXT DEFAULT 'c',
+                datistemplate INTEGER DEFAULT 0,
+                datallowconn INTEGER DEFAULT 1,
+                dathasloginevt INTEGER DEFAULT 0,
+                datconnlimit INTEGER DEFAULT -1,
+                datfrozenxid INTEGER DEFAULT 1,
+                datminmxid INTEGER DEFAULT 1,
+                dattablespace INTEGER DEFAULT 1663,
+                datcollate TEXT DEFAULT 'en_US.UTF-8',
+                datctype TEXT DEFAULT 'en_US.UTF-8',
+                datlocale TEXT DEFAULT 'en_US.UTF-8',
+                daticurules TEXT,
+                datcollversion TEXT,
+                datacl TEXT
+            );
+            "#,
+            r#"
+            -- Re-point pg_database at the registry table so every file can list
+            -- all databases served by this process.
+            DROP VIEW IF EXISTS pg_database;
+            CREATE VIEW pg_database AS SELECT * FROM __pgsqlite_databases;
+            "#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '38', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ]),
+        down: Some(MigrationAction::SqlBatch(&[
+            r#"DROP VIEW IF EXISTS pg_database;"#,
+            r#"DROP TABLE IF EXISTS __pgsqlite_databases;"#,
+            r#"
+            -- Restore the single-database pg_database view
+            CREATE VIEW IF NOT EXISTS pg_database AS
+            SELECT
+                1 as oid,
+                'main' as datname,
+                10 as datdba,
+                6 as encoding,
+                'c' as datlocprovider,
+                false as datistemplate,
+                true as datallowconn,
+                false as dathasloginevt,
+                -1 as datconnlimit,
+                1 as datfrozenxid,
+                1 as datminmxid,
+                1663 as dattablespace,
+                'en_US.UTF-8' as datcollate,
+                'en_US.UTF-8' as datctype,
+                'en_US.UTF-8' as datlocale,
+                NULL as daticurules,
+                NULL as datcollversion,
+                NULL as datacl;
+            "#,
+            r#"
+            UPDATE __pgsqlite_metadata
+            SET value = '37', updated_at = strftime('%s', 'now')
+            WHERE key = 'schema_version';
+            "#,
+        ])),
+        dependencies: vec![29],
+    });
 }

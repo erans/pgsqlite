@@ -6,7 +6,7 @@ use regex::Regex;
 
 // Pre-compiled regex patterns for constraint parsing
 static PK_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bPRIMARY\s+KEY\b").unwrap()
+    Regex::new(r"(?i)\b(\w+)\s+[^,()]*(?:\([^)]*\)[^,()]*)?\s*\bPRIMARY\s+KEY\b").unwrap()
 });
 
 static TABLE_PK_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -14,7 +14,7 @@ static TABLE_PK_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static UNIQUE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bUNIQUE\b").unwrap()
+    Regex::new(r"(?i)\b(\w+)\s+[^,()]*(?:\([^)]*\)[^,()]*)?\s*\bUNIQUE\b").unwrap()
 });
 
 static TABLE_UNIQUE_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -26,11 +26,11 @@ static CHECK_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static NOT_NULL_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bNOT\s+NULL\b").unwrap()
+    Regex::new(r"(?i)\b(\w+)\s+[^,()]*(?:\([^)]*\)[^,()]*)?\s*\bNOT\s+NULL\b").unwrap()
 });
 
 static DEFAULT_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bDEFAULT\s+([^,\)]+)").unwrap()
+    Regex::new(r"(?i)\b(\w+)\s+[^,()]*(?:\([^)]*\)[^,()]*)?\s*\bDEFAULT\s+([^,()]+)").unwrap()
 });
 
 static FOREIGN_KEY_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -38,11 +38,11 @@ static FOREIGN_KEY_REGEX: Lazy<Regex> = Lazy::new(|| {
 });
 
 static INLINE_FOREIGN_KEY_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b(\w+)\s+[^,\)]*\bREFERENCES\s+(\w+)\s*\(\s*([^)]+)\s*\)").unwrap()
+    Regex::new(r"(?i)\b(\w+)\s+[^,()]*(?:\([^)]*\)[^,()]*)?\s*\bREFERENCES\s+(\w+)\s*\(\s*([^)]+)\s*\)").unwrap()
 });
 
 static TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)CREATE\s+TABLE\s+[^(]+\(\s*(.+)\s*\)").unwrap()
+    Regex::new(r"(?is)CREATE\s+TABLE\s+[^(]+\(\s*(.+)\s*\)").unwrap()
 });
 
 /// Populate PostgreSQL catalog tables with constraint information for a newly created table
@@ -115,7 +115,7 @@ fn get_referenced_table_oid(_conn: &Connection, definition: &str) -> Result<Stri
 }
 
 /// Populate pg_constraint table with constraint information
-fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &str, table_oid: &str) -> Result<()> {
+pub fn populate_table_constraints(conn: &Connection, table_name: &str, create_sql: &str, table_oid: &str) -> Result<()> {
     let constraints = parse_table_constraints(table_name, create_sql);
     eprintln!("🔎 Found {} constraints for table {}", constraints.len(), table_name);
     for c in &constraints {
@@ -615,4 +615,67 @@ fn generate_sequence_oid(table_name: &str, column_name: &str) -> u32 {
     let sequence_name = format!("{}_{}_seq", table_name, column_name);
     // Use the standard OID generator but offset for sequences to avoid conflicts
     generate_oid(&sequence_name) + 50000
+}
+
+#[cfg(test)]
+mod v25_column_regex_tests {
+    use super::*;
+
+    const CONFIG_DDL: &str = "CREATE TABLE config (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')";
+    const WISH_DDL: &str = r#"CREATE TABLE wish_goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    child_id INTEGER NOT NULL REFERENCES users(id),
+    item_id INTEGER NOT NULL REFERENCES shop_items(id),
+    active INTEGER DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)"#;
+
+    #[test]
+    fn v25_pk_extracts_real_column_not_create() {
+        let cons = parse_table_constraints("config", CONFIG_DDL);
+        let pk: Vec<_> = cons.iter().filter(|c| c.contype == "p").collect();
+        assert_eq!(pk.len(), 1, "应恰好 1 个主键");
+        assert_eq!(pk[0].columns, vec!["key".to_string()],
+                   "PK 列应为 key，而不是被 CREATE 劫持");
+    }
+
+    #[test]
+    fn v25_not_null_extracts_column() {
+        let cons = parse_table_constraints("config", CONFIG_DDL);
+        let nn: Vec<_> = cons.iter().filter(|c| c.contype == "c").collect();
+        assert!(!nn.is_empty());
+        assert!(nn.iter().any(|c| c.columns == vec!["value".to_string()]));
+    }
+
+    #[test]
+    fn v25_inline_fk_extracts_column() {
+        let cons = parse_table_constraints("wish_goals", WISH_DDL);
+        let fks: Vec<_> = cons.iter().filter(|c| c.contype == "f").collect();
+        assert_eq!(fks.len(), 2, "wish_goals 应 2 个外键");
+        assert_eq!(fks[0].columns, vec!["child_id".to_string()]);
+        assert_eq!(fks[1].columns, vec!["item_id".to_string()]);
+    }
+
+    #[test]
+    fn v25_pk_autoincrement_column() {
+        let cons = parse_table_constraints("wish_goals", WISH_DDL);
+        let pk: Vec<_> = cons.iter().filter(|c| c.contype == "p").collect();
+        assert_eq!(pk.len(), 1);
+        assert_eq!(pk[0].columns, vec!["id".to_string()]);
+    }
+
+    #[test]
+    fn v25_get_column_number_multiline_ddl() {
+        // 多行 DDL（wish_goals 真实形态）必须能定位列号
+        assert_eq!(get_column_number(WISH_DDL, "id"), Some(1), "id 应为第 1 列");
+        assert_eq!(get_column_number(WISH_DDL, "child_id"), Some(2), "child_id 应为第 2 列");
+        assert_eq!(get_column_number(WISH_DDL, "item_id"), Some(3), "item_id 应为第 3 列");
+        assert_eq!(get_column_number(WISH_DDL, "active"), Some(4), "active 应为第 4 列");
+    }
+
+    #[test]
+    fn v25_get_column_number_single_line_ddl() {
+        assert_eq!(get_column_number(CONFIG_DDL, "key"), Some(1), "key 应为第 1 列");
+        assert_eq!(get_column_number(CONFIG_DDL, "value"), Some(2), "value 应为第 2 列");
+    }
 }

@@ -14,6 +14,12 @@ pub struct Config {
     #[arg(short, long, default_value = "sqlite.db", env = "PGSQLITE_DATABASE")]
     pub database: String,
 
+    #[arg(long, env = "PGSQLITE_DATABASES", value_delimiter = ',', help = "Multiple databases as name=path pairs (comma separated, e.g. --databases a=/x/a.sdb,b=/y/b.sdb). Overrides --database.")]
+    pub databases: Vec<String>,
+
+    #[arg(long, default_value = "127.0.0.1", env = "PGSQLITE_BIND_ADDRESS", help = "TCP bind address (default 127.0.0.1, use 0.0.0.0 to expose on all interfaces)")]
+    pub bind_address: String,
+
     #[arg(long, default_value = "info", env = "PGSQLITE_LOG_LEVEL")]
     pub log_level: String,
 
@@ -185,6 +191,48 @@ impl Config {
             in_memory_db_uri(IN_MEMORY_DB_NAME)
         } else {
             self.database.clone()
+        }
+    }
+
+    /// Derive a PostgreSQL database name from a SQLite file path.
+    /// `/home/x/sdbs/grow_award.sdb` -> `grow_award`, `sqlite.db` -> `sqlite`.
+    pub fn db_name_from_path(path: &str) -> String {
+        std::path::Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "main".to_string())
+    }
+
+    /// Build the ordered list of (database_name, sqlite_path) pairs this server serves.
+    ///
+    /// - `--in-memory`: single in-memory database.
+    /// - `--databases a=/x/a.sdb,b=/y/b.sdb`: multi-database mode; each entry may
+    ///   also be a bare path (name derived from the file stem).
+    /// - otherwise: single `--database` path, name derived from the file stem
+    ///   (kept loose for backward compatibility — single-db mode does not validate
+    ///   the StartupMessage database name).
+    pub fn database_registry(&self) -> Vec<(String, String)> {
+        if self.in_memory {
+            return vec![(IN_MEMORY_DB_NAME.to_string(), self.resolve_db_path())];
+        }
+        if !self.databases.is_empty() {
+            self.databases
+                .iter()
+                .map(|entry| {
+                    if let Some((n, p)) = entry.split_once('=') {
+                        (n.trim().to_string(), p.trim().to_string())
+                    } else {
+                        let p = entry.trim().to_string();
+                        (Self::db_name_from_path(&p), p)
+                    }
+                })
+                .collect()
+        } else {
+            vec![(
+                Self::db_name_from_path(&self.database),
+                self.database.clone(),
+            )]
         }
     }
 

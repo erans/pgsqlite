@@ -424,6 +424,14 @@ impl ExtendedQueryHandler {
             cleaned_query.clone()
         };
         
+        // === v47fix7: 去除 public. schema 前缀（与 execute_select 的 v47fix5 对齐）===
+        // 否则非 catalog 的带 public 前缀查询（如 SELECT * FROM "public"."t"）在
+        // Parse 阶段测试查询失败 -> field_descriptions 空 -> Describe(P) 发 NoData(0列)，
+        // 而 Execute 阶段 strip 后返回真实列数 -> 列数错位 -> pgjdbc unexpected message。
+        if translated_for_analysis.contains("public.") || translated_for_analysis.contains("\"public\"") {
+            translated_for_analysis = crate::translator::SchemaPrefixTranslator::strip_public_prefix(&translated_for_analysis);
+        }
+        
         // Translate NUMERIC to TEXT casts with proper formatting
         #[cfg(not(feature = "unified_processor"))] // Skip when using unified processor
         if crate::translator::NumericFormatTranslator::needs_translation(&translated_for_analysis) {
@@ -528,8 +536,19 @@ impl ExtendedQueryHandler {
                cleaned_query.contains("pg_namespace") || cleaned_query.contains("pg_enum") ||
                cleaned_query.contains("pg_constraint") || cleaned_query.contains("pg_depend") ||
                cleaned_query.contains("pg_database") {
-                info!("PARSE: Skipping field description for catalog query: {}", cleaned_query);
-                Vec::new()
+                // v47fix: Parse 阶段即用 catalog interceptor 探测真实列数，
+                // 避免在 extended 协议下 fd_len=0，导致 Describe(Portal) 直接发
+                // NoData(0列)，客户端(dbx/DataGrip)据此把 Execute 结果按 0 列
+                // 丢弃，表列表/对象列表等节点空白。truth probe 只在
+                // Describe(Statement) 运行，而 dbx 走 Describe(Portal)，必须
+                // 让 Parse 阶段就把 field_descriptions 设为正确列数。
+                match Self::v29i_probe_catalog_columns(session, &cleaned_query).await {
+                    Some(cols) => Self::v29i_fields_from_columns(&cols),
+                    None => {
+                        info!("PARSE: catalog query probed empty, leaving 0 field_descriptions: {}", cleaned_query);
+                        Vec::new()
+                    }
+                }
             } else {
                 // Try to get field descriptions
                 // For parameterized queries, substitute dummy values
@@ -1952,7 +1971,96 @@ impl ExtendedQueryHandler {
         
         Ok(())
     }
-    
+
+    // ===================== v29i catalog truth probe =====================
+    /// v29i: build FieldDescriptions from a real column-name list.
+    /// Catalog values are shipped as text bytes, so Text is the honest
+    /// default; the two exceptions below preserve the pre-v29i typing of
+    /// pg_attribute boolean/char columns so existing clients do not regress.
+    fn v29i_fields_from_columns(cols: &[String]) -> Vec<FieldDescription> {
+        cols.iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let lower = name.to_lowercase();
+                let type_oid = match lower.as_str() {
+                    "attnotnull" | "atthasdef" | "attbyval" | "atthasmissing"
+                    | "attisdropped" | "attislocal" | "not_null" | "has_default"
+                    | "is_not_null" | "has_def" => PgType::Bool.to_oid(),
+                    "attidentity" | "attgenerated" | "attalign" | "attstorage"
+                    | "attcompression" => PgType::Char.to_oid(),
+                    _ => PgType::Text.to_oid(),
+                };
+                FieldDescription {
+                    name: name.clone(),
+                    table_oid: 0,
+                    column_id: (i + 1) as i16,
+                    type_oid,
+                    type_size: -1,
+                    type_modifier: -1,
+                    format: 0,
+                }
+            })
+            .collect()
+    }
+
+    /// v29i: THE single source of truth for the shape of a catalog result.
+    /// Whatever CatalogInterceptor returns at Execute time is exactly what
+    /// Describe must announce, so we simply ask it up-front.  $N parameter
+    /// placeholders are neutralised to NULL: we only want the column list,
+    /// never the rows.  Result is memoised per query text.
+    async fn v29i_probe_catalog_columns(
+        session: &Arc<SessionState>,
+        query: &str,
+    ) -> Option<Vec<String>> {
+        static V29I_CATALOG_COLS: once_cell::sync::Lazy<
+            parking_lot::Mutex<std::collections::HashMap<String, Vec<String>>>,
+        > = once_cell::sync::Lazy::new(|| {
+            parking_lot::Mutex::new(std::collections::HashMap::new())
+        });
+
+        if let Some(hit) = V29I_CATALOG_COLS.lock().get(query).cloned() {
+            return if hit.is_empty() { None } else { Some(hit) };
+        }
+
+        let mut probe = query.to_string();
+        for i in (1..=32).rev() {
+            probe = probe.replace(&format!("${i}"), "NULL");
+        }
+
+        // 列数探测不需要实际行数。参数化查询中的 LIMIT/OFFSET（如
+        // `LIMIT CAST($4 AS BIGINT) OFFSET CAST($5 AS BIGINT)`）被替换成
+        // NULL 后，在 SQLite 里是非法语法（LIMIT must be an integer），
+        // 会让整条探测查询执行失败、返回 None，进而 Parse 阶段 fd_len 仍为 0，
+        // extended 协议下 Describe(Portal) 直接发 NoData(0列)，客户端
+        // (dbx/DataGrip) 据此把 Execute 的 DataRow 按 0 列丢弃 -> 表列表/
+        // 对象列表等节点空白。列数与行数无关，统一修正为合法形态再探测。
+        probe = probe.replace("LIMIT CAST(NULL AS BIGINT)", "LIMIT 0");
+        probe = probe.replace("OFFSET CAST(NULL AS BIGINT)", "");
+        probe = probe.replace("LIMIT NULL", "LIMIT 0");
+        probe = probe.replace("OFFSET NULL", "");
+
+        let db = session.get_db_handler().await?;
+        let cols = match CatalogInterceptor::intercept_query(
+            &probe,
+            db,
+            Some(session.clone()),
+        )
+        .await
+        {
+            Some(Ok(resp)) if !resp.columns.is_empty() => Some(resp.columns),
+            _ => None,
+        };
+
+        {
+            let mut cache = V29I_CATALOG_COLS.lock();
+            if cache.len() > 512 {
+                cache.clear();
+            }
+            cache.insert(query.to_string(), cols.clone().unwrap_or_default());
+        }
+        cols
+    }
+
     pub async fn handle_describe<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
         session: &Arc<SessionState>,
@@ -1966,14 +2074,60 @@ impl ExtendedQueryHandler {
         
         if typ == b'S' {
             // Describe statement
+            // Snapshot what we need, then release the read lock so the truth
+            // probe below can take a write lock without deadlocking.
+            let (param_types, query_text, fd_len) = {
+                let statements = session.prepared_statements.read().await;
+                let stmt = statements.get(&name)
+                    .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {name}")))?;
+                (stmt.param_types.clone(), stmt.query.clone(), stmt.field_descriptions.len())
+            };
+
+            // Send ParameterDescription first
+            framed.send(BackendMessage::ParameterDescription(param_types)).await
+                .map_err(PgSqliteError::Io)?;
+
+            // ============ v29i catalog truth probe ============
+            // Before v29i the field list for catalog queries came from
+            // hand-maintained tables that had drifted from what the catalog
+            // interceptor actually returns, and parameterised `SELECT *`
+            // catalog queries fell through to NoData entirely.  Both cases end
+            // with Describe and Execute disagreeing, which clients report as
+            // "unexpected message from server" (DataGrip: empty table list).
+            // Ask the interceptor up-front for the real column list.
+            if query_starts_with_ignore_case(&query_text, "SELECT")
+                && (query_text.contains("pg_catalog") || query_text.contains("pg_type")
+                    || query_text.contains("pg_namespace") || query_text.contains("pg_class")
+                    || query_text.contains("pg_attribute") || query_text.contains("pg_constraint")
+                    || query_text.contains("pg_index") || query_text.contains("pg_depend")
+                    || query_text.contains("pg_database") || query_text.contains("information_schema"))
+            {
+                if let Some(cols) = Self::v29i_probe_catalog_columns(session, &query_text).await {
+                    if fd_len != cols.len() {
+                        warn!(
+                            "v29i truth probe: statement '{}' announced {} fields but the catalog returns {} -> realigning. query: {}",
+                            name, fd_len, cols.len(), query_text
+                        );
+                        let fields = Self::v29i_fields_from_columns(&cols);
+                        {
+                            let mut sm = session.prepared_statements.write().await;
+                            if let Some(stmt_mut) = sm.get_mut(&name) {
+                                stmt_mut.field_descriptions = fields.clone();
+                            }
+                        }
+                        framed.send(BackendMessage::RowDescription(fields)).await
+                            .map_err(PgSqliteError::Io)?;
+                        return Ok(());
+                    }
+                }
+            }
+            // ============ end v29i catalog truth probe ============
+
+            // Re-acquire the read lock (released during the truth probe above)
             let statements = session.prepared_statements.read().await;
             let stmt = statements.get(&name)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {name}")))?;
-            
-            // Send ParameterDescription first
-            framed.send(BackendMessage::ParameterDescription(stmt.param_types.clone())).await
-                .map_err(PgSqliteError::Io)?;
-            
+
             // Check if this is a catalog query that needs special handling
             let query = &stmt.query;
             let is_catalog_query = query.contains("pg_catalog") || query.contains("pg_type") ||
@@ -1981,7 +2135,7 @@ impl ExtendedQueryHandler {
                                    query.contains("pg_attribute") || query.contains("pg_constraint") ||
                                    query.contains("pg_index") || query.contains("pg_depend") ||
                                    query.contains("pg_database") || query.contains("information_schema");
-            
+
             // Then send RowDescription or NoData
             if !stmt.field_descriptions.is_empty() {
                 info!("Sending RowDescription with {} fields in Describe", stmt.field_descriptions.len());
@@ -2507,6 +2661,44 @@ impl ExtendedQueryHandler {
             }
         } else {
             // Describe portal
+            // === v47fix6: catalog truth probe 前移（防列数错位）===
+            // dbx 点开表会发外键等 information_schema 查询（实际 7 列），但 Parse
+            // 阶段 field_descriptions 可能被错算（如 3 列）。dbx 走 Describe(Portal)
+            // 取列数，若直接用错的 field_descriptions 发 RowDescription，Execute 再发
+            // 真实列数的 DataRow，列数错位 -> pgjdbc 报 "unexpected message from server"。
+            // 这里先对 catalog 查询探测真实列数，不匹配则 realign 后直接返回。
+            {
+                let (q, fd_len, sname) = {
+                    let portals = session.portals.read().await;
+                    let portal = portals.get(&name)
+                        .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {name}")))?;
+                    let statements = session.prepared_statements.read().await;
+                    let stmt = statements.get(&portal.statement_name)
+                        .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown statement: {}", portal.statement_name)))?;
+                    (stmt.query.clone(), stmt.field_descriptions.len(), portal.statement_name.clone())
+                };
+                let is_catalog = query_starts_with_ignore_case(&q, "SELECT")
+                    && (q.contains("pg_catalog") || q.contains("pg_type")
+                        || q.contains("pg_namespace") || q.contains("pg_class")
+                        || q.contains("pg_attribute") || q.contains("pg_constraint")
+                        || q.contains("pg_index") || q.contains("pg_depend")
+                        || q.contains("pg_database") || q.contains("information_schema"));
+                if is_catalog && fd_len > 0 {
+                    if let Some(cols) = Self::v29i_probe_catalog_columns(session, &q).await {
+                        if cols.len() != fd_len {
+                            let fields = Self::v29i_fields_from_columns(&cols);
+                            let mut sm = session.prepared_statements.write().await;
+                            if let Some(stmt_mut) = sm.get_mut(&sname) {
+                                stmt_mut.field_descriptions = fields.clone();
+                            }
+                            drop(sm);
+                            framed.send(BackendMessage::RowDescription(fields)).await
+                                .map_err(PgSqliteError::Io)?;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
             let portals = session.portals.read().await;
             let portal = portals.get(&name)
                 .ok_or_else(|| PgSqliteError::Protocol(format!("Unknown portal: {name}")))?;
@@ -2582,6 +2774,37 @@ impl ExtendedQueryHandler {
                 framed.send(BackendMessage::RowDescription(fields)).await
                     .map_err(PgSqliteError::Io)?;
             } else {
+                // v29i: dbx / DataGrip 走 Describe(Portal) 取列数，且往往不发
+                // Describe(Statement)。Parse 阶段即便跑了 catalog 探测，结果也可能
+                // 没落到该 statement（或探测当次返回 None），导致 field_descriptions
+                // 恒为 0 -> 此处直接发 NoData(0列)，客户端据此把 Execute 的 DataRow
+                // 按 0 列丢弃 -> 表列表/对象列表等节点空白。
+                // 这里在 Describe(Portal) 补一次 catalog 探测（此时 Bind 已完成、
+                // 连接可用），把真实列数钉进去再发 RowDescription，与
+                // Describe(Statement) 的 truth probe 行为保持一致。
+                let query_text = stmt.query.clone();
+                let statement_name = portal.statement_name.clone();
+                drop(portals);
+                drop(statements);
+                let is_catalog = query_starts_with_ignore_case(&query_text, "SELECT")
+                    && (query_text.contains("pg_catalog") || query_text.contains("pg_type")
+                        || query_text.contains("pg_namespace") || query_text.contains("pg_class")
+                        || query_text.contains("pg_attribute") || query_text.contains("pg_constraint")
+                        || query_text.contains("pg_index") || query_text.contains("pg_depend")
+                        || query_text.contains("pg_database") || query_text.contains("information_schema"));
+                if is_catalog {
+                    if let Some(cols) = Self::v29i_probe_catalog_columns(session, &query_text).await {
+                        let fields = Self::v29i_fields_from_columns(&cols);
+                        let mut sm = session.prepared_statements.write().await;
+                        if let Some(stmt_mut) = sm.get_mut(&statement_name) {
+                            stmt_mut.field_descriptions = fields.clone();
+                        }
+                        drop(sm);
+                        framed.send(BackendMessage::RowDescription(fields)).await
+                            .map_err(PgSqliteError::Io)?;
+                        return Ok(());
+                    }
+                }
                 framed.send(BackendMessage::NoData).await
                     .map_err(PgSqliteError::Io)?;
             }
@@ -4454,6 +4677,17 @@ impl ExtendedQueryHandler {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        // === v47fix5: 去除 public. schema 前缀 ===
+        // dbx 点开表发 SELECT * FROM "public"."bath_records"（带 schema 前缀），
+        // SQLite 无 schema namespace，直接执行会报 "no such table: public.bath_records"。
+        // 与 executor.rs 的 execute_select (PATCH v27) 对齐，去掉 public. 前缀。
+        let __v47fix5_public_owned = if query.contains("public.") || query.contains("\"public\"") {
+            Some(crate::translator::SchemaPrefixTranslator::strip_public_prefix(query))
+        } else {
+            None
+        };
+        let query: &str = __v47fix5_public_owned.as_deref().unwrap_or(query);
+
         // Check if this is a catalog query first
         info!("execute_select: Checking if query is catalog query: {}", query);
         if query.contains("int_array_with_nulls") {
@@ -4464,7 +4698,7 @@ impl ExtendedQueryHandler {
             println!("EXTENDED: Got catalog result, about to unwrap");
             let mut catalog_response = catalog_result?;
             println!("EXTENDED: Unwrapped catalog result, columns: {}, rows: {}", catalog_response.columns.len(), catalog_response.rows.len());
-            
+
             // For catalog queries with binary result formats, we need to ensure the data
             // is in the correct format for binary encoding
             let portals = session.portals.read().await;
@@ -5922,7 +6156,30 @@ impl ExtendedQueryHandler {
                     info!("Found explicit cast for parameter {}: {} (OID {})", i, cast_type, oid);
                     found_type = true;
                 }
-            
+
+            // Check for CAST($N AS TYPE) — 如 LIMIT CAST($4 AS BIGINT) OFFSET CAST($5 AS BIGINT)
+            // 这是 dbx/DataGrip 表列表查询 LIMIT/OFFSET 的参数写法。若漏掉，$4/$5
+            // 会被默认推断成 text(25) 而非 int8(20)，导致返回给 pgjdbc 的参数类型
+            // 全错、Bind 阶段序列化参数时报 "error serializing parameter N"。
+            if !found_type {
+                let cast_as_pattern =
+                    format!(r"CAST\s*\(\s*\${i}\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)");
+                if let Ok(cast_as_regex) = regex::Regex::new(&cast_as_pattern) {
+                    if let Some(captures) = cast_as_regex.captures(query) {
+                        if let Some(type_match) = captures.get(1) {
+                            let cast_type = type_match.as_str();
+                            let oid = Self::pg_type_name_to_oid(cast_type);
+                            param_types.push(oid);
+                            info!(
+                                "Found CAST(${} AS {}) -> OID {}",
+                                i, cast_type, oid
+                            );
+                            found_type = true;
+                        }
+                    }
+                }
+            }
+
             if found_type {
                 continue;
             }
@@ -6505,4 +6762,16 @@ mod tests {
         assert!(!count_backstop_applies("count", "SELECT upper(name) AS count FROM t"));
         assert!(!count_backstop_applies("count", "SELECT max(x) AS count FROM t"));
     }
+}
+
+
+/// Returns true when `name` refers to a PostgreSQL system catalog object
+/// (anything under `pg_*` or `information_schema`). Callers use this to avoid
+/// PRAGMA-probing synthesised catalog views, which would otherwise emit binary
+/// that dbx / DBeaver / pg8000 fail to hex-decode. Treated as "no table" so the
+/// caller falls back to plain text (oid 25), which is correct.
+fn is_pg_catalog_object(name: &str) -> bool {
+    let lower = name.trim_matches('"').trim_matches('\'').to_ascii_lowercase();
+    let bare = lower.rsplit('.').next().unwrap_or(lower.as_str());
+    bare.starts_with("pg_") || bare.starts_with("information_schema")
 }
