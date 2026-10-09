@@ -1,6 +1,54 @@
 use rusqlite::{Connection, Result, functions::FunctionFlags, types::ValueRef};
 use serde_json::Value as JsonValue;
 
+/// Render a SQLite value as a JSON fragment (text as a string, blobs as hex).
+fn value_ref_to_json(value: ValueRef<'_>) -> String {
+    match value {
+        ValueRef::Null => "null".to_string(),
+        ValueRef::Integer(i) => i.to_string(),
+        ValueRef::Real(f) => f.to_string(),
+        ValueRef::Text(s) => serde_json::to_string(&String::from_utf8_lossy(s)).unwrap(),
+        ValueRef::Blob(b) => serde_json::to_string(&format!("\\x{}", hex::encode(b))).unwrap(),
+    }
+}
+
+/// Render a SQLite value as a JSON object key string (escaped by the caller).
+fn value_ref_to_key(value: ValueRef<'_>) -> String {
+    match value {
+        ValueRef::Null => "null".to_string(),
+        ValueRef::Integer(i) => i.to_string(),
+        ValueRef::Real(f) => f.to_string(),
+        ValueRef::Text(s) => String::from_utf8_lossy(s).into_owned(),
+        ValueRef::Blob(b) => format!("\\x{}", hex::encode(b)),
+    }
+}
+
+/// Shared by `json_build_object` and `jsonb_build_object`; emits pairs in
+/// argument order, preserving duplicate keys.
+fn json_build_object_impl(ctx: &rusqlite::functions::Context<'_>) -> Result<String> {
+    let len = ctx.len();
+    if !len.is_multiple_of(2) {
+        return Err(rusqlite::Error::UserFunctionError(
+            "argument list must have even number of elements".into(),
+        ));
+    }
+
+    let mut out = String::from("{");
+    let mut i = 0;
+    while i < len {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        let key = value_ref_to_key(ctx.get_raw(i));
+        out.push_str(&serde_json::to_string(&key).unwrap());
+        out.push_str(": ");
+        out.push_str(&value_ref_to_json(ctx.get_raw(i + 1)));
+        i += 2;
+    }
+    out.push('}');
+    Ok(out)
+}
+
 /// Register JSON/JSONB-related functions in SQLite
 pub fn register_json_functions(conn: &Connection) -> Result<()> {
     // json_valid(text) - Validate JSON (SQLite built-in, but we override for consistency)
@@ -128,28 +176,20 @@ pub fn register_json_functions(conn: &Connection) -> Result<()> {
         },
     )?;
     
-    // json_build_object(variadic) - Build JSON object from key-value pairs
-    // For simplicity, we'll implement a 2-argument version
+    // json_build_object(variadic "any") - Build JSON object from key-value pairs
+    // jsonb_build_object is registered as an alias.
     conn.create_scalar_function(
         "json_build_object",
-        2,
+        -1,
         FunctionFlags::SQLITE_UTF8,
-        |ctx| {
-            let key: String = ctx.get(0)?;
-            let value: String = match ctx.get_raw(1) {
-                ValueRef::Null => "null".to_string(),
-                ValueRef::Integer(i) => i.to_string(),
-                ValueRef::Real(f) => f.to_string(),
-                ValueRef::Text(s) => serde_json::to_string(&s).unwrap(),
-                ValueRef::Blob(b) => {
-                    // Convert blob to hex string for JSON  
-                    let hex = b.iter().map(|byte| format!("{byte:02x}")).collect::<String>();
-                    serde_json::to_string(&hex).unwrap()
-                },
-            };
-            
-            Ok(format!("{{\"{key}\": {value}}}"))
-        },
+        json_build_object_impl,
+    )?;
+
+    conn.create_scalar_function(
+        "jsonb_build_object",
+        -1,
+        FunctionFlags::SQLITE_UTF8,
+        json_build_object_impl,
     )?;
     
     // json_extract_scalar(json, path) - Extract scalar value from JSON path
@@ -1683,6 +1723,89 @@ mod tests {
             |row| row.get(0)
         ).unwrap();
         assert!(!not_contains);
+    }
+    
+    #[test]
+    fn test_json_build_object() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_json_functions(&conn).unwrap();
+        
+        fn build(conn: &Connection, sql: &str) -> JsonValue {
+            let raw: String = conn.query_row(sql, [], |row| row.get(0)).unwrap();
+            serde_json::from_str(&raw).unwrap()
+        }
+        
+        // Text values must serialise as JSON strings, not arrays of byte values
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('d', 'abc')"),
+            serde_json::json!({"d": "abc"})
+        );
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('d', '')"),
+            serde_json::json!({"d": ""})
+        );
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('d', 'a\"b')"),
+            serde_json::json!({"d": "a\"b"})
+        );
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('d', 'a\\b')"),
+            serde_json::json!({"d": "a\\b"})
+        );
+        
+        // Non-text scalars
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('id', 1)"),
+            serde_json::json!({"id": 1})
+        );
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('n', 1.5)"),
+            serde_json::json!({"n": 1.5})
+        );
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('v', NULL)"),
+            serde_json::json!({"v": null})
+        );
+        
+        // Keys containing quotes or backslashes must produce valid JSON
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('a\"b', 1)"),
+            serde_json::json!({"a\"b": 1})
+        );
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('a\\b', 1)"),
+            serde_json::json!({"a\\b": 1})
+        );
+        
+        // Variadic pairs are emitted in order
+        assert_eq!(
+            build(&conn, "SELECT json_build_object('id', 1, 'name', 'x')"),
+            serde_json::json!({"id": 1, "name": "x"})
+        );
+        
+        // Duplicate keys are preserved (matches PostgreSQL json semantics)
+        let dup: String = conn
+            .query_row("SELECT json_build_object('k', 1, 'k', 2)", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(dup, "{\"k\": 1, \"k\": 2}");
+        
+        // Zero arguments yields an empty object
+        let empty: String = conn
+            .query_row("SELECT json_build_object()", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(empty, "{}");
+        
+        // jsonb_build_object is an alias
+        assert_eq!(
+            build(&conn, "SELECT jsonb_build_object('d', 'abc')"),
+            serde_json::json!({"d": "abc"})
+        );
+        
+        // Odd argument count is rejected
+        assert!(
+            conn.query_row::<String, _, _>("SELECT json_build_object('k')", [], |row| row.get(0))
+                .is_err()
+        );
     }
     
     #[test]
