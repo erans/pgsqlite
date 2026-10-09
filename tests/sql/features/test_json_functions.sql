@@ -62,12 +62,16 @@ SELECT to_json(NULL) AS null_to_json;
 SELECT to_jsonb(true) AS bool_to_jsonb;
 SELECT to_jsonb(3.14159) AS float_to_jsonb;
 
--- Test json_build_object function (2-argument version)
+-- Test json_build_object function (variadic)
 SELECT 'json_build_object tests:' AS test_group;
 SELECT json_build_object('name', 'John') AS simple_object;
 SELECT json_build_object('age', 30) AS number_value;
 SELECT json_build_object('active', true) AS bool_value;
 SELECT json_build_object('data', NULL) AS null_value;
+SELECT json_build_object('id', 1, 'name', 'John') AS multi_pair_object;
+SELECT jsonb_build_object('id', 1, 'name', 'John') AS jsonb_object;
+SELECT json_build_object() AS empty_object;
+SELECT json_build_object('a"b', 1) AS escaped_key_object;
 
 -- Test json_extract_path and json_extract_path_text functions
 SELECT 'json_extract_path tests:' AS test_group;

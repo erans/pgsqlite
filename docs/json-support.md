@@ -169,8 +169,8 @@ SELECT to_json(123);              -- Returns: 123
 SELECT to_json(NULL);             -- Returns: null
 ```
 
-#### json_build_object(variadic)
-Builds a JSON object from key-value pairs.
+#### json_build_object(variadic) / jsonb_build_object(variadic)
+Builds a JSON object from key-value pairs. `jsonb_build_object` is an alias.
 
 ```sql
 SELECT json_build_object('name', 'John', 'age', 30);
