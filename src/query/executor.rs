@@ -1866,6 +1866,15 @@ impl QueryExecutor {
         use crate::ddl::EnumDdlHandler;
         use tracing::info;
 
+        // ALTER TABLE ... ADD/DROP/RENAME COLUMN keeps __pgsqlite_schema in step
+        if let Some(alter) = crate::ddl::alter_column::parse(query) {
+            db.with_session_connection(&session.id, |conn| crate::ddl::alter_column::execute(conn, &alter)).await?;
+            invalidate_all_schema_cache();
+            framed.send(BackendMessage::CommandComplete { tag: "ALTER TABLE".to_string() }).await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+
         // Check if this is a CREATE DATABASE statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
            query.trim_start()[6..].trim_start().to_uppercase().starts_with("DATABASE") {
@@ -2706,6 +2715,13 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
 
 /// Extract table name from CREATE TABLE statement
 pub fn extract_table_name_from_create(query: &str) -> Option<String> {
+    // pgsqlite's own __pgsqlite_* tables never get user type metadata or
+    // catalog rows (CREATE TABLE IF NOT EXISTS __pgsqlite_schema runs on
+    // every metadata write and would otherwise describe itself).
+    extract_table_name_from_create_any(query).filter(|t| !t.starts_with("__pgsqlite_"))
+}
+
+fn extract_table_name_from_create_any(query: &str) -> Option<String> {
     // Look for CREATE TABLE pattern with case-insensitive search
     let create_table_pos = query.as_bytes().windows(12)
         .position(|window| window.eq_ignore_ascii_case(b"CREATE TABLE"))?;

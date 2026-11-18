@@ -5610,6 +5610,15 @@ impl ExtendedQueryHandler {
             return Err(enum_error);
         }
         
+        // ALTER TABLE ... ADD/DROP/RENAME COLUMN keeps __pgsqlite_schema in step
+        if let Some(alter) = crate::ddl::alter_column::parse(query) {
+            db.with_session_connection(&session.id, |conn| crate::ddl::alter_column::execute(conn, &alter)).await?;
+            crate::query::executor::invalidate_all_schema_cache();
+            framed.send(BackendMessage::CommandComplete { tag: "ALTER TABLE".to_string() }).await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+
         // Handle CREATE TABLE translation
         if query_starts_with_ignore_case(query, "CREATE TABLE") {
             // Use translator with connection for ENUM support
@@ -6382,6 +6391,13 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
 
 /// Extract table name from CREATE TABLE statement
 fn extract_table_name_from_create(query: &str) -> Option<String> {
+    // pgsqlite's own __pgsqlite_* tables never get user type metadata or
+    // catalog rows (CREATE TABLE IF NOT EXISTS __pgsqlite_schema runs on
+    // every metadata write and would otherwise describe itself).
+    extract_table_name_from_create_any(query).filter(|t| !t.starts_with("__pgsqlite_"))
+}
+
+fn extract_table_name_from_create_any(query: &str) -> Option<String> {
     // Look for CREATE TABLE pattern
     if let Some(table_pos) = find_keyword_position(query, "CREATE TABLE") {
         let after_create = &query[table_pos + 12..].trim();
