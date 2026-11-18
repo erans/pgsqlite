@@ -558,6 +558,7 @@ impl QueryExecutor {
                                                                 let mut buf = vec![0u8; 32];
                                                                 let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
                                                                 buf.truncate(len);
+                                                                if matches!(dt_type.as_str(), "timestamptz" | "timestamp with time zone") { buf.extend_from_slice(b"+00"); }
                                                                 Some(buf)
                                                             }
                                                             _ => Some(data), // Keep original data for unknown datetime types
@@ -1478,6 +1479,7 @@ impl QueryExecutor {
                                             let mut buf = vec![0u8; 32];
                                             let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                                             buf.truncate(len);
+                                            if matches!(pg_type.to_uppercase().as_str(), "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE") { buf.extend_from_slice(b"+00"); }
                                             *value_bytes = buf;
                                         }
                                 }
@@ -1809,6 +1811,7 @@ impl QueryExecutor {
                                         let mut buf = vec![0u8; 32];
                                         let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                                         buf.truncate(len);
+                                        if matches!(pg_type.to_uppercase().as_str(), "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE") { buf.extend_from_slice(b"+00"); }
                                         Some(buf)
                                     } else {
                                         Some(value_bytes.clone())
@@ -2516,6 +2519,7 @@ impl QueryExecutor {
                                 let mut buf = vec![0u8; 32];
                                 let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                                 buf.truncate(len);
+                                if type_oid == timestamptz_oid { buf.extend_from_slice(b"+00"); }
                                 Some(buf)
                             } else {
                                 Some(data) // Keep original if not an integer

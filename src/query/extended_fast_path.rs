@@ -742,6 +742,11 @@ impl ExtendedFastPath {
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
     {
+        // RETURNING needs schema-typed RowDescription and timestamp formatting;
+        // the normal path does both, so leave it before anything executes.
+        if crate::translator::ReturningTranslator::has_returning_clause(query) {
+            return Err(PgSqliteError::Protocol("FastPathFallback".to_string()));
+        }
         // Use DbHandler's fast path method
         let response = match db.try_execute_fast_path_with_params(query, &params, &session.id).await {
             Ok(Some(resp)) => {

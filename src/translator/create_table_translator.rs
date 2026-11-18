@@ -451,7 +451,15 @@ impl CreateTableTranslator {
             } else {
                 remaining_clause
             };
-            
+            // TIMESTAMP/TIMESTAMPTZ are stored as INTEGER microseconds since
+            // epoch; a text datetime('now') default would come back without
+            // a UTC offset and fail timestamptz decoding in clients.
+            let translated_clause = if pg_type.to_lowercase().starts_with("timestamp") {
+                translated_clause.replace("datetime('now')", "(CAST(unixepoch('subsec') * 1000000 AS INTEGER))")
+            } else {
+                translated_clause
+            };
+
             result.push(' ');
             result.push_str(&translated_clause);
         }
@@ -737,9 +745,9 @@ mod tests {
 
         println!("Translated SQL: {}", result.sql);
 
-        // Check that NOW() was translated to datetime('now')
-        assert!(result.sql.contains("DEFAULT datetime('now')"),
-                "Expected 'DEFAULT datetime('now')' but got: {}", result.sql);
+        // TIMESTAMP default NOW() becomes INTEGER microseconds (the storage format)
+        assert!(result.sql.contains("DEFAULT (CAST(unixepoch('subsec') * 1000000 AS INTEGER))"),
+                "Expected integer-microsecond default but got: {}", result.sql);
         assert!(!result.sql.contains("DEFAULT now()"),
                 "Found 'DEFAULT now()' which should have been translated: {}", result.sql);
     }

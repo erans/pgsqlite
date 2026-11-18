@@ -684,9 +684,11 @@ impl InsertTranslator {
     ) -> Result<String, String> {
         // SQLAlchemy VALUES pattern is now handled in the main translate_query method
         
-        // Parse the SELECT clause to extract individual expressions
+        // Parse the SELECT clause to extract individual expressions; keep the
+        // FROM/WHERE tail so it survives the rebuild below.
+        let (_, tail) = Self::split_top_level_from(select_clause);
         let expressions = Self::parse_select_expressions(select_clause)?;
-        
+
         if expressions.len() != columns.len() {
             return Err(format!(
                 "Column count mismatch in SELECT: {} columns but {} expressions", 
@@ -707,9 +709,49 @@ impl InsertTranslator {
             converted_expressions.push(converted_expr);
         }
         
-        Ok(converted_expressions.join(", "))
+        let joined = converted_expressions.join(", ");
+        if tail.is_empty() {
+            Ok(joined)
+        } else {
+            Ok(format!("{joined} {tail}"))
+        }
     }
-    
+
+    /// Split a SELECT body at its top-level FROM keyword (outside quotes and
+    /// parentheses, any surrounding whitespace). Returns (expressions, tail)
+    /// where tail starts with FROM, or (whole, "") when there is none.
+    fn split_top_level_from(select_clause: &str) -> (&str, &str) {
+        let b = select_clause.as_bytes();
+        let mut depth = 0i32;
+        let mut in_quotes = false;
+        for i in 0..b.len() {
+            let c = b[i];
+            if in_quotes {
+                if c == b'\'' {
+                    in_quotes = false;
+                }
+                continue;
+            }
+            match c {
+                b'\'' => in_quotes = true,
+                b'(' => depth += 1,
+                b')' => depth -= 1,
+                b'F' | b'f'
+                    if depth == 0
+                        && i > 0
+                        && b[i - 1].is_ascii_whitespace()
+                        && b.len() >= i + 4
+                        && b[i..i + 4].eq_ignore_ascii_case(b"FROM")
+                        && (b.len() == i + 4 || b[i + 4].is_ascii_whitespace() || b[i + 4] == b'(') =>
+                {
+                    return (&select_clause[..i], &select_clause[i..]);
+                }
+                _ => {}
+            }
+        }
+        (select_clause, "")
+    }
+
     /// Check if this is the SQLAlchemy VALUES pattern with column aliases
     fn is_sqlalchemy_values_pattern(select_clause: &str) -> bool {
         // Look for pattern: p0::TYPE or CAST(p0 AS TYPE), ... FROM (VALUES ...) AS alias(p0, p1, p2, ...)
@@ -926,11 +968,7 @@ impl InsertTranslator {
     /// Parse SELECT clause into individual expressions, handling commas within function calls
     fn parse_select_expressions(select_clause: &str) -> Result<Vec<String>, String> {
         // First, extract only the expressions part before FROM
-        let expressions_part = if let Some(from_pos) = select_clause.find(" FROM ") {
-            &select_clause[..from_pos]
-        } else {
-            select_clause
-        }.trim();
+        let expressions_part = Self::split_top_level_from(select_clause).0.trim();
         
         let mut expressions = Vec::new();
         let mut current = String::new();
@@ -1151,6 +1189,18 @@ mod tests {
         // Test SQLAlchemy pattern with FROM clause
         let expressions = InsertTranslator::parse_select_expressions("p0::VARCHAR, p1::TEXT, p2::TIMESTAMP WITHOUT TIME ZONE FROM (VALUES (...)) AS imp_sen ORDER BY sen_counter").unwrap();
         assert_eq!(expressions, vec!["p0::VARCHAR", "p1::TEXT", "p2::TIMESTAMP WITHOUT TIME ZONE"]);
+
+        // FROM after a newline, plus a FROM inside a subquery
+        let expressions = InsertTranslator::parse_select_expressions("p.id, 1, 'flat-monthly'\nFROM plans p\nWHERE NOT EXISTS (SELECT 1 FROM pv WHERE pv.x = p.id)").unwrap();
+        assert_eq!(expressions, vec!["p.id", "1", "'flat-monthly'"]);
+    }
+
+    #[test]
+    fn test_translate_select_clause_keeps_from_tail() {
+        let types = std::collections::HashMap::new();
+        let sql = "p.id, 'VND'\nFROM plans p\nWHERE p.code = 'flat-monthly'\n  AND NOT EXISTS (SELECT 1 FROM pv WHERE pv.plan_id = p.id)";
+        let out = InsertTranslator::translate_select_clause(sql, &["plan_id", "currency"], &types).unwrap();
+        assert_eq!(out, "p.id, 'VND' FROM plans p\nWHERE p.code = 'flat-monthly'\n  AND NOT EXISTS (SELECT 1 FROM pv WHERE pv.plan_id = p.id)");
     }
     
     #[test]
