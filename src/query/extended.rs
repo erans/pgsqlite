@@ -15,6 +15,46 @@ use std::sync::Arc;
 use byteorder::{BigEndian, ByteOrder};
 use chrono::{NaiveDate, NaiveTime, NaiveDateTime, Timelike};
 
+/// For a `WITH ...` query, the keyword of its main statement (the first
+/// SELECT/INSERT/UPDATE/DELETE outside parentheses and quotes); None otherwise.
+fn cte_main_keyword(query: &str) -> Option<&'static str> {
+    let q = query.trim_start();
+    let b = q.as_bytes();
+    if b.len() < 5 || !b[..4].eq_ignore_ascii_case(b"WITH") || !b[4].is_ascii_whitespace() {
+        return None;
+    }
+    let (mut depth, mut in_quotes, mut i) = (0i32, false, 4usize);
+    while i < b.len() {
+        let c = b[i];
+        if in_quotes {
+            if c == b'\'' {
+                in_quotes = false;
+            }
+            i += 1;
+            continue;
+        }
+        match c {
+            b'\'' => in_quotes = true,
+            b'(' => depth += 1,
+            b')' => depth -= 1,
+            _ if depth == 0 && c.is_ascii_alphabetic() && !b[i - 1].is_ascii_alphanumeric() && b[i - 1] != b'_' => {
+                let end = b[i..].iter().position(|x| !(x.is_ascii_alphanumeric() || *x == b'_')).map_or(b.len(), |n| i + n);
+                let word = &b[i..end];
+                for kw in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+                    if word.eq_ignore_ascii_case(kw.as_bytes()) {
+                        return Some(kw);
+                    }
+                }
+                i = end;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// Efficient case-insensitive query type detection
 #[inline]
 fn query_starts_with_ignore_case(query: &str, prefix: &str) -> bool {
@@ -520,7 +560,8 @@ impl ExtendedQueryHandler {
         info!("PARSE: Analyzing query '{}' for field descriptions", translated_for_analysis);
         info!("PARSE: Original query: {}", cleaned_query);
         info!("PARSE: Is simple param select: {}", is_simple_param_select);
-        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
+        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT")
+            || cte_main_keyword(&cleaned_query) == Some("SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
             if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") ||
@@ -1750,7 +1791,9 @@ impl ExtendedQueryHandler {
         // Try existing fast path as second option
         if let Some(fast_query) = crate::query::can_use_fast_path_enhanced(&query) {
             // Only use fast path for queries that actually have parameters in the extended protocol
+            // RETURNING goes to execute_dml_with_returning for schema-typed columns
             if !bound_values.is_empty() && query.contains('$')
+                && !ReturningTranslator::has_returning_clause(&query)
                 && let Ok(Some(result)) = Self::try_execute_fast_path_with_params(
                     framed, 
                     db, 
@@ -1912,11 +1955,13 @@ impl ExtendedQueryHandler {
         }
         
         // Execute based on query type
-        if query_starts_with_ignore_case(&final_query, "SELECT") {
+        if query_starts_with_ignore_case(&final_query, "SELECT")
+            || cte_main_keyword(&final_query) == Some("SELECT") {
             Self::execute_select(framed, db, session, &portal, &final_query, max_rows).await?;
         } else if query_starts_with_ignore_case(&final_query, "INSERT") 
             || query_starts_with_ignore_case(&final_query, "UPDATE") 
-            || query_starts_with_ignore_case(&final_query, "DELETE") {
+            || query_starts_with_ignore_case(&final_query, "DELETE")
+            || cte_main_keyword(&final_query) == Some("INSERT") {
             Self::execute_dml(framed, db, &final_query, &portal, session).await?;
         } else if query_starts_with_ignore_case(&final_query, "CREATE") 
             || query_starts_with_ignore_case(&final_query, "DROP") 
@@ -1953,8 +1998,81 @@ impl ExtendedQueryHandler {
         Ok(())
     }
     
+    /// Answer a Describe whose statement Parse could not describe. NoData is only
+    /// correct when Execute sends no rows: after NoData, pgjdbc fails with
+    /// "Received resultset tuples, but no field structure for them". The fields
+    /// are stored on the statement so Execute does not send a second RowDescription.
+    async fn send_fallback_description<T>(
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
+        stmt_name: &str,
+        result_formats: &[i16],
+    ) -> Result<(), PgSqliteError>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        let msg = match Self::fallback_fields(db, session, stmt_name, result_formats).await {
+            Some(fields) if !fields.is_empty() => {
+                if let Some(stmt) = session.prepared_statements.write().await.get_mut(stmt_name) {
+                    stmt.field_descriptions = fields.clone();
+                }
+                info!("Describe fallback: RowDescription with {} fields", fields.len());
+                BackendMessage::RowDescription(fields)
+            }
+            _ => BackendMessage::NoData,
+        };
+        framed.send(msg).await.map_err(PgSqliteError::Io)
+    }
+
+    async fn fallback_fields(
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
+        stmt_name: &str,
+        result_formats: &[i16],
+    ) -> Option<Vec<FieldDescription>> {
+        let query = session.prepared_statements.read().await.get(stmt_name)?.query.clone();
+        if let Some((base, clause)) = ReturningTranslator::extract_returning_clause(&query) {
+            // Same columns execute_dml_with_returning reads back, without running the DML
+            let table = ReturningTranslator::extract_table_from_insert(&base)
+                .or_else(|| ReturningTranslator::extract_table_from_update(&base))
+                .or_else(|| ReturningTranslator::extract_table_from_delete(&base))?;
+            let probe = format!("SELECT {clause} FROM {table} LIMIT 0");
+            let columns = db.with_session_connection(&session.id, |c| {
+                Ok(c.prepare(&probe)?.column_names().into_iter().map(String::from).collect::<Vec<_>>())
+            }).await.ok()?;
+            return Some(Self::build_returning_field_descriptions(db, session, &table, &columns, result_formats, &clause).await);
+        }
+        if !query_starts_with_ignore_case(&query, "SELECT") {
+            return None;
+        }
+        // Catalog SELECT served by the interceptor (e.g. SELECT * FROM pg_catalog.pg_settings).
+        // ponytail: columns typed TEXT; per-handler types if a client needs them.
+        let n = ParameterParser::count_parameters(&query);
+        let probe = if n > 0 {
+            ParameterParser::substitute_parameters(&query, &vec!["NULL".to_string(); n]).ok()?
+        } else {
+            query
+        };
+        let response = CatalogInterceptor::intercept_query(&probe, db.clone(), Some(session.clone())).await?.ok()?;
+        Some(response.columns.into_iter().enumerate().map(|(i, name)| FieldDescription {
+            name,
+            table_oid: 0,
+            column_id: (i + 1) as i16,
+            type_oid: PgType::Text.to_oid(),
+            type_size: -1,
+            type_modifier: -1,
+            format: match result_formats {
+                [] => 0,
+                [f] => *f,
+                fs => fs.get(i).copied().unwrap_or(0),
+            },
+        }).collect())
+    }
+
     pub async fn handle_describe<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         typ: u8,
         name: String,
@@ -2495,15 +2613,13 @@ impl ExtendedQueryHandler {
                     framed.send(BackendMessage::RowDescription(field_descriptions)).await
                         .map_err(PgSqliteError::Io)?;
                 } else {
-                    // Fallback to NoData if we couldn't parse the query
-                    info!("Could not determine catalog fields, sending NoData in Describe");
-                    framed.send(BackendMessage::NoData).await
-                        .map_err(PgSqliteError::Io)?;
+                    info!("Could not determine catalog fields from the query text");
+                    drop(statements);
+                    Self::send_fallback_description(framed, db, session, &name, &[]).await?;
                 }
             } else {
-                info!("Sending NoData in Describe");
-                framed.send(BackendMessage::NoData).await
-                    .map_err(PgSqliteError::Io)?;
+                drop(statements);
+                Self::send_fallback_description(framed, db, session, &name, &[]).await?;
             }
         } else {
             // Describe portal
@@ -2582,11 +2698,14 @@ impl ExtendedQueryHandler {
                 framed.send(BackendMessage::RowDescription(fields)).await
                     .map_err(PgSqliteError::Io)?;
             } else {
-                framed.send(BackendMessage::NoData).await
-                    .map_err(PgSqliteError::Io)?;
+                let statement_name = portal.statement_name.clone();
+                let result_formats = portal.result_formats.clone();
+                drop(statements);
+                drop(portals);
+                Self::send_fallback_description(framed, db, session, &statement_name, &result_formats).await?;
             }
         }
-        
+
         Ok(())
     }
     
@@ -2924,6 +3043,7 @@ impl ExtendedQueryHandler {
                                     // Convert microseconds to formatted timestamp
                                     use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                     let formatted = format_microseconds_to_timestamp(micros);
+                                    let formatted = if type_oid == PgType::Timestamptz.to_oid() { formatted + "+00" } else { formatted };
                                     converted_row.push(Some(formatted.into_bytes()));
                                 } else {
                                     // Already formatted or not a timestamp
@@ -4387,6 +4507,7 @@ impl ExtendedQueryHandler {
                                         // Convert microseconds to formatted timestamp
                                         use crate::types::datetime_utils::format_microseconds_to_timestamp;
                                         let formatted = format_microseconds_to_timestamp(micros);
+                                        let formatted = if t == PgType::Timestamptz.to_oid() { formatted + "+00" } else { formatted };
                                         eprintln!("🕐 TIMESTAMP conversion: {} -> {}", micros, formatted);
                                         Some(formatted.into_bytes())
                                     } else {
@@ -5164,12 +5285,16 @@ impl ExtendedQueryHandler {
         if ReturningTranslator::has_returning_clause(query) {
             debug!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             // Get result formats from portal
-            let result_formats = {
+            let (result_formats, send_row_desc) = {
                 let portals = session.portals.read().await;
                 let portal = portals.get(portal_name).unwrap();
-                portal.result_formats.clone()
+                // A Describe already sent RowDescription (send_fallback_description)
+                let described = session.prepared_statements.read().await
+                    .get(&portal.statement_name)
+                    .is_some_and(|s| !s.field_descriptions.is_empty());
+                (portal.result_formats.clone(), !described)
             };
-            return Self::execute_dml_with_returning(framed, db, session, query, &result_formats).await;
+            return Self::execute_dml_with_returning(framed, db, session, query, &result_formats, send_row_desc).await;
         }
         
         // Validation is now done in handle_execute before parameter substitution
@@ -5178,7 +5303,7 @@ impl ExtendedQueryHandler {
         let cached_conn = Self::get_or_cache_connection(session, db).await;
         let response = db.execute_with_session_cached(query, &session.id, cached_conn.as_ref()).await?;
         
-        let tag = if query_starts_with_ignore_case(query, "INSERT") {
+        let tag = if query_starts_with_ignore_case(query, "INSERT") || cte_main_keyword(query) == Some("INSERT") {
             format!("INSERT 0 {}", response.rows_affected)
         } else if query_starts_with_ignore_case(query, "UPDATE") {
             format!("UPDATE {}", response.rows_affected)
@@ -5277,9 +5402,12 @@ impl ExtendedQueryHandler {
     ) -> Result<Vec<Vec<Option<Vec<u8>>>>, PgSqliteError> {
         // Get schema types for all columns
         let mut is_timestamp = vec![false; columns.len()];
+        let mut is_timestamptz = vec![false; columns.len()];
         for (i, col_name) in columns.iter().enumerate() {
             if let Ok(Some(pg_type)) = db.get_schema_type_with_session(&session.id, table_name, col_name).await {
-                is_timestamp[i] = matches!(pg_type.as_str(), "TIMESTAMP" | "TIMESTAMPTZ");
+                let t = pg_type.to_uppercase();
+                is_timestamptz[i] = matches!(t.as_str(), "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE");
+                is_timestamp[i] = is_timestamptz[i] || matches!(t.as_str(), "TIMESTAMP" | "TIMESTAMP WITHOUT TIME ZONE");
             }
         }
         
@@ -5295,7 +5423,10 @@ impl ExtendedQueryHandler {
                             if value_str.chars().all(|c| c.is_ascii_digit() || c == '-')
                                 && let Ok(micros) = value_str.parse::<i64>() {
                                     // Convert microseconds to formatted timestamp
-                                    let formatted = crate::types::datetime_utils::format_microseconds_to_timestamp(micros);
+                                    let mut formatted = crate::types::datetime_utils::format_microseconds_to_timestamp(micros);
+                                    if is_timestamptz[i] {
+                                        formatted.push_str("+00");
+                                    }
                                     converted_row.push(Some(formatted.into_bytes()));
                                     continue;
                                 }
@@ -5314,6 +5445,7 @@ impl ExtendedQueryHandler {
         session: &Arc<SessionState>,
         query: &str,
         result_formats: &[i16],
+        send_row_desc: bool,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -5321,7 +5453,7 @@ impl ExtendedQueryHandler {
         let (base_query, returning_clause) = ReturningTranslator::extract_returning_clause(query)
             .ok_or_else(|| PgSqliteError::Protocol("Failed to parse RETURNING clause".to_string()))?;
         
-        if query_starts_with_ignore_case(&base_query, "INSERT") {
+        if query_starts_with_ignore_case(&base_query, "INSERT") || cte_main_keyword(&base_query) == Some("INSERT") {
             // For INSERT, execute the insert and then query by last_insert_rowid
             let table_name = ReturningTranslator::extract_table_from_insert(&base_query)
                 .ok_or_else(|| PgSqliteError::Protocol("Failed to extract table name".to_string()))?;
@@ -5353,7 +5485,12 @@ impl ExtendedQueryHandler {
             
             // Query for RETURNING data for all inserted rows
             // For multi-row inserts, we need to get all rows from (last_rowid - rows_affected + 1) to last_rowid
-            let returning_query = if response.rows_affected > 1 && last_rowid > 0 {
+            let returning_query = if response.rows_affected == 0 {
+                // Nothing inserted (INSERT ... SELECT matched no rows, or ON
+                // CONFLICT DO NOTHING): last_insert_rowid() still names an
+                // older row, so return no rows instead.
+                format!("SELECT {returning_clause} FROM {table_name} WHERE 0")
+            } else if response.rows_affected > 1 && last_rowid > 0 {
                 // Multi-row insert: get all inserted rows
                 let first_rowid = last_rowid - response.rows_affected as i64 + 1;
                 debug!("Multi-row INSERT RETURNING: fetching rows from rowid {} to {}", first_rowid, last_rowid);
@@ -5383,8 +5520,8 @@ impl ExtendedQueryHandler {
                 &returning_clause,
             ).await;
             
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
+            if send_row_desc { framed.send(BackendMessage::RowDescription(fields)).await
+                .map_err(PgSqliteError::Io)?; }
             
             // Convert timestamps and send data rows
             let converted_rows = Self::convert_returning_timestamps(
@@ -5445,8 +5582,8 @@ impl ExtendedQueryHandler {
                     &returning_clause,
                 ).await;
                 
-                framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(PgSqliteError::Io)?;
+                if send_row_desc { framed.send(BackendMessage::RowDescription(fields)).await
+                    .map_err(PgSqliteError::Io)?; }
                 
                 // Convert timestamps and send data rows
                 let converted_rows = Self::convert_returning_timestamps(
@@ -5501,8 +5638,8 @@ impl ExtendedQueryHandler {
                 &returning_clause,
             ).await;
             
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
+            if send_row_desc { framed.send(BackendMessage::RowDescription(fields)).await
+                .map_err(PgSqliteError::Io)?; }
             
             // Convert timestamps in captured rows (skip rowid column)
             let rows_without_rowid: Vec<Vec<Option<Vec<u8>>>> = captured_rows.rows.into_iter()
@@ -5554,6 +5691,15 @@ impl ExtendedQueryHandler {
             return Err(enum_error);
         }
         
+        // ALTER TABLE ... ADD/DROP/RENAME COLUMN keeps __pgsqlite_schema in step
+        if let Some(alter) = crate::ddl::alter_column::parse(query) {
+            db.with_session_connection(&session.id, |conn| crate::ddl::alter_column::execute(conn, &alter)).await?;
+            crate::query::executor::invalidate_all_schema_cache();
+            framed.send(BackendMessage::CommandComplete { tag: "ALTER TABLE".to_string() }).await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
+
         // Handle CREATE TABLE translation
         if query_starts_with_ignore_case(query, "CREATE TABLE") {
             // Use translator with connection for ENUM support
@@ -6326,6 +6472,13 @@ fn extract_table_name_from_select(query: &str) -> Option<String> {
 
 /// Extract table name from CREATE TABLE statement
 fn extract_table_name_from_create(query: &str) -> Option<String> {
+    // pgsqlite's own __pgsqlite_* tables never get user type metadata or
+    // catalog rows (CREATE TABLE IF NOT EXISTS __pgsqlite_schema runs on
+    // every metadata write and would otherwise describe itself).
+    extract_table_name_from_create_any(query).filter(|t| !t.starts_with("__pgsqlite_"))
+}
+
+fn extract_table_name_from_create_any(query: &str) -> Option<String> {
     // Look for CREATE TABLE pattern
     if let Some(table_pos) = find_keyword_position(query, "CREATE TABLE") {
         let after_create = &query[table_pos + 12..].trim();
@@ -6405,6 +6558,7 @@ fn is_bare_aggregate_candidate(col_lower: &str) -> bool {
 mod tests {
     use regex::Regex;
     use super::{
+        cte_main_keyword,
         count_backstop_applies, datetime_oid_from_type_str, direct_aggregate_inner_column,
         is_bare_aggregate_candidate,
     };
@@ -6504,5 +6658,16 @@ mod tests {
         // Aliased non-aggregate upper(name) AS count must NOT be int8.
         assert!(!count_backstop_applies("count", "SELECT upper(name) AS count FROM t"));
         assert!(!count_backstop_applies("count", "SELECT max(x) AS count FROM t"));
+    }
+
+    #[test]
+    fn test_cte_main_keyword() {
+        assert_eq!(cte_main_keyword("
+		WITH u AS (SELECT id FROM users WHERE lower(email) = lower($2))
+		INSERT INTO m (a) SELECT $1 FROM u RETURNING a"), Some("INSERT"));
+        assert_eq!(cte_main_keyword("WITH a AS (SELECT 1), b AS (DELETE FROM t RETURNING *) SELECT * FROM a"), Some("SELECT"));
+        assert_eq!(cte_main_keyword("with x as (select 'insert') update t set y = 1"), Some("UPDATE"));
+        assert_eq!(cte_main_keyword("INSERT INTO t VALUES (1)"), None);
+        assert_eq!(cte_main_keyword("WITHOUT"), None);
     }
 }

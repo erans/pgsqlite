@@ -86,8 +86,11 @@ impl CreateTableTranslator {
             // No CHECK constraints to add anymore
             let final_columns = sqlite_columns;
 
-            // Reconstruct CREATE TABLE
-            let sqlite_sql = format!("CREATE TABLE {} ({})", table_name_for_output, final_columns);
+            // Reconstruct CREATE TABLE, keeping IF NOT EXISTS from the header
+            let name_start = captures.get(1).or_else(|| captures.get(2)).map_or(0, |m| m.start());
+            let header = pg_sql[..name_start].split_whitespace().collect::<Vec<_>>().join(" ").to_uppercase();
+            let if_not_exists = if header.ends_with("IF NOT EXISTS") { "IF NOT EXISTS " } else { "" };
+            let sqlite_sql = format!("CREATE TABLE {}{} ({})", if_not_exists, table_name_for_output, final_columns);
             
             Ok(CreateTableResult {
                 sql: sqlite_sql,
@@ -451,7 +454,15 @@ impl CreateTableTranslator {
             } else {
                 remaining_clause
             };
-            
+            // TIMESTAMP/TIMESTAMPTZ are stored as INTEGER microseconds since
+            // epoch; a text datetime('now') default would come back without
+            // a UTC offset and fail timestamptz decoding in clients.
+            let translated_clause = if pg_type.to_lowercase().starts_with("timestamp") {
+                translated_clause.replace("datetime('now')", "(CAST(unixepoch('subsec') * 1000000 AS INTEGER))")
+            } else {
+                translated_clause
+            };
+
             result.push(' ');
             result.push_str(&translated_clause);
         }
@@ -724,6 +735,16 @@ mod tests {
     }
     
     #[test]
+    fn test_keeps_if_not_exists() {
+        let result = CreateTableTranslator::translate_with_connection_full(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version BIGINT PRIMARY KEY)", None).unwrap();
+        assert!(result.sql.starts_with("CREATE TABLE IF NOT EXISTS schema_migrations ("), "got: {}", result.sql);
+        let result = CreateTableTranslator::translate_with_connection_full(
+            "CREATE TABLE t (id INT)", None).unwrap();
+        assert!(result.sql.starts_with("CREATE TABLE t ("), "got: {}", result.sql);
+    }
+
+    #[test]
     fn test_translate_default_now() {
         let sql = "CREATE TABLE orders (
             id SERIAL PRIMARY KEY,
@@ -737,9 +758,9 @@ mod tests {
 
         println!("Translated SQL: {}", result.sql);
 
-        // Check that NOW() was translated to datetime('now')
-        assert!(result.sql.contains("DEFAULT datetime('now')"),
-                "Expected 'DEFAULT datetime('now')' but got: {}", result.sql);
+        // TIMESTAMP default NOW() becomes INTEGER microseconds (the storage format)
+        assert!(result.sql.contains("DEFAULT (CAST(unixepoch('subsec') * 1000000 AS INTEGER))"),
+                "Expected integer-microsecond default but got: {}", result.sql);
         assert!(!result.sql.contains("DEFAULT now()"),
                 "Found 'DEFAULT now()' which should have been translated: {}", result.sql);
     }

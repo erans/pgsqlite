@@ -558,6 +558,7 @@ impl QueryExecutor {
                                                                 let mut buf = vec![0u8; 32];
                                                                 let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
                                                                 buf.truncate(len);
+                                                                if matches!(dt_type.as_str(), "timestamptz" | "timestamp with time zone") { buf.extend_from_slice(b"+00"); }
                                                                 Some(buf)
                                                             }
                                                             _ => Some(data), // Keep original data for unknown datetime types
@@ -1478,6 +1479,7 @@ impl QueryExecutor {
                                             let mut buf = vec![0u8; 32];
                                             let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                                             buf.truncate(len);
+                                            if matches!(pg_type.to_uppercase().as_str(), "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE") { buf.extend_from_slice(b"+00"); }
                                             *value_bytes = buf;
                                         }
                                 }
@@ -1809,6 +1811,7 @@ impl QueryExecutor {
                                         let mut buf = vec![0u8; 32];
                                         let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                                         buf.truncate(len);
+                                        if matches!(pg_type.to_uppercase().as_str(), "TIMESTAMPTZ" | "TIMESTAMP WITH TIME ZONE") { buf.extend_from_slice(b"+00"); }
                                         Some(buf)
                                     } else {
                                         Some(value_bytes.clone())
@@ -1862,6 +1865,15 @@ impl QueryExecutor {
         use crate::query::{QueryTypeDetector, QueryType};
         use crate::ddl::EnumDdlHandler;
         use tracing::info;
+
+        // ALTER TABLE ... ADD/DROP/RENAME COLUMN keeps __pgsqlite_schema in step
+        if let Some(alter) = crate::ddl::alter_column::parse(query) {
+            db.with_session_connection(&session.id, |conn| crate::ddl::alter_column::execute(conn, &alter)).await?;
+            invalidate_all_schema_cache();
+            framed.send(BackendMessage::CommandComplete { tag: "ALTER TABLE".to_string() }).await
+                .map_err(PgSqliteError::Io)?;
+            return Ok(());
+        }
 
         // Check if this is a CREATE DATABASE statement
         if matches!(QueryTypeDetector::detect_query_type(query), QueryType::Create) &&
@@ -2516,6 +2528,7 @@ impl QueryExecutor {
                                 let mut buf = vec![0u8; 32];
                                 let len = format_microseconds_to_timestamp_buf(micros, &mut buf);
                                 buf.truncate(len);
+                                if type_oid == timestamptz_oid { buf.extend_from_slice(b"+00"); }
                                 Some(buf)
                             } else {
                                 Some(data) // Keep original if not an integer
@@ -2702,6 +2715,13 @@ fn extract_column_mappings_from_query(query: &str, table: &str) -> std::collecti
 
 /// Extract table name from CREATE TABLE statement
 pub fn extract_table_name_from_create(query: &str) -> Option<String> {
+    // pgsqlite's own __pgsqlite_* tables never get user type metadata or
+    // catalog rows (CREATE TABLE IF NOT EXISTS __pgsqlite_schema runs on
+    // every metadata write and would otherwise describe itself).
+    extract_table_name_from_create_any(query).filter(|t| !t.starts_with("__pgsqlite_"))
+}
+
+fn extract_table_name_from_create_any(query: &str) -> Option<String> {
     // Look for CREATE TABLE pattern with case-insensitive search
     let create_table_pos = query.as_bytes().windows(12)
         .position(|window| window.eq_ignore_ascii_case(b"CREATE TABLE"))?;

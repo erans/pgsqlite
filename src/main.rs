@@ -279,7 +279,15 @@ async fn handle_ssl_negotiation(
     
     // Read the first message to check if it's an SSL request
     let mut buf = vec![0u8; 8];
-    stream.read_exact(&mut buf).await?;
+    if let Err(e) = stream.read_exact(&mut buf).await {
+        // A client that closes before sending a startup message (e.g. a TCP port
+        // probe) is a clean disconnect, not a failure for the circuit breaker.
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            debug!("Connection from {} closed before startup message", addr);
+            return Ok(());
+        }
+        return Err(e.into());
+    }
     
     // Check if this is an SSL request
     let len = i32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
@@ -594,7 +602,7 @@ where
                 }
             }
             FrontendMessage::Describe { typ, name } => {
-                match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await
+                match ExtendedQueryHandler::handle_describe(&mut framed, &db_handler, &session, typ, name).await
                 {
                     Ok(()) => {}
                     Err(e) => {

@@ -438,6 +438,7 @@ impl CastTranslator {
             // Handle parentheses
             if ch == b')' {
                 paren_depth += 1;
+                continue;
             } else if ch == b'(' {
                 paren_depth -= 1;
                 if paren_depth < 0 {
@@ -445,6 +446,9 @@ impl CastTranslator {
                     // Return position after the '('
                     return i + 1;
                 }
+                // This '(' closes a group that is part of the expression
+                // (e.g. `f()` or `(a + b)`), so it is not a boundary.
+                continue;
             }
             
             // If we're not in parentheses, look for expression boundaries
@@ -804,5 +808,31 @@ impl CastTranslator {
         }
         
         result
+    }
+}
+#[cfg(test)]
+mod expression_start_tests {
+    use super::CastTranslator;
+
+    fn expr_before_cast(before: &str) -> &str {
+        &before[CastTranslator::find_expression_start(before)..]
+    }
+
+    #[test]
+    fn function_call_with_empty_args_is_whole_expression() {
+        assert_eq!(expr_before_cast("SELECT pg_backend_pid()"), "pg_backend_pid()");
+        assert_eq!(expr_before_cast("COALESCE(inet_server_port()"), "inet_server_port()");
+    }
+
+    #[test]
+    fn function_call_with_args_and_parenthesized_expr() {
+        assert_eq!(expr_before_cast("SELECT count(*)"), "count(*)");
+        assert_eq!(expr_before_cast("SELECT (a + b)"), "(a + b)");
+        assert_eq!(expr_before_cast("WHERE x = lower(name)"), "lower(name)");
+    }
+
+    #[test]
+    fn unmatched_open_paren_still_bounds_expression() {
+        assert_eq!(expr_before_cast("SELECT COALESCE(col"), "col");
     }
 }

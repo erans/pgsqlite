@@ -4,7 +4,11 @@ use once_cell::sync::Lazy;
 
 // Pre-compiled regex patterns
 static RETURNING_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)(.+?)\s+RETURNING\s+(.+)$").unwrap()
+    Regex::new(r"(?is)(.+?)\s+RETURNING\s+(.+)$").unwrap()
+});
+
+static HAS_RETURNING_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"(?i)\sRETURNING\s").unwrap()
 });
 
 static INSERT_TABLE_REGEX: Lazy<Regex> = Lazy::new(|| {
@@ -33,8 +37,7 @@ pub struct ReturningTranslator;
 impl ReturningTranslator {
     /// Check if a query contains a RETURNING clause
     pub fn has_returning_clause(sql: &str) -> bool {
-        let upper_sql = sql.to_uppercase();
-        upper_sql.contains(" RETURNING ")
+        HAS_RETURNING_REGEX.is_match(sql)
     }
     
     /// Extract RETURNING clause from a query
@@ -132,6 +135,10 @@ mod tests {
         assert!(ReturningTranslator::has_returning_clause("INSERT INTO users (name) VALUES ('John') RETURNING id"));
         assert!(ReturningTranslator::has_returning_clause("UPDATE users SET name = 'Jane' WHERE id = 1 returning *"));
         assert!(!ReturningTranslator::has_returning_clause("INSERT INTO users (name) VALUES ('John')"));
+        assert!(ReturningTranslator::has_returning_clause("INSERT INTO m (a)\n\t\tSELECT $1 FROM u\n\t\tRETURNING user_id,\n\t\t  role"));
+        let (base, ret) = ReturningTranslator::extract_returning_clause("INSERT INTO m (a)\nSELECT 1\nRETURNING a,\n  b").unwrap();
+        assert_eq!(base, "INSERT INTO m (a)\nSELECT 1");
+        assert_eq!(ret, "a,\n  b");
     }
     
     #[test]

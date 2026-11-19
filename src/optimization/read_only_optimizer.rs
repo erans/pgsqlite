@@ -358,6 +358,7 @@ impl ReadOnlyOptimizer {
                                     let mut buf = vec![0u8; 64];
                                     let len = format_microseconds_to_timestamp_buf(int_val, &mut buf);
                                     buf.truncate(len);
+                                    if pg_type.eq_ignore_ascii_case("timestamptz") { buf.extend_from_slice(b"+00"); }
                                     values.push(Some(buf));
                                 }
                                 _ => {
