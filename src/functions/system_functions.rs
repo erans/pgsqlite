@@ -183,7 +183,56 @@ pub fn register_system_functions(conn: &Connection) -> Result<()> {
             Ok(5432i32)
         },
     )?;
-    
+
+    // host(inet) - IP address as text, without the netmask
+    conn.create_scalar_function(
+        "host",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let addr: Option<String> = ctx.get(0)?;
+            Ok(addr.map(|a| a.split('/').next().unwrap_or_default().to_string()))
+        },
+    )?;
+
+    // current_setting(name [, missing_ok]) - a few read-only settings clients query
+    fn setting_value(name: &str) -> Option<&'static str> {
+        match name.to_ascii_lowercase().as_str() {
+            "port" => Some("5432"),
+            "server_encoding" | "client_encoding" => Some("UTF8"),
+            _ => None,
+        }
+    }
+    conn.create_scalar_function(
+        "current_setting",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let name: String = ctx.get(0)?;
+            setting_value(&name).map(str::to_string).ok_or_else(|| {
+                rusqlite::Error::UserFunctionError(
+                    format!("unrecognized configuration parameter \"{name}\"").into(),
+                )
+            })
+        },
+    )?;
+    conn.create_scalar_function(
+        "current_setting",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let name: String = ctx.get(0)?;
+            let missing_ok: bool = ctx.get(1)?;
+            match setting_value(&name) {
+                Some(v) => Ok(Some(v.to_string())),
+                None if missing_ok => Ok(None),
+                None => Err(rusqlite::Error::UserFunctionError(
+                    format!("unrecognized configuration parameter \"{name}\"").into(),
+                )),
+            }
+        },
+    )?;
+
     // pg_has_role(role, privilege) - Check if current user has role privilege (2-parameter version)
     conn.create_scalar_function(
         "pg_has_role",
@@ -565,6 +614,25 @@ mod tests {
         assert!(pid > 0);
     }
     
+    #[test]
+    fn test_host_and_current_setting() {
+        let conn = Connection::open_in_memory().unwrap();
+        register_system_functions(&conn).unwrap();
+
+        let h: String = conn.query_row("SELECT host('10.0.0.1/24')", [], |r| r.get(0)).unwrap();
+        assert_eq!(h, "10.0.0.1");
+        let h: Option<String> = conn.query_row("SELECT host(NULL)", [], |r| r.get(0)).unwrap();
+        assert_eq!(h, None);
+
+        let port: String = conn.query_row("SELECT current_setting('port')", [], |r| r.get(0)).unwrap();
+        assert_eq!(port, "5432");
+        let missing: Option<String> = conn
+            .query_row("SELECT current_setting('no_such', 1)", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(missing, None);
+        assert!(conn.query_row("SELECT current_setting('no_such')", [], |r| r.get::<_, String>(0)).is_err());
+    }
+
     #[test]
     fn test_pg_is_in_recovery() {
         let conn = Connection::open_in_memory().unwrap();

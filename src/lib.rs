@@ -261,7 +261,7 @@ pub async fn handle_test_connection_with_pool(
                     }
                 }
                 FrontendMessage::Describe { typ, name } => {
-                    match ExtendedQueryHandler::handle_describe(&mut framed, &session, typ, name).await {
+                    match ExtendedQueryHandler::handle_describe(&mut framed, &db_handler, &session, typ, name).await {
                         Ok(()) => {},
                         Err(e) => {
                             let err = ErrorResponse::new(

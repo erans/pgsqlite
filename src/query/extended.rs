@@ -560,7 +560,8 @@ impl ExtendedQueryHandler {
         info!("PARSE: Analyzing query '{}' for field descriptions", translated_for_analysis);
         info!("PARSE: Original query: {}", cleaned_query);
         info!("PARSE: Is simple param select: {}", is_simple_param_select);
-        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT") {
+        let field_descriptions = if query_starts_with_ignore_case(&cleaned_query, "SELECT")
+            || cte_main_keyword(&cleaned_query) == Some("SELECT") {
             // Don't try to get field descriptions if this is a catalog query
             // These queries are handled specially and don't need real field info
             if cleaned_query.contains("pg_catalog") || cleaned_query.contains("pg_type") ||
@@ -1954,7 +1955,8 @@ impl ExtendedQueryHandler {
         }
         
         // Execute based on query type
-        if query_starts_with_ignore_case(&final_query, "SELECT") {
+        if query_starts_with_ignore_case(&final_query, "SELECT")
+            || cte_main_keyword(&final_query) == Some("SELECT") {
             Self::execute_select(framed, db, session, &portal, &final_query, max_rows).await?;
         } else if query_starts_with_ignore_case(&final_query, "INSERT") 
             || query_starts_with_ignore_case(&final_query, "UPDATE") 
@@ -1996,8 +1998,81 @@ impl ExtendedQueryHandler {
         Ok(())
     }
     
+    /// Answer a Describe whose statement Parse could not describe. NoData is only
+    /// correct when Execute sends no rows: after NoData, pgjdbc fails with
+    /// "Received resultset tuples, but no field structure for them". The fields
+    /// are stored on the statement so Execute does not send a second RowDescription.
+    async fn send_fallback_description<T>(
+        framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
+        stmt_name: &str,
+        result_formats: &[i16],
+    ) -> Result<(), PgSqliteError>
+    where
+        T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        let msg = match Self::fallback_fields(db, session, stmt_name, result_formats).await {
+            Some(fields) if !fields.is_empty() => {
+                if let Some(stmt) = session.prepared_statements.write().await.get_mut(stmt_name) {
+                    stmt.field_descriptions = fields.clone();
+                }
+                info!("Describe fallback: RowDescription with {} fields", fields.len());
+                BackendMessage::RowDescription(fields)
+            }
+            _ => BackendMessage::NoData,
+        };
+        framed.send(msg).await.map_err(PgSqliteError::Io)
+    }
+
+    async fn fallback_fields(
+        db: &Arc<DbHandler>,
+        session: &Arc<SessionState>,
+        stmt_name: &str,
+        result_formats: &[i16],
+    ) -> Option<Vec<FieldDescription>> {
+        let query = session.prepared_statements.read().await.get(stmt_name)?.query.clone();
+        if let Some((base, clause)) = ReturningTranslator::extract_returning_clause(&query) {
+            // Same columns execute_dml_with_returning reads back, without running the DML
+            let table = ReturningTranslator::extract_table_from_insert(&base)
+                .or_else(|| ReturningTranslator::extract_table_from_update(&base))
+                .or_else(|| ReturningTranslator::extract_table_from_delete(&base))?;
+            let probe = format!("SELECT {clause} FROM {table} LIMIT 0");
+            let columns = db.with_session_connection(&session.id, |c| {
+                Ok(c.prepare(&probe)?.column_names().into_iter().map(String::from).collect::<Vec<_>>())
+            }).await.ok()?;
+            return Some(Self::build_returning_field_descriptions(db, session, &table, &columns, result_formats, &clause).await);
+        }
+        if !query_starts_with_ignore_case(&query, "SELECT") {
+            return None;
+        }
+        // Catalog SELECT served by the interceptor (e.g. SELECT * FROM pg_catalog.pg_settings).
+        // ponytail: columns typed TEXT; per-handler types if a client needs them.
+        let n = ParameterParser::count_parameters(&query);
+        let probe = if n > 0 {
+            ParameterParser::substitute_parameters(&query, &vec!["NULL".to_string(); n]).ok()?
+        } else {
+            query
+        };
+        let response = CatalogInterceptor::intercept_query(&probe, db.clone(), Some(session.clone())).await?.ok()?;
+        Some(response.columns.into_iter().enumerate().map(|(i, name)| FieldDescription {
+            name,
+            table_oid: 0,
+            column_id: (i + 1) as i16,
+            type_oid: PgType::Text.to_oid(),
+            type_size: -1,
+            type_modifier: -1,
+            format: match result_formats {
+                [] => 0,
+                [f] => *f,
+                fs => fs.get(i).copied().unwrap_or(0),
+            },
+        }).collect())
+    }
+
     pub async fn handle_describe<T>(
         framed: &mut Framed<T, crate::protocol::PostgresCodec>,
+        db: &Arc<DbHandler>,
         session: &Arc<SessionState>,
         typ: u8,
         name: String,
@@ -2538,15 +2613,13 @@ impl ExtendedQueryHandler {
                     framed.send(BackendMessage::RowDescription(field_descriptions)).await
                         .map_err(PgSqliteError::Io)?;
                 } else {
-                    // Fallback to NoData if we couldn't parse the query
-                    info!("Could not determine catalog fields, sending NoData in Describe");
-                    framed.send(BackendMessage::NoData).await
-                        .map_err(PgSqliteError::Io)?;
+                    info!("Could not determine catalog fields from the query text");
+                    drop(statements);
+                    Self::send_fallback_description(framed, db, session, &name, &[]).await?;
                 }
             } else {
-                info!("Sending NoData in Describe");
-                framed.send(BackendMessage::NoData).await
-                    .map_err(PgSqliteError::Io)?;
+                drop(statements);
+                Self::send_fallback_description(framed, db, session, &name, &[]).await?;
             }
         } else {
             // Describe portal
@@ -2625,11 +2698,14 @@ impl ExtendedQueryHandler {
                 framed.send(BackendMessage::RowDescription(fields)).await
                     .map_err(PgSqliteError::Io)?;
             } else {
-                framed.send(BackendMessage::NoData).await
-                    .map_err(PgSqliteError::Io)?;
+                let statement_name = portal.statement_name.clone();
+                let result_formats = portal.result_formats.clone();
+                drop(statements);
+                drop(portals);
+                Self::send_fallback_description(framed, db, session, &statement_name, &result_formats).await?;
             }
         }
-        
+
         Ok(())
     }
     
@@ -5209,12 +5285,16 @@ impl ExtendedQueryHandler {
         if ReturningTranslator::has_returning_clause(query) {
             debug!("Extended protocol: Query has RETURNING clause, using execute_dml_with_returning: {}", query);
             // Get result formats from portal
-            let result_formats = {
+            let (result_formats, send_row_desc) = {
                 let portals = session.portals.read().await;
                 let portal = portals.get(portal_name).unwrap();
-                portal.result_formats.clone()
+                // A Describe already sent RowDescription (send_fallback_description)
+                let described = session.prepared_statements.read().await
+                    .get(&portal.statement_name)
+                    .is_some_and(|s| !s.field_descriptions.is_empty());
+                (portal.result_formats.clone(), !described)
             };
-            return Self::execute_dml_with_returning(framed, db, session, query, &result_formats).await;
+            return Self::execute_dml_with_returning(framed, db, session, query, &result_formats, send_row_desc).await;
         }
         
         // Validation is now done in handle_execute before parameter substitution
@@ -5365,6 +5445,7 @@ impl ExtendedQueryHandler {
         session: &Arc<SessionState>,
         query: &str,
         result_formats: &[i16],
+        send_row_desc: bool,
     ) -> Result<(), PgSqliteError>
     where
         T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -5439,8 +5520,8 @@ impl ExtendedQueryHandler {
                 &returning_clause,
             ).await;
             
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
+            if send_row_desc { framed.send(BackendMessage::RowDescription(fields)).await
+                .map_err(PgSqliteError::Io)?; }
             
             // Convert timestamps and send data rows
             let converted_rows = Self::convert_returning_timestamps(
@@ -5501,8 +5582,8 @@ impl ExtendedQueryHandler {
                     &returning_clause,
                 ).await;
                 
-                framed.send(BackendMessage::RowDescription(fields)).await
-                    .map_err(PgSqliteError::Io)?;
+                if send_row_desc { framed.send(BackendMessage::RowDescription(fields)).await
+                    .map_err(PgSqliteError::Io)?; }
                 
                 // Convert timestamps and send data rows
                 let converted_rows = Self::convert_returning_timestamps(
@@ -5557,8 +5638,8 @@ impl ExtendedQueryHandler {
                 &returning_clause,
             ).await;
             
-            framed.send(BackendMessage::RowDescription(fields)).await
-                .map_err(PgSqliteError::Io)?;
+            if send_row_desc { framed.send(BackendMessage::RowDescription(fields)).await
+                .map_err(PgSqliteError::Io)?; }
             
             // Convert timestamps in captured rows (skip rowid column)
             let rows_without_rowid: Vec<Vec<Option<Vec<u8>>>> = captured_rows.rows.into_iter()
